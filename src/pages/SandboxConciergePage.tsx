@@ -7900,7 +7900,6 @@ export function SandboxConciergePage() {
   const [error, setError] = useState<string>()
   const [showDebug, setShowDebug] = useState(false)
   const [showDistrictPanel, setShowDistrictPanel] = useState(false)
-  const [showEngineReveal, setShowEngineReveal] = useState(true)
   const [ecsState, setEcsState] = useState<ExplorationControlState>(DEFAULT_ECS_STATE)
   const [activePreviewShapeIntent, setActivePreviewShapeIntent] = useState<PreviewShapeIntent | null>(
     null,
@@ -7953,8 +7952,7 @@ export function SandboxConciergePage() {
   >({})
   const [debugExpandedByKey, setDebugExpandedByKey] = useState<Record<string, boolean>>({})
   const [selectionPreview, setSelectionPreview] = useState<DirectionPreviewModel | null>(null)
-  const verticalDebugEnvValue = import.meta.env.VITE_VERTICAL_DEBUG
-  const verticalDebugEnabled = verticalDebugEnvValue === '1'
+  const verticalDebugEnabled = false
   const districtLocationQuery = useMemo(() => city.trim(), [city])
   const selectedPersonaLabel = useMemo(
     () => personaOptions.find((option) => option.value === persona)?.label ?? persona,
@@ -10511,8 +10509,12 @@ export function SandboxConciergePage() {
         ),
       },
     })
+    const isDevSandbox =
+      typeof window !== 'undefined' &&
+      (window.location.pathname.toLowerCase().startsWith('/dev') ||
+        window.location.pathname.toLowerCase().startsWith('/sandbox'))
     window.setTimeout(() => {
-      window.location.assign('/journey/live')
+      window.location.assign(isDevSandbox ? '/dev/live' : '/journey/live')
     }, 220)
   }
 
@@ -10522,7 +10524,9 @@ export function SandboxConciergePage() {
     }
     const stopBySourceId = new Map(plan.itinerary.stops.map((stop) => [stop.id, stop] as const))
     const stopByIndex = new Map(plan.itinerary.stops.map((stop, index) => [index, stop] as const))
-    const orderedRouteStops = [...finalRoute.stops].sort((left, right) => left.stopIndex - right.stopIndex)
+    const orderedRouteStops = [...finalRoute.stops]
+      .filter((stop) => stop.role !== 'surprise')
+      .sort((left, right) => left.stopIndex - right.stopIndex)
     return orderedRouteStops
       .map((finalStop) => {
         const sourceStop =
@@ -11026,9 +11030,7 @@ export function SandboxConciergePage() {
   const previewStartLabel =
     preview?.stops.find((stop) => stop.role === 'start')?.name ?? 'TBD'
   const previewHighlightLabel =
-    preview?.stops.find((stop) => stop.role === 'highlight')?.name ??
-    preview?.stops.find((stop) => stop.role === 'surprise')?.name ??
-    'TBD'
+    preview?.stops.find((stop) => stop.role === 'highlight')?.name ?? 'TBD'
   const previewWindDownLabel =
     preview?.stops.find((stop) => stop.role === 'windDown')?.name ?? 'Soft close nearby'
   const previewNarrativeSummary =
@@ -11166,27 +11168,10 @@ export function SandboxConciergePage() {
     ],
     [previewHighlightLabel, previewStartLabel, previewWindDownLabel],
   )
-  const previewBridgeLine = 'Choose your night'
-  const previewBridgeSubline = 'Preview a complete plan and make it yours.'
-  const revealedStepHeader = isLocking ? 'Run your night' : 'Review your plan'
-  const revealedStepSubline = isLocking
-    ? 'Follow along, adjust in real time, and share it.'
-    : 'See how your night flows across the city.'
-  const fieldDistrictNames =
-    directionView.mode === 'all'
-      ? districtDiscoveryCards.map((district) => district.name).filter(Boolean).slice(0, 3)
-      : activeDistrictLabel
-        ? [activeDistrictLabel]
-        : []
-  const fieldRevealDescription =
-    fieldDistrictNames.length > 0
-      ? `Detected active districts nearby (${fieldDistrictNames.join(', ')})`
-      : 'Detected active districts nearby (Downtown, Japantown, SoFA)'
-  const interpretationModeLabel =
-    selectedDirectionTitle?.toLowerCase() ?? 'contained pulse night'
-  const interpretationRevealDescription = `Shaped this into a ${interpretationModeLabel} based on your vibe and area energy`
-  const bearingsRevealDescription = 'Kept movement tight with smooth pacing between stops'
-  const waypointRevealDescription = 'Structured the night: Start \u2192 Highlight \u2192 Wind-down'
+  const previewBridgeLine = 'Generated route summary'
+  const previewBridgeSubline = 'Start, Highlight, and Wind-down are ready. Review the full route.'
+  const revealedStepHeader = 'Confirm your night'
+  const revealedStepSubline = 'Take one last look.'
   const handleBuildFullPlan = useCallback(async () => {
     if (!selectedDirectionId || loading) {
       return
@@ -11469,6 +11454,7 @@ export function SandboxConciergePage() {
     () =>
       finalRoute
         ? [...finalRoute.stops]
+            .filter((stop) => stop.role !== 'surprise')
             .sort((left, right) => left.stopIndex - right.stopIndex)
             .map((stop) => ({
               id: stop.id,
@@ -12497,7 +12483,7 @@ export function SandboxConciergePage() {
           </div>
         )}
         <div className="step2-night-options">
-          <p className="step2-night-options-label">Choose a built night</p>
+          <p className="step2-night-options-label">Choose tonight's direction</p>
           <div className="step2-night-options-grid">
             {step2BuiltNightCards.map((option) => {
               const sourceOption = verifiedCityOpportunityById.get(option.id)
@@ -12637,6 +12623,26 @@ export function SandboxConciergePage() {
               <h3>{previewHeaderTitle}</h3>
               <p className="night-preview-commit">A complete, ready-to-run night.</p>
               <p className="night-preview-mainline">{previewNarrativeSummary}</p>
+              <div className="plan-update-lists">
+                <div>
+                  <p className="plan-update-list-title">Start</p>
+                  <ul className="plan-update-list">
+                    <li>{previewStartLabel}</li>
+                  </ul>
+                </div>
+                <div>
+                  <p className="plan-update-list-title">Highlight</p>
+                  <ul className="plan-update-list">
+                    <li>{previewHighlightLabel}</li>
+                  </ul>
+                </div>
+                <div>
+                  <p className="plan-update-list-title">Wind-down</p>
+                  <ul className="plan-update-list">
+                    <li>{previewWindDownLabel}</li>
+                  </ul>
+                </div>
+              </div>
               <section
                 className={`preview-district-anchor preview-spatial-overview${
                   activeDistrictPocketId !== ALL_DISTRICTS_CONTEXT_ID ? ' is-active' : ''
@@ -12798,36 +12804,6 @@ export function SandboxConciergePage() {
                   ))}
                 </ul>
               </div>
-              <div className="engine-reveal">
-                <button
-                  type="button"
-                  className="engine-reveal-toggle"
-                  onClick={() => setShowEngineReveal((previous) => !previous)}
-                  aria-expanded={showEngineReveal}
-                >
-                  See how the system shaped this
-                </button>
-                {showEngineReveal && (
-                  <div className="engine-reveal-content">
-                    <div className="engine-row">
-                      <div className="engine-name">FIELD</div>
-                      <div className="engine-description">{fieldRevealDescription}</div>
-                    </div>
-                    <div className="engine-row">
-                      <div className="engine-name">INTERPRETATION</div>
-                      <div className="engine-description">{interpretationRevealDescription}</div>
-                    </div>
-                    <div className="engine-row">
-                      <div className="engine-name">BEARINGS</div>
-                      <div className="engine-description">{bearingsRevealDescription}</div>
-                    </div>
-                    <div className="engine-row">
-                      <div className="engine-name">WAYPOINT</div>
-                      <div className="engine-description">{waypointRevealDescription}</div>
-                    </div>
-                  </div>
-                )}
-              </div>
               <div className="action-row draft-actions">
                 <button
                   type="button"
@@ -12872,13 +12848,6 @@ export function SandboxConciergePage() {
                   cityLabel={finalRoute.location || city.trim()}
                   onNearbySummaryChange={handleNearbySummaryChange}
                 />
-                {verticalDebugEnabled && (
-                  <p className="system-line">
-                    activeStopId={guidedActiveStop?.id ?? 'n/a'} | activeStopRole=
-                    {guidedActiveStop?.role ?? 'n/a'} | activeStopIndex=
-                    {typeof guidedActiveStopIndex === 'number' ? guidedActiveStopIndex : 'n/a'}
-                  </p>
-                )}
               </div>
             </div>
 
@@ -12894,17 +12863,7 @@ export function SandboxConciergePage() {
                 usedRecoveredCentralMomentHighlight={Boolean(
                   plan.selectedArc.scoreBreakdown.recoveredCentralMomentHighlight,
                 )}
-                routeDebugSummary={
-                  verticalDebugEnabled
-                    ? {
-                        arcType: getRouteArcType(plan.itinerary),
-                        highlightIntensity: getHighlightIntensityFromArc(plan.selectedArc),
-                        usedRecoveredCentralMomentHighlight: Boolean(
-                          plan.selectedArc.scoreBreakdown.usedRecoveredCentralMomentHighlight,
-                        ),
-                      }
-                    : undefined
-                }
+                routeDebugSummary={undefined}
                 allowStopAdjustments={false}
                 enableInlineDetails
                 inlineDetailsByRole={inlineDetailsByRole}
@@ -12913,7 +12872,7 @@ export function SandboxConciergePage() {
                 activeRole={activeRole}
                 changedRoles={[]}
                 animatedRoles={[]}
-                debugMode={verticalDebugEnabled}
+                debugMode={false}
                 enableActiveStopTracking
                 alternativesByRole={{}}
                 alternativeKindsByRole={{}}
@@ -12924,17 +12883,6 @@ export function SandboxConciergePage() {
                 onApplySwap={() => undefined}
                 onPreviewAlternative={handlePreviewAlternative}
               />
-
-              <p className="system-line">{getAnchoredBearingsSignal(plan.itinerary, canonicalStopByRole)}</p>
-              {appliedSwapRole && (
-                <p className="system-line swap-global-signal">
-                  Your route shifted slightly to keep the night balanced.
-                </p>
-              )}
-
-              <p className="system-line">
-                We&apos;ll keep your night on track as things shift.
-              </p>
 
               <div className="sandbox-guided-action-row">
                 <p className="confirm-decision-line">

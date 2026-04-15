@@ -1,5 +1,4 @@
 import { AppShell } from './app/AppShell'
-import { resolveDevOriginMode, writeDevOriginMode } from './app/devRoutingState'
 import { DemoPage } from './pages/DemoPage'
 import { HomePage } from './pages/HomePage'
 import { LiveJourneyPage } from './pages/LiveJourneyPage'
@@ -50,7 +49,6 @@ function EnvironmentAccessBar({ currentPath }: { currentPath: string }) {
 
 function App() {
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '/'
-  const search = typeof window !== 'undefined' ? window.location.search : ''
   let normalizedPathname = pathname.toLowerCase()
   if (
     typeof window !== 'undefined' &&
@@ -60,7 +58,6 @@ function App() {
     normalizedPathname = '/dev/home'
   }
   const startModeMatch = normalizedPathname.match(/^\/start\/(surprise|curate|build)\/?$/)
-  const devStartModeMatch = normalizedPathname.match(/^\/dev\/start\/(surprise|curate|build)\/?$/)
   let page = <DemoPage />
 
   if (normalizedPathname === '/') {
@@ -68,103 +65,22 @@ function App() {
   } else if (startModeMatch?.[1]) {
     page = <AppShell initialMode={startModeMatch[1] as ExperienceMode} />
   }
-  if (normalizedPathname === '/dev' || normalizedPathname === '/sandbox') {
-    page = <HomePage />
-  } else if (normalizedPathname === '/dev/home') {
-    page = <HomePage />
-  } else if (devStartModeMatch?.[1] === 'surprise') {
-    writeDevOriginMode('surprise')
-    page = (
-      <AppShell
-        environment="dev"
-        initialMode="surprise"
-        initialDevStartMode="surprise"
-        initialGenerationTarget="preview"
-        initialStep="generating"
-      />
-    )
-  } else if (devStartModeMatch?.[1] === 'curate') {
-    writeDevOriginMode('curate')
-    page = (
-      <AppShell
-        environment="dev"
-        initialMode="curate"
-        initialDevStartMode="curate"
-        initialStep="curate"
-      />
-    )
-  } else if (devStartModeMatch?.[1] === 'build') {
-    writeDevOriginMode('build')
-    page = (
-      <AppShell
-        environment="dev"
-        initialMode="build"
-        initialDevStartMode="build"
-        initialStep="mood"
-      />
-    )
-  } else if (normalizedPathname === '/dev/choose') {
-    const restoredMode = resolveDevOriginMode(search)
-    if (restoredMode === 'curate' || restoredMode === 'build') {
-      page = (
-        <AppShell
-          environment="dev"
-          initialMode={restoredMode}
-          initialDevStartMode={restoredMode}
-          initialStep="mood"
-        />
-      )
-    } else {
-      if (typeof window !== 'undefined') {
-        window.history.replaceState(null, '', '/dev/home')
-      }
-      page = <HomePage />
-    }
-  } else if (normalizedPathname === '/dev/preview') {
-    const restoredMode = resolveDevOriginMode(search)
-    if (restoredMode) {
-      page = (
-        <AppShell
-          environment="dev"
-          initialMode={restoredMode}
-          initialDevStartMode={restoredMode}
-          initialGenerationTarget="preview"
-          initialStep="preview"
-        />
-      )
-    } else {
-      if (typeof window !== 'undefined') {
-        window.history.replaceState(null, '', '/dev/home')
-      }
-      page = <HomePage />
-    }
-  } else if (normalizedPathname === '/dev/confirm') {
-    const restoredMode = resolveDevOriginMode(search)
-    if (restoredMode) {
-      page = (
-        <AppShell
-          environment="dev"
-          initialMode={restoredMode}
-          initialDevStartMode={restoredMode}
-          initialGenerationTarget="final"
-          initialStep="reveal"
-        />
-      )
-    } else {
-      if (typeof window !== 'undefined') {
-        window.history.replaceState(null, '', '/dev/home')
-      }
-      page = <HomePage />
-    }
-  } else if (normalizedPathname === '/dev/live') {
-    page = <LiveJourneyPage />
-  } else if (normalizedPathname === '/dev/plans') {
-    page = <PlansHubPage />
-  } else if (
+  if (
+    normalizedPathname === '/dev' ||
+    normalizedPathname === '/sandbox' ||
+    normalizedPathname === '/dev/home' ||
+    normalizedPathname === '/dev/choose' ||
+    normalizedPathname === '/dev/preview' ||
+    normalizedPathname === '/dev/confirm' ||
+    /^\/dev\/start\/(surprise|curate|build)\/?$/.test(normalizedPathname) ||
     normalizedPathname === '/dev/concierge' ||
     normalizedPathname === '/sandbox/concierge'
   ) {
     page = <SandboxConciergePage />
+  } else if (normalizedPathname === '/dev/live') {
+    page = <LiveJourneyPage />
+  } else if (normalizedPathname === '/dev/plans') {
+    page = <PlansHubPage />
   } else if (normalizedPathname === '/archive') {
     page = <AppShell environment="archive" />
   } else if (normalizedPathname === '/journey/live' || normalizedPathname === '/live') {

@@ -678,7 +678,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
       city: finalRoute?.location ?? artifact.city,
       mapPath,
     })
-    window.location.assign(isDevLive ? '/dev/home' : '/home')
+    window.location.assign(isDevLive ? '/dev/plans' : '/home')
   }
 
   const handleOpenShareModal = () => {
