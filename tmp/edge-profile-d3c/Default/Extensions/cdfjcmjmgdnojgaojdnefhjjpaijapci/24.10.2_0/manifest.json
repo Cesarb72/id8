@@ -1,0 +1,36 @@
+{
+   "action": {
+      "default_popup": ""
+   },
+   "background": {
+      "service_worker": "BackgroundServiceWorker.js"
+   },
+   "content_scripts": [ {
+      "all_frames": true,
+      "js": [ "ContentMain.js" ],
+      "match_about_blank": true,
+      "matches": [ "http://*/*", "https://*/*", "file://*/*" ],
+      "run_at": "document_start"
+   } ],
+   "content_security_policy": {
+      "extension_pages": "script-src 'self'; object-src 'self'"
+   },
+   "default_locale": "en",
+   "description": "Expands your browser automation capabilities from Studio desktop.",
+   "externally_connectable": {
+      "matches": [ "*://*.uipath.com/*" ]
+   },
+   "host_permissions": [ "\u003Call_urls>" ],
+   "icons": {
+      "128": "uiPath128.png",
+      "16": "uiPath16.png",
+      "32": "uiPath32.png",
+      "48": "uiPath48.png"
+   },
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7LxGRzJTCLSy+O/O8BR6DlUAJn83BJ20VteREWNpxwfpcDUrmWxapuE2KBMtJH1no/11t8W+RR+Hldp97sn9yx6eCR1Hg7OM7WsP7VaEP0BPDKZoCeG90S5Vfvi9a9cZMn2pu1DMCb9CXSK6HTQHqVTTpFtdpwYeu2zhWhzbS1VUSsIi8vGnHDS1qorOo7M1m7WBFymrWD53cGLnEsQH/yLLnj9UcyXvj4B9IBlYUrOenL19WCe8Z1BBqIX9y/gKAThWXvbmDkSkul29YXbFDuiS1/u7dPbygt2EDUr3fWYd6cYlGXJvI4vhy+U6oSf0QFjKnPbfOg0x/FOcn33zsQIDAQAB",
+   "manifest_version": 3,
+   "name": "UiPath Browser Automation 24.10",
+   "permissions": [ "management", "nativeMessaging", "tabs", "webNavigation", "debugger", "cookies", "scripting", "webRequest", "downloads" ],
+   "update_url": "https://edge.microsoft.com/extensionwebstorebase/v1/crx",
+   "version": "24.10.2"
+}

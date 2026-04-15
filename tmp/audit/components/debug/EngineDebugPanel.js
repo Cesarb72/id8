@@ -1,0 +1,4 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+export function EngineDebugPanel({ snapshot }) {
+    return (_jsxs("details", { className: "debug-panel engine-debug-panel", children: [_jsx("summary", { children: "Dev: Engine handoff" }), _jsx("p", { className: "engine-debug-summary", children: snapshot.summary }), _jsx("div", { className: "engine-debug-sections", children: snapshot.sections.map((section) => (_jsxs("section", { className: "engine-debug-section", children: [_jsx("p", { className: "engine-debug-section-title", children: section.title }), _jsx("div", { className: "engine-debug-grid", children: section.entries.map((entry) => (_jsxs("div", { className: "engine-debug-entry", children: [_jsx("p", { className: "engine-debug-label", children: entry.label }), _jsx("p", { className: "engine-debug-value", children: entry.value })] }, `${section.title}_${entry.label}`))) })] }, section.title))) })] }));
+}
