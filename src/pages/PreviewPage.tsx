@@ -103,6 +103,13 @@ function buildDraftSummary(distanceMode: DistanceMode): string {
   return 'Built around your vibe and nearby options.'
 }
 
+function buildPreviewRouteMeta(itinerary: Itinerary): string {
+  const location = itinerary.neighborhood
+    ? `${itinerary.neighborhood}, ${itinerary.city}`
+    : itinerary.city
+  return `${itinerary.stops.length} stops | ${location}`
+}
+
 function buildDraftFeedback({
   previewDirty,
   districtPreference,
@@ -385,18 +392,13 @@ export function PreviewPage({
       <div className="draft-page-topline">
         <div className="reveal-story-meta">
           <span className="reveal-story-chip draft-chip">Draft</span>
+          <span className="reveal-story-chip">{buildPreviewRouteMeta(itinerary)}</span>
           <span className="reveal-story-chip">{itinerary.estimatedTotalLabel}</span>
           <span className="reveal-story-chip">{itinerary.routeFeelLabel}</span>
         </div>
         <button type="button" className="ghost-button subtle draft-back-link" onClick={onBack}>
           {backLabel}
         </button>
-      </div>
-      <div className="reveal-story-meta" aria-label="Built with">
-        <span className="reveal-story-chip">Built with:</span>
-        <span className="reveal-story-chip">Real-time availability</span>
-        <span className="reveal-story-chip">Local context</span>
-        <span className="reveal-story-chip">Flow optimization</span>
       </div>
       <section className="preview-controls-panel" aria-label="Preview controls">
         <div className="preview-controls-header">
@@ -568,6 +570,7 @@ export function PreviewPage({
       <RouteSpine
         className="draft-story-spine"
         stops={itinerary.stops}
+        strictSharedSemantics
         storySpine={itinerary.storySpine}
         debugMode={false}
         adjustMode="swap-only"

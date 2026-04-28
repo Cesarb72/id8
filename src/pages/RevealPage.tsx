@@ -246,9 +246,9 @@ export function RevealPage({
       {!showFullConfirmReview && (
         <section className="plan-update-panel" aria-label="Generated route summary">
           <div className="plan-update-header">
-            <p className="discovery-group-kicker">Generated route summary</p>
+            <p className="discovery-group-kicker">Route summary</p>
           </div>
-          <p className="plan-update-headline">{itinerary.story.headline}</p>
+          <p className="plan-update-headline">{buildRouteMeta(itinerary)}</p>
           <div className="plan-update-lists">
             <div>
               <p className="plan-update-list-title">Start</p>
@@ -275,16 +275,10 @@ export function RevealPage({
       {showFullConfirmReview && (
         <>
       <div className="reveal-story-meta">
-        <span className="reveal-story-chip">Guided story</span>
+        <span className="reveal-story-chip">Route summary</span>
         <span className="reveal-story-chip">{buildRouteMeta(itinerary)}</span>
         <span className="reveal-story-chip">{itinerary.estimatedTotalLabel}</span>
         <span className="reveal-story-chip">{itinerary.routeFeelLabel}</span>
-      </div>
-      <div className="reveal-story-meta" aria-label="Built with">
-        <span className="reveal-story-chip">Built with:</span>
-        <span className="reveal-story-chip">Real-time availability</span>
-        <span className="reveal-story-chip">Local context</span>
-        <span className="reveal-story-chip">Flow optimization</span>
       </div>
 
       <div className="stage-rail" aria-label="Journey stages">
@@ -332,6 +326,7 @@ export function RevealPage({
 
       <RouteSpine
         stops={itinerary.stops}
+        strictSharedSemantics
         storySpine={itinerary.storySpine}
         debugMode={debugEnabled}
         allowStopAdjustments={false}

@@ -27,6 +27,7 @@ import type {
   PlanAnchor,
   PlanningMode,
   PersonaMode,
+  SelectedDirectionContext,
   VibeAnchor,
 } from '../../domain/types/intent'
 import type { Itinerary, UserStopRole } from '../../domain/types/itinerary'
@@ -87,6 +88,7 @@ export interface SessionState {
   discoveryGroups?: DiscoveryDirection[]
   discoveryLoading: boolean
   selectedDiscoveryVenueIds: string[]
+  selectedDiscoveryDirectionContext?: SelectedDirectionContext
   selectedAnchorVenue?: Venue
   generatedItinerary?: Itinerary
   generatedArc?: ArcCandidate
@@ -128,6 +130,7 @@ type SessionAction =
   | { type: 'SET_DISCOVERY_PREVIEW'; payload: DiscoveryDirection[] }
   | { type: 'CLEAR_DISCOVERY_PREVIEW' }
   | { type: 'SET_DISCOVERY_SELECTION'; payload: string[] }
+  | { type: 'SET_DISCOVERY_DIRECTION_CONTEXT'; payload?: SelectedDirectionContext }
   | { type: 'SET_SELECTED_ANCHOR_VENUE'; payload?: Venue }
   | { type: 'BEGIN_EXPLORATION' }
   | { type: 'SET_EXPLORATION_PLAN'; payload: ExplorationPlan }
@@ -193,6 +196,7 @@ const initialSessionState: SessionState = {
   districtSelectionLoading: false,
   discoveryLoading: false,
   selectedDiscoveryVenueIds: [],
+  selectedDiscoveryDirectionContext: undefined,
   explorationLoading: false,
   routeEditedByUser: false,
   userComposedStopsByRole: {},
@@ -246,6 +250,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       discoveryGroups: undefined,
       discoveryLoading: false,
       selectedDiscoveryVenueIds: [],
+      selectedDiscoveryDirectionContext: undefined,
       selectedAnchorVenue: undefined,
       generatedItinerary: undefined,
       generatedArc: undefined,
@@ -291,6 +296,9 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       discoveryGroups: invalidatesDiscovery ? undefined : state.discoveryGroups,
       discoveryLoading: invalidatesDiscovery ? false : state.discoveryLoading,
       selectedDiscoveryVenueIds: invalidatesDiscovery ? [] : state.selectedDiscoveryVenueIds,
+      selectedDiscoveryDirectionContext: invalidatesDiscovery
+        ? undefined
+        : state.selectedDiscoveryDirectionContext,
     }
   }
   if (action.type === 'PATCH_PREVIEW_CONTROLS') {
@@ -312,6 +320,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       discoveryGroups: undefined,
       discoveryLoading: false,
       selectedDiscoveryVenueIds: [],
+      selectedDiscoveryDirectionContext: undefined,
       explorationPlan: undefined,
       explorationLoading: false,
     }
@@ -355,6 +364,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       discoveryGroups: undefined,
       discoveryLoading: true,
       selectedDiscoveryVenueIds: [],
+      selectedDiscoveryDirectionContext: undefined,
     }
   }
   if (action.type === 'SET_DISCOVERY_PREVIEW') {
@@ -370,12 +380,19 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       discoveryGroups: undefined,
       discoveryLoading: false,
       selectedDiscoveryVenueIds: [],
+      selectedDiscoveryDirectionContext: undefined,
     }
   }
   if (action.type === 'SET_DISCOVERY_SELECTION') {
     return {
       ...state,
       selectedDiscoveryVenueIds: action.payload,
+    }
+  }
+  if (action.type === 'SET_DISCOVERY_DIRECTION_CONTEXT') {
+    return {
+      ...state,
+      selectedDiscoveryDirectionContext: action.payload,
     }
   }
   if (action.type === 'SET_SELECTED_ANCHOR_VENUE') {
@@ -413,6 +430,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       discoveryGroups: isPreviewGeneration ? state.discoveryGroups : undefined,
       discoveryLoading: false,
       selectedDiscoveryVenueIds: isPreviewGeneration ? state.selectedDiscoveryVenueIds : [],
+      selectedDiscoveryDirectionContext: action.payload.intentProfile.selectedDirectionContext,
       generatedItinerary: action.payload.itinerary,
       generatedArc: action.payload.arc,
       scoredVenues: action.payload.scoredVenues,
@@ -547,6 +565,7 @@ interface SessionActions {
   setDiscoveryPreview: (groups: DiscoveryDirection[]) => void
   clearDiscoveryPreview: () => void
   setDiscoverySelection: (venueIds: string[]) => void
+  setDiscoveryDirectionContext: (context?: SelectedDirectionContext) => void
   setSelectedAnchorVenue: (venue?: Venue) => void
   beginExploration: () => void
   setExplorationPlan: (plan: ExplorationPlan) => void
@@ -638,6 +657,9 @@ function buildActions(dispatch: Dispatch<SessionAction>): SessionActions {
     },
     setDiscoverySelection(venueIds) {
       dispatch({ type: 'SET_DISCOVERY_SELECTION', payload: venueIds })
+    },
+    setDiscoveryDirectionContext(context) {
+      dispatch({ type: 'SET_DISCOVERY_DIRECTION_CONTEXT', payload: context })
     },
     setSelectedAnchorVenue(venue) {
       dispatch({ type: 'SET_SELECTED_ANCHOR_VENUE', payload: venue })

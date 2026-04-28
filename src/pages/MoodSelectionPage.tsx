@@ -3,12 +3,18 @@ import { ID8Butler } from '../components/butler/ID8Butler'
 import { CrewCard } from '../components/cards/CrewCard'
 import { VibeChip } from '../components/cards/VibeChip'
 import { PageShell } from '../components/layout/PageShell'
+import { getDiscoveryCandidatePresentation } from '../domain/discovery/discoveryCardPresentation'
 import type { DiscoveryDirection } from '../domain/discovery/getDiscoveryCandidates'
 import {
-  searchAnchorVenues,
+  getDirectionLeadVenueIds,
+  resolveSelectedDirectionContextFromDiscoverySelection,
+  toSelectedDirectionContext,
+} from '../domain/discovery/selectedDirectionContext'
+import {
+  searchAnchorVenueOptions,
   type AnchorSearchChip,
   type AnchorSearchResult,
-} from '../domain/search/searchAnchorVenues'
+} from '../app/services/arcApplicationService'
 import {
   vibeOptions,
   type ExperienceMode,
@@ -31,6 +37,7 @@ interface MoodSelectionPageProps {
   discoveryGroups?: DiscoveryDirection[]
   discoveryLoading: boolean
   selectedVenueIds: string[]
+  selectedDirectionId?: string | null
   debugPanel?: ReactNode
   onChange: (primary: VibeAnchor, secondary?: VibeAnchor) => void
   onPersonaChange: (persona: PersonaMode | null) => void
@@ -38,6 +45,11 @@ interface MoodSelectionPageProps {
   onAnchorSelect: (venue: Venue) => void
   onToggleDiscoveryVenue: (venueId: string) => void
   onSetDiscoverySelection?: (venueIds: string[]) => void
+  onSelectDiscoveryDirection?: (payload: {
+    directionId: string
+    venueIds: string[]
+    context: ReturnType<typeof toSelectedDirectionContext>
+  }) => void
   onBack: () => void
   onNext: () => void
 }
@@ -178,6 +190,7 @@ export function MoodSelectionPage({
   discoveryGroups,
   discoveryLoading,
   selectedVenueIds,
+  selectedDirectionId,
   debugPanel,
   onChange,
   onPersonaChange,
@@ -185,6 +198,7 @@ export function MoodSelectionPage({
   onAnchorSelect,
   onToggleDiscoveryVenue,
   onSetDiscoverySelection,
+  onSelectDiscoveryDirection,
   onBack,
   onNext,
 }: MoodSelectionPageProps) {
@@ -200,28 +214,16 @@ export function MoodSelectionPage({
       ? inferChooseExploreMode(modePosture)
       : inferInitialExploreMode(showAnchorSearch, anchorName, selectedVenueIds),
   )
-  const selectedDirectionId = useMemo(() => {
-    if (!isDirectionChooseStage || !discoveryGroups || discoveryGroups.length === 0) {
-      return null
-    }
-    for (const direction of discoveryGroups) {
-      const leadVenueIds = Array.from(
-        new Set(
-          direction.groups
-            .map((group) => group.candidates[0]?.venueId)
-            .filter((value): value is string => Boolean(value)),
-        ),
-      )
-      if (leadVenueIds.length === 0) {
-        continue
-      }
-      if (leadVenueIds.every((venueId) => selectedVenueIds.includes(venueId))) {
-        return direction.id
-      }
-    }
-    return null
-  }, [discoveryGroups, isDirectionChooseStage, selectedVenueIds])
-  const canContinue = isDirectionChooseStage ? Boolean(selectedDirectionId) : Boolean(primaryVibe)
+  const inferredSelectedDirectionContext = useMemo(
+    () =>
+      isDirectionChooseStage
+        ? resolveSelectedDirectionContextFromDiscoverySelection(selectedVenueIds, discoveryGroups)
+        : undefined,
+    [discoveryGroups, isDirectionChooseStage, selectedVenueIds],
+  )
+  const inferredSelectedDirectionId = inferredSelectedDirectionContext?.directionId ?? null
+  const resolvedSelectedDirectionId = selectedDirectionId ?? inferredSelectedDirectionId
+  const canContinue = isDirectionChooseStage ? Boolean(resolvedSelectedDirectionId) : Boolean(primaryVibe)
   const canToggleMore = selectedVenueIds.length < 2
   const supportingDirections = useMemo(
     () => (discoveryGroups ?? []).slice(0, 2),
@@ -287,7 +289,7 @@ export function MoodSelectionPage({
     const timeoutHandle = window.setTimeout(() => {
       void (async () => {
         try {
-          const results = await searchAnchorVenues({
+          const results = await searchAnchorVenueOptions({
             query: trimmedQuery,
             city,
             neighborhood,
@@ -301,7 +303,7 @@ export function MoodSelectionPage({
             results.length === 0 ? 'No close matches yet. Try a broader name.' : undefined,
           )
         } catch (error) {
-          console.error(error)
+          void error
           if (!cancelled) {
             setAnchorResults([])
             setAnchorError(
@@ -323,15 +325,9 @@ export function MoodSelectionPage({
   }, [anchorChip, anchorQuery, city, exploreMode, neighborhood])
 
   const renderDirection = (direction: DiscoveryDirection) => {
-    const directionLeadVenueIds = Array.from(
-      new Set(
-        direction.groups
-          .map((group) => group.candidates[0]?.venueId)
-          .filter((value): value is string => Boolean(value)),
-      ),
-    )
+    const directionLeadVenueIds = getDirectionLeadVenueIds(direction)
     const directionSelected = isDirectionChooseStage
-      ? selectedDirectionId === direction.id
+      ? resolvedSelectedDirectionId === direction.id
       : directionLeadVenueIds.length > 0 &&
         directionLeadVenueIds.every((venueId) => selectedVenueIds.includes(venueId))
 
@@ -374,6 +370,7 @@ export function MoodSelectionPage({
           group.candidates.map((candidate) => {
             const selected = isSelected(selectedVenueIds, candidate.venueId)
             const disabled = !selected && !canToggleMore
+            const presentation = getDiscoveryCandidatePresentation(candidate)
 
             const cardClassName = `discovery-card${selected ? ' selected' : ''}${isDirectedMode ? ' supporting' : ' priority'}`
             const cardContent = (
@@ -392,9 +389,9 @@ export function MoodSelectionPage({
                         : 'Choose path'}
                   </span>
                 </span>
-                <strong>{candidate.name}</strong>
-                <span className="discovery-card-reason">{candidate.reason}</span>
-                <span className="discovery-card-meta">{candidate.areaLabel}</span>
+                <strong>{presentation.venueName}</strong>
+                <span className="discovery-card-reason">{presentation.fitSummary}</span>
+                <span className="discovery-card-meta">{presentation.meta}</span>
                 <span className="discovery-card-state">
                   {isDirectionChooseStage
                     ? 'Included as part of this built-night direction.'
@@ -444,9 +441,19 @@ export function MoodSelectionPage({
             className={`primary-button${directionSelected ? ' selected' : ''}`}
             onClick={() => {
               if (!onSetDiscoverySelection || directionLeadVenueIds.length === 0) {
+                if (!onSelectDiscoveryDirection || directionLeadVenueIds.length === 0) {
+                  return
+                }
+              }
+              if (onSelectDiscoveryDirection) {
+                onSelectDiscoveryDirection({
+                  directionId: direction.id,
+                  venueIds: directionLeadVenueIds,
+                  context: toSelectedDirectionContext(direction),
+                })
                 return
               }
-              onSetDiscoverySelection(directionLeadVenueIds)
+              onSetDiscoverySelection?.(directionLeadVenueIds)
             }}
           >
             {directionSelected ? 'Selected' : 'Choose this night'}
@@ -714,7 +721,7 @@ export function MoodSelectionPage({
               <div className="discovery-meta">
                 <span className="reveal-story-chip active">Direction selection</span>
                 <span className="reveal-story-chip">Choose 1</span>
-                {selectedDirectionId && (
+                {resolvedSelectedDirectionId && (
                   <span className="reveal-story-chip active">Selection saved</span>
                 )}
               </div>

@@ -10,11 +10,12 @@ import { RouteSpine } from '../components/journey/RouteSpine'
 import { PageShell } from '../components/layout/PageShell'
 import { swapArcStop } from '../domain/arc/swapArcStop'
 import { inverseRoleProjection } from '../domain/config/roleProjection'
-import { saveLiveArtifactSession } from '../domain/live/liveArtifactSession'
+import { createLiveArtifactPlanId, saveLiveArtifactSession } from '../domain/live/liveArtifactSession'
 import { getCrewPolicy } from '../domain/intent/getCrewPolicy'
 import { projectItinerary } from '../domain/itinerary/projectItinerary'
 import { buildTonightSignals } from '../domain/journey/buildTonightSignals'
-import { runGeneratePlan } from '../domain/runGeneratePlan'
+import { runPlanBuild } from '../app/services/arcApplicationService'
+import { getSourceMode } from '../domain/sources/getSourceMode'
 import type { ArcCandidate, ScoredVenue } from '../domain/types/arc'
 import type { ExperienceLens } from '../domain/types/experienceLens'
 import type { IntentProfile, PersonaMode, VibeAnchor } from '../domain/types/intent'
@@ -80,6 +81,17 @@ const clusterRefinementMap: Record<RealityCluster, RefinementMode[]> = {
   lively: ['more-exciting'],
   chill: ['more-relaxed'],
   explore: ['more-unique'],
+}
+
+const realityClusters = new Set<RealityCluster>(['lively', 'chill', 'explore'])
+
+function toFallbackDirectionId(cluster: RealityCluster): string {
+  return `fallback-${cluster}`
+}
+
+function parseFallbackDirectionId(directionId: string): RealityCluster | null {
+  const normalized = directionId.replace(/^fallback-/, '') as RealityCluster
+  return realityClusters.has(normalized) ? normalized : null
 }
 
 const roleToInternalRole: Record<UserStopRole, keyof ScoredVenue['roleScores']> = {
@@ -668,12 +680,56 @@ export function DemoPage() {
   const [isLocking, setIsLocking] = useState(false)
   const [previewSwap, setPreviewSwap] = useState<PreviewSwapState>()
   const [appliedSwapRole, setAppliedSwapRole] = useState<UserStopRole | null>(null)
+  const search = typeof window !== 'undefined' ? window.location.search : ''
+  const debugMode =
+    typeof window !== 'undefined' && new URLSearchParams(search).get('debug') === '1'
+  const sourceModeResolution = getSourceMode({
+    debugMode,
+    search,
+  })
+  const selectedDirectionId = selectedCluster ? toFallbackDirectionId(selectedCluster) : null
+
+  const handleSelectDirection = useCallback((directionId: string) => {
+    const cluster = parseFallbackDirectionId(directionId)
+    if (!cluster) {
+      setError('This direction is unavailable right now. Refresh and try again.')
+      return
+    }
+    setSelectedCluster(cluster)
+    setPlan(undefined)
+    setError(undefined)
+    setHasRevealed(false)
+    setPreviewSwap(undefined)
+    setAppliedSwapRole(null)
+  }, [])
+
+  const buildBlockedMessage = useCallback(
+    (message: string): string => {
+      if (
+        sourceModeResolution.requestedSourceMode === 'live' ||
+        sourceModeResolution.requestedSourceMode === 'hybrid'
+      ) {
+        return `Route build blocked for ${sourceModeResolution.requestedSourceMode} mode. ${message || 'No usable live inventory was admitted for this run.'}`
+      }
+      return message || 'Failed to generate plan.'
+    },
+    [sourceModeResolution.requestedSourceMode],
+  )
 
   const generatePlan = async () => {
     if (!selectedCluster) {
       return
     }
+    if (debugMode && typeof window !== 'undefined') {
+      console.info('[ID8 TRACE] DemoPage build click', {
+        url: window.location.href,
+        urlSourceMode: new URLSearchParams(search).get('sourceMode'),
+        passedSourceMode: sourceModeResolution.requestedSourceMode,
+        sourceModeOverrideApplied: sourceModeResolution.overrideApplied,
+      })
+    }
     setLoading(true)
+    setPlan(undefined)
     setError(undefined)
     setIsLocking(false)
     setHasRevealed(false)
@@ -685,7 +741,7 @@ export function DemoPage() {
       const interpretation = getRealityInterpretation(persona, primaryVibe)
       const selectedClusterConfirmation =
         interpretation.cards[selectedCluster].confirmation
-      const result = await runGeneratePlan(
+      const result = await runPlanBuild(
         {
           mode: 'build',
           planningMode: 'engine-led',
@@ -696,11 +752,18 @@ export function DemoPage() {
           refinementModes: clusterRefinementMap[selectedCluster],
         },
         {
-          sourceMode: 'curated',
-          sourceModeOverrideApplied: true,
-          debugMode: false,
+          sourceMode: sourceModeResolution.requestedSourceMode,
+          sourceModeOverrideApplied: sourceModeResolution.overrideApplied,
+          debugMode,
         },
       )
+      if (debugMode && typeof window !== 'undefined') {
+        console.info('[ID8 TRACE] DemoPage build success', {
+          selectedCluster,
+          itineraryId: result.itinerary.id,
+          stopCount: result.itinerary.stops.length,
+        })
+      }
       setPlan({
         itinerary: result.itinerary,
         selectedArc: result.selectedArc,
@@ -713,9 +776,17 @@ export function DemoPage() {
       setActiveRole('start')
       setNearbySummaryByRole({})
     } catch (nextError) {
-      setError(
-        nextError instanceof Error ? nextError.message : 'Failed to generate plan.',
-      )
+      if (debugMode && typeof window !== 'undefined') {
+        console.info('[ID8 TRACE] DemoPage build blocked', {
+          message: nextError instanceof Error ? nextError.message : 'unknown_error',
+        })
+      }
+      setPlan(undefined)
+      setHasRevealed(false)
+      setPreviewSwap(undefined)
+      setAppliedSwapRole(null)
+      setIsLocking(false)
+      setError(buildBlockedMessage(nextError instanceof Error ? nextError.message : ''))
     } finally {
       setLoading(false)
     }
@@ -723,6 +794,7 @@ export function DemoPage() {
 
   useEffect(() => {
     setSelectedCluster(null)
+    setPlan(undefined)
     setHasRevealed(false)
     setIsLocking(false)
     setPreviewSwap(undefined)
@@ -839,6 +911,7 @@ export function DemoPage() {
     }
     setIsLocking(true)
     saveLiveArtifactSession({
+      sessionId: createLiveArtifactPlanId(),
       city: plan.itinerary.city || city.trim() || 'San Jose',
       itinerary: plan.itinerary,
       selectedClusterConfirmation: plan.selectedClusterConfirmation,
@@ -992,8 +1065,8 @@ export function DemoPage() {
       <RealityCommitStep
         persona={persona}
         vibe={primaryVibe}
-        selectedCluster={selectedCluster}
-        onSelectCluster={setSelectedCluster}
+        selectedDirectionId={selectedDirectionId}
+        onSelectDirection={handleSelectDirection}
         onGenerate={generatePlan}
         loading={loading}
       />

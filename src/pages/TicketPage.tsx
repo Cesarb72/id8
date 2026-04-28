@@ -1,5 +1,4 @@
 import { ExtendOutingSection } from '../components/exploration/ExtendOutingSection'
-import { DistrictFlowNarrative } from '../components/journey/DistrictFlowNarrative'
 import type { LightNearbyExtensionOption } from '../domain/exploration/deriveLightNearbyExtensions'
 import type { ExplorationPlan } from '../domain/exploration/types'
 import { PageShell } from '../components/layout/PageShell'
@@ -25,10 +24,14 @@ export function TicketPage({
   onContinueOuting,
   onStartOver,
 }: TicketPageProps) {
+  const locationLabel = itinerary.neighborhood
+    ? `${itinerary.neighborhood}, ${itinerary.city}`
+    : itinerary.city
+
   return (
     <PageShell
       title="Plan Locked"
-      subtitle="Your curated route is ready."
+      subtitle="Your route summary is ready."
       footer={
         <button type="button" className="primary-button" onClick={onStartOver}>
           Build Another Plan
@@ -37,25 +40,16 @@ export function TicketPage({
     >
       <article className="ticket-card">
         <p className="ticket-label">Summary</p>
-        <h2>{itinerary.title}</h2>
-        <p>{itinerary.shareSummary}</p>
-        {itinerary.storySpine && (
-          <div className="ticket-story-spine">
-            <p className="ticket-story-spine-title">{itinerary.storySpine.title}</p>
-            <p className="ticket-story-spine-summary">{itinerary.storySpine.routeSummary}</p>
-            <div className="ticket-story-spine-phases">
-              {itinerary.storySpine.phases.slice(0, 3).map((phase) => (
-                <span key={`${phase.role}_${phase.label}`}>{phase.label}</span>
-              ))}
-            </div>
-          </div>
-        )}
+        <h2>Locked route overview</h2>
+        <div className="reveal-story-meta">
+          <span className="reveal-story-chip">{`${itinerary.stops.length} stops`}</span>
+          <span className="reveal-story-chip">{itinerary.estimatedTotalLabel}</span>
+          <span className="reveal-story-chip">{itinerary.routeFeelLabel}</span>
+        </div>
         <p className="ticket-meta">
-          {itinerary.city}
-          {itinerary.neighborhood ? ` | ${itinerary.neighborhood}` : ''}
+          {locationLabel}
           {lockedAt ? ` | Locked ${formatReadableDate(lockedAt)}` : ''}
         </p>
-        <DistrictFlowNarrative itinerary={itinerary} />
         <ol className="ticket-stops">
           {itinerary.stops.map((stop) => (
             <li key={stop.id}>

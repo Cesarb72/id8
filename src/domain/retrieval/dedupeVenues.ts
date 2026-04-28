@@ -1,4 +1,5 @@
 import { computeHybridLiveLift } from './computeHybridLiveLift'
+import { classifyProviderAuthority } from './fieldPolicy'
 import type { LiveDedupeLossDiagnostics } from '../types/diagnostics'
 import type { Venue } from '../types/venue'
 
@@ -173,9 +174,11 @@ export function dedupeVenues(venues: Venue[]): DedupeVenuesResult {
         removedVenueId: removed.id,
         removedVenueName: removed.name,
         removedSourceOrigin: removed.source.sourceOrigin,
+        removedProviderAuthority: classifyProviderAuthority(removed.source),
         keptVenueId: kept.id,
         keptVenueName: kept.name,
         keptSourceOrigin: kept.source.sourceOrigin,
+        keptProviderAuthority: classifyProviderAuthority(kept.source),
         duplicateReason,
         preferenceReason: resolution.reason,
         liveLostAgainstCurated,

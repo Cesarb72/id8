@@ -19,6 +19,15 @@ type DirectionContextCarrierLike = {
   selectedDirectionContext?: SelectedDirectionContextLike
 }
 
+type AnchorLike = {
+  venueId?: string | null
+}
+
+type AnchorCarrierLike = {
+  mode?: string | null
+  anchor?: AnchorLike
+}
+
 export function assertCanonicalSelectedDirectionContext(params: {
   wrapperSeam: string
   input: DirectionContextCarrierLike
@@ -43,5 +52,20 @@ export function enforceSelectedDirectionLineage(params: {
   throw new Error(
     errorMessage ??
       `[ARC-BOUNDARY] ${wrapperSeam} failed to preserve selectedDirectionContext lineage.`,
+  )
+}
+
+export function assertCanonicalBuildAnchorLineage(params: {
+  wrapperSeam: string
+  input: AnchorCarrierLike
+  selectedAnchorVenueId?: string
+}): void {
+  const { wrapperSeam, input, selectedAnchorVenueId } = params
+  if (!selectedAnchorVenueId || input.mode !== 'build') {
+    return
+  }
+  console.assert(
+    input.anchor?.venueId === selectedAnchorVenueId,
+    `[ARC-BOUNDARY] ${wrapperSeam} should preserve canonical build anchor lineage.`,
   )
 }

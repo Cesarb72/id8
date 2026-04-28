@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { NearbyNodeGroup } from './NearbyNodeGroup'
 import { StopCard } from '../cards/StopCard'
 import type {
@@ -15,6 +15,7 @@ import type {
 import type { GenerationTrace } from '../../domain/runGeneratePlan'
 import type { ItineraryStop, UserStopRole } from '../../domain/types/itinerary'
 import type { StorySpine } from '../../domain/types/itinerary'
+import { buildPlanningStopRepresentation } from '../../domain/adapters/buildPlanningStopRepresentation'
 
 type RouteArcType = 'full' | 'partial' | 'highlightOnly'
 
@@ -26,6 +27,7 @@ interface RouteDebugSummary {
 
 interface RouteSpineProps {
   stops: ItineraryStop[]
+  strictSharedSemantics?: boolean
   storySpine?: StorySpine
   className?: string
   debugMode?: boolean
@@ -93,6 +95,7 @@ interface RouteSpineProps {
   }>
   routeHeadline?: string
   routeWhyLine?: string
+  hideArcSummary?: boolean
   routeStructureLabel?: string
   experienceFamily?: string
   familyConfidence?: number
@@ -126,6 +129,7 @@ interface RouteSpineProps {
 
 export function RouteSpine({
   stops,
+  strictSharedSemantics = false,
   storySpine,
   className,
   debugMode = false,
@@ -156,6 +160,7 @@ export function RouteSpine({
   continuationEntries = [],
   routeHeadline,
   routeWhyLine,
+  hideArcSummary = false,
   routeStructureLabel,
   experienceFamily,
   familyConfidence,
@@ -382,6 +387,11 @@ export function RouteSpine({
     return 'SURPRISE'
   }
 
+  const getStoryPhaseSummary = (role: UserStopRole): string | undefined => {
+    const spineRole = role === 'windDown' ? 'winddown' : role
+    return normalizeSummarySentence(storySpine?.phases.find((phase) => phase.role === spineRole)?.summary)
+  }
+
   const getRoleMicroCopy = (stop: ItineraryStop, highlightIntensity?: number): string => {
     if (stop.role === 'start') {
       if (familyMode === 'eventful' || familyMode === 'social') {
@@ -441,6 +451,26 @@ export function RouteSpine({
     }
     return intensityDelta >= 0.05 ? 'Builds into the next stop.' : 'Leads into the next stop.'
   }
+  const normalizeSummarySentence = (value: string | undefined): string | undefined => {
+    const normalized = value?.trim().replace(/\s+/g, ' ')
+    if (!normalized) {
+      return undefined
+    }
+    return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`
+  }
+
+  const getThinBeatFallback = (role: UserStopRole): string => {
+    if (role === 'start') {
+      return 'Opens the route with a clear first beat.'
+    }
+    if (role === 'highlight') {
+      return 'Carries the central beat of this route.'
+    }
+    if (role === 'windDown') {
+      return 'Closes the route with a calmer landing.'
+    }
+    return 'Supports the route flow.'
+  }
 
   const resolvedArcType = routeDebugSummary?.arcType ?? getArcType(stops)
   const highlightStop = stops.find((stop) => stop.role === 'highlight')
@@ -458,48 +488,160 @@ export function RouteSpine({
       : resolvedArcType === 'partial'
         ? 'A focused route with one clear center'
         : 'A full route with clear progression')
-  const resolvedWhyLine =
-    routeWhyLine ??
-    storySpine?.routeSummary ??
-    (resolvedArcType === 'highlightOnly'
-      ? 'Built around one strong anchor when local options are limited.'
+  const resolvedWhyLine = strictSharedSemantics
+    ? routeWhyLine ?? normalizeSummarySentence(storySpine?.routeSummary)
+    : routeWhyLine ??
+      normalizeSummarySentence(storySpine?.routeSummary) ??
+      (resolvedArcType === 'highlightOnly'
+        ? 'Built around one strong anchor.'
+        : resolvedArcType === 'partial'
+          ? 'A tighter route preserving the strongest available structure.'
+          : 'A clear start-to-finish route.')
+  const startStopName = stops.find((stop) => stop.role === 'start')?.venueName
+  const highlightStopName = stops.find((stop) => stop.role === 'highlight')?.venueName
+  const windDownStopName = stops.find((stop) => stop.role === 'windDown')?.venueName
+  const stopRepresentationByRole = useMemo(
+    () =>
+      new Map(
+        stops.map((stop) => [
+          stop.role,
+          buildPlanningStopRepresentation({
+            stop,
+            detail: inlineDetailsByRole?.[stop.role],
+          }),
+        ]),
+      ),
+    [inlineDetailsByRole, stops],
+  )
+  const startRepresentation = stopRepresentationByRole.get('start')
+  const highlightRepresentation = stopRepresentationByRole.get('highlight')
+  const windDownRepresentation = stopRepresentationByRole.get('windDown')
+  const maxDriveMinutes =
+    stops.length > 0 ? Math.max(...stops.map((stop) => stop.driveMinutes)) : 0
+  const movementLine =
+    maxDriveMinutes <= 10
+      ? 'Movement stays tight between stops.'
+      : maxDriveMinutes <= 18
+        ? 'Movement stays manageable across the route.'
+        : 'Movement stretches a bit, with a clear central payoff.'
+  const toBeatModifier = (value: string | undefined): string | undefined => {
+    const normalized = value?.trim().replace(/\s+/g, ' ')
+    if (!normalized) {
+      return undefined
+    }
+    const lower = normalized.toLowerCase()
+    const isGenericRoleLine =
+      lower.includes('opens the route') ||
+      lower.includes('central beat') ||
+      lower.includes('calmer close')
+    if (isGenericRoleLine) {
+      return undefined
+    }
+    return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`
+  }
+  const introShapeLine =
+    resolvedArcType === 'full'
+      ? 'A full three-beat night with a clear center.'
       : resolvedArcType === 'partial'
-        ? 'A tighter route preserving the strongest available structure.'
-        : 'Built as a clear start-to-finish arc with one dominant middle moment.')
+        ? 'A focused two-beat night with one strong center.'
+        : 'A single-anchor night built around one standout moment.'
+  const introMovementLine = movementLine
+  const atGlanceBeats = [
+    {
+      key: 'ease_in',
+      label: 'Ease in',
+      stopName: startRepresentation?.venueName ?? startStopName ?? 'Start stop',
+      summary: strictSharedSemantics
+        ? toBeatModifier(startRepresentation?.fitSummary)
+        : toBeatModifier(startRepresentation?.fitSummary) ??
+          getStoryPhaseSummary('start') ??
+          getThinBeatFallback('start'),
+    },
+    {
+      key: 'main_event',
+      label: 'Main event',
+      stopName: highlightRepresentation?.venueName ?? highlightStopName ?? 'Highlight stop',
+      summary: strictSharedSemantics
+        ? toBeatModifier(highlightRepresentation?.fitSummary)
+        : toBeatModifier(highlightRepresentation?.fitSummary) ??
+          getStoryPhaseSummary('highlight') ??
+          getThinBeatFallback('highlight'),
+    },
+    {
+      key: 'let_it_land',
+      label: 'Let it land',
+      stopName: windDownRepresentation?.venueName ?? windDownStopName ?? 'Wind-down stop',
+      summary: strictSharedSemantics
+        ? toBeatModifier(windDownRepresentation?.fitSummary)
+        : toBeatModifier(windDownRepresentation?.fitSummary) ??
+          getStoryPhaseSummary('windDown') ??
+          getThinBeatFallback('windDown'),
+    },
+  ]
+  const canonicalRouteSummary = normalizeSummarySentence(routeWhyLine ?? storySpine?.routeSummary)
+  const routeSpineCopy = hideArcSummary
+    ? (
+        <>
+          {introShapeLine}
+          <br />
+          {introMovementLine}
+        </>
+      )
+    : strictSharedSemantics
+      ? normalizeSummarySentence(storySpine?.routeSummary)
+      : canonicalRouteSummary ?? 'A route with a clear center and readable progression.'
 
   return (
     <section className={className ? `route-spine ${className}` : 'route-spine'}>
       <div className="route-spine-header">
         <div>
-          <p className="route-spine-kicker">Story Spine</p>
+          <p className="route-spine-kicker">{hideArcSummary ? 'Night at a glance' : 'Story Spine'}</p>
           <h2>Your night ahead</h2>
         </div>
-        <p className="route-spine-copy">
-          Starts easy, builds to a strong center, and settles into a clean finish.
-        </p>
-      </div>
-
-      <div className="route-spine-arc-summary">
-        <p className="route-spine-arc-headline">{resolvedHeadline}</p>
-        <p className="route-spine-arc-why">{resolvedWhyLine}</p>
-        <div className="route-spine-arc-meta">
-          <span className="route-spine-arc-chip">{resolvedStructureLabel}</span>
-          {resolvedRecoveredHighlight && (
-            <span className="route-spine-arc-chip subdued">Central moment</span>
-          )}
-        </div>
-        {debugMode && (
-          <p className="route-spine-arc-debug">
-            arcType={resolvedArcType} | highlightIntensity=
-            {typeof resolvedHighlightIntensity === 'number'
-              ? resolvedHighlightIntensity.toFixed(2)
-              : 'n/a'}{' '}
-            | usedRecoveredCentralMomentHighlight={String(resolvedRecoveredHighlight)}
-          </p>
+        {routeSpineCopy && (
+          <p className="route-spine-copy">{routeSpineCopy}</p>
         )}
       </div>
 
-      {storySpine && (
+      {!hideArcSummary && (
+        <div className="route-spine-arc-summary">
+          <p className="route-spine-arc-headline">{resolvedHeadline}</p>
+          {resolvedWhyLine && <p className="route-spine-arc-why">{resolvedWhyLine}</p>}
+          <div className="route-spine-arc-meta">
+            <span className="route-spine-arc-chip">{resolvedStructureLabel}</span>
+            {resolvedRecoveredHighlight && (
+              <span className="route-spine-arc-chip subdued">Central moment</span>
+            )}
+          </div>
+          {debugMode && (
+            <p className="route-spine-arc-debug">
+              arcType={resolvedArcType} | highlightIntensity=
+              {typeof resolvedHighlightIntensity === 'number'
+                ? resolvedHighlightIntensity.toFixed(2)
+                : 'n/a'}{' '}
+              | usedRecoveredCentralMomentHighlight={String(resolvedRecoveredHighlight)}
+            </p>
+          )}
+        </div>
+      )}
+
+      {hideArcSummary ? (
+        <div className="route-spine-story-panel">
+          <ul className="route-spine-story-phases">
+            {atGlanceBeats.map((beat) => (
+              <li key={beat.key}>
+                <p className="route-spine-story-phase-label">
+                  {beat.label} - {beat.stopName}
+                </p>
+                {beat.summary && (
+                  <p className="route-spine-story-phase-summary">{beat.summary}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        storySpine && (
         <div className="route-spine-story-panel">
           <p className="route-spine-story-title">{storySpine.title}</p>
           <p className="route-spine-story-summary">{storySpine.routeSummary}</p>
@@ -514,6 +656,7 @@ export function RouteSpine({
             </ul>
           )}
         </div>
+        )
       )}
 
       <div className="route-spine-list">
@@ -543,6 +686,11 @@ export function RouteSpine({
             showInlineDetailToggle && expandedInlineRole === stop.role
           const appliedSwapNote = appliedSwapNoteByRole?.[stop.role]
           const postSwapHint = postSwapHintByRole?.[stop.role]
+          const roleMicrocopy = strictSharedSemantics
+            ? undefined
+            : getStoryPhaseSummary(stop.role) ??
+              toBeatModifier(stopRepresentationByRole.get(stop.role)?.fitSummary) ??
+              getRoleMicroCopy(stop, resolvedHighlightIntensity)
           return (
             <div key={stop.id}>
               <div
@@ -576,13 +724,15 @@ export function RouteSpine({
                         {resolvedRecoveredHighlight ? 'Central moment' : 'Peak moment'}
                       </span>
                     )}
-                    <p className="route-spine-role-microcopy">
-                      {getRoleMicroCopy(stop, resolvedHighlightIntensity)}
-                    </p>
+                    {roleMicrocopy && (
+                      <p className="route-spine-role-microcopy">{roleMicrocopy}</p>
+                    )}
                   </div>
 
                   <StopCard
                     stop={stop}
+                    stopRepresentation={stopRepresentationByRole.get(stop.role) ?? undefined}
+                    strictSharedSemantics={strictSharedSemantics}
                     sequence={index}
                     active={isActive}
                     changed={changed}
@@ -668,9 +818,11 @@ export function RouteSpine({
                 </div>
               </div>
 
-              {nextStop && (
+              {nextStop && !strictSharedSemantics && (
                 <p className="route-spine-transition-line">
-                  {getTransitionLine(stop, nextStop)}
+                  {normalizeSummarySentence(inlineDetailsByRole?.[stop.role]?.stopNarrativeTransitionLogic) ??
+                    getStoryPhaseSummary(nextStop.role) ??
+                    getTransitionLine(stop, nextStop)}
                 </p>
               )}
             </div>

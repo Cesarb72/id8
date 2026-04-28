@@ -1,14 +1,31 @@
 /**
- * ARC BOUNDARY: cross-engine generation orchestrator.
+ * ARC BOUNDARY: canonical Plan Build Orchestrator.
+ *
+ * `runGeneratePlan` is the shared pipeline used by Surprise, Curate, Build, and
+ * higher-order wrappers that need a plan build pass.
  *
  * Owns:
- * - deterministic execution order across Field/Interpretation/Bearings/Waypoint seams
- * - canonical artifact handoff between those engines
+ * - canonical intent normalization before planning
+ * - retrieval / scoring / role-pool / arc-assembly execution order
+ * - canonical handoff across Interpretation, Bearings, and Waypoint seams
+ * - returning the engine-authored planning result needed by wrappers
+ *
+ * Wrapper/application code may:
+ * - assemble canonical `IntentInput`
+ * - pass canonical seed venues, contracts, and debug/source-mode flags
+ * - validate lineage before/after the orchestrator call
+ * - project the returned result into page/session/runtime artifacts
+ *
+ * Wrapper/application code must not:
+ * - create a parallel plan-build pipeline
+ * - re-run retrieval/scoring/planning stages outside this orchestrator
+ * - synthesize competing engine truth before invoking the orchestrator
  *
  * Does NOT own:
  * - semantic interpretation authorship
  * - admissibility truth authorship
  * - product presentation logic
+ * - application-specific artifact projection
  */
 import { assembleArcCandidates } from './arc/assembleArcCandidates'
 import { buildRolePools, type RolePools } from './arc/buildRolePools'
@@ -25,6 +42,7 @@ import { getCrewPolicy } from './intent/getCrewPolicy'
 import { normalizeIntent } from './intent/normalizeIntent'
 import { projectItinerary } from './itinerary/projectItinerary'
 import { buildTemporalTrace, detectTemporalMode } from './constraints/detectTemporalMode'
+import type { CanonicalInterpretationBundle } from './interpretation/buildCanonicalInterpretationBundle'
 import { applyTargetedRefinement } from './refinement/applyTargetedRefinement'
 import { getRefinementDirective } from './refinement/getRefinementDirective'
 import { selectRefinementTargetRoles } from './refinement/selectRefinementTargetRoles'
@@ -35,9 +53,12 @@ import { retrieveVenues, type RetrieveVenuesResult } from './retrieval/retrieveV
 import { scoreVenueCollection } from './retrieval/scoreVenueFit'
 import { isValidArcCombination } from './arc/isValidArcCombination'
 import { isArcViable, scoreArcAssembly } from './arc/scoreArcAssembly'
-import { rankWithWaypointBoundary } from '../integrations/waypoint/core'
+import { rankArcCandidatesWithDiagnostics } from '../integrations/waypoint/rankArcCandidates'
+import type { RankedPocket } from '../engines/district/types/districtTypes'
+import type { ContractGateWorld } from './bearings/buildContractGateWorld'
 import { createId } from '../lib/ids'
 import { starterPacks } from '../data/starterPacks'
+import type { ContractEntryArtifactLineage } from './artifacts/contractEntryArtifact'
 import type {
   ArcAssemblySurpriseDiagnostics,
   ArcCandidate,
@@ -54,6 +75,7 @@ import type {
 import type { ConstraintTraceEntry } from './types/constraints'
 import type {
   BuildFallbackTraceDiagnostics,
+  CurateHardCommitCandidateDiagnostics,
   GenerationDiagnostics,
   RoleWinnerFrequencyEntry,
 } from './types/diagnostics'
@@ -76,9 +98,11 @@ export interface GenerationTrace extends GenerationDiagnostics {
   intent: IntentProfile
   lens: Pick<ExperienceLens, 'tone' | 'discoveryBias' | 'movementTolerance'>
   rankingEngine: string
+  selectedArtifactLineage?: ContractEntryArtifactLineage
 }
 
 export interface GeneratePlanResult {
+  // Engine-authored planning truth returned to wrappers for projection.
   itinerary: Itinerary
   selectedArc: ArcCandidate
   scoredVenues: ScoredVenue[]
@@ -87,7 +111,8 @@ export interface GeneratePlanResult {
   trace: GenerationTrace
 }
 
-interface GeneratePlanOptions {
+export interface RunGeneratePlanOptions {
+  // Wrapper-supplied inputs that constrain or contextualize the shared build pipeline.
   starterPack?: StarterPack
   baselineArc?: ArcCandidate
   baselineTrace?: GenerationTrace
@@ -95,10 +120,309 @@ interface GeneratePlanOptions {
   seedVenues?: Venue[]
   experienceContract?: ExperienceContract
   contractConstraints?: ContractConstraints
+  canonicalInterpretationBundle?: CanonicalInterpretationBundle
+  rankedDistrictPockets?: RankedPocket[]
+  contractGateWorld?: ContractGateWorld
   debugMode?: boolean
   strictShape?: boolean
   sourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
+  // Narrow planner handoff around selected candidate artifact lineage when present.
+  selectedArtifactLineage?: ContractEntryArtifactLineage
+  curateCommitSemantics?: 'seed_guided' | 'approved_route_hard_commit'
+}
+
+function shouldBlockGovernedPlannerIngress(retrieval: RetrieveVenuesResult): boolean {
+  const runtimeMode = retrieval.sourceMode.runtimeMode
+  const requestedMode = retrieval.sourceMode.requestedMode
+
+  if (runtimeMode !== 'api_governed') {
+    return false
+  }
+  if (requestedMode !== 'live' && requestedMode !== 'hybrid') {
+    return false
+  }
+
+  return retrieval.sourceMode.liveUsableInventory !== true
+}
+
+function buildGovernedPlannerIngressFailureMessage(retrieval: RetrieveVenuesResult): string {
+  const requestedMode = retrieval.sourceMode.requestedMode
+  const inventoryTruth = retrieval.sourceMode.inventoryTruth ?? 'unknown'
+  const fallbackSources = retrieval.sourceMode.fallbackSources?.join(', ') ?? 'none'
+  const reason =
+    retrieval.sourceMode.fallbackReason ??
+    retrieval.sourceMode.failureReason ??
+    'No usable live inventory was admitted for this run.'
+
+  return `Planner ingress blocked for governed ${requestedMode} mode. inventoryTruth=${inventoryTruth}. fallbackSources=${fallbackSources}. ${reason}`
+}
+
+function normalizeSelectedArtifactLineage(input: {
+  intent: IntentInput
+  lineage?: ContractEntryArtifactLineage
+}): ContractEntryArtifactLineage | undefined {
+  const { intent, lineage } = input
+  const artifactId = lineage?.artifactId?.trim()
+  if (!artifactId) {
+    return undefined
+  }
+
+  const selectedDirectionId = intent.selectedDirectionContext?.directionId?.trim()
+  const lineageDirectionId = lineage.directionId?.trim()
+  if (selectedDirectionId && lineageDirectionId && selectedDirectionId !== lineageDirectionId) {
+    throw new Error(
+      'Selected artifact lineage did not match selected direction context before planning.',
+    )
+  }
+
+  return {
+    artifactId,
+    sourceOpportunityId: lineage.sourceOpportunityId,
+    anchorVenueId: lineage.anchorVenueId,
+    ...(lineage.anchorRole ? { anchorRole: lineage.anchorRole } : {}),
+    ...(lineageDirectionId
+      ? { directionId: lineageDirectionId }
+      : selectedDirectionId
+        ? { directionId: selectedDirectionId }
+        : {}),
+    ...(lineage.pocketId?.trim() ? { pocketId: lineage.pocketId.trim() } : {}),
+  }
+}
+
+function applySelectedArtifactLineageToPlannerInput(input: {
+  intent: IntentInput
+  selectedArtifactLineage?: ContractEntryArtifactLineage
+}): IntentInput {
+  const { intent, selectedArtifactLineage } = input
+  if (!selectedArtifactLineage || intent.mode !== 'curate') {
+    return intent
+  }
+
+  const selectedArtifactAnchorRole = selectedArtifactLineage.anchorRole ?? 'highlight'
+  const selectedArtifactAnchor = {
+    venueId: selectedArtifactLineage.anchorVenueId,
+    role: selectedArtifactAnchorRole,
+  } as const
+
+  const existingDiscoveryPreferences = intent.discoveryPreferences ?? []
+  const mergedDiscoveryPreferences = Array.from(
+    new Map(
+      [
+        {
+          venueId: selectedArtifactAnchor.venueId,
+          role: selectedArtifactAnchor.role,
+        },
+        ...existingDiscoveryPreferences,
+      ].map((preference) => [preference.venueId, preference] as const),
+    ).values(),
+  )
+
+  return {
+    ...intent,
+    anchor: intent.anchor?.venueId ? intent.anchor : selectedArtifactAnchor,
+    discoveryPreferences: mergedDiscoveryPreferences,
+    selectedDirectionContext: {
+      ...intent.selectedDirectionContext,
+      directionId:
+        intent.selectedDirectionContext?.directionId ?? selectedArtifactLineage.directionId,
+      pocketId: intent.selectedDirectionContext?.pocketId ?? selectedArtifactLineage.pocketId,
+    },
+  }
+}
+
+function buildCanonicalInterpretationIngressDiagnostics(params: {
+  canonicalInterpretationBundle?: CanonicalInterpretationBundle
+  plannerAuthoritativeInput: IntentInput
+  experienceContract?: ExperienceContract
+  contractConstraints?: ContractConstraints
+}): NonNullable<GenerationDiagnostics['canonicalInterpretationIngress']> {
+  const {
+    canonicalInterpretationBundle,
+    plannerAuthoritativeInput,
+    experienceContract,
+    contractConstraints,
+  } = params
+  if (!canonicalInterpretationBundle) {
+    return {
+      supplied: false,
+      plannerIntentAuthoritative: true,
+    }
+  }
+
+  return {
+    supplied: true,
+    plannerIntentAuthoritative: true,
+    personaAligned:
+      plannerAuthoritativeInput.persona === canonicalInterpretationBundle.normalizedIntent.experienceProfile.persona,
+    primaryVibeAligned:
+      plannerAuthoritativeInput.primaryVibe === canonicalInterpretationBundle.normalizedIntent.experienceProfile.vibe,
+    experienceContractAligned: experienceContract
+      ? experienceContract.id === canonicalInterpretationBundle.experienceContract.id
+      : undefined,
+    contractConstraintsAligned: contractConstraints
+      ? contractConstraints.id === canonicalInterpretationBundle.contractConstraints.id
+      : undefined,
+    strategyFamily: canonicalInterpretationBundle.strategyFamily,
+    strategyReasonSummary:
+      canonicalInterpretationBundle.strategyFamilyResolution.reasonSummary,
+    bundleSource: canonicalInterpretationBundle.debug.bundleSource,
+    bundleDerivedFrom: [...canonicalInterpretationBundle.debug.derivedFrom],
+    experienceContractId: canonicalInterpretationBundle.experienceContract.id,
+    contractConstraintsId: canonicalInterpretationBundle.contractConstraints.id,
+  }
+}
+
+function buildDistrictEngineIngressDiagnostics(params: {
+  rankedDistrictPockets?: RankedPocket[]
+  plannerTopDistrictIds?: string[]
+}): NonNullable<GenerationDiagnostics['districtEngineIngress']> {
+  const { rankedDistrictPockets, plannerTopDistrictIds } = params
+  if (!rankedDistrictPockets) {
+    return {
+      supplied: false,
+      plannerDistrictAuthoritative: true,
+      plannerTopDistrictIds,
+    }
+  }
+
+  const topPockets = rankedDistrictPockets.slice(0, 5)
+  const topPocketIds = topPockets.map((entry) => entry.profile.pocketId)
+  const topPocketLabels = topPockets.map((entry) => entry.profile.label)
+  const normalizedPocketKeys = new Set(
+    topPockets.flatMap((entry) => [entry.profile.pocketId, entry.profile.label.toLowerCase()]),
+  )
+  const overlapPocketIds = (plannerTopDistrictIds ?? []).filter((districtId) =>
+    normalizedPocketKeys.has(districtId) || normalizedPocketKeys.has(districtId.toLowerCase()),
+  )
+
+  return {
+    supplied: true,
+    plannerDistrictAuthoritative: true,
+    rankedPocketCount: rankedDistrictPockets.length,
+    topPocketIds,
+    topPocketLabels,
+    plannerTopDistrictIds,
+    overlapPocketIds,
+    topDistrictMatchesTopPocket:
+      plannerTopDistrictIds && plannerTopDistrictIds.length > 0
+        ? normalizedPocketKeys.has(plannerTopDistrictIds[0]!) ||
+          normalizedPocketKeys.has(plannerTopDistrictIds[0]!.toLowerCase())
+        : undefined,
+  }
+}
+
+function buildBearingsIngressDiagnostics(params: {
+  contractGateWorld?: ContractGateWorld
+  plannerTopDistrictIds?: string[]
+  selectedDistrictId?: string
+}): NonNullable<GenerationDiagnostics['bearingsIngress']> {
+  const { contractGateWorld, plannerTopDistrictIds, selectedDistrictId } = params
+  if (!contractGateWorld) {
+    return {
+      supplied: false,
+      plannerAdmissibilityAuthoritative: true,
+      plannerTopDistrictIds,
+      selectedDistrictMatchesAdmittedPocket: undefined,
+    }
+  }
+
+  const topAdmittedPocketIds = contractGateWorld.admittedPockets
+    .slice(0, 5)
+    .map((entry) => entry.profile.pocketId)
+  const admittedPocketIdSet = new Set(topAdmittedPocketIds)
+  const overlapPocketIds = (plannerTopDistrictIds ?? []).filter((districtId) =>
+    admittedPocketIdSet.has(districtId),
+  )
+
+  return {
+    supplied: true,
+    plannerAdmissibilityAuthoritative: true,
+    admittedPocketCount: contractGateWorld.admittedPockets.length,
+    suppressedPocketCount: contractGateWorld.suppressedPockets.length,
+    rejectedPocketCount: contractGateWorld.rejectedPockets.length,
+    topAdmittedPocketIds,
+    strategyFamily: contractGateWorld.debug.strategyFamilyResolution.canonicalStrategyFamily,
+    gateSummary: contractGateWorld.gateSummary,
+    gateStrengthSummary: contractGateWorld.gateStrengthSummary,
+    plannerTopDistrictIds,
+    overlapPocketIds,
+    selectedDistrictMatchesAdmittedPocket: selectedDistrictId
+      ? admittedPocketIdSet.has(selectedDistrictId)
+      : undefined,
+  }
+}
+
+function matchesPreferredDiscoveryRole(
+  candidate: ArcCandidate,
+  role: 'start' | 'highlight' | 'windDown',
+  venueId: string,
+): boolean {
+  const expectedRole =
+    role === 'start' ? 'warmup' : role === 'highlight' ? 'peak' : 'cooldown'
+  return candidate.stops.some(
+    (stop) => stop.role === expectedRole && stop.scoredVenue.venue.id === venueId,
+  )
+}
+
+function candidateMatchesCurateCommitPreferences(
+  candidate: ArcCandidate,
+  discoveryPreferences: NonNullable<IntentProfile['discoveryPreferences']>,
+): boolean {
+  return discoveryPreferences.every((preference) =>
+    matchesPreferredDiscoveryRole(candidate, preference.role, preference.venueId),
+  )
+}
+
+function getArcCandidateRoleStop(
+  candidate: ArcCandidate,
+  role: 'start' | 'highlight' | 'windDown',
+) {
+  const expectedRole =
+    role === 'start' ? 'warmup' : role === 'highlight' ? 'peak' : 'cooldown'
+  return candidate.stops.find((stop) => stop.role === expectedRole)
+}
+
+function buildCurateHardCommitCandidateDiagnostics(
+  candidate: ArcCandidate,
+  preferences: NonNullable<IntentProfile['discoveryPreferences']>,
+): CurateHardCommitCandidateDiagnostics {
+  const startStop = getArcCandidateRoleStop(candidate, 'start')
+  const highlightStop = getArcCandidateRoleStop(candidate, 'highlight')
+  const windDownStop = getArcCandidateRoleStop(candidate, 'windDown')
+  const startPreference = preferences.find((entry) => entry.role === 'start')
+  const highlightPreference = preferences.find((entry) => entry.role === 'highlight')
+  const windDownPreference = preferences.find((entry) => entry.role === 'windDown')
+  const startVenueId = startStop?.scoredVenue.venue.id
+  const highlightVenueId = highlightStop?.scoredVenue.venue.id
+  const windDownVenueId = windDownStop?.scoredVenue.venue.id
+  const startMatch = Boolean(startPreference?.venueId && startVenueId === startPreference.venueId)
+  const highlightMatch = Boolean(
+    highlightPreference?.venueId && highlightVenueId === highlightPreference.venueId,
+  )
+  const windDownMatch = Boolean(
+    windDownPreference?.venueId && windDownVenueId === windDownPreference.venueId,
+  )
+
+  return {
+    candidateId: candidate.id,
+    start: {
+      venueId: startVenueId,
+      venueName: startStop?.scoredVenue.venue.name,
+      exactMatch: startMatch,
+    },
+    highlight: {
+      venueId: highlightVenueId,
+      venueName: highlightStop?.scoredVenue.venue.name,
+      exactMatch: highlightMatch,
+    },
+    windDown: {
+      venueId: windDownVenueId,
+      venueName: windDownStop?.scoredVenue.venue.name,
+      exactMatch: windDownMatch,
+    },
+    overallMatch: startMatch && highlightMatch && windDownMatch,
+  }
 }
 
 interface RefinementPathContext {
@@ -1116,10 +1440,10 @@ async function simulateOverlapScenario(
     scenarioLens,
     scenarioPools,
   )
-  const scenarioRanking = rankWithWaypointBoundary({
-    candidates: scenarioArcAssembly.candidates,
-    intent: scenarioIntent,
-  })
+  const scenarioRanking = rankArcCandidatesWithDiagnostics(
+    scenarioArcAssembly.candidates,
+    scenarioIntent,
+  )
   const rankedCandidates = scenarioRanking.ranked.map((entry) => entry.candidate)
   const winner = rankedCandidates[0]
   const rolePoolVenueIds = new Set<string>()
@@ -1154,15 +1478,32 @@ async function simulateOverlapScenario(
 
 export async function runGeneratePlan(
   input: IntentInput,
-  options: GeneratePlanOptions = {},
+  options: RunGeneratePlanOptions = {},
 ): Promise<GeneratePlanResult> {
+  // Wrapper seam: by the time execution reaches this function, wrappers should have already
+  // assembled a canonical `IntentInput` plus any canonical constraints/options. From here on,
+  // `runGeneratePlan` owns plan-build execution order and engine-stage handoff.
   // Boundary guardrail: interpretation and bearings artifacts should be passed as a canonical pair.
   console.assert(
     (Boolean(options.experienceContract) && Boolean(options.contractConstraints)) ||
       (!options.experienceContract && !options.contractConstraints),
     '[ARC-BOUNDARY] runGeneratePlan expects experienceContract + contractConstraints together.',
   )
-  const intent = normalizeIntent(input)
+  const selectedArtifactLineage = normalizeSelectedArtifactLineage({
+    intent: input,
+    lineage: options.selectedArtifactLineage,
+  })
+  const plannerAuthoritativeInput = applySelectedArtifactLineageToPlannerInput({
+    intent: input,
+    selectedArtifactLineage,
+  })
+  const canonicalInterpretationIngress = buildCanonicalInterpretationIngressDiagnostics({
+    canonicalInterpretationBundle: options.canonicalInterpretationBundle,
+    plannerAuthoritativeInput,
+    experienceContract: options.experienceContract,
+    contractConstraints: options.contractConstraints,
+  })
+  const intent = normalizeIntent(plannerAuthoritativeInput)
   console.assert(
     !intent.selectedDirectionContext || Boolean(intent.selectedDirectionContext.directionId),
     '[ARC-BOUNDARY] selectedDirectionContext should carry a canonical directionId when present.',
@@ -1186,6 +1527,31 @@ export async function runGeneratePlan(
     sourceModeOverrideApplied: options.sourceModeOverrideApplied,
     starterPack: options.starterPack,
   })
+  if (options.debugMode && typeof window !== 'undefined') {
+    console.info('[ID8 TRACE] runGeneratePlan retrieval ingress', {
+      requestedSourceMode: options.sourceMode,
+      sourceModeOverrideApplied: options.sourceModeOverrideApplied,
+      retrievalRequestedMode: retrieval.sourceMode.requestedMode,
+      retrievalEffectiveMode: retrieval.sourceMode.effectiveMode,
+      runtimeMode: retrieval.sourceMode.runtimeMode,
+      inventoryTruth: retrieval.sourceMode.inventoryTruth,
+      liveFailureVisible: retrieval.sourceMode.liveFailureVisible,
+      fallbackUsed: retrieval.sourceMode.fallbackUsed,
+      fallbackSources: retrieval.sourceMode.fallbackSources,
+      liveUsableInventory: retrieval.sourceMode.liveUsableInventory,
+    })
+  }
+  if (shouldBlockGovernedPlannerIngress(retrieval)) {
+    if (options.debugMode && typeof window !== 'undefined') {
+      console.info('[ID8 TRACE] runGeneratePlan governance guard fired', {
+        requestedSourceMode: retrieval.sourceMode.requestedMode,
+        runtimeMode: retrieval.sourceMode.runtimeMode,
+        inventoryTruth: retrieval.sourceMode.inventoryTruth,
+        liveUsableInventory: retrieval.sourceMode.liveUsableInventory,
+      })
+    }
+    throw new Error(buildGovernedPlannerIngressFailureMessage(retrieval))
+  }
   const anchorCanonicalization = resolvePlanningIntent(
     intent,
     retrieval,
@@ -1238,6 +1604,11 @@ export async function runGeneratePlan(
     scoredVenues,
     rolePools,
     intent: planningIntent,
+  })
+  const plannerTopDistrictIds = recommendedDistricts.slice(0, 5).map((entry) => entry.districtId)
+  const districtEngineIngress = buildDistrictEngineIngressDiagnostics({
+    rankedDistrictPockets: options.rankedDistrictPockets,
+    plannerTopDistrictIds,
   })
   const arcAssembly = assembleArcCandidates(scoredVenues, planningIntent, crewPolicy, lens, rolePools)
   const arcCandidates = arcAssembly.candidates
@@ -1342,7 +1713,7 @@ export async function runGeneratePlan(
     : arcCandidates
   // Waypoint seam: ranking consumes already-assembled candidate arcs.
   // It must not be used to author interpretation or admissibility truth.
-  const ranking = rankWithWaypointBoundary({ candidates: boundaryCandidates, intent: planningIntent })
+  const ranking = rankArcCandidatesWithDiagnostics(boundaryCandidates, planningIntent)
   const rankedCandidates = ranking.ranked.map((entry) => entry.candidate)
   const finalAnchorCandidates =
     anchorApplied && planningIntent.anchor?.venueId && anchorInternalRole
@@ -1466,12 +1837,53 @@ export async function runGeneratePlan(
     }
     return fallback.candidate
   }
+  const curateCommitPreferences =
+    selectedArtifactLineage && planningIntent.mode === 'curate' && planningIntent.discoveryPreferences
+      ? planningIntent.discoveryPreferences.filter(
+          (preference): preference is NonNullable<IntentProfile['discoveryPreferences']>[number] =>
+            preference.role === 'start' ||
+            preference.role === 'highlight' ||
+            preference.role === 'windDown',
+        )
+      : []
+  const curateCommitSemantics =
+    planningIntent.mode === 'curate'
+      ? options.curateCommitSemantics ??
+        (selectedArtifactLineage ? 'approved_route_hard_commit' : 'seed_guided')
+      : null
+  const curateHardCommitCandidates =
+    curateCommitPreferences.length > 0
+      ? rankedCandidates.filter((candidate) =>
+          candidateMatchesCurateCommitPreferences(candidate, curateCommitPreferences),
+        )
+      : []
+  const curateHardCommitRequired =
+    selectedArtifactLineage != null &&
+    planningIntent.mode === 'curate' &&
+    curateCommitPreferences.length > 0 &&
+    curateCommitSemantics === 'approved_route_hard_commit'
+  const selectedCurateCommitTarget = {
+    start: curateCommitPreferences.find((preference) => preference.role === 'start'),
+    highlight: curateCommitPreferences.find((preference) => preference.role === 'highlight'),
+    windDown: curateCommitPreferences.find((preference) => preference.role === 'windDown'),
+  }
   let selectedArc =
-    rankedCandidates[0] ??
+    (curateHardCommitRequired ? curateHardCommitCandidates[0] : rankedCandidates[0]) ??
     selectFallbackArc({
       triggerStage: 'initial_selection',
-      primaryPathFailureReason: 'no_ranked_candidates_after_boundary',
+      primaryPathFailureReason:
+        curateHardCommitRequired && curateHardCommitCandidates.length === 0
+          ? 'curate_selected_artifact_structurally_infeasible'
+          : 'no_ranked_candidates_after_boundary',
     })
+  const curateHardCommitSampleCandidates =
+    curateHardCommitRequired && curateCommitPreferences.length > 0
+      ? rankedCandidates
+          .slice(0, 5)
+          .map((candidate) =>
+            buildCurateHardCommitCandidateDiagnostics(candidate, curateCommitPreferences),
+          )
+      : []
   let refinementPathContext: RefinementPathContext | undefined
 
   if (options.baselineArc && (intent.refinementModes?.length ?? 0) > 0) {
@@ -1691,6 +2103,11 @@ export async function runGeneratePlan(
     neighborhood: planningIntent.neighborhood,
     spatial: selectedArc.spatial,
   })
+  const bearingsIngress = buildBearingsIngressDiagnostics({
+    contractGateWorld: options.contractGateWorld,
+    plannerTopDistrictIds,
+    selectedDistrictId: districtAnchor.districtId,
+  })
   const categoryDiversity: GenerationDiagnostics['categoryDiversity'] = {
     categoryDiversityScore: roundToHundredths(selectedArc.scoreBreakdown.diversityScore),
     repeatedCategoryCount: selectedArc.scoreBreakdown.repeatedCategoryCount ?? 0,
@@ -1751,6 +2168,26 @@ export async function runGeneratePlan(
     minRolePoolSize,
   })
   const faultIsolationNotes: string[] = []
+  if (curateHardCommitRequired) {
+    if (curateHardCommitCandidates.length > 0) {
+      faultIsolationNotes.push(
+        `Curate hard commit preserved selected artifact route with ${curateCommitPreferences.length} preferred role matches.`,
+      )
+    } else {
+      faultIsolationNotes.push(
+        'Curate hard commit fallback applied because no structurally valid ranked candidate preserved the selected artifact route.',
+      )
+    }
+  } else if (
+    selectedArtifactLineage &&
+    planningIntent.mode === 'curate' &&
+    curateCommitSemantics === 'seed_guided' &&
+    curateCommitPreferences.length > 0
+  ) {
+    faultIsolationNotes.push(
+      'Curate seed-guided generation used scenario-derived role preferences as soft hints only; exact artifact preservation was not required at card generation time.',
+    )
+  }
   if (fallbackTrace) {
     faultIsolationNotes.push(
       `Fallback trace: full=${fallbackTrace.fullArcCandidatesCount}, partial=${fallbackTrace.partialArcCandidatesCount}, highlight-only=${fallbackTrace.highlightOnlyCandidatesCount}, selected=${fallbackTrace.selectedFallbackType ?? 'none'}.`,
@@ -2129,6 +2566,10 @@ export async function runGeneratePlan(
           stop.scoredVenue.venue.source.sourceOrigin,
         ]),
       ) as GenerationDiagnostics['retrievalDiagnostics']['liveSource']['selectedStopSources'],
+      devGreatStopFixturesEnvRaw: retrieval.sourceMode.devGreatStopFixturesEnvRaw,
+      devGreatStopFixturesEnabled: retrieval.sourceMode.devGreatStopFixturesEnabled,
+      devGreatStopFixtureCount: retrieval.sourceMode.devGreatStopFixtureCount,
+      devGreatStopFixtureVenueIds: retrieval.sourceMode.devGreatStopFixtureVenueIds,
     },
     personaFilteredCount,
     starterPackFilteredCount,
@@ -2532,6 +2973,69 @@ export async function runGeneratePlan(
     boundaryDiagnostics,
     overlapDiagnostics,
     retrievalDiagnostics,
+    canonicalInterpretationIngress,
+    districtEngineIngress,
+    bearingsIngress,
+    curateHardCommit:
+      selectedArtifactLineage && planningIntent.mode === 'curate' && curateCommitPreferences.length > 0
+        ? (() => {
+            const finalWinner = buildCurateHardCommitCandidateDiagnostics(
+              selectedArc,
+              curateCommitPreferences,
+            )
+            const failedRoles = (['start', 'highlight', 'windDown'] as const).filter((role) => {
+              if (role === 'start') {
+                return !finalWinner.start.exactMatch
+              }
+              if (role === 'highlight') {
+                return !finalWinner.highlight.exactMatch
+              }
+              return !finalWinner.windDown.exactMatch
+            })
+            const explicitFallbackReason =
+              curateHardCommitRequired && curateHardCommitCandidates.length === 0
+                ? 'curate_selected_artifact_structurally_infeasible'
+                : undefined
+            return {
+              curateCommitSemantics:
+                curateCommitSemantics ?? 'approved_route_hard_commit',
+              hardCommitRequired: curateHardCommitRequired,
+              selectedArtifactId: selectedArtifactLineage?.artifactId,
+              selectedTarget: {
+                start: selectedCurateCommitTarget.start
+                  ? {
+                      venueId: selectedCurateCommitTarget.start.venueId,
+                    }
+                  : undefined,
+                highlight: selectedCurateCommitTarget.highlight
+                  ? {
+                      venueId: selectedCurateCommitTarget.highlight.venueId,
+                    }
+                  : undefined,
+                windDown: selectedCurateCommitTarget.windDown
+                  ? {
+                      venueId: selectedCurateCommitTarget.windDown.venueId,
+                    }
+                  : undefined,
+              },
+              rankedCandidateCount: rankedCandidates.length,
+              hardCommitCandidateCount: curateHardCommitCandidates.length,
+              hardCommitPreservationSucceeded: curateHardCommitCandidates.length > 0,
+              explicitFallbackTriggered:
+                curateHardCommitRequired && curateHardCommitCandidates.length === 0,
+              explicitFallbackReason,
+              failedRoles,
+              exactPreservingCandidateIds: curateHardCommitCandidates.map((candidate) => candidate.id),
+              sampledCandidates: curateHardCommitSampleCandidates,
+              finalWinner,
+              finalWinnerMatchType: finalWinner.overallMatch
+                ? 'exact_selected_artifact_match'
+                : failedRoles.length < 3
+                  ? 'partial_role_match'
+                  : 'pure_fallback',
+            }
+          })()
+        : undefined,
     faultIsolationNotes,
     refinementOutcome,
     baselineArcId: options.baselineArc?.id,
@@ -2557,6 +3061,7 @@ export async function runGeneratePlan(
         movementTolerance: lens.movementTolerance,
       },
       rankingEngine: ranking.engine,
+      ...(selectedArtifactLineage ? { selectedArtifactLineage } : {}),
     },
   }
 }

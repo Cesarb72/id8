@@ -4,6 +4,7 @@ import {
   listSharedLiveArtifactPlans,
   loadLiveArtifactHomeState,
   loadLiveArtifactSession,
+  type SharedLiveArtifactPlanEntry,
 } from '../domain/live/liveArtifactSession'
 
 type HomePlanPriority = 'active-live' | 'locked-in-progress' | 'recent-saved'
@@ -29,10 +30,28 @@ function formatLockedAt(lockedAt: number | undefined): string {
   })
 }
 
+function buildSavedPlanTitle(entry: SharedLiveArtifactPlanEntry): string {
+  return entry.payload.finalRoute?.routeHeadline || entry.payload.itinerary.title || 'Saved plan'
+}
+
+function buildSavedPlanCity(entry: SharedLiveArtifactPlanEntry): string {
+  return (
+    entry.payload.finalRoute?.location ||
+    entry.payload.city ||
+    entry.payload.itinerary.city ||
+    'San Jose'
+  )
+}
+
+function buildSavedPlanStatus(entry: SharedLiveArtifactPlanEntry): string {
+  return entry.payload.finalRoute ? 'Most recent saved' : 'Saved plan incomplete'
+}
+
 export function HomePage() {
   const currentPath =
     typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : ''
   const isDevHome = currentPath.startsWith('/dev')
+  const surpriseStartPath = '/dev/start/surprise'
   const startPrefix = isDevHome ? '/dev/start' : '/start'
   const plansPath = isDevHome ? '/dev/plans' : '/plans'
   const homeState = loadLiveArtifactHomeState()
@@ -50,8 +69,8 @@ export function HomePage() {
   const prioritizedContinuation: HomePlanSummary | null = liveArtifact
     ? {
         priority: 'active-live',
-        title: liveArtifact.itinerary.title || 'Tonight',
-        city: liveArtifact.city || liveArtifact.itinerary.city || 'San Jose',
+        title: liveArtifact.finalRoute.routeHeadline || 'Tonight',
+        city: liveArtifact.finalRoute.location || liveArtifact.city || liveArtifact.itinerary.city || 'San Jose',
         routePath: isDevHome ? '/dev/live' : '/journey/live',
         status: 'Live plan active',
         lockedAt: liveArtifact.lockedAt,
@@ -67,11 +86,10 @@ export function HomePage() {
       : mostRecentSaved
         ? {
             priority: 'recent-saved',
-            title: mostRecentSaved.payload.itinerary.title || 'Saved plan',
-            city:
-              mostRecentSaved.payload.city || mostRecentSaved.payload.itinerary.city || 'San Jose',
+            title: buildSavedPlanTitle(mostRecentSaved),
+            city: buildSavedPlanCity(mostRecentSaved),
             routePath: `/p/${encodeURIComponent(mostRecentSaved.planId)}`,
-            status: 'Most recent saved',
+            status: buildSavedPlanStatus(mostRecentSaved),
             lockedAt: mostRecentSaved.payload.lockedAt,
           }
         : null
@@ -87,11 +105,10 @@ export function HomePage() {
     : mostRecentSaved
       ? {
           priority: 'recent-saved',
-          title: mostRecentSaved.payload.itinerary.title || 'Saved plan',
-          city:
-            mostRecentSaved.payload.city || mostRecentSaved.payload.itinerary.city || 'San Jose',
+          title: buildSavedPlanTitle(mostRecentSaved),
+          city: buildSavedPlanCity(mostRecentSaved),
           routePath: `/p/${encodeURIComponent(mostRecentSaved.planId)}`,
-          status: 'Most recent saved',
+          status: buildSavedPlanStatus(mostRecentSaved),
           lockedAt: mostRecentSaved.payload.lockedAt,
         }
       : null
@@ -126,17 +143,17 @@ export function HomePage() {
             <h2>Start something new</h2>
           </div>
           <div className="home-v1-mode-grid">
-            <a className="home-v1-mode-card" href={`${startPrefix}/surprise`}>
+            <a className="home-v1-mode-card" href={surpriseStartPath}>
               <span>Surprise Me</span>
-              <small>Assistant-led. Light input, fast start.</small>
+              <small>Just go.</small>
             </a>
             <a className="home-v1-mode-card" href={`${startPrefix}/curate`}>
               <span>Curate Experience</span>
-              <small>Guided control. Pick a direction with guardrails.</small>
+              <small>Pick a direction.</small>
             </a>
             <a className="home-v1-mode-card" href={`${startPrefix}/build`}>
               <span>Build My Plan</span>
-              <small>Direct control. Set intent explicitly.</small>
+              <small>Start with what you know.</small>
             </a>
           </div>
         </section>

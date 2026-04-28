@@ -41,6 +41,7 @@ export type DirectionIdentityMode = DirectionIdentity
 export interface DirectionPlanningSelection {
   id: string
   label: string
+  subtitle?: string
   pocketId: string
   pocketLabel: string
   archetype: string
@@ -68,9 +69,18 @@ export interface BuildDirectionPlanningSelectionInput {
 
 export interface DirectionContractValidationResult {
   valid: boolean
+  validatorMode?: 'surprise' | 'curate' | 'build' | 'unknown'
   generationDriftReason: string | null
   expectedDirectionIdentity: DirectionIdentityMode
   observedDirectionIdentity: DirectionIdentityMode
+  directionAlignmentScore?: number
+  surpriseSoftAlignmentFloor?: number
+  surpriseHardAlignmentFloor?: number
+  surpriseMaterialAlignmentFloor?: number
+  lowAlignment?: boolean
+  hardAlignmentFailure?: boolean
+  materialAlignmentFailure?: boolean
+  severeGreatStopRisk?: boolean
   contractBuildabilityStatus: DirectionContractBuildability['contractBuildabilityStatus']
   missingRoleForContract: DirectionCoreRole | null
   candidatePoolSufficiencyByRole: Record<DirectionCoreRole, number>
@@ -129,12 +139,180 @@ function toTagSet(tags: string[]): Set<string> {
   return new Set(tags.map((tag) => tag.toLowerCase()))
 }
 
+function normalizeAlignmentSignal(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function tokenizeDirectionSignal(value: string | undefined): string[] {
+  if (!value) {
+    return []
+  }
+  return normalizeAlignmentSignal(value)
+    .split(/[^a-z0-9]+/g)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3)
+}
+
+function tokenMatchesStem(token: string, stems: string[]): boolean {
+  return stems.some((stem) => token === stem || token.startsWith(stem))
+}
+
+function mapTokenToSemanticChannels(token: string): Array<'social' | 'exploratory' | 'intimate'> {
+  const channels = new Set<'social' | 'exploratory' | 'intimate'>()
+
+  if (
+    tokenMatchesStem(token, [
+      'social',
+      'lively',
+      'night',
+      'party',
+      'dance',
+      'music',
+      'live',
+      'buzz',
+      'vibrant',
+      'bar',
+      'cocktail',
+      'club',
+      'arcade',
+      'show',
+      'event',
+    ])
+  ) {
+    channels.add('social')
+  }
+  if (
+    tokenMatchesStem(token, [
+      'explor',
+      'discover',
+      'culture',
+      'cultur',
+      'museum',
+      'gallery',
+      'art',
+      'curat',
+      'hidden',
+      'market',
+      'indie',
+      'local',
+    ])
+  ) {
+    channels.add('exploratory')
+  }
+  if (
+    tokenMatchesStem(token, [
+      'intimate',
+      'cozy',
+      'calm',
+      'quiet',
+      'relax',
+      'romantic',
+      'lounge',
+      'wine',
+      'dessert',
+      'cafe',
+      'patio',
+    ])
+  ) {
+    channels.add('intimate')
+  }
+
+  return [...channels]
+}
+
+function withSemanticChannels(tokens: string[]): string[] {
+  const expanded = new Set<string>()
+  for (const token of tokens) {
+    expanded.add(token)
+    for (const channel of mapTokenToSemanticChannels(token)) {
+      expanded.add(`sem:${channel}`)
+    }
+  }
+  return [...expanded]
+}
+
+function computeDirectionContextAlignment(params: {
+  itinerary: Itinerary
+  context: ResolvedDirectionContext
+}): number {
+  const weightedTokens = new Map<string, number>()
+  const addTokens = (tokens: string[], weight: number, includeSemantic = true) => {
+    const scopedTokens = includeSemantic ? withSemanticChannels(tokens) : tokens
+    for (const token of scopedTokens) {
+      const tokenWeight = token.startsWith('sem:') ? weight * 0.92 : weight
+      if (tokenWeight <= 0) {
+        continue
+      }
+      weightedTokens.set(token, Math.max(tokenWeight, weightedTokens.get(token) ?? 0))
+    }
+  }
+  const addSemanticIdentityToken = (identity: ResolvedDirectionContext['identity'] | undefined, weight: number) => {
+    if (!identity) {
+      return
+    }
+    for (const token of withSemanticChannels(tokenizeDirectionSignal(identity))) {
+      weightedTokens.set(token, Math.max(weight, weightedTokens.get(token) ?? 0))
+    }
+  }
+  addTokens(tokenizeDirectionSignal(params.context.label), 1.15)
+  addTokens(tokenizeDirectionSignal(params.context.archetype), 1.35)
+  addTokens(tokenizeDirectionSignal(params.context.selectedPocketId), 0.35, false)
+  addTokens(tokenizeDirectionSignal(params.context.selectedDirectionId), 0.25, false)
+  addSemanticIdentityToken(params.context.identity, 1.45)
+
+  if (weightedTokens.size === 0) {
+    return 0
+  }
+
+  const roleWeightByRole: Partial<Record<UserStopRole, number>> = {
+    start: 0.25,
+    highlight: 0.5,
+    surprise: 0.08,
+    windDown: 0.17,
+  }
+  let weightedMatches = 0
+  let weightedPossible = 0
+  for (const stop of params.itinerary.stops) {
+    const roleWeight = roleWeightByRole[stop.role] ?? 0
+    if (roleWeight <= 0) {
+      continue
+    }
+    const stopTokens = new Set<string>(
+      withSemanticChannels([
+        ...tokenizeDirectionSignal(stop.venueName),
+        ...tokenizeDirectionSignal(stop.neighborhood),
+        ...tokenizeDirectionSignal(stop.subcategory),
+        ...tokenizeDirectionSignal(stop.category),
+        ...stop.tags.flatMap((tag) => tokenizeDirectionSignal(tag)),
+      ]),
+    )
+    let stopMatched = 0
+    let stopPossible = 0
+    for (const [token, tokenWeight] of weightedTokens.entries()) {
+      stopPossible += tokenWeight
+      if (stopTokens.has(token)) {
+        stopMatched += tokenWeight
+      }
+    }
+    if (stopPossible > 0) {
+      weightedMatches += roleWeight * (stopMatched / stopPossible)
+      weightedPossible += roleWeight
+    }
+  }
+  return weightedPossible > 0 ? Math.max(0, Math.min(1, weightedMatches / weightedPossible)) : 0
+}
+
 export function buildDirectionPlanningSelection(
   input: BuildDirectionPlanningSelectionInput,
 ): DirectionPlanningSelection {
   return {
     id: input.id,
     label: input.label,
+    subtitle: input.subtitle,
     pocketId: input.pocketId ?? input.id,
     pocketLabel: input.pocketLabel ?? input.label,
     archetype: input.archetype ?? input.cluster,
@@ -164,6 +342,7 @@ export function buildIntentSelectedDirectionContext(
   return {
     directionId: selectedDirection.id,
     label: selectedDirection.label,
+    subtitle: selectedDirection.subtitle,
     pocketId: selectedDirection.pocketId,
     archetype: selectedDirection.archetype,
     identity: selectedDirection.identity,
@@ -486,10 +665,12 @@ export function validateDirectionRouteContract(params: {
   selectedDirection?: Pick<DirectionPlanningSelection, 'identity'>
   itinerary: Itinerary
   buildability: DirectionContractBuildability
+  mode?: 'surprise' | 'curate' | 'build'
 }): DirectionContractValidationResult {
   // Canonical coordination validator: checks route adherence against planning lineage.
   // It should remain structural; meaning/buildability policy should be delegated by engine ownership.
   const { selectedDirectionContext, selectedDirection, itinerary, buildability } = params
+  const validatorMode = params.mode ?? 'unknown'
   const hasHighlight = itinerary.stops.some((stop) => stop.role === 'highlight')
   const expectedDirectionIdentity =
     selectedDirectionContext?.identity ?? selectedDirection?.identity ?? 'exploratory'
@@ -502,6 +683,7 @@ export function validateDirectionRouteContract(params: {
   if (!hasHighlight) {
     return {
       valid: false,
+      validatorMode,
       generationDriftReason: 'missing highlight role in generated itinerary',
       expectedDirectionIdentity,
       observedDirectionIdentity,
@@ -526,6 +708,7 @@ export function validateDirectionRouteContract(params: {
     if (buildability.contractBuildabilityStatus === 'thin') {
       return {
         valid: true,
+        validatorMode,
         generationDriftReason: 'thin_pool_identity_relaxation',
         expectedDirectionIdentity,
         observedDirectionIdentity,
@@ -549,6 +732,7 @@ export function validateDirectionRouteContract(params: {
     }
     return {
       valid: false,
+      validatorMode,
       generationDriftReason: 'identity_mismatch',
       expectedDirectionIdentity,
       observedDirectionIdentity,
@@ -568,8 +752,139 @@ export function validateDirectionRouteContract(params: {
       },
     }
   }
+  if (params.mode === 'surprise' && selectedDirectionContext) {
+    const directionAlignment = computeDirectionContextAlignment({
+      itinerary,
+      context: selectedDirectionContext,
+    })
+    // Surprise-specific calibration:
+    // keep hard rejection for materially low alignment, but widen borderline acceptance
+    // so forward progression better matches the Step 2 preview contract.
+    const surpriseHardAlignmentFloor = 0.06
+    const surpriseSoftAlignmentFloor = 0.12
+    const surpriseMaterialAlignmentFloor = 0.03
+    const lowAlignment = directionAlignment < surpriseSoftAlignmentFloor
+    const hardAlignmentFailure = directionAlignment < surpriseHardAlignmentFloor
+    const materialAlignmentFailure = directionAlignment < surpriseMaterialAlignmentFloor
+    const severeGreatStopRisk =
+      greatStopQuality?.suppressionRecommended === true && greatStopQuality?.riskTier === 'severe'
+    if (lowAlignment) {
+      const canRelaxForThinSupply = buildability.contractBuildabilityStatus === 'thin'
+      const canRelaxForBorderlineSufficient =
+        buildability.contractBuildabilityStatus === 'sufficient' &&
+        !materialAlignmentFailure &&
+        !severeGreatStopRisk
+      if (canRelaxForThinSupply || canRelaxForBorderlineSufficient) {
+        const relaxationReason = canRelaxForThinSupply
+          ? 'surprise_direction_alignment_with_thin_role_supply'
+          : hardAlignmentFailure
+            ? 'surprise_direction_alignment_borderline_with_sufficient_supply'
+            : 'surprise_direction_alignment_near_match'
+        const relaxedRule = canRelaxForThinSupply
+          ? 'surprise_direction_alignment_softened_when_contract_buildability_is_thin'
+          : hardAlignmentFailure
+            ? 'surprise_direction_alignment_softened_for_borderline_match_with_sufficient_supply'
+            : 'surprise_direction_alignment_softened_for_near_match_with_sufficient_supply'
+        return {
+          valid: true,
+          validatorMode,
+          generationDriftReason: 'surprise_direction_alignment_relaxed',
+          directionAlignmentScore: directionAlignment,
+          surpriseSoftAlignmentFloor,
+          surpriseHardAlignmentFloor,
+          surpriseMaterialAlignmentFloor,
+          lowAlignment,
+          hardAlignmentFailure,
+          materialAlignmentFailure,
+          severeGreatStopRisk,
+          expectedDirectionIdentity,
+          observedDirectionIdentity,
+          contractBuildabilityStatus: buildability.contractBuildabilityStatus,
+          missingRoleForContract: buildability.missingRoleForContract,
+          candidatePoolSufficiencyByRole: buildability.candidatePoolSufficiencyByRole,
+          fallbackApplied: true,
+          greatStopQuality,
+          thinPoolRelaxationTrace: {
+            triggered: true,
+            expectedDirectionIdentity,
+            observedDirectionIdentity,
+            contractBuildabilityStatus: buildability.contractBuildabilityStatus,
+            missingRoleForContract: buildability.missingRoleForContract,
+            candidatePoolSufficiencyByRole: buildability.candidatePoolSufficiencyByRole,
+            relaxationReason,
+            relaxedRule,
+            validationOutcome: 'accepted_with_relaxation',
+          },
+        }
+      }
+      const rejectionReason = severeGreatStopRisk
+        ? 'surprise_direction_alignment_with_severe_great_stop_risk'
+        : materialAlignmentFailure
+          ? 'surprise_direction_alignment_material_mismatch'
+          : 'surprise_direction_alignment_mismatch'
+      return {
+        valid: false,
+        validatorMode,
+        generationDriftReason: rejectionReason,
+        directionAlignmentScore: directionAlignment,
+        surpriseSoftAlignmentFloor,
+        surpriseHardAlignmentFloor,
+        surpriseMaterialAlignmentFloor,
+        lowAlignment,
+        hardAlignmentFailure,
+        materialAlignmentFailure,
+        severeGreatStopRisk,
+        expectedDirectionIdentity,
+        observedDirectionIdentity,
+        contractBuildabilityStatus: buildability.contractBuildabilityStatus,
+        missingRoleForContract: buildability.missingRoleForContract,
+        candidatePoolSufficiencyByRole: buildability.candidatePoolSufficiencyByRole,
+        fallbackApplied: false,
+        greatStopQuality,
+        thinPoolRelaxationTrace: {
+          triggered: false,
+          expectedDirectionIdentity,
+          observedDirectionIdentity,
+          contractBuildabilityStatus: buildability.contractBuildabilityStatus,
+          missingRoleForContract: buildability.missingRoleForContract,
+          candidatePoolSufficiencyByRole: buildability.candidatePoolSufficiencyByRole,
+          validationOutcome: 'rejected',
+        },
+      }
+    }
+    return {
+      valid: true,
+      validatorMode,
+      generationDriftReason: null,
+      directionAlignmentScore: directionAlignment,
+      surpriseSoftAlignmentFloor,
+      surpriseHardAlignmentFloor,
+      surpriseMaterialAlignmentFloor,
+      lowAlignment,
+      hardAlignmentFailure,
+      materialAlignmentFailure,
+      severeGreatStopRisk,
+      expectedDirectionIdentity,
+      observedDirectionIdentity,
+      contractBuildabilityStatus: buildability.contractBuildabilityStatus,
+      missingRoleForContract: buildability.missingRoleForContract,
+      candidatePoolSufficiencyByRole: buildability.candidatePoolSufficiencyByRole,
+      fallbackApplied: false,
+      greatStopQuality,
+      thinPoolRelaxationTrace: {
+        triggered: false,
+        expectedDirectionIdentity,
+        observedDirectionIdentity,
+        contractBuildabilityStatus: buildability.contractBuildabilityStatus,
+        missingRoleForContract: buildability.missingRoleForContract,
+        candidatePoolSufficiencyByRole: buildability.candidatePoolSufficiencyByRole,
+        validationOutcome: 'accepted_without_relaxation',
+      },
+    }
+  }
   return {
     valid: true,
+    validatorMode,
     generationDriftReason: null,
     expectedDirectionIdentity,
     observedDirectionIdentity,

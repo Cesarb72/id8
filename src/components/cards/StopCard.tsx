@@ -1,9 +1,12 @@
-﻿import { deriveReadableDistrictName } from '../../domain/districts/deriveReadableDistrictName'
+import { deriveReadableDistrictName } from '../../domain/districts/deriveReadableDistrictName'
 import type { ItineraryStop, UserStopRole } from '../../domain/types/itinerary'
 import { deriveReadableStopContent } from '../../domain/interpretation/deriveReadableStopContent'
+import type { VenueCardStopRepresentation } from '../../domain/types/stopRepresentation'
 
 interface StopCardProps {
   stop: ItineraryStop
+  stopRepresentation?: VenueCardStopRepresentation
+  strictSharedSemantics?: boolean
   sequence?: number
   active?: boolean
   changed?: boolean
@@ -242,6 +245,8 @@ function extractRatingLabel(values: Array<string | undefined>): string | undefin
 
 export function StopCard({
   stop,
+  stopRepresentation,
+  strictSharedSemantics = false,
   sequence,
   active = false,
   changed = false,
@@ -269,27 +274,33 @@ export function StopCard({
   onPreviewAlternative,
   onPreviewDecisionAction,
 }: StopCardProps) {
+  const hasSharedRepresentation = Boolean(stopRepresentation)
   const readableDistrict = deriveReadableDistrictName(stop.neighborhood, {
     city: stop.city,
   })
-  const readableContent = deriveReadableStopContent(
-    stop,
-    {
-      category: stop.category,
-      subcategory: stop.subcategory,
-      priceTier: stop.priceTier,
-      tags: stop.tags,
-      vibeTags: stop.vibeTags,
-    },
-    stop.role,
-  )
+  const readableContent =
+    strictSharedSemantics || hasSharedRepresentation
+      ? undefined
+      : deriveReadableStopContent(
+          stop,
+          {
+            category: stop.category,
+            subcategory: stop.subcategory,
+            priceTier: stop.priceTier,
+            tags: stop.tags,
+            vibeTags: stop.vibeTags,
+          },
+          stop.role,
+        )
   const visibleReasonLabels =
     active || changed || debugMode
       ? debugMode
         ? stop.reasonLabels
         : stop.reasonLabels?.slice(0, 2)
       : undefined
-  const insider = stop.stopInsider ?? buildFallbackStopInsider(stop.role)
+  const insider = strictSharedSemantics
+    ? stop.stopInsider
+    : stop.stopInsider ?? (hasSharedRepresentation ? undefined : buildFallbackStopInsider(stop.role))
   const statusBadge =
     unavailable
       ? {
@@ -305,15 +316,25 @@ export function StopCard({
   const aroundHereSignals =
     inlineDetail?.aroundHereSignals && inlineDetail.aroundHereSignals.length > 0
       ? inlineDetail.aroundHereSignals.slice(0, 1)
-      : buildAroundHereSignals(stop.role)
+      : strictSharedSemantics
+        ? []
+        : hasSharedRepresentation
+          ? []
+          : buildAroundHereSignals(stop.role)
   const tonightSignals = uniqueLines(
-    [
-      ...(inlineDetail?.tonightSignals?.slice(0, 3) ?? []),
-      aroundHereSignals[0],
-      inlineDetail?.localSignal,
-      insider.localSignal,
-      buildAroundHereSignals(stop.role)[1],
-    ],
+    strictSharedSemantics
+      ? [
+          ...(inlineDetail?.tonightSignals?.slice(0, 3) ?? []),
+          aroundHereSignals[0],
+          inlineDetail?.localSignal,
+        ]
+      : [
+          ...(inlineDetail?.tonightSignals?.slice(0, 3) ?? []),
+          aroundHereSignals[0],
+          inlineDetail?.localSignal,
+          hasSharedRepresentation ? undefined : insider?.localSignal,
+          hasSharedRepresentation ? undefined : buildAroundHereSignals(stop.role)[1],
+        ],
     3,
   )
   const replacementTarget = inlineDetail?.alternatives?.[0]?.replacementContext
@@ -336,6 +357,8 @@ export function StopCard({
   ])
   const realityAnchors = uniqueLines(
     [
+      stopRepresentation?.venueType,
+      stopRepresentation?.areaName,
       readableDistrict.displayName,
       `${stop.driveMinutes} min away`,
       openStatusLabel,
@@ -345,16 +368,18 @@ export function StopCard({
   )
   const secondaryDetails = uniqueLines(
     [
+      stopRepresentation?.areaFitSummary,
       `${readableDistrict.displayName} - ${stop.estimatedDurationLabel} - ${stop.driveMinutes} min away`,
-      readableContent.confidenceLine,
-      insider.roleReason,
-      readableContent.roleLine,
+      strictSharedSemantics || hasSharedRepresentation ? undefined : readableContent?.confidenceLine,
+      strictSharedSemantics || hasSharedRepresentation ? undefined : insider?.roleReason,
+      strictSharedSemantics || hasSharedRepresentation ? undefined : readableContent?.roleLine,
       inlineDetail?.whyItFits,
       stop.role === 'highlight'
         ? highlightDecisionSignal ?? 'Chosen as your main moment'
         : undefined,
       stop.role === 'highlight' ? highlightDecisionSecondarySignal : undefined,
-      insider.selectionReason,
+      strictSharedSemantics || hasSharedRepresentation ? undefined : insider?.selectionReason,
+      stopRepresentation?.knownFor,
       inlineDetail?.knownFor,
       inlineDetail?.goodToKnow,
       inlineDetail?.localSignal,
@@ -386,6 +411,8 @@ export function StopCard({
       (inlineDetail?.alternatives && inlineDetail.alternatives.length > 0) ||
       (inlineDetail?.decisionActions && inlineDetail.decisionActions.length > 0),
   )
+  const descriptionLine =
+    stopRepresentation?.fitSummary || (strictSharedSemantics ? undefined : readableContent?.identityLine)
 
   return (
     <article
@@ -406,7 +433,11 @@ export function StopCard({
       }}
     >
       <div className="stop-card-image-wrap">
-        <img src={stop.imageUrl} alt={stop.venueName} loading="lazy" />
+        <img
+          src={stopRepresentation?.mediaUrl || stop.imageUrl}
+          alt={stopRepresentation?.venueName || stop.venueName}
+          loading="lazy"
+        />
       </div>
       <div className="stop-card-content">
         <div className="stop-card-topline">
@@ -421,8 +452,8 @@ export function StopCard({
             <span className={`stop-card-badge ${statusBadge.className}`}>{statusBadge.label}</span>
           </div>
         )}
-        <h3>{stop.venueName}</h3>
-        <p className="stop-card-description-line">{readableContent.identityLine}</p>
+        <h3>{stopRepresentation?.venueName || stop.venueName}</h3>
+        {descriptionLine && <p className="stop-card-description-line">{descriptionLine}</p>}
         {realityAnchors.length > 0 && (
           <p className="stop-card-reality-anchors">{realityAnchors.join(' · ')}</p>
         )}
@@ -589,5 +620,6 @@ export function StopCard({
     </article>
   )
 }
+
 
 

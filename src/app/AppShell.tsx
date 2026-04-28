@@ -23,6 +23,7 @@ import { inverseRoleProjection, roleProjection } from '../domain/config/roleProj
 import { getRoleContract } from '../domain/contracts/getRoleContract'
 import type { DiscoveryDirection } from '../domain/discovery/getDiscoveryCandidates'
 import { getDiscoveryCandidates } from '../domain/discovery/getDiscoveryCandidates'
+import { resolveSelectedDirectionContextFromDiscoverySelection } from '../domain/discovery/selectedDirectionContext'
 import { deriveLightNearbyExtensions } from '../domain/exploration/deriveLightNearbyExtensions'
 import { planExploration } from '../domain/exploration/planExploration'
 import { getCrewPolicy } from '../domain/intent/getCrewPolicy'
@@ -33,8 +34,6 @@ import { scoreVenueFit } from '../domain/retrieval/scoreVenueFit'
 import {
   generatePlanAdjustmentFeedback,
 } from '../domain/interpretation/adjustment/generatePlanAdjustmentFeedback'
-import { runGeneratePlan, type GenerationTrace } from '../domain/runGeneratePlan'
-import { searchAnchorVenues } from '../domain/search/searchAnchorVenues'
 import { getSourceMode } from '../domain/sources/getSourceMode'
 import { proposeLceRepair, type LceRepairProposal, type LceRepairTrigger } from '../domain/lce/lceRepair'
 import {
@@ -44,7 +43,20 @@ import {
   type SessionState,
   type UserComposedStop,
 } from './state/sessionStore'
-import { assertCanonicalSelectedDirectionContext } from './wrapper/arcWrapperBoundary'
+import {
+  assertCanonicalBuildAnchorLineage,
+  assertCanonicalSelectedDirectionContext,
+} from './wrapper/arcWrapperBoundary'
+import {
+  resolveArcFlowPhase,
+  type ArcFlowMode,
+  type ArcFlowPhase,
+} from './wrapper/arcFlowPhase'
+import {
+  runPlanBuild,
+  searchAnchorVenueOptions,
+  type GenerationTrace,
+} from './services/arcApplicationService'
 import { CurateExperiencePage } from '../pages/CurateExperiencePage'
 import { GeneratingPage } from '../pages/GeneratingPage'
 import { LandingPage } from '../pages/LandingPage'
@@ -97,6 +109,55 @@ const stepProgress: Record<FlowStep, number> = {
 
 type AppEnvironment = 'default' | 'dev' | 'archive'
 type DevStartMode = Extract<ExperienceMode, 'surprise' | 'curate' | 'build'>
+
+function toArcFlowMode(mode: SessionState['mode']): ArcFlowMode | null {
+  if (mode === 'surprise' || mode === 'curate' || mode === 'build') {
+    return mode
+  }
+  return null
+}
+
+function mapLegacyFlowStepToArcFlowPhase(params: {
+  currentStep: FlowStep
+  mode: SessionState['mode']
+  hasStarterPackSelection: boolean
+  hasBuildAnchorSelection: boolean
+  hasCommittedRoute: boolean
+  isLockingLivePlan: boolean
+}): ArcFlowPhase | null {
+  const mode = toArcFlowMode(params.mode)
+  if (!mode) {
+    return null
+  }
+  if (params.currentStep === 'landing' || params.currentStep === 'curate') {
+    return 'mode_selected'
+  }
+  if (params.currentStep === 'preview') {
+    return 'contract_preview'
+  }
+  if (params.currentStep === 'reveal') {
+    return 'route_refinement'
+  }
+  if (params.currentStep === 'ticket') {
+    return 'live_plan'
+  }
+  return resolveArcFlowPhase({
+    mode,
+    hasEntryReady: mode === 'curate'
+      ? params.hasStarterPackSelection
+      : mode === 'build'
+        ? params.hasBuildAnchorSelection
+        : true,
+    hasContractSelection: mode === 'curate'
+      ? params.hasStarterPackSelection
+      : mode === 'build'
+        ? params.hasBuildAnchorSelection
+        : false,
+    canEnterContractPreview: params.currentStep === 'generating',
+    hasCommittedRoute: params.hasCommittedRoute,
+    isLockingLivePlan: params.isLockingLivePlan,
+  })
+}
 
 function buildDiscoveryRoleLookup(
   discoveryDirections?: DiscoveryDirection[],
@@ -168,6 +229,56 @@ function buildPlanAnchor(
         role: roleByVenueId.get(venueId) ?? 'highlight',
       }
     : undefined
+}
+
+function resolveCanonicalAnchor(
+  state: SessionState,
+  mode: SessionState['mode'],
+  options?: {
+    fallbackAnchor?: IntentInput['anchor']
+  },
+): IntentInput['anchor'] | undefined {
+  const intentAnchor = state.intentDraft.anchor
+  if (intentAnchor?.venueId) {
+    return intentAnchor
+  }
+
+  if (mode === 'build' && state.selectedAnchorVenue?.id) {
+    return {
+      venueId: state.selectedAnchorVenue.id,
+      role: 'highlight',
+    }
+  }
+
+  if (options?.fallbackAnchor?.venueId) {
+    return options.fallbackAnchor
+  }
+
+  // Compatibility fallback for legacy/incomplete selection state.
+  return buildPlanAnchor(
+    mode,
+    state.selectedDiscoveryVenueIds,
+    state.discoveryGroups,
+  )
+}
+
+function resolveCanonicalSelectedDirectionContext(
+  state: SessionState,
+  options?: {
+    fallbackContext?: IntentProfile['selectedDirectionContext']
+  },
+): IntentInput['selectedDirectionContext'] {
+  if (state.selectedDiscoveryDirectionContext) {
+    return state.selectedDiscoveryDirectionContext
+  }
+  if (options?.fallbackContext) {
+    return options.fallbackContext
+  }
+  // Compatibility fallback for legacy/incomplete selection state.
+  return resolveSelectedDirectionContextFromDiscoverySelection(
+    state.selectedDiscoveryVenueIds,
+    state.discoveryGroups,
+  )
 }
 
 function mapDistanceToleranceToDistanceMode(
@@ -250,20 +361,18 @@ function buildDraftGenerationInput(
   state: SessionState,
   selectedPack?: StarterPack,
 ): IntentInput {
+  // Wrapper seam: assemble canonical input for the shared Plan Build Orchestrator.
+  // This helper may gather user/session selections, but it must not reproduce planning stages.
   const persona = state.intentDraft.persona
   const primaryVibe = state.intentDraft.primaryVibe ?? selectedPack?.primaryAnchor ?? null
   const secondaryVibe = state.intentDraft.secondaryVibe ?? selectedPack?.secondaryAnchors?.[0]
   const mode = state.mode ?? 'build'
+  const selectedDirectionContext = resolveCanonicalSelectedDirectionContext(state)
   const discoveryPreferences = buildDiscoveryPreferences(
     state.selectedDiscoveryVenueIds,
     state.discoveryGroups,
   )
-  const discoveryAnchor = buildPlanAnchor(
-    mode,
-    state.selectedDiscoveryVenueIds,
-    state.discoveryGroups,
-  )
-  const anchor = state.intentDraft.anchor ?? discoveryAnchor
+  const anchor = resolveCanonicalAnchor(state, mode)
   const planningMode =
     state.intentDraft.planningMode ?? (anchor ? 'user-led' : 'engine-led')
 
@@ -286,6 +395,7 @@ function buildDraftGenerationInput(
       selectedPack?.lensPreset?.discoveryBias === 'high',
     refinementModes: [...new Set(state.selectedRefinements)],
     discoveryPreferences,
+    selectedDirectionContext,
   }
 
   const preferredDistrictNeighborhood = toPreferredNeighborhoodLabel(
@@ -306,6 +416,8 @@ function buildRefinementInput(
   modes: RefinementMode[],
   selectedPack?: StarterPack,
 ): IntentInput {
+  // Wrapper seam: refinements still call the same orchestrator; this helper only prepares
+  // the next canonical input envelope for that run.
   const persona = state.intentDraft.persona ?? state.lastIntentProfile?.persona ?? null
   const primaryVibe =
     state.intentDraft.primaryVibe ??
@@ -317,16 +429,16 @@ function buildRefinementInput(
     selectedPack?.secondaryAnchors?.[0] ??
     state.lastIntentProfile?.secondaryAnchors?.[0]
   const mode = state.mode ?? state.lastIntentProfile?.mode ?? 'build'
+  const selectedDirectionContext = resolveCanonicalSelectedDirectionContext(state, {
+    fallbackContext: state.lastIntentProfile?.selectedDirectionContext,
+  })
   const discoveryPreferences = buildDiscoveryPreferences(
     state.selectedDiscoveryVenueIds,
     state.discoveryGroups,
   )
-  const discoveryAnchor = buildPlanAnchor(
-    mode,
-    state.selectedDiscoveryVenueIds,
-    state.discoveryGroups,
-  )
-  const anchor = state.intentDraft.anchor ?? discoveryAnchor ?? state.lastIntentProfile?.anchor
+  const anchor = resolveCanonicalAnchor(state, mode, {
+    fallbackAnchor: state.lastIntentProfile?.anchor,
+  })
   const planningMode =
     state.intentDraft.planningMode ??
     (anchor ? 'user-led' : state.lastIntentProfile?.planningMode ?? 'engine-led')
@@ -350,6 +462,7 @@ function buildRefinementInput(
       selectedPack?.lensPreset?.discoveryBias === 'high',
     refinementModes: [...new Set(modes)],
     discoveryPreferences,
+    selectedDirectionContext,
   }
 }
 
@@ -371,6 +484,7 @@ function buildIntentInputFromProfile(intent: IntentProfile): IntentInput {
     planningMode: intent.planningMode,
     anchor: intent.anchor,
     discoveryPreferences: intent.discoveryPreferences,
+    selectedDirectionContext: intent.selectedDirectionContext,
   }
 }
 
@@ -564,8 +678,18 @@ function getDebugQueryFlags(): {
     }
   }
   const params = new URLSearchParams(window.location.search)
+  const currentPath = window.location.pathname.toLowerCase()
+  const isDevCloseoutFlow = currentPath.startsWith('/dev') || currentPath.startsWith('/sandbox')
   const debugMode = params.get('debug') === '1'
   const strictShape = debugMode && params.get('strictShape') === '1'
+  if (isDevCloseoutFlow) {
+    return {
+      debugMode,
+      strictShape,
+      sourceMode: 'curated',
+      sourceModeOverrideApplied: true,
+    }
+  }
   const sourceMode = getSourceMode({
     debugMode,
     search: window.location.search,
@@ -731,7 +855,8 @@ function buildCustomDraftVenue({
         ...templateVenue.source,
         provider: undefined,
         providerRecordId: undefined,
-        sourceOrigin: 'live',
+        sourceOrigin: 'curated',
+        curatedSubtype: 'manual-custom',
         sourceQueryLabel: 'draft-compose-custom',
         sourceConfidence: Math.max(templateVenue.source.sourceConfidence, 0.58),
       },
@@ -759,7 +884,8 @@ function buildCustomDraftVenue({
     categoryHint: baseTemplate?.category ?? defaultCategoryByRole[role],
     subcategoryHint: baseTemplate?.subcategory ?? 'custom stop',
     normalizedFromRawType: 'raw-place',
-    sourceOrigin: 'live',
+    sourceOrigin: 'curated',
+    curatedSubtype: 'manual-custom',
     sourceQueryLabel: 'draft-compose-custom',
     sourceConfidence: 0.55,
     queryTerms: [name],
@@ -872,6 +998,28 @@ function AppShellContent({
           debugMode: true,
         }
       : queryDebugFlags
+  const appShellFlowPhase = useMemo(
+    () =>
+      mapLegacyFlowStepToArcFlowPhase({
+        currentStep: state.currentStep,
+        mode: state.mode,
+        hasStarterPackSelection: Boolean(state.selectedStarterPackId),
+        hasBuildAnchorSelection: Boolean(
+          state.selectedAnchorVenue?.id ?? state.intentDraft.anchor?.venueId,
+        ),
+        hasCommittedRoute: Boolean(state.generatedItinerary && state.currentStep === 'reveal'),
+        isLockingLivePlan: Boolean(state.lockedAt && state.currentStep === 'ticket'),
+      }),
+    [
+      state.currentStep,
+      state.generatedItinerary,
+      state.intentDraft.anchor?.venueId,
+      state.lockedAt,
+      state.mode,
+      state.selectedAnchorVenue?.id,
+      state.selectedStarterPackId,
+    ],
+  )
   const effectiveDraftInput = useMemo(
     () => buildDraftGenerationInput(state, activeStarterPack),
     [
@@ -880,6 +1028,8 @@ function AppShellContent({
       state.intentDraft,
       state.mode,
       state.previewControls,
+      state.selectedAnchorVenue,
+      state.selectedDiscoveryDirectionContext,
       state.selectedDiscoveryVenueIds,
       state.selectedRefinements,
     ],
@@ -941,12 +1091,18 @@ function AppShellContent({
     const timeoutHandle = window.setTimeout(() => {
       void (async () => {
         try {
-          // Wrapper seam: pass canonical intent input to engine; do not synthesize engine truth here.
+          // Wrapper seam: pass canonical input/options into the shared Plan Build Orchestrator.
+          // Any route/session projection happens only after the engine-authored result returns.
           assertCanonicalSelectedDirectionContext({
             wrapperSeam: 'app_shell.generate',
             input,
           })
-          const result = await runGeneratePlan(input, {
+          assertCanonicalBuildAnchorLineage({
+            wrapperSeam: 'app_shell.generate',
+            input,
+            selectedAnchorVenueId: state.selectedAnchorVenue?.id,
+          })
+          const result = await runPlanBuild(input, {
             starterPack: selectedPack,
             debugMode: debugFlags.debugMode,
             strictShape: debugFlags.strictShape,
@@ -1015,7 +1171,7 @@ function AppShellContent({
           }
           actions.setStep(generationTarget === 'preview' ? 'preview' : 'reveal')
         } catch (error) {
-          console.error(error)
+          void error
           if (!cancelled) {
             setPendingPlanAdjustment(undefined)
             if (environment === 'dev' && state.mode === 'surprise') {
@@ -1530,7 +1686,7 @@ function AppShellContent({
       })
       actions.setDiscoveryPreview(groups)
     } catch (error) {
-      console.error(error)
+      void error
       actions.clearDiscoveryPreview()
     }
   }
@@ -1551,7 +1707,7 @@ function AppShellContent({
           await handleRefreshExplorePreview()
         } catch (error) {
           if (!cancelled) {
-            console.error(error)
+            void error
           }
         }
       })()
@@ -1737,7 +1893,7 @@ function AppShellContent({
       matchesDraftComposeQuery(item.venue, trimmedQuery),
     )
 
-    const remoteMatches = await searchAnchorVenues({
+    const remoteMatches = await searchAnchorVenueOptions({
       query: trimmedQuery,
       city: state.lastIntentProfile.city,
       neighborhood: state.lastIntentProfile.neighborhood ?? currentStop?.scoredVenue.venue.neighborhood,
@@ -1926,12 +2082,18 @@ function AppShellContent({
       try {
         const selectedPack = starterPacks.find((pack) => pack.id === state.selectedStarterPackId)
         const input = buildRefinementInput(state, modes, selectedPack)
-        // Wrapper seam: refinement orchestrates engine invocation, not planning truth assembly.
+        // Wrapper seam: refinement prepares the next canonical wrapper input, then reuses the
+        // same shared Plan Build Orchestrator instead of creating a second planning path.
         assertCanonicalSelectedDirectionContext({
           wrapperSeam: 'app_shell.refinement',
           input,
         })
-        const result = await runGeneratePlan(input, {
+        assertCanonicalBuildAnchorLineage({
+          wrapperSeam: 'app_shell.refinement',
+          input,
+          selectedAnchorVenueId: state.selectedAnchorVenue?.id,
+        })
+        const result = await runPlanBuild(input, {
           starterPack: selectedPack,
           baselineArc: state.generatedArc,
           baselineTrace: state.generationTrace,
@@ -1970,7 +2132,7 @@ function AppShellContent({
           actions.setArcAndItinerary(preferredItinerary, persistedAuthoredRoute.arc)
         }
       } catch (error) {
-        console.error(error)
+        void error
       }
     })()
   }
@@ -1996,7 +2158,7 @@ function AppShellContent({
         })
         actions.setExplorationPlan(plan)
       } catch (error) {
-        console.error(error)
+        void error
         actions.clearExplorationPlan()
       }
     })()
@@ -2123,7 +2285,7 @@ function AppShellContent({
       if (state.currentStep === 'preview') {
         return state.mode === 'surprise' ? '/dev/preview?mode=surprise' : '/dev/preview'
       }
-      if (state.currentStep === 'reveal' || state.currentStep === 'ticket') {
+      if (appShellFlowPhase === 'route_refinement' || appShellFlowPhase === 'live_plan') {
         return '/dev/confirm'
       }
       return '/dev/home'
@@ -2133,7 +2295,7 @@ function AppShellContent({
       return
     }
     window.history.replaceState(null, '', targetPath)
-  }, [devStartMode, environment, state.currentStep, state.mode])
+  }, [appShellFlowPhase, devStartMode, environment, state.currentStep, state.mode])
 
   return (
     <main className="app-shell">
@@ -2176,7 +2338,7 @@ function AppShellContent({
               window.location.assign('/dev/home')
               return
             }
-            actions.setStep('landing')
+            window.location.assign('/home')
           }}
           onContinue={() => {
             if (environment === 'dev') {
@@ -2202,6 +2364,7 @@ function AppShellContent({
           discoveryGroups={state.discoveryGroups}
           discoveryLoading={state.discoveryLoading}
           selectedVenueIds={state.selectedDiscoveryVenueIds}
+          selectedDirectionId={state.selectedDiscoveryDirectionContext?.directionId ?? null}
           debugPanel={undefined}
           onChange={(primary, secondary) =>
             actions.patchIntentDraft({
@@ -2224,15 +2387,27 @@ function AppShellContent({
               actions.setDiscoverySelection(
                 state.selectedDiscoveryVenueIds.filter((id) => id !== venueId),
               )
+              actions.setDiscoveryDirectionContext(undefined)
               return
             }
             if (state.selectedDiscoveryVenueIds.length >= 2) {
               return
             }
             actions.setDiscoverySelection([...state.selectedDiscoveryVenueIds, venueId])
+            actions.setDiscoveryDirectionContext(undefined)
           }}
           onSetDiscoverySelection={(venueIds) => {
             actions.setDiscoverySelection(venueIds)
+            actions.setDiscoveryDirectionContext(
+              resolveSelectedDirectionContextFromDiscoverySelection(
+                venueIds,
+                state.discoveryGroups,
+              ),
+            )
+          }}
+          onSelectDiscoveryDirection={({ venueIds, context }) => {
+            actions.setDiscoverySelection(venueIds)
+            actions.setDiscoveryDirectionContext(context)
           }}
           onBack={() =>
             {
@@ -2265,11 +2440,11 @@ function AppShellContent({
                 window.location.assign('/dev/home')
                 return
               }
-              actions.setStep(
-                state.mode === 'curate'
-                  ? 'curate'
-                  : 'landing',
-              )
+              if (state.mode === 'curate') {
+                actions.setStep('curate')
+                return
+              }
+              window.location.assign('/home')
             }
           }
           onNext={() => {

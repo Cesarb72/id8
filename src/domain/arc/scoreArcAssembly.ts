@@ -86,6 +86,104 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
 }
 
+function tokenizeDirectionSignal(value: string | undefined): string[] {
+  if (!value) {
+    return []
+  }
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3)
+}
+
+function computeSurpriseDirectionAlignmentAdjustments(
+  stops: ArcStop[],
+  intent: IntentProfile,
+): {
+  score: number
+  penalty: number
+  alignment: number
+  applied: boolean
+} {
+  if (intent.mode !== 'surprise' || !intent.selectedDirectionContext) {
+    return {
+      score: 0,
+      penalty: 0,
+      alignment: 0,
+      applied: false,
+    }
+  }
+
+  const context = intent.selectedDirectionContext
+  const weightedTokens = new Map<string, number>()
+  const addTokens = (tokens: string[], weight: number) => {
+    for (const token of tokens) {
+      weightedTokens.set(token, Math.max(weight, weightedTokens.get(token) ?? 0))
+    }
+  }
+  addTokens(tokenizeDirectionSignal(context.label), 1)
+  addTokens(tokenizeDirectionSignal(context.archetype), 1.4)
+  addTokens(tokenizeDirectionSignal(context.pocketId), 1.9)
+  addTokens(tokenizeDirectionSignal(context.subtitle), 1.15)
+  addTokens(tokenizeDirectionSignal(context.directionId), 1.6)
+
+  if (weightedTokens.size === 0) {
+    return {
+      score: 0,
+      penalty: 0,
+      alignment: 0,
+      applied: false,
+    }
+  }
+
+  const roleWeightByRole: Partial<Record<ArcStop['role'], number>> = {
+    peak: 0.48,
+    warmup: 0.22,
+    cooldown: 0.22,
+    wildcard: 0.08,
+  }
+  let weightedMatches = 0
+  let weightedPossible = 0
+  for (const stop of stops) {
+    const roleWeight = roleWeightByRole[stop.role] ?? 0
+    if (roleWeight <= 0) {
+      continue
+    }
+    const venueTokens = new Set<string>([
+      ...tokenizeDirectionSignal(stop.scoredVenue.venue.name),
+      ...tokenizeDirectionSignal(stop.scoredVenue.venue.neighborhood),
+      ...tokenizeDirectionSignal(stop.scoredVenue.venue.subcategory),
+      ...stop.scoredVenue.venue.tags
+        .map((tag) => tag.trim().toLowerCase())
+        .filter((tag) => tag.length >= 3),
+      stop.scoredVenue.venue.category.toLowerCase(),
+    ])
+    let stopMatched = 0
+    let stopPossible = 0
+    for (const [token, tokenWeight] of weightedTokens.entries()) {
+      stopPossible += tokenWeight
+      if (venueTokens.has(token)) {
+        stopMatched += tokenWeight
+      }
+    }
+    if (stopPossible > 0) {
+      weightedMatches += roleWeight * (stopMatched / stopPossible)
+      weightedPossible += roleWeight
+    }
+  }
+
+  const alignment = weightedPossible > 0 ? clamp01(weightedMatches / weightedPossible) : 0
+  const score = alignment * 0.18
+  const penalty = alignment < 0.16 ? (0.16 - alignment) * 0.42 : 0
+  return {
+    score,
+    penalty,
+    alignment,
+    applied: true,
+  }
+}
+
 function normalizeArcTotalScore(value: number): number {
   if (value <= 0) {
     return 0
@@ -3258,6 +3356,7 @@ export function scoreArcAssembly(
   const fakeCompleteness = computeFakeCompletenessPenalty(stops)
   const liveRolePromotionScore = computeLiveRolePromotionScore(stops)
   const roleAwareCategoryLift = computeRoleAwareCategoryLift(stops, intent, lens)
+  const surpriseDirectionAlignment = computeSurpriseDirectionAlignmentAdjustments(stops, intent)
 
   const totalScoreRaw =
     breakdown.roleFlowScore * 0.34 +
@@ -3289,6 +3388,7 @@ export function scoreArcAssembly(
       roleEnergyBalance.score * 0.1 +
       liveRolePromotionScore * 0.06 +
       roleAwareCategoryLift * 0.12 +
+      surpriseDirectionAlignment.score +
       highlightIntegrity.dominanceBoost +
       highlightIntegrity.familyAlignmentBoost +
       categoryDiversityGuardrail.bonus +
@@ -3313,6 +3413,7 @@ export function scoreArcAssembly(
       fallbackHighlightSuppression.penalty -
       localStretchPolicy.penalty -
       alignmentPreservation.themeSpreadPenalty -
+      surpriseDirectionAlignment.penalty -
       roleEnergyBalance.penalty -
       missedPeakPenalty.penalty -
       alignmentPreservation.penalty
@@ -3426,6 +3527,10 @@ export function scoreArcAssembly(
       eliteFieldDiversificationReason: expressionRelease.diversificationReason,
       eliteFieldDetectedLanes: expressionRelease.detectedLanes,
       eliteFieldLaneCandidates: expressionRelease.laneCandidates,
+      surpriseDirectionAlignmentScore: clamp01(surpriseDirectionAlignment.score),
+      surpriseDirectionAlignmentPenalty: clamp01(surpriseDirectionAlignment.penalty),
+      surpriseDirectionAlignmentApplied: surpriseDirectionAlignment.applied,
+      surpriseDirectionAlignment: clamp01(surpriseDirectionAlignment.alignment),
       eliteFieldCandidateNames: expressionRelease.eliteCandidateNames,
       eliteFieldCandidateLanes: expressionRelease.eliteCandidateLanes,
       activationMomentElevationScore: clamp01(activationMomentElevation.score),

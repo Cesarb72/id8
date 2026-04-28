@@ -1,4 +1,5 @@
 import { buildRolePools } from '../arc/buildRolePools'
+import { buildVenueCardStopRepresentation } from '../adapters/buildVenueCardStopRepresentation'
 import { getRoleContract } from '../contracts/getRoleContract'
 import { deriveReadableDistrictName } from '../districts/deriveReadableDistrictName'
 import { buildExperienceLens } from '../intent/buildExperienceLens'
@@ -9,9 +10,15 @@ import { scoreVenueCollection } from '../retrieval/scoreVenueFit'
 import type { RolePools } from '../arc/buildRolePools'
 import type { ScoredVenue } from '../types/arc'
 import type { UserStopRole } from '../types/itinerary'
+import type {
+  SharedStopRepresentationRole,
+  VenueCardFallbackStopSeed,
+  VenueCardStopRepresentation,
+} from '../types/stopRepresentation'
 import { getVibeLabel, type IntentInput, type VibeAnchor } from '../types/intent'
 import type { SourceMode } from '../types/sourceMode'
 import type { StarterPack } from '../types/starterPack'
+import type { Venue } from '../types/venue'
 
 export interface DiscoveryCandidate {
   venueId: string
@@ -20,6 +27,7 @@ export interface DiscoveryCandidate {
   categoryLabel: string
   reason: string
   areaLabel: string
+  stopPreview: VenueCardStopRepresentation
 }
 
 export interface DiscoveryGroup {
@@ -116,15 +124,6 @@ function formatCategory(category: string): string {
   return category.replace('_', ' ')
 }
 
-function firstSentence(value: string): string {
-  const trimmed = value.trim()
-  if (!trimmed) {
-    return ''
-  }
-  const sentence = trimmed.split(/[.!?]/)[0]?.trim() ?? trimmed
-  return sentence.length > 0 ? `${sentence}.` : trimmed
-}
-
 function getVibeTone(vibe: VibeAnchor): string {
   return getVibeLabel(vibe).toLowerCase().replace(/\s*\(.*?\)\s*/g, ' ').trim()
 }
@@ -197,38 +196,104 @@ function getDiscoveryExperienceLane(candidate: ScoredVenue): DiscoveryExperience
   return 'other'
 }
 
-function buildDiscoveryReason(candidate: ScoredVenue, role: UserStopRole): string {
-  if (role === 'highlight' && candidate.highlightValidity.validityLevel === 'valid') {
-    return 'Strong fit for the main moment.'
+function toStopRepresentationRole(role: UserStopRole): SharedStopRepresentationRole {
+  if (role === 'start' || role === 'highlight' || role === 'windDown') {
+    return role
   }
-  if (role === 'start' && candidate.stopShapeFit.start >= 0.62) {
-    return 'Easy opener with a strong first-stop fit.'
-  }
-  if (
-    role === 'windDown' &&
-    candidate.stopShapeFit.windDown >= 0.62 &&
-    candidate.venue.energyLevel <= 3
-  ) {
-    return 'Soft finish with easy linger energy.'
-  }
-  return firstSentence(candidate.venue.shortDescription)
+  return 'surprise'
 }
 
-function buildAreaLabel(candidate: ScoredVenue): string {
+function buildContractFitSummary(candidate: ScoredVenue, role: UserStopRole): string {
+  if (role === 'highlight') {
+    if (candidate.highlightValidity.validityLevel === 'valid') {
+      return 'Strong centerpiece fit for this direction.'
+    }
+    return 'Carries the main beat for this direction.'
+  }
+  if (role === 'start') {
+    return candidate.stopShapeFit.start >= 0.62
+      ? 'Strong opener fit for this direction.'
+      : 'Opens this direction with a clean first beat.'
+  }
+  if (role === 'windDown') {
+    return candidate.stopShapeFit.windDown >= 0.62
+      ? 'Strong landing fit for this direction.'
+      : 'Lands this direction with a calmer final beat.'
+  }
+  return 'Supports this direction in sequence.'
+}
+
+function formatVenueTypeLabel(category: Venue['category'], subcategory?: string): string {
+  const categoryLabel = formatCategory(category).replace(/\b\w/g, (value) => value.toUpperCase())
+  const normalizedSubcategory = subcategory?.trim()
+  if (!normalizedSubcategory) {
+    return categoryLabel
+  }
+  if (normalizedSubcategory.toLowerCase().includes(categoryLabel.toLowerCase())) {
+    return categoryLabel
+  }
+  return `${categoryLabel} (${normalizedSubcategory
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ')})`
+}
+
+function buildDiscoveryStopPreview(
+  role: UserStopRole,
+  candidate: ScoredVenue,
+): VenueCardStopRepresentation {
   const readableDistrict = deriveReadableDistrictName(candidate.venue.neighborhood, {
     city: candidate.venue.city,
   })
-  return `${readableDistrict.displayName} | ${candidate.venue.driveMinutes} min away`
+  const fitSummary = buildContractFitSummary(candidate, role)
+  const fallbackSeed: VenueCardFallbackStopSeed = {
+    venueId: candidate.venue.id,
+    venueName: candidate.venue.name,
+    fitSummary,
+    knownFor: candidate.venue.subcategory,
+    areaName: readableDistrict.displayName,
+    venueType: formatVenueTypeLabel(candidate.venue.category, candidate.venue.subcategory),
+    areaFitSummary: `Around ${candidate.venue.driveMinutes} min from this route pocket.`,
+  }
+
+  const representation = buildVenueCardStopRepresentation({
+    role: toStopRepresentationRole(role),
+    detail: undefined,
+    planningStop: undefined,
+    fallbackSeed,
+    curatedVenueById: new Map([[candidate.venue.id, candidate.venue]]),
+  })
+
+  if (representation) {
+    return representation
+  }
+
+  return {
+    role: toStopRepresentationRole(role),
+    roleLabel: role === 'windDown' ? 'Wind Down' : role === 'highlight' ? 'Highlight' : 'Start',
+    venueName: candidate.venue.name,
+    fitSummary,
+    mediaUrl: candidate.venue.imageUrl,
+    venueType: fallbackSeed.venueType,
+    areaName: fallbackSeed.areaName,
+    knownFor: fallbackSeed.knownFor,
+    areaFitSummary: fallbackSeed.areaFitSummary,
+  }
 }
 
 function buildCandidate(role: UserStopRole, candidate: ScoredVenue): DiscoveryCandidate {
+  const stopPreview = buildDiscoveryStopPreview(role, candidate)
+  const areaLabel = stopPreview.areaFitSummary || stopPreview.areaName || ''
+  const reason = stopPreview.fitSummary
   return {
     venueId: candidate.venue.id,
     role,
     name: candidate.venue.name,
-    categoryLabel: formatCategory(candidate.venue.category),
-    reason: buildDiscoveryReason(candidate, role),
-    areaLabel: buildAreaLabel(candidate),
+    categoryLabel: stopPreview.venueType ?? formatCategory(candidate.venue.category),
+    reason,
+    areaLabel,
+    stopPreview,
   }
 }
 

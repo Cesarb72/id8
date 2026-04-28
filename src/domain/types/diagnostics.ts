@@ -6,7 +6,15 @@ import type { BusinessStatus, HoursPressureLevel } from './hours'
 import type { ConstraintTraceEntry, TemporalTrace } from './constraints'
 import type { ExcludedVenueDiagnostics, QualityGateStatus } from './normalization'
 import type { DurationClass, RouteContinuity, RouteMovementMode } from './pacing'
-import type { LiveDataProvider, SourceMode, VenueSourceOrigin } from './sourceMode'
+import type {
+  FieldFallbackSource,
+  FieldGovernanceRuntimeMode,
+  FieldInventoryTruth,
+  LiveDataProvider,
+  ProviderAuthorityClass,
+  SourceMode,
+  VenueSourceOrigin,
+} from './sourceMode'
 import type {
   DistrictAnchor,
   DistrictAnchorSource,
@@ -39,6 +47,47 @@ export interface RolePoolCounts {
   highlight: number
   surprise: number
   windDown: number
+}
+
+export interface CanonicalInterpretationIngressDiagnostics {
+  supplied: boolean
+  plannerIntentAuthoritative: true
+  personaAligned?: boolean
+  primaryVibeAligned?: boolean
+  experienceContractAligned?: boolean
+  contractConstraintsAligned?: boolean
+  strategyFamily?: string
+  strategyReasonSummary?: string
+  bundleSource?: string
+  bundleDerivedFrom?: string[]
+  experienceContractId?: string
+  contractConstraintsId?: string
+}
+
+export interface DistrictEngineIngressDiagnostics {
+  supplied: boolean
+  plannerDistrictAuthoritative: true
+  rankedPocketCount?: number
+  topPocketIds?: string[]
+  topPocketLabels?: string[]
+  plannerTopDistrictIds?: string[]
+  overlapPocketIds?: string[]
+  topDistrictMatchesTopPocket?: boolean
+}
+
+export interface BearingsIngressDiagnostics {
+  supplied: boolean
+  plannerAdmissibilityAuthoritative: true
+  admittedPocketCount?: number
+  suppressedPocketCount?: number
+  rejectedPocketCount?: number
+  topAdmittedPocketIds?: string[]
+  strategyFamily?: string
+  gateSummary?: string
+  gateStrengthSummary?: string
+  plannerTopDistrictIds?: string[]
+  overlapPocketIds?: string[]
+  selectedDistrictMatchesAdmittedPocket?: boolean
 }
 
 export interface RejectedCandidateDiagnostics {
@@ -197,9 +246,11 @@ export interface LiveDedupeLossDiagnostics {
   removedVenueId: string
   removedVenueName: string
   removedSourceOrigin: VenueSourceOrigin
+  removedProviderAuthority?: ProviderAuthorityClass
   keptVenueId: string
   keptVenueName: string
   keptSourceOrigin: VenueSourceOrigin
+  keptProviderAuthority?: ProviderAuthorityClass
   duplicateReason: string
   preferenceReason: string
   liveLostAgainstCurated: boolean
@@ -431,6 +482,21 @@ export interface RetrievalDiagnostics {
     sourceBalanceNotes: string[]
     curatedVsLiveWinnerNotes: string[]
     selectedStopSources: Partial<Record<UserStopRole, VenueSourceOrigin>>
+    devGreatStopFixturesEnvRaw: string
+    devGreatStopFixturesEnabled: boolean
+    devGreatStopFixtureCount: number
+    devGreatStopFixtureVenueIds: string[]
+    runtimeMode?: FieldGovernanceRuntimeMode
+    liveUsableInventory?: boolean
+    fallbackUsed?: boolean
+    fallbackReason?: string
+    fallbackSources?: FieldFallbackSource[]
+    inventoryTruth?: FieldInventoryTruth
+    liveFailureVisible?: boolean
+    fixtureInjectionUsed?: boolean
+    bootstrapInjectionUsed?: boolean
+    defaultCityFallbackUsed?: boolean
+    providerAuthoritySummary?: Partial<Record<ProviderAuthorityClass, number>>
   }
   personaFilteredCount: number
   starterPackFilteredCount: number
@@ -666,6 +732,41 @@ export interface PreRankingAnchorRoleLockTrace {
   fallbackReason?: string
 }
 
+export interface CurateHardCommitRoleMatchDiagnostics {
+  venueId?: string
+  venueName?: string
+  exactMatch: boolean
+}
+
+export interface CurateHardCommitCandidateDiagnostics {
+  candidateId: string
+  start: CurateHardCommitRoleMatchDiagnostics
+  highlight: CurateHardCommitRoleMatchDiagnostics
+  windDown: CurateHardCommitRoleMatchDiagnostics
+  overallMatch: boolean
+}
+
+export interface CurateHardCommitDiagnostics {
+  curateCommitSemantics: 'seed_guided' | 'approved_route_hard_commit'
+  hardCommitRequired: boolean
+  selectedArtifactId?: string
+  selectedTarget: {
+    start?: { venueId?: string; venueName?: string }
+    highlight?: { venueId?: string; venueName?: string }
+    windDown?: { venueId?: string; venueName?: string }
+  }
+  rankedCandidateCount: number
+  hardCommitCandidateCount: number
+  hardCommitPreservationSucceeded: boolean
+  explicitFallbackTriggered: boolean
+  explicitFallbackReason?: string
+  failedRoles: Array<'start' | 'highlight' | 'windDown'>
+  exactPreservingCandidateIds: string[]
+  sampledCandidates: CurateHardCommitCandidateDiagnostics[]
+  finalWinner: CurateHardCommitCandidateDiagnostics
+  finalWinnerMatchType: 'exact_selected_artifact_match' | 'partial_role_match' | 'pure_fallback'
+}
+
 export interface GenerationDiagnostics {
   totalVenueCount: number
   retrievedVenueCount: number
@@ -761,6 +862,10 @@ export interface GenerationDiagnostics {
   boundaryDiagnostics: BoundaryDiagnostics
   overlapDiagnostics?: OverlapDiagnostics
   retrievalDiagnostics: RetrievalDiagnostics
+  canonicalInterpretationIngress?: CanonicalInterpretationIngressDiagnostics
+  districtEngineIngress?: DistrictEngineIngressDiagnostics
+  bearingsIngress?: BearingsIngressDiagnostics
+  curateHardCommit?: CurateHardCommitDiagnostics
   faultIsolationNotes: string[]
   refinementOutcome?: RefinementOutcome
   baselineArcId?: string

@@ -1,5 +1,6 @@
 import { ID8Butler } from '../butler/ID8Butler'
 import { PageShell } from '../layout/PageShell'
+import { getDiscoveryCandidatePresentation } from '../../domain/discovery/discoveryCardPresentation'
 import type { DiscoveryGroup } from '../../domain/discovery/getDiscoveryCandidates'
 
 interface DiscoverySurfaceProps {
@@ -112,6 +113,7 @@ export function DiscoverySurface({
                   {group.candidates.map((candidate) => {
                     const selected = isSelected(selectedVenueIds, candidate.venueId)
                     const disabled = !selected && !canToggleMore
+                    const presentation = getDiscoveryCandidatePresentation(candidate)
 
                     return (
                       <button
@@ -128,9 +130,9 @@ export function DiscoverySurface({
                             {selected ? 'Selected' : 'Tap to prefer'}
                           </span>
                         </span>
-                        <strong>{candidate.name}</strong>
-                        <span className="discovery-card-reason">{candidate.reason}</span>
-                        <span className="discovery-card-meta">{candidate.areaLabel}</span>
+                        <strong>{presentation.venueName}</strong>
+                        <span className="discovery-card-reason">{presentation.fitSummary}</span>
+                        <span className="discovery-card-meta">{presentation.meta}</span>
                         <span className="discovery-card-state">
                           {selected
                             ? 'We will lean toward this if it fits cleanly.'

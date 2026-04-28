@@ -2004,6 +2004,15 @@ function pickRoleCandidates(
     role === 'peak'
       ? new Set(roleCandidates.map((candidate) => getScoredVenueCandidateId(candidate)))
       : undefined
+  const preferredAdmissionScopedOut = Boolean(
+    preferredAdmission.admittedCandidate &&
+      role === 'peak' &&
+      scopedPeakCandidateIds &&
+      !scopedPeakCandidateIds.has(
+        getScoredVenueCandidateId(preferredAdmission.admittedCandidate),
+      ) &&
+      !isAnchorCandidateForRole(preferredAdmission.admittedCandidate, role, intent),
+  )
   const allowPreferredAdmission =
     !preferredAdmission.admittedCandidate ||
     role !== 'peak' ||
@@ -2011,7 +2020,14 @@ function pickRoleCandidates(
     scopedPeakCandidateIds.has(
       getScoredVenueCandidateId(preferredAdmission.admittedCandidate),
     ) ||
-    isAnchorCandidateForRole(preferredAdmission.admittedCandidate, role, intent)
+    isAnchorCandidateForRole(preferredAdmission.admittedCandidate, role, intent) ||
+    preferredAdmissionScopedOut
+  if (preferredAdmissionScopedOut) {
+    contractRelaxed = true
+    fallbackReason =
+      fallbackReason ??
+      'Peak discovery preference admitted after generic highlight scope.'
+  }
   const scoredRoleCandidates =
     allowPreferredAdmission &&
     preferredAdmission.admittedCandidate &&
@@ -2036,6 +2052,21 @@ function pickRoleCandidates(
       }),
     ] as const),
   )
+  const preferredAdmissionHardRejected = Boolean(
+    allowPreferredAdmission &&
+      preferredAdmission.admittedCandidate &&
+      contractPressureByCandidateId.get(
+        getScoredVenueCandidateId(preferredAdmission.admittedCandidate),
+      )?.hardReject,
+  )
+  const finalAllowPreferredAdmission =
+    allowPreferredAdmission && !preferredAdmissionHardRejected
+  if (preferredAdmissionHardRejected) {
+    contractRelaxed = true
+    fallbackReason =
+      fallbackReason ??
+      `${roleContract.label} kept generic highlight scope: selected discovery venue was contract-incompatible.`
+  }
   const hardRejectedCandidates = roleCandidates.filter(
     (candidate) => contractPressureByCandidateId.get(getScoredVenueCandidateId(candidate))?.hardReject,
   )
@@ -2086,7 +2117,7 @@ function pickRoleCandidates(
 
   if (
     enforceContract &&
-    allowPreferredAdmission &&
+    finalAllowPreferredAdmission &&
     preferredAdmission.admittedCandidate &&
     !preferredAdmission.admittedCandidate.roleContract[role].satisfied
   ) {
@@ -2095,7 +2126,7 @@ function pickRoleCandidates(
       fallbackReason ?? `${roleContract.label} relaxed to admit the selected discovery venue.`
   }
 
-  const rankedWithPreference = allowPreferredAdmission && preferredAdmission.admittedCandidate
+  const rankedWithPreference = finalAllowPreferredAdmission && preferredAdmission.admittedCandidate
     ? [
         markRoleCandidate(preferredAdmission.admittedCandidate, intent, role),
         ...ranked.filter(

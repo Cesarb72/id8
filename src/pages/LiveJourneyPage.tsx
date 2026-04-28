@@ -1,5 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ID8Butler } from '../components/butler/ID8Butler'
+import { DevTopNav } from '../components/layout/DevTopNav'
 import { RouteSpine } from '../components/journey/RouteSpine'
 import {
   JourneyMapReal,
@@ -9,17 +10,26 @@ import {
 import { PageShell } from '../components/layout/PageShell'
 import {
   createLiveArtifactPlanId,
-  loadSharedLiveArtifactPlan,
-  loadLiveArtifactSession,
+  loadValidatedSharedLiveArtifactPlan,
+  loadValidatedLiveArtifactSession,
   saveLiveArtifactSession,
   saveLiveArtifactHomeState,
   saveSharedLiveArtifactPlan,
-  type FinalRoute,
-  type FinalRouteStop,
+  type LockedLiveArtifactLoadResult,
   type LiveArtifactSessionPayload,
 } from '../domain/live/liveArtifactSession'
+import type {
+  RuntimeRouteArtifact,
+  RuntimeRouteStop,
+} from '../domain/artifacts/runtimeRouteArtifact'
+import { canonicalizeNearbySwapTarget } from '../domain/live/canonicalizeNearbySwapTarget'
+import {
+  validateFinalRouteAgainstItinerary,
+  type LiveArtifactRouteError,
+} from '../domain/live/validateLiveArtifact'
 import { buildTonightSignals } from '../domain/journey/buildTonightSignals'
-import type { ItineraryStop, UserStopRole } from '../domain/types/itinerary'
+import type { Itinerary, ItineraryStop, UserStopRole } from '../domain/types/itinerary'
+import { buildPlanningStopRepresentation } from '../domain/adapters/buildPlanningStopRepresentation'
 
 type LiveAlertStage = 'idle' | 'alert' | 'preview' | 'resolved'
 type LiveAlertDecision = 'keep' | 'switch' | 'timing'
@@ -32,84 +42,104 @@ interface LiveJourneyPageProps {
 
 const LIVE_ALERT_PREVIEW_BY_DECISION: Record<
   LiveAlertDecision,
-  { title: string; lines: string[]; ctaLabel: string }
+  { signal: string; impact: string; ctaLabel: string }
 > = {
   keep: {
-    title: 'Stay with current plan',
-    lines: ["We'll keep watching this stop."],
+    signal: 'Stay with current highlight',
+    impact: 'Highlight entry may tighten if congestion increases further.',
     ctaLabel: 'Confirm',
   },
   switch: {
-    title: 'Swap Jazz Cellar for a nearby option',
-    lines: ['Keeps the same role in your night.', '2 min away.'],
+    signal: 'Switch to a nearby highlight option',
+    impact: 'Keeps route continuity while reducing immediate timing pressure.',
     ctaLabel: 'Apply swap',
   },
   timing: {
-    title: 'Push this stop by 20 minutes',
-    lines: ['Improves entry window.', 'Rest of route stays aligned.'],
+    signal: 'Shift highlight timing by ~20 minutes',
+    impact: 'Protects your next-step entry window without changing the route shape.',
     ctaLabel: 'Update timing',
   },
 }
 
 const LIVE_CONTINUATION_OPTIONS: Array<{
   id: LiveContinuationOptionId
+  archetypeLabel: string
+  continuationArchetype: string
   title: string
   description: string
+  defaultRationale: string
+  futureVenueSlotLabel: string
+  futureVenueReasonSlotLabel: string
   stops: JourneyContinuationStop[]
 }> = [
   {
     id: 'stay-nearby',
+    archetypeLabel: 'Continue local',
+    continuationArchetype: 'stay_local_extension',
     title: 'Stay nearby',
     description: 'Keep things local with one or two easy nearby beats.',
+    defaultRationale: 'Extends your landing without adding much movement.',
+    futureVenueSlotLabel: 'Suggestions will appear here when this lane has a strong next match.',
+    futureVenueReasonSlotLabel: 'A short fit note will appear with each suggestion.',
     stops: [
       {
         id: 'continue_stay_nearby_1',
-        name: 'Alameda Late Kitchen',
-        descriptor: 'Walkable nightcap with easy seating and soft energy.',
+        name: 'Nearby continuation stop A',
+        descriptor: 'Compact local extension lane.',
         coordinates: [-121.9256, 37.3235],
       },
       {
         id: 'continue_stay_nearby_2',
-        name: 'Garden Patio Pour',
-        descriptor: 'Low-key patio stop to keep the flow nearby.',
+        name: 'Nearby continuation stop B',
+        descriptor: 'Optional second nearby extension.',
         coordinates: [-121.9237, 37.3221],
       },
     ],
   },
   {
     id: 'change-pace',
+    archetypeLabel: 'Re-lift energy',
+    continuationArchetype: 'energy_relift_extension',
     title: 'Change the pace',
     description: 'Shift energy with a fresh district feel after the main arc.',
+    defaultRationale: 'Adds a second wind after your current landing.',
+    futureVenueSlotLabel: 'Suggestions will appear here when this lane has a strong next match.',
+    futureVenueReasonSlotLabel: 'A short fit note will appear with each suggestion.',
     stops: [
       {
         id: 'continue_change_pace_1',
-        name: 'SoFa Vinyl Room',
-        descriptor: 'A livelier late set to lift momentum again.',
+        name: 'Energy-lift continuation stop A',
+        descriptor: 'Higher-energy continuation lane.',
         coordinates: [-121.8918, 37.3339],
       },
       {
         id: 'continue_change_pace_2',
-        name: 'Market Street Social',
-        descriptor: 'Crowd-forward lounge to close on a brighter note.',
+        name: 'Energy-lift continuation stop B',
+        descriptor: 'Optional brighter late extension.',
         coordinates: [-121.8886, 37.3351],
       },
     ],
   },
   {
     id: 'ease-out',
+    archetypeLabel: 'Soft close',
+    continuationArchetype: 'soft_close_extension',
     title: 'Ease out',
     description: 'Land softly with a calmer final beat before wrapping.',
+    defaultRationale: 'Preserves a calm close after your route endpoint.',
+    futureVenueSlotLabel: 'Suggestions will appear here when this lane has a strong next match.',
+    futureVenueReasonSlotLabel: 'A short fit note will appear with each suggestion.',
     stops: [
       {
         id: 'continue_ease_out_1',
-        name: 'Willow Quiet Bar',
-        descriptor: 'Quieter corner for a slow final pour.',
+        name: 'Soft-close continuation stop A',
+        descriptor: 'Lower-energy continuation lane.',
         coordinates: [-121.9194, 37.3202],
       },
       {
         id: 'continue_ease_out_2',
-        name: 'Late Dessert Counter',
-        descriptor: 'Short, relaxed sweet finish before heading out.',
+        name: 'Soft-close continuation stop B',
+        descriptor: 'Optional gentle final extension.',
         coordinates: [-121.9168, 37.3189],
       },
     ],
@@ -123,50 +153,7 @@ const FALLBACK_COORDINATES_BY_ROLE: Record<UserStopRole, [number, number]> = {
   surprise: [-121.9078, 37.3292],
   windDown: [-121.9275, 37.3229],
 }
-
-function toTitleCase(value: string): string {
-  return value
-    .split(/[\s_-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
-function getKnownForLine(stop: ItineraryStop): string {
-  const priorityTags = stop.tags.filter((tag) =>
-    ['jazz', 'cocktails', 'wine', 'dessert', 'chef-led', 'tasting', 'speakeasy', 'tea'].includes(
-      tag.toLowerCase(),
-    ),
-  )
-  const tags = (priorityTags.length > 0 ? priorityTags : stop.tags).slice(0, 2)
-  if (tags.length > 0) {
-    return `Known for ${tags.map((tag) => toTitleCase(tag)).join(' and ')}.`
-  }
-  if (stop.subcategory) {
-    return `Known for its ${toTitleCase(stop.subcategory)} focus.`
-  }
-  return `Known for a strong local fit in ${stop.neighborhood}.`
-}
-
-function getLocalSignal(stop: ItineraryStop): string {
-  const normalized = new Set(stop.tags.map((tag) => tag.toLowerCase()))
-  if (
-    ['reservations', 'reservation-recommended', 'book-ahead', 'bookings'].some((tag) =>
-      normalized.has(tag),
-    )
-  ) {
-    return 'Reservations recommended.'
-  }
-  if (
-    ['late-night', 'night-owl', 'live', 'jazz', 'small-stage'].some((tag) => normalized.has(tag))
-  ) {
-    return 'Fills quickly after 9pm.'
-  }
-  if (['walk-up', 'quick-start', 'coffee', 'tea-room', 'dessert', 'gelato'].some((tag) => normalized.has(tag))) {
-    return 'Easy to enter without long waits.'
-  }
-  return 'Steady local traffic through the evening.'
-}
+const LIVE_GOOGLE_STOP_ID_PREFIX = 'live_google_'
 
 function getNearbyOptionDescriptor(category: JourneyNearbyOption['category']): string {
   if (category === 'nightlife') {
@@ -243,13 +230,22 @@ function getRoleTravelWindow(
   return before + after
 }
 
-function toFinalRouteStopFromArtifact(stop: ItineraryStop, stopIndex: number): FinalRouteStop {
+function getProviderRecordIdFromVenueId(venueId: string): string | undefined {
+  if (!venueId.startsWith(LIVE_GOOGLE_STOP_ID_PREFIX)) {
+    return undefined
+  }
+  const providerRecordId = venueId.slice(LIVE_GOOGLE_STOP_ID_PREFIX.length).trim()
+  return providerRecordId.length > 0 ? providerRecordId : undefined
+}
+
+function toFinalRouteStopFromArtifact(stop: ItineraryStop, stopIndex: number): RuntimeRouteStop {
   const fallbackCoordinates = FALLBACK_COORDINATES_BY_ROLE[stop.role]
+  const providerRecordId = getProviderRecordIdFromVenueId(stop.venueId)
   return {
     id: stop.id,
     sourceStopId: stop.id,
     displayName: stop.venueName,
-    providerRecordId: stop.venueId || stop.id,
+    ...(providerRecordId ? { providerRecordId } : {}),
     latitude: fallbackCoordinates[1],
     longitude: fallbackCoordinates[0],
     address: `${stop.neighborhood}, ${stop.city}`.replace(/^,\s*/, ''),
@@ -264,39 +260,9 @@ function toFinalRouteStopFromArtifact(stop: ItineraryStop, stopIndex: number): F
   }
 }
 
-function buildFinalRouteFromArtifact(artifact: LiveArtifactSessionPayload): FinalRoute {
-  const stops = artifact.itinerary.stops.map((stop, stopIndex) =>
-    toFinalRouteStopFromArtifact(stop, stopIndex),
-  )
-  return {
-    routeId: artifact.finalRoute?.routeId ?? `${artifact.itinerary.id}-live`,
-    selectedDirectionId: artifact.finalRoute?.selectedDirectionId ?? artifact.itinerary.id,
-    location: artifact.city,
-    persona: artifact.finalRoute?.persona ?? artifact.itinerary.crew.persona,
-    vibe: artifact.finalRoute?.vibe ?? artifact.itinerary.vibes[0] ?? 'lively',
-    stops,
-    activeStopIndex: Math.max(
-      0,
-      stops.findIndex((stop) => stop.role === artifact.initialActiveRole),
-    ),
-    routeHeadline: artifact.itinerary.story?.headline ?? artifact.itinerary.title,
-    routeSummary: artifact.selectedClusterConfirmation,
-    mapMarkers: stops.map((stop) => ({
-      id: stop.id,
-      displayName: stop.displayName,
-      role: stop.role,
-      stopIndex: stop.stopIndex,
-      latitude: stop.latitude,
-      longitude: stop.longitude,
-    })),
-    liveNotices: [],
-    updatedAt: artifact.lockedAt,
-  }
-}
-
 function buildFinalRouteMapMarkers(
-  stops: FinalRouteStop[],
-): FinalRoute['mapMarkers'] {
+  stops: RuntimeRouteStop[],
+): RuntimeRouteArtifact['mapMarkers'] {
   return stops
     .slice()
     .sort((left, right) => left.stopIndex - right.stopIndex)
@@ -310,17 +276,107 @@ function buildFinalRouteMapMarkers(
     }))
 }
 
+function getCanonicalRouteItineraryStops(
+  itinerary: Itinerary,
+): ItineraryStop[] {
+  return itinerary.stops.filter(
+    (stop) => stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown',
+  )
+}
+
+function alignCanonicalStopToFinalRouteStop(
+  canonicalStop: ItineraryStop,
+  routeStop: RuntimeRouteStop,
+): ItineraryStop {
+  const alignedDriveMinutes =
+    Number.isFinite(routeStop.driveMinutes) && routeStop.driveMinutes >= 0
+      ? routeStop.driveMinutes
+      : canonicalStop.driveMinutes
+  return {
+    ...canonicalStop,
+    venueId: routeStop.venueId || canonicalStop.venueId,
+    venueName: routeStop.displayName || canonicalStop.venueName,
+    subtitle: routeStop.subtitle || canonicalStop.subtitle,
+    neighborhood: routeStop.neighborhood || canonicalStop.neighborhood,
+    driveMinutes: alignedDriveMinutes,
+    imageUrl: routeStop.imageUrl || canonicalStop.imageUrl,
+  }
+}
+
+function mapFinalRouteToCanonicalItineraryStops(
+  itinerary: Itinerary,
+  finalRoute: RuntimeRouteArtifact,
+): ItineraryStop[] {
+  const canonicalStops = getCanonicalRouteItineraryStops(itinerary)
+  const routeStops = finalRoute.stops
+    .filter((stop) => stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown')
+    .sort((left, right) => left.stopIndex - right.stopIndex)
+  if (canonicalStops.length === 0 || routeStops.length === 0) {
+    return []
+  }
+  const canonicalStopById = new Map(canonicalStops.map((stop) => [stop.id, stop] as const))
+  const canonicalStopByRole = new Map(canonicalStops.map((stop) => [stop.role, stop] as const))
+  const usedStopIds = new Set<string>()
+  const mappedStops: ItineraryStop[] = []
+
+  for (const routeStop of routeStops) {
+    const sourceStopId = routeStop.sourceStopId?.trim()
+    if (sourceStopId) {
+      const canonicalById = canonicalStopById.get(sourceStopId)
+      if (!canonicalById || canonicalById.role !== routeStop.role) {
+        return []
+      }
+      if (usedStopIds.has(canonicalById.id)) {
+        return []
+      }
+      mappedStops.push(alignCanonicalStopToFinalRouteStop(canonicalById, routeStop))
+      usedStopIds.add(canonicalById.id)
+      continue
+    }
+
+    const canonicalByRole = canonicalStopByRole.get(routeStop.role)
+    if (!canonicalByRole || usedStopIds.has(canonicalByRole.id)) {
+      return []
+    }
+    mappedStops.push(alignCanonicalStopToFinalRouteStop(canonicalByRole, routeStop))
+    usedStopIds.add(canonicalByRole.id)
+  }
+
+  return mappedStops
+}
+
+function uniqueLiveLines(lines: Array<string | undefined>, limit: number): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const rawLine of lines) {
+    const line = rawLine?.trim()
+    if (!line) {
+      continue
+    }
+    const key = line.toLowerCase()
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    result.push(line)
+    if (result.length >= limit) {
+      break
+    }
+  }
+  return result
+}
+
 function patchFinalRouteStop(params: {
-  route: FinalRoute
+  route: RuntimeRouteArtifact
   targetRole: UserStopRole
   targetStopId?: string
   targetStopIndex?: number
-  replacementStop: FinalRouteStop
+  replacementStop: RuntimeRouteStop
   notice?: string
   activeRole?: UserStopRole
 }): {
-  route: FinalRoute
-  resolvedStop: FinalRouteStop
+  route: RuntimeRouteArtifact
+  resolvedStop: RuntimeRouteStop
   resolution: 'id' | 'index' | 'role'
 } | null {
   const orderedStops = params.route.stops
@@ -353,7 +409,7 @@ function patchFinalRouteStop(params: {
   if (!currentStop) {
     return null
   }
-  const replacementStop: FinalRouteStop = {
+  const replacementStop: RuntimeRouteStop = {
     ...currentStop,
     ...params.replacementStop,
     title: currentStop.title,
@@ -384,41 +440,16 @@ function patchFinalRouteStop(params: {
   }
 }
 
-function logSwapCommitChecks(
-  route: FinalRoute,
-  swappedRole: UserStopRole,
-  surfaces: string[],
-): void {
-  if (!import.meta.env.DEV) {
-    return
-  }
-  const stopNames = route.stops.map((stop) => stop.displayName)
-  const stopIds = route.stops.map((stop) => stop.providerRecordId || stop.id)
-  console.log('SWAP COMMIT CHECK', {
-    routeId: route.routeId,
-    swappedRole,
-    stopNames,
-    stopIds,
-  })
-  surfaces.forEach((surface) => {
-    console.log('SURFACE ROUTE CHECK', {
-      surface,
-      routeId: route.routeId,
-      stopNames,
-    })
-  })
-}
-
 export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
-  const [artifact] = useState<LiveArtifactSessionPayload | null>(() =>
-    sharedPlanId ? loadSharedLiveArtifactPlan(sharedPlanId) : loadLiveArtifactSession(),
+  const [loadResult] = useState<LockedLiveArtifactLoadResult>(() =>
+    sharedPlanId ? loadValidatedSharedLiveArtifactPlan(sharedPlanId) : loadValidatedLiveArtifactSession(),
   )
-  const [finalRoute, setFinalRoute] = useState<FinalRoute | null>(() => {
-    if (!artifact) {
-      return null
-    }
-    return artifact.finalRoute ?? buildFinalRouteFromArtifact(artifact)
-  })
+  const artifact = loadResult.status === 'ok' ? loadResult.payload : null
+  const loadError: LiveArtifactRouteError | null =
+    loadResult.status === 'error' ? loadResult.error : null
+  const [finalRoute, setFinalRoute] = useState<RuntimeRouteArtifact | null>(() =>
+    artifact?.finalRoute ?? null,
+  )
   const [activeRole, setActiveRole] = useState<UserStopRole>(artifact?.initialActiveRole ?? 'start')
   const [nearbySummaryByRole, setNearbySummaryByRole] = useState<Partial<Record<UserStopRole, string>>>(
     {},
@@ -449,39 +480,33 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     if (!artifact || !finalRoute) {
       return [] as ItineraryStop[]
     }
-    const sourceStopById = new Map(artifact.itinerary.stops.map((stop) => [stop.id, stop] as const))
-    const sourceStopByRole = new Map(
-      artifact.itinerary.stops.map((stop) => [stop.role, stop] as const),
-    )
-    const fallbackSourceStop = artifact.itinerary.stops[0]
-    return finalRoute.stops
-      .slice()
-      .filter((finalStop) => finalStop.role !== 'surprise')
-      .sort((left, right) => left.stopIndex - right.stopIndex)
-      .map((finalStop) => {
-        const sourceStop =
-          sourceStopById.get(finalStop.sourceStopId) ??
-          sourceStopByRole.get(finalStop.role) ??
-          fallbackSourceStop
-        if (!sourceStop || !finalStop.displayName.trim()) {
-          return null
-        }
-        return {
-          ...sourceStop,
-          id: finalStop.sourceStopId || sourceStop.id,
-          role: finalStop.role,
-          title: finalStop.title || sourceStop.title,
-          venueId: finalStop.venueId || sourceStop.venueId,
-          venueName: finalStop.displayName,
-          city: finalRoute.location || sourceStop.city,
-          subtitle: finalStop.subtitle || sourceStop.subtitle,
-          neighborhood: finalStop.neighborhood || sourceStop.neighborhood,
-          driveMinutes: finalStop.driveMinutes ?? sourceStop.driveMinutes,
-          imageUrl: finalStop.imageUrl || sourceStop.imageUrl,
-        }
-      })
-      .filter((stop): stop is ItineraryStop => Boolean(stop))
+    return mapFinalRouteToCanonicalItineraryStops(artifact.itinerary, finalRoute)
   }, [artifact, finalRoute])
+  const routeMappingError = useMemo<LiveArtifactRouteError | null>(() => {
+    if (!artifact || !finalRoute || routeItineraryStops.length > 0) {
+      return null
+    }
+    return {
+      code: 'final_route_itinerary_mapping_failed',
+      detail:
+        'Locked finalRoute could not be mapped onto the canonical itinerary companion stops.',
+    }
+  }, [artifact, finalRoute, routeItineraryStops])
+  const canonicalRouteArtifact = useMemo<LiveArtifactSessionPayload | null>(() => {
+    if (!artifact || !finalRoute || routeItineraryStops.length === 0) {
+      return null
+    }
+    return {
+      ...artifact,
+      selectedClusterConfirmation: finalRoute.routeSummary || artifact.selectedClusterConfirmation,
+      finalRoute,
+      itinerary: artifact.itinerary,
+    }
+  }, [artifact, finalRoute, routeItineraryStops])
+  const liveRenderRoute = useMemo(
+    () => canonicalRouteArtifact?.finalRoute ?? finalRoute ?? null,
+    [canonicalRouteArtifact, finalRoute],
+  )
 
   const handleNearbySummaryChange = useCallback(
     (role: UserStopRole, summary: string | null) => {
@@ -516,6 +541,9 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
           existing.every(
             (option, index) =>
               option.id === nextOptions[index]?.id &&
+              option.providerRecordId === nextOptions[index]?.providerRecordId &&
+              option.sourceOrigin === nextOptions[index]?.sourceOrigin &&
+              option.provider === nextOptions[index]?.provider &&
               option.minutesAway === nextOptions[index]?.minutesAway &&
               option.category === nextOptions[index]?.category,
           )
@@ -532,6 +560,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
   )
 
   const switchNearbyOptions = (nearbyOptionsByRole.highlight ?? []).slice(0, 3)
+  const primarySwitchNearbyOption = switchNearbyOptions[0] ?? null
   const originalHighlightStop = routeItineraryStops.find((stop) => stop.role === 'highlight') ?? null
 
   useEffect(() => {
@@ -574,35 +603,14 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     return () => window.clearTimeout(timer)
   }, [shareFeedback])
   useEffect(() => {
-    if (!import.meta.env.DEV || !finalRoute) {
-      return
-    }
-    console.log('ROUTE TRUTH CHECK', {
-      routeId: finalRoute.routeId,
-      selectedDirectionId: finalRoute.selectedDirectionId,
-      stopNames: finalRoute.stops.map((stop) => stop.displayName),
-      stopRoles: finalRoute.stops.map((stop) => stop.role),
-      stopIds: finalRoute.stops.map((stop) => stop.id || stop.providerRecordId),
-    })
-    console.log('ROUTE SURFACE CHECK: live-map', { routeId: finalRoute.routeId })
-    console.log('ROUTE SURFACE CHECK: live-spine', { routeId: finalRoute.routeId })
-    console.log('ROUTE SURFACE CHECK: live-share', { routeId: finalRoute.routeId })
-    console.log('ROUTE SURFACE CHECK: live-calendar', { routeId: finalRoute.routeId })
-  }, [finalRoute])
-  useEffect(() => {
-    if (!artifact || !finalRoute || routeItineraryStops.length === 0) {
+    if (!canonicalRouteArtifact) {
       return
     }
     saveLiveArtifactSession({
-      ...artifact,
+      ...canonicalRouteArtifact,
       initialActiveRole: activeRole,
-      finalRoute,
-      itinerary: {
-        ...artifact.itinerary,
-        stops: routeItineraryStops,
-      },
     })
-  }, [activeRole, artifact, finalRoute, routeItineraryStops])
+  }, [activeRole, canonicalRouteArtifact])
 
   const handleLiveAlertDecision = (decision: LiveAlertDecision) => {
     setActiveRole('highlight')
@@ -635,6 +643,13 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
       return
     }
     handleLiveAlertDecision(decision)
+  }
+
+  const handleOpenHighlightSwapOptions = () => {
+    if (!primarySwitchNearbyOption) {
+      return
+    }
+    handlePreviewAlternativeFromCard('highlight', primarySwitchNearbyOption.id)
   }
 
   const handleSelectContinuationOption = (optionId: LiveContinuationOptionId) => {
@@ -675,10 +690,10 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
         ? toSharedPlanPath(sharedId)
         : '/journey/live'
     saveLiveArtifactHomeState({
-      city: finalRoute?.location ?? artifact.city,
+      city: liveRenderRoute?.location ?? artifact.city,
       mapPath,
     })
-    window.location.assign(isDevLive ? '/dev/plans' : '/home')
+    window.location.assign(isDevLive ? '/dev/plans' : '/plans')
   }
 
   const handleOpenShareModal = () => {
@@ -701,75 +716,67 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
       return
     }
     if (liveAlertDecision === 'switch') {
-      setLiveAppliedSwitchOption(selectedSwitchNearbyOption)
-      if (selectedSwitchNearbyOption) {
-        setFinalRoute((current) => {
-          if (!current) {
-            return current
-          }
-          const currentHighlightStop = current.stops.find((stop) => stop.role === 'highlight')
-          if (!currentHighlightStop) {
-            return current
-          }
-          const replacementStop: FinalRouteStop = {
-            ...currentHighlightStop,
-            displayName: selectedSwitchNearbyOption.name,
-            providerRecordId: selectedSwitchNearbyOption.id,
-            latitude: selectedSwitchNearbyOption.coordinates[1],
-            longitude: selectedSwitchNearbyOption.coordinates[0],
-            address: `${currentHighlightStop.neighborhood || current.location}, ${current.location}`.replace(
-              /^,\s*/,
-              '',
-            ),
-            subtitle: `${getNearbyOptionDescriptor(selectedSwitchNearbyOption.category)} · ${selectedSwitchNearbyOption.minutesAway} min away`,
-          }
-          const patchedRoute = patchFinalRouteStop({
-            route: current,
-            targetRole: 'highlight',
-            targetStopId: currentHighlightStop.id,
-            targetStopIndex: currentHighlightStop.stopIndex,
-            replacementStop,
-            notice: `Highlight switched to ${selectedSwitchNearbyOption.name}.`,
-            activeRole: 'highlight',
-          })
-          if (!patchedRoute) {
-            return current
-          }
-          if (import.meta.env.DEV) {
-            console.log('SWAP TARGET CHECK', {
-              routeId: current.routeId,
-              modalTargetStopId: currentHighlightStop.id,
-              modalTargetRole: 'highlight',
-              modalTargetStopIndex: currentHighlightStop.stopIndex,
-              resolvedStopId: patchedRoute.resolvedStop.id,
-              resolvedRole: patchedRoute.resolvedStop.role,
-              resolvedStopIndex: patchedRoute.resolvedStop.stopIndex,
-            })
-          }
-          if (
-            patchedRoute.resolvedStop.role !== 'highlight' ||
-            patchedRoute.resolvedStop.stopIndex !== currentHighlightStop.stopIndex
-          ) {
-            console.error('Live swap aborted due to target mismatch.', {
-              routeId: current.routeId,
-              expectedRole: 'highlight',
-              expectedStopIndex: currentHighlightStop.stopIndex,
-              resolvedRole: patchedRoute.resolvedStop.role,
-              resolvedStopIndex: patchedRoute.resolvedStop.stopIndex,
-              resolution: patchedRoute.resolution,
-            })
-            return current
-          }
-          logSwapCommitChecks(patchedRoute.route, 'highlight', [
-            'live',
-            'map',
-            'spine',
-            'share',
-            'calendar',
-          ])
-          return patchedRoute.route
-        })
+      const canonicalSwapTarget = canonicalizeNearbySwapTarget({
+        selectedOptionId: selectedSwitchNearbyOption?.id,
+        nearbyOptions: nearbyOptionsByRole.highlight ?? [],
+      })
+      if (!canonicalSwapTarget.ok) {
+        setLiveAlertDecision(null)
+        setSelectedSwitchNearbyOption(null)
+        setLiveAlertStage('alert')
+        return
       }
+      const swapTarget = canonicalSwapTarget.canonicalOption
+      setLiveAppliedSwitchOption(swapTarget)
+      setFinalRoute((current) => {
+        if (!current) {
+          return current
+        }
+        const currentHighlightStop = current.stops.find((stop) => stop.role === 'highlight')
+        if (!currentHighlightStop) {
+          return current
+        }
+        const replacementStop: RuntimeRouteStop = {
+          ...currentHighlightStop,
+          displayName: swapTarget.name,
+          venueId: swapTarget.id,
+          providerRecordId: swapTarget.providerRecordId,
+          latitude: swapTarget.coordinates[1],
+          longitude: swapTarget.coordinates[0],
+          address: `${currentHighlightStop.neighborhood || current.location}, ${current.location}`.replace(
+            /^,\s*/,
+            '',
+          ),
+          subtitle: `${getNearbyOptionDescriptor(swapTarget.category)} · ${swapTarget.minutesAway} min away`,
+        }
+        const patchedRoute = patchFinalRouteStop({
+          route: current,
+          targetRole: 'highlight',
+          targetStopId: currentHighlightStop.id,
+          targetStopIndex: currentHighlightStop.stopIndex,
+          replacementStop,
+          notice: `Highlight switched to ${swapTarget.name}.`,
+          activeRole: 'highlight',
+        })
+        if (!patchedRoute) {
+          return current
+        }
+        if (
+          patchedRoute.resolvedStop.role !== 'highlight' ||
+          patchedRoute.resolvedStop.stopIndex !== currentHighlightStop.stopIndex
+        ) {
+          return current
+        }
+        if (
+          !validateFinalRouteAgainstItinerary({
+            itinerary: artifact.itinerary,
+            finalRoute: patchedRoute.route,
+          })
+        ) {
+          return current
+        }
+        return patchedRoute.route
+      })
     } else {
       setLiveAppliedSwitchOption(null)
     }
@@ -787,17 +794,52 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     setLiveAlertStage('alert')
   }
 
+  const liveStopRepresentationByRole = useMemo(
+    () =>
+      new Map(
+        routeItineraryStops.map((stop) => [
+          stop.role,
+          buildPlanningStopRepresentation({ stop }),
+        ]),
+      ),
+    [routeItineraryStops],
+  )
+  const canonicalHighlightVenueName = useMemo(
+    () =>
+      liveStopRepresentationByRole.get('highlight')?.venueName ||
+      routeItineraryStops.find((stop) => stop.role === 'highlight')?.venueName ||
+      null,
+    [liveStopRepresentationByRole, routeItineraryStops],
+  )
+  const copilotBusyLine = canonicalHighlightVenueName
+    ? `${canonicalHighlightVenueName} is getting busy.`
+    : 'Your highlight stop is getting busy.'
+
   const inlineDetailsByRole = useMemo(() => {
     if (!artifact) {
       return {}
     }
     return Object.fromEntries(
       routeItineraryStops.map((stop) => {
+        const sharedStopRepresentation = liveStopRepresentationByRole.get(stop.role)
+        const roleTravelWindowMinutes = getRoleTravelWindow(artifact.itinerary, stop.role)
+        const canonicalTonightSignals = buildTonightSignals({
+          stop,
+          roleTravelWindowMinutes,
+          nearbySummary: nearbySummaryByRole[stop.role],
+          nearbyOptionsCount: nearbyOptionsByRole[stop.role]?.length ?? 0,
+        })
+        const reasonSignals = stop.reasonLabels?.slice(0, 2) ?? []
+        const baseGoodToKnow =
+          stop.note?.trim() ||
+          (roleTravelWindowMinutes > 0
+            ? `${roleTravelWindowMinutes} min travel envelope around this stop.`
+            : 'Compact movement envelope for this stop.')
         const next: {
-          whyItFits: string
-          knownFor: string
+          whyItFits?: string
+          knownFor?: string
           goodToKnow: string
-          localSignal: string
+          localSignal?: string
           alertSignal?: string
           decisionActions?: Array<{
             id: 'keep' | 'timing'
@@ -813,29 +855,27 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
             replacementContext?: string
           }>
         } = {
-          whyItFits:
-            stop.selectedBecause?.trim() ||
-            `Anchored as your ${stop.title.toLowerCase()} beat without breaking route flow.`,
-          knownFor: getKnownForLine(stop),
-          goodToKnow: 'Kept aligned with nearby pacing and transition timing.',
-          localSignal: getLocalSignal(stop),
-          tonightSignals: buildTonightSignals({
-            stop,
-            roleTravelWindowMinutes: getRoleTravelWindow(artifact.itinerary, stop.role),
-            nearbySummary: nearbySummaryByRole[stop.role],
-            nearbyOptionsCount: nearbyOptionsByRole[stop.role]?.length ?? 0,
-          }),
+          whyItFits: sharedStopRepresentation?.fitSummary,
+          knownFor: sharedStopRepresentation?.knownFor,
+          goodToKnow: baseGoodToKnow,
+          localSignal: sharedStopRepresentation?.areaFitSummary,
+          tonightSignals: uniqueLiveLines([...canonicalTonightSignals, ...reasonSignals], 3),
+        }
+        const canonicalAroundHere = [stop.neighborhood, stop.city]
+          .filter((value): value is string => Boolean(value && value.trim()))
+        if (canonicalAroundHere.length > 0) {
+          next.aroundHereSignals = canonicalAroundHere.slice(0, 2)
         }
         const nearbySummary = nearbySummaryByRole[stop.role]
         if (nearbySummary) {
-          next.aroundHereSignals = [nearbySummary]
+          next.aroundHereSignals = [nearbySummary, ...(next.aroundHereSignals ?? [])].slice(0, 2)
         }
-        if (stop.role === 'highlight' && liveAlertStage === 'alert') {
-          next.alertSignal = '⚠️ This stop is getting busy'
-          next.decisionActions = [
-            { id: 'keep', label: 'Keep current plan' },
-            { id: 'timing', label: 'Go later (~20 min)' },
-          ]
+        const highlightAlertOwnsDecision = stop.role === 'highlight' && liveAlertStage === 'alert'
+        if (
+          stop.role === 'highlight' &&
+          switchNearbyOptions.length > 0 &&
+          !highlightAlertOwnsDecision
+        ) {
           next.alternatives = switchNearbyOptions.map((option) => ({
             venueId: option.id,
             name: option.name,
@@ -844,21 +884,28 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
             replacementContext: originalHighlightStop?.venueName ?? stop.venueName,
           }))
         }
+        if (highlightAlertOwnsDecision) {
+          next.alertSignal = '⚠️ This stop is getting busy'
+        }
         if (stop.role === 'highlight' && liveAppliedDecision) {
           if (liveAppliedDecision === 'keep') {
-            next.localSignal = "We'll keep watching this stop."
+            next.alertSignal = 'Monitoring this stop after your keep decision.'
+            next.tonightSignals = uniqueLiveLines(
+              [...(next.tonightSignals ?? []), "We'll keep watching this stop."],
+              3,
+            )
           } else if (liveAppliedDecision === 'switch') {
-            next.whyItFits = 'Same highlight role, same vibe, minimal disruption.'
-            if (liveAppliedSwitchOption) {
-              next.localSignal = `Swapped to ${liveAppliedSwitchOption.name} (${liveAppliedSwitchOption.minutesAway} min away).`
-            } else {
-              next.localSignal = 'Nearby highlight swap selected (mock) - 2 min away.'
-            }
+            const switchSignal = liveAppliedSwitchOption
+              ? `Swapped to ${liveAppliedSwitchOption.name} (${liveAppliedSwitchOption.minutesAway} min away).`
+              : 'Nearby highlight swap selected.'
+            next.alertSignal = switchSignal
+            next.tonightSignals = uniqueLiveLines([...(next.tonightSignals ?? []), switchSignal], 3)
           } else if (liveAppliedDecision === 'timing') {
-            next.tonightSignals = [
-              'Shifted +20 min to improve the entry window.',
-              ...((next.tonightSignals ?? []).slice(0, 1)),
-            ]
+            next.alertSignal = 'Highlight timing shifted by about 20 minutes.'
+            next.tonightSignals = uniqueLiveLines(
+              [...(next.tonightSignals ?? []), 'Shifted +20 min to improve the entry window.'],
+              3,
+            )
           }
         }
         return [stop.role, next]
@@ -867,10 +914,10 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
       Record<
         UserStopRole,
         {
-          whyItFits: string
+          whyItFits?: string
           tonightSignals?: string[]
           aroundHereSignals?: string[]
-          knownFor: string
+          knownFor?: string
           goodToKnow: string
           localSignal?: string
           alertSignal?: string
@@ -893,6 +940,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     liveAlertStage,
     liveAppliedDecision,
     liveAppliedSwitchOption,
+    liveStopRepresentationByRole,
     nearbySummaryByRole,
     originalHighlightStop?.venueName,
     routeItineraryStops,
@@ -908,29 +956,59 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
       })),
     [continuationStops],
   )
+  const routeEndingStop = useMemo(() => {
+    if (routeItineraryStops.length === 0) {
+      return null
+    }
+    return [...routeItineraryStops].sort((left, right) => {
+      const leftIndex = left.role === 'start' ? 0 : left.role === 'highlight' ? 1 : 2
+      const rightIndex = right.role === 'start' ? 0 : right.role === 'highlight' ? 1 : 2
+      return leftIndex - rightIndex
+    })[routeItineraryStops.length - 1] ?? null
+  }, [routeItineraryStops])
+  const continuationOptionCards = useMemo(() => {
+    const endingRoleLabel = routeEndingStop?.title ?? 'Wind Down'
+    const endingStopName = routeEndingStop?.venueName ?? 'your route endpoint'
+    return LIVE_CONTINUATION_OPTIONS.map((option) => {
+      let rationale = option.defaultRationale
+      if (option.id === 'stay-nearby') {
+        rationale = `Fits your ${endingRoleLabel.toLowerCase()} landing by keeping movement tight from ${endingStopName}.`
+      } else if (option.id === 'change-pace') {
+        rationale = `Fits if you want to re-lift after ${endingStopName} without replacing your route ending.`
+      } else if (option.id === 'ease-out') {
+        rationale = `Fits if you want a softer close that extends the ${endingRoleLabel.toLowerCase()} posture.`
+      }
+      return {
+        ...option,
+        rationale,
+      }
+    })
+  }, [routeEndingStop])
 
   const routeMoments = useMemo(() => {
-    if (!artifact || !finalRoute) {
+    if (!canonicalRouteArtifact || !liveRenderRoute) {
       return []
     }
-    const orderedStops = [...finalRoute.stops].sort((left, right) => left.stopIndex - right.stopIndex)
+    const orderedStops = [...liveRenderRoute.stops].sort(
+      (left, right) => left.stopIndex - right.stopIndex,
+    )
     return orderedStops.map((stop, index) => ({
       id: stop.id,
       roleLabel: stop.title,
       name: stop.displayName,
       descriptor: stop.subtitle,
       durationMinutes: 45,
-      travelToNextMinutes:
-        artifact.itinerary.transitions[index]?.estimatedTransitionMinutes ??
-        (index < orderedStops.length - 1 ? 8 : 0),
+        travelToNextMinutes:
+          canonicalRouteArtifact.itinerary.transitions[index]?.estimatedTransitionMinutes ??
+          (index < orderedStops.length - 1 ? 8 : 0),
     }))
-  }, [artifact, finalRoute])
+  }, [canonicalRouteArtifact, liveRenderRoute])
 
   const calendarTimeline = useMemo(() => {
-    if (!artifact || routeMoments.length === 0) {
+    if (!canonicalRouteArtifact || routeMoments.length === 0) {
       return []
     }
-    const startBase = new Date(artifact.lockedAt || Date.now())
+    const startBase = new Date(canonicalRouteArtifact.lockedAt || Date.now())
     startBase.setMinutes(0, 0, 0)
     if (startBase.getHours() < 17) {
       startBase.setHours(19, 0, 0, 0)
@@ -948,39 +1026,29 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
         timeLabel,
       }
     })
-  }, [artifact, routeMoments])
+  }, [canonicalRouteArtifact, routeMoments])
 
-  const shareTitle = `Your night in ${finalRoute?.location ?? artifact.city}`
+  const shareTitle = `Your night in ${
+    liveRenderRoute?.location ?? artifact?.city ?? 'your city'
+  }`
   const shareStopsText = routeMoments
     .map((moment, index) => `${index + 1}. ${moment.roleLabel}: ${moment.name}`)
     .join('\n')
   const shareText = `${shareTitle}\n${shareStopsText}`
-  const shareArtifactPayload = useMemo<LiveArtifactSessionPayload | null>(() => {
-    if (!artifact || !finalRoute) {
-      return null
-    }
-    return {
-      ...artifact,
-      initialActiveRole: activeRole,
-      finalRoute,
-      itinerary: {
-        ...artifact.itinerary,
-        stops: routeItineraryStops,
-      },
-    }
-  }, [activeRole, artifact, finalRoute, routeItineraryStops])
-
   const persistSharedPlan = useCallback((): string | null => {
-    if (!shareArtifactPayload) {
+    if (!canonicalRouteArtifact) {
       return null
     }
     const nextPlanId = sharePlanId ?? createLiveArtifactPlanId()
-    saveSharedLiveArtifactPlan(nextPlanId, shareArtifactPayload)
+    saveSharedLiveArtifactPlan(nextPlanId, {
+      ...canonicalRouteArtifact,
+      initialActiveRole: activeRole,
+    })
     if (sharePlanId !== nextPlanId) {
       setSharePlanId(nextPlanId)
     }
     return nextPlanId
-  }, [shareArtifactPayload, sharePlanId])
+  }, [activeRole, canonicalRouteArtifact, sharePlanId])
 
   const buildShareUrl = useCallback((): string | null => {
     const nextPlanId = persistSharedPlan()
@@ -1016,9 +1084,9 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     )}&dates=${toGoogleCalendarDate(firstEntry.start)}/${toGoogleCalendarDate(
       lastEntry.end,
     )}&details=${encodeURIComponent(details)}&location=${encodeURIComponent(
-      finalRoute?.location ?? artifact.city,
+      liveRenderRoute?.location ?? artifact?.city ?? '',
     )}`
-  }, [artifact.city, calendarTimeline, finalRoute?.location, shareTitle])
+  }, [artifact?.city, calendarTimeline, liveRenderRoute?.location, shareTitle])
 
   const calendarIcsContent = useMemo(() => {
     if (calendarTimeline.length === 0) {
@@ -1036,22 +1104,29 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
       'VERSION:2.0',
       'PRODID:-//ID8//Live Journey//EN',
       'BEGIN:VEVENT',
-      `UID:id8-live-${artifact.lockedAt}@id8`,
+      `UID:id8-live-${canonicalRouteArtifact?.lockedAt ?? artifact?.lockedAt}@id8`,
       `DTSTAMP:${toIcsDate(new Date())}`,
       `DTSTART:${toIcsDate(firstEntry.start)}`,
       `DTEND:${toIcsDate(lastEntry.end)}`,
       `SUMMARY:${escapeIcs(shareTitle)}`,
       `DESCRIPTION:${escapeIcs(details)}`,
-      `LOCATION:${escapeIcs(finalRoute?.location ?? artifact.city)}`,
+      `LOCATION:${escapeIcs(liveRenderRoute?.location ?? artifact?.city ?? '')}`,
       'END:VEVENT',
       'END:VCALENDAR',
     ].join('\r\n')
-  }, [artifact.city, artifact.lockedAt, calendarTimeline, finalRoute?.location, shareTitle])
+  }, [
+    artifact?.city,
+    artifact?.lockedAt,
+    calendarTimeline,
+    liveRenderRoute?.location,
+    canonicalRouteArtifact?.lockedAt,
+    shareTitle,
+  ])
 
   const mapRouteStops = useMemo(
     () =>
-      finalRoute
-        ? finalRoute.stops
+      liveRenderRoute
+        ? liveRenderRoute.stops
             .slice()
             .sort((left, right) => left.stopIndex - right.stopIndex)
             .map((stop) => ({
@@ -1064,25 +1139,8 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
               longitude: stop.longitude,
             }))
         : [],
-    [finalRoute],
+    [liveRenderRoute],
   )
-  useEffect(() => {
-    if (!import.meta.env.DEV || !finalRoute) {
-      return
-    }
-    const activeMapStop = mapRouteStops.find((stop) => stop.role === activeRole) ?? mapRouteStops[0]
-    const activeMapStopIndex =
-      typeof activeMapStop?.stopIndex === 'number'
-        ? activeMapStop.stopIndex
-        : mapRouteStops.findIndex((stop) => stop.id === activeMapStop?.id)
-    console.log('MAP REFRESH CHECK', {
-      routeId: finalRoute.routeId,
-      activeStopId: activeMapStop?.id ?? null,
-      activeStopIndex: activeMapStopIndex >= 0 ? activeMapStopIndex : null,
-      mapStopNames: mapRouteStops.map((stop) => stop.displayName || stop.name),
-    })
-  }, [activeRole, finalRoute, mapRouteStops])
-
   const mapWaypointOverrides = useMemo(() => {
     return undefined
   }, [])
@@ -1090,16 +1148,26 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
   const selectedNearbyPlaceIdByRole = useMemo(() => {
     return undefined
   }, [])
-
   const liveAlertPreview = useMemo(() => {
-    if (!liveAlertDecision) {
+    if (!liveAlertDecision || liveAlertStage !== 'preview') {
       return null
     }
     if (liveAlertDecision === 'switch') {
-      return null
+      if (!selectedSwitchNearbyOption) {
+        return {
+          signal: LIVE_ALERT_PREVIEW_BY_DECISION.switch.signal,
+          impact: LIVE_ALERT_PREVIEW_BY_DECISION.switch.impact,
+          ctaLabel: LIVE_ALERT_PREVIEW_BY_DECISION.switch.ctaLabel,
+        }
+      }
+      return {
+        signal: `Switch highlight to ${selectedSwitchNearbyOption.name}`,
+        impact: `${selectedSwitchNearbyOption.minutesAway} min away; route flow stays intact with lower timing risk.`,
+        ctaLabel: LIVE_ALERT_PREVIEW_BY_DECISION.switch.ctaLabel,
+      }
     }
     return LIVE_ALERT_PREVIEW_BY_DECISION[liveAlertDecision]
-  }, [liveAlertDecision])
+  }, [liveAlertDecision, liveAlertStage, selectedSwitchNearbyOption])
 
   const liveSwapPreview = useMemo(() => {
     if (
@@ -1112,7 +1180,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
 
     const descriptor = getNearbyOptionDescriptor(selectedSwitchNearbyOption.category)
     const distanceLine = `${descriptor} · ${selectedSwitchNearbyOption.minutesAway} min away`
-    const currentHighlightName = originalHighlightStop?.venueName ?? 'Theatre District Jazz Cellar'
+    const currentHighlightName = originalHighlightStop?.venueName ?? 'Current highlight stop'
     const currentRoleLabel = originalHighlightStop?.title ?? 'Highlight'
     const locationLine = `${originalHighlightStop?.neighborhood ?? 'Downtown San Jose'} | about ${selectedSwitchNearbyOption.minutesAway} min | ${originalHighlightStop?.driveMinutes ?? 6} min out`
     const pacingShift =
@@ -1138,19 +1206,12 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
       roleLine: `This becomes your new ${currentRoleLabel}`,
       replacesLine: `Replaces: ${currentHighlightName}`,
       locationLine,
-      whyItFits:
-        inlineDetailsByRole.highlight?.whyItFits ??
-        'Same role, same route intent, with minimal disruption.',
-      knownFor:
-        inlineDetailsByRole.highlight?.knownFor ??
-        'Known for a strong local fit in this district.',
-      localSignal:
-        inlineDetailsByRole.highlight?.localSignal ??
-        'Local traffic remains steady through this window.',
+      whyItFits: inlineDetailsByRole.highlight?.whyItFits,
+      knownFor: inlineDetailsByRole.highlight?.knownFor,
+      localSignal: inlineDetailsByRole.highlight?.localSignal,
       whatChanges: [pacingShift, travelImpact, vibeShift],
     }
   }, [
-    artifact,
     inlineDetailsByRole,
     liveAlertDecision,
     liveAlertStage,
@@ -1258,6 +1319,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     }
   }, [buildShareUrl, handleCopyShareLink, shareText, shareTitle])
 
+  const liveArtifactCity = liveRenderRoute?.location ?? artifact?.city ?? 'live'
   const handleDownloadIcs = useCallback(() => {
     if (!calendarIcsContent) {
       return
@@ -1265,22 +1327,27 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     const file = new Blob([calendarIcsContent], { type: 'text/calendar;charset=utf-8' })
     const url = window.URL.createObjectURL(file)
     const anchor = document.createElement('a')
-    const slug = (finalRoute?.location ?? artifact.city).toLowerCase().replace(/[^a-z0-9]+/g, '-')
+    const slug = liveArtifactCity.toLowerCase().replace(/[^a-z0-9]+/g, '-')
     anchor.href = url
     anchor.download = `id8-night-${slug || 'live'}.ics`
     document.body.append(anchor)
     anchor.click()
     anchor.remove()
     window.URL.revokeObjectURL(url)
-  }, [artifact.city, calendarIcsContent, finalRoute?.location])
+  }, [calendarIcsContent, liveArtifactCity])
 
   const isAlertActive = liveAlertStage === 'alert' || liveAlertStage === 'preview'
   const liveHeaderStatus = isAlertActive ? 'Adjusting in real time' : 'In motion'
 
-  if (!artifact) {
+  if (!artifact && !loadError && !routeMappingError) {
     return (
       <PageShell title="Live Journey" subtitle="No active artifact found">
         <div className="demo-flow-frame">
+          <DevTopNav
+            homeHref={isDevLive ? '/dev/home' : '/home'}
+            backHref={isDevLive ? '/dev/plans' : '/plans'}
+            backLabel="Back to Plans"
+          />
           <div className="preview-notice draft-feedback">
             <p className="preview-notice-title">
               {sharedPlanId ? 'Shared plan not found' : 'No live artifact yet'}
@@ -1295,9 +1362,45 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
             <button
               type="button"
               className="primary-button"
-              onClick={() => window.location.assign(isDevLive ? '/dev/home' : sharedPlanId ? '/home' : '/')}
+              onClick={() => window.location.assign(isDevLive ? '/dev/home' : '/home')}
             >
-              {isDevLive ? 'Go to sandbox home' : sharedPlanId ? 'Go to home' : 'Go to planner'}
+              {isDevLive ? 'Go to sandbox home' : 'Go to home'}
+            </button>
+          </div>
+        </div>
+      </PageShell>
+    )
+  }
+
+  if (loadError || routeMappingError) {
+    const artifactError = loadError ?? routeMappingError
+    return (
+      <PageShell title="Live Journey" subtitle="Live route artifact unavailable">
+        <div className="demo-flow-frame">
+          <DevTopNav
+            homeHref={isDevLive ? '/dev/home' : '/home'}
+            backHref={isDevLive ? '/dev/plans' : '/plans'}
+            backLabel="Back to Plans"
+          />
+          <div className="preview-notice draft-feedback">
+            <p className="preview-notice-title">Live route artifact unavailable</p>
+            <p className="preview-notice-copy">
+              This locked route could not be opened. Re-lock the plan from concierge before entering
+              Live Journey.
+            </p>
+            {isDevLive && (
+              <p className="preview-notice-copy">
+                Route artifact error: {artifactError?.code} | {artifactError?.detail}
+              </p>
+            )}
+          </div>
+          <div className="action-row draft-actions">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => window.location.assign(isDevLive ? '/dev/home' : '/home')}
+            >
+              {isDevLive ? 'Go to sandbox home' : 'Go to home'}
             </button>
           </div>
         </div>
@@ -1312,88 +1415,130 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
       subtitle="Active route handoff"
     >
       <div className="demo-flow-frame live-artifact-page">
-        <section className="plan-reveal live-artifact-surface">
-          <div className="live-artifact-top-actions">
-            <button type="button" className="ghost-button subtle" onClick={handleDonePlanning}>
-              Done planning
-            </button>
-          </div>
+        <DevTopNav
+          homeHref={isDevLive ? '/dev/home' : '/home'}
+          backOnClick={handleDonePlanning}
+          backLabel="Back to Plans"
+        />
 
+        <section className="plan-reveal live-artifact-surface">
           <div className="confirm-night-header live-artifact-header is-live">
             <h2>Your night &mdash; live</h2>
             <p>
-              {finalRoute?.location ?? artifact.city} &middot; Tonight
+              {liveRenderRoute?.location ?? artifact.city} &middot; Tonight
             </p>
             <p className="live-artifact-status">{liveHeaderStatus}</p>
           </div>
 
-          <p className="preview-notice-copy">
-            {finalRoute?.routeSummary ?? artifact.selectedClusterConfirmation}
-          </p>
+          <section className="live-map-module">
+            <div className="live-section-header">
+              <p className="live-section-kicker">Route progression</p>
+              <p className="live-section-subcopy">
+                Map state and co-pilot guidance stay aligned through your current checkpoint.
+              </p>
+            </div>
+            {/* Map owns route/position state now; future live overlays should attach here without changing co-pilot contract. */}
+            <div className="artifact-map-layer is-live">
+              <JourneyMapReal
+                key={`live-route-${liveRenderRoute?.routeId ?? 'none'}`}
+                activeRole={activeRole}
+                onNearbySummaryChange={handleNearbySummaryChange}
+                onNearbyOptionsChange={handleNearbyOptionsChange}
+                routeStops={mapRouteStops}
+                waypointOverrides={mapWaypointOverrides}
+                selectedNearbyPlaceIdByRole={selectedNearbyPlaceIdByRole}
+                continuationStops={continuationStops}
+                alertActive={isAlertActive}
+                alertRole={isAlertActive ? 'highlight' : null}
+              />
+            </div>
+            <section className={`lce-system-layer is-live stage-${liveAlertStage}`} aria-live="polite">
+              <p className="lce-system-strip">Co-pilot now</p>
+              {liveAlertStage === 'idle' && (
+                <p className="lce-system-idle">
+                  No action now. Stay on your current route; co-pilot is watching the next checkpoint.
+                </p>
+              )}
 
-          <div className="artifact-map-layer is-live">
-            <JourneyMapReal
-              key={`live-route-${finalRoute?.routeId ?? 'none'}`}
-              activeRole={activeRole}
-              onNearbySummaryChange={handleNearbySummaryChange}
-              onNearbyOptionsChange={handleNearbyOptionsChange}
-              routeStops={mapRouteStops}
-              waypointOverrides={mapWaypointOverrides}
-              selectedNearbyPlaceIdByRole={selectedNearbyPlaceIdByRole}
-              continuationStops={continuationStops}
-              alertActive={isAlertActive}
-              alertRole={isAlertActive ? 'highlight' : null}
-            />
-          </div>
-
-          <section className={`lce-system-layer is-live stage-${liveAlertStage}`} aria-live="polite">
-            <p className="lce-system-strip">[ LIVE CO-PILOT &mdash; ACTIVE ]</p>
-            {liveAlertStage === 'idle' && (
-              <p className="lce-system-idle">We&apos;re keeping an eye on your route</p>
-            )}
-
-            {liveAlertStage === 'alert' && (
-              <article className="lce-alert-card">
-                <h3>Something changed near your next stop</h3>
-                <p className="lce-alert-copy">Theatre District Jazz Cellar is getting busy.</p>
-                <p className="lce-alert-support">Open the Highlight stop below to review options.</p>
-              </article>
-            )}
-
-            {liveAlertStage === 'preview' && liveAlertPreview && (
-              <article className="lce-alert-card preview">
-                <p className="lce-alert-kicker">Decision preview</p>
-                <h3>{liveAlertPreview.title}</h3>
-                {liveAlertPreview.lines.map((line) => (
-                  <p key={line} className="lce-alert-support">
-                    {line}
+              {liveAlertStage === 'alert' && (
+                <article className="lce-alert-card">
+                  <h3>Highlight checkpoint changed</h3>
+                  <p className="lce-alert-copy">{copilotBusyLine}</p>
+                  <p className="lce-alert-support">
+                    If unchanged, this can compress your highlight entry timing.
                   </p>
-                ))}
-                <div className="lce-alert-actions">
-                  <button
-                    type="button"
-                    className="ghost-button lce-action-button"
-                    onClick={handleBackFromLiveAlertPreview}
-                  >
-                    Back
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-button lce-action-button"
-                    onClick={handleConfirmLiveAlertDecision}
-                  >
-                    {liveAlertPreview.ctaLabel}
-                  </button>
-                </div>
-              </article>
-            )}
+                  <div className="lce-alert-actions">
+                    {primarySwitchNearbyOption && (
+                      <button
+                        type="button"
+                        className="primary-button lce-action-button"
+                        onClick={handleOpenHighlightSwapOptions}
+                      >
+                        Review swap options
+                      </button>
+                    )}
+                    {!primarySwitchNearbyOption && (
+                      <button
+                        type="button"
+                        className="primary-button lce-action-button"
+                        onClick={() => handleLiveAlertDecision('timing')}
+                      >
+                        Go later (~20 min)
+                      </button>
+                    )}
+                    {primarySwitchNearbyOption && (
+                      <button
+                        type="button"
+                        className="ghost-button lce-action-button"
+                        onClick={() => handleLiveAlertDecision('timing')}
+                      >
+                        Go later (~20 min)
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="ghost-button lce-action-button"
+                      onClick={() => handleLiveAlertDecision('keep')}
+                    >
+                      Keep current plan
+                    </button>
+                  </div>
+                </article>
+              )}
 
-            {liveAlertStage === 'resolved' && (
-              <div className="preview-notice draft-feedback live-resolved-state">
-                <p className="preview-notice-title">Updated</p>
-                <p className="preview-notice-copy">Your night is still on track.</p>
-              </div>
-            )}
+              {liveAlertStage === 'preview' && liveAlertPreview && (
+                <article className="lce-alert-card preview">
+                  <p className="lce-alert-kicker">Decision checkpoint</p>
+                  <h3>{liveAlertPreview.signal}</h3>
+                  <p className="lce-alert-support">{liveAlertPreview.impact}</p>
+                  <div className="lce-alert-actions">
+                    <button
+                      type="button"
+                      className="ghost-button lce-action-button"
+                      onClick={handleBackFromLiveAlertPreview}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-button lce-action-button"
+                      onClick={handleConfirmLiveAlertDecision}
+                    >
+                      {liveAlertPreview.ctaLabel}
+                    </button>
+                  </div>
+                </article>
+              )}
+
+              {liveAlertStage === 'resolved' && (
+                <div className="preview-notice draft-feedback live-resolved-state">
+                  <p className="preview-notice-title">Updated</p>
+                  <p className="preview-notice-copy">
+                    Continue to your next stop. Co-pilot is now watching the next checkpoint.
+                  </p>
+                </div>
+              )}
+            </section>
           </section>
 
           {liveSwapPreview && (
@@ -1429,18 +1574,24 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
                     <p className="swap-preview-descriptor">{liveSwapPreview.roleLine}</p>
                     <p className="swap-preview-descriptor">{liveSwapPreview.replacesLine}</p>
 
-                    <div className="stop-card-inline-detail-row">
-                      <p className="stop-card-inline-detail-label">Why it fits</p>
-                      <p className="stop-card-inline-detail-copy">{liveSwapPreview.whyItFits}</p>
-                    </div>
-                    <div className="stop-card-inline-detail-row">
-                      <p className="stop-card-inline-detail-label">Known for</p>
-                      <p className="stop-card-inline-detail-copy">{liveSwapPreview.knownFor}</p>
-                    </div>
-                    <div className="stop-card-inline-detail-row">
-                      <p className="stop-card-inline-detail-label">Local signal</p>
-                      <p className="stop-card-inline-detail-copy">{liveSwapPreview.localSignal}</p>
-                    </div>
+                    {liveSwapPreview.whyItFits && (
+                      <div className="stop-card-inline-detail-row">
+                        <p className="stop-card-inline-detail-label">Why it fits</p>
+                        <p className="stop-card-inline-detail-copy">{liveSwapPreview.whyItFits}</p>
+                      </div>
+                    )}
+                    {liveSwapPreview.knownFor && (
+                      <div className="stop-card-inline-detail-row">
+                        <p className="stop-card-inline-detail-label">Known for</p>
+                        <p className="stop-card-inline-detail-copy">{liveSwapPreview.knownFor}</p>
+                      </div>
+                    )}
+                    {liveSwapPreview.localSignal && (
+                      <div className="stop-card-inline-detail-row">
+                        <p className="stop-card-inline-detail-label">Local signal</p>
+                        <p className="stop-card-inline-detail-copy">{liveSwapPreview.localSignal}</p>
+                      </div>
+                    )}
 
                     <div className="swap-preview-impact">
                       <p className="stop-card-inline-detail-label">What changes in your night</p>
@@ -1585,10 +1736,10 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
                     {routeItineraryStops[0]?.imageUrl ? (
                       <img
                         src={routeItineraryStops[0].imageUrl}
-                        alt={`${finalRoute?.location ?? artifact.city} route snapshot`}
+                        alt={`${liveRenderRoute?.location ?? artifact.city} route snapshot`}
                       />
                     ) : (
-                      <p>Map snapshot placeholder</p>
+                      <p>Route snapshot unavailable</p>
                     )}
                   </div>
                   <div className="swap-preview-body">
@@ -1693,12 +1844,17 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
               setPlanDetailsOpen((event.currentTarget as HTMLDetailsElement).open)
             }}
           >
-            <summary>View plan details</summary>
+            <summary>Route reference</summary>
             <div className="live-artifact-details-body">
+              <p className="live-section-subcopy compact">
+                Current stop order and context for the active route.
+              </p>
               <RouteSpine
                 className="draft-story-spine artifact-reference-spine is-live"
                 stops={routeItineraryStops}
-                storySpine={artifact.itinerary.storySpine}
+                strictSharedSemantics
+                storySpine={canonicalRouteArtifact?.itinerary.storySpine ?? artifact.itinerary.storySpine}
+                hideArcSummary
                 allowStopAdjustments={false}
                 enableInlineDetails
                 inlineDetailsByRole={inlineDetailsByRole}
@@ -1730,7 +1886,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
               </p>
             </div>
             <div className="live-continuation-options">
-              {LIVE_CONTINUATION_OPTIONS.map((option) => (
+              {continuationOptionCards.map((option) => (
                 <button
                   key={option.id}
                   type="button"
@@ -1739,8 +1895,20 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
                   }`}
                   onClick={() => handleSelectContinuationOption(option.id)}
                 >
+                  <p className="live-continuation-option-kicker">{option.archetypeLabel}</p>
                   <p className="live-continuation-option-title">{option.title}</p>
                   <p className="live-continuation-option-copy">{option.description}</p>
+                  <p className="live-continuation-option-rationale">{option.rationale}</p>
+                  <div className="live-continuation-option-slot">
+                    <p className="live-continuation-option-slot-label">Suggested next stop</p>
+                    <p className="live-continuation-option-slot-copy">{option.futureVenueSlotLabel}</p>
+                  </div>
+                  <div className="live-continuation-option-slot">
+                    <p className="live-continuation-option-slot-label">Why this lane fit</p>
+                    <p className="live-continuation-option-slot-copy">
+                      {option.futureVenueReasonSlotLabel}
+                    </p>
+                  </div>
                 </button>
               ))}
             </div>

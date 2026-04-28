@@ -18,6 +18,7 @@ interface RealityCommitStepProps {
   allowFallbackCards?: boolean
   showGenerateAction?: boolean
   showIntroCopy?: boolean
+  selectionEnabled?: boolean
 }
 
 export interface RealityClusterCardCopy {
@@ -1161,6 +1162,7 @@ export function RealityCommitStep({
   allowFallbackCards = true,
   showGenerateAction = true,
   showIntroCopy = true,
+  selectionEnabled = true,
 }: RealityCommitStepProps) {
   const shouldShowDebug = Boolean(showDebugMeta)
   const [activeDebugCardId, setActiveDebugCardId] = useState<string | null>(null)
@@ -1280,8 +1282,13 @@ export function RealityCommitStep({
                 <button
                   type="button"
                   className={`reality-step-card direction-card${selected ? ' selected' : ''}${dimmed ? ' dimmed' : ''}${recommended ? ' recommended' : ''}`}
-                  onClick={() => onSelectDirection(entry.id)}
+                  onClick={() => {
+                    if (selectionEnabled) {
+                      onSelectDirection(entry.id)
+                    }
+                  }}
                   aria-pressed={selected}
+                  aria-disabled={!selectionEnabled}
                 >
                   <div className="direction-title">{rewriteCenteredAround(card.title)}</div>
                   <p className="direction-identity">{rewriteCenteredAround(identityLine)}</p>
@@ -1305,7 +1312,7 @@ export function RealityCommitStep({
                       }
                       aria-expanded={isInspectExpanded}
                     >
-                      <span>Inspect this direction</span>
+                      <span>Show direction debug</span>
                       <span aria-hidden="true">{isInspectExpanded ? '[-]' : '[+]'}</span>
                     </button>
                     {isInspectExpanded && (

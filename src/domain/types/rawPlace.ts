@@ -4,7 +4,11 @@ import type {
   VenueSetting,
 } from './normalization'
 import type { HoursPeriod } from './hours'
-import type { LiveDataProvider, VenueSourceOrigin } from './sourceMode'
+import type {
+  CuratedSourceSubtype,
+  LiveDataProvider,
+  VenueSourceOrigin,
+} from './sourceMode'
 import type {
   LocalSignals,
   PriceTier,
@@ -29,6 +33,7 @@ interface RawVenueBase {
   sourceTypes?: string[]
   normalizedFromRawType?: NormalizedVenueSourceType
   sourceOrigin?: VenueSourceOrigin
+  curatedSubtype?: CuratedSourceSubtype
   provider?: LiveDataProvider
   providerRecordId?: string
   sourceQueryLabel?: string

@@ -25,6 +25,14 @@ export interface GooglePlacesConfig {
   maxCenters: number
 }
 
+export function isDevOrSandboxCloseoutFlow(): boolean {
+  if (typeof window === 'undefined') {
+    return false
+  }
+  const path = window.location.pathname.toLowerCase()
+  return path.startsWith('/dev') || path.startsWith('/sandbox')
+}
+
 function getProcessEnvValue(key: string): string | undefined {
   const processEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
     .process?.env

@@ -14,6 +14,7 @@ export interface HybridPortableDiagnostics {
   city: string
   liveAttempted: boolean
   liveSucceeded: boolean
+  liveUsableCount: number
   liveRawFetched: number
   liveMapped: number
   liveMappedDropped: number
@@ -30,7 +31,10 @@ export interface HybridPortableDiagnostics {
   geoSpreadScore: number
   geoDiversityDownsampledCount: number
   bootstrapCount: number
+  bootstrapSupplemental: boolean
+  bootstrapRequired: boolean
   selectedCount: number
+  failureCategory?: 'none' | 'live_unavailable_or_thin' | 'live_request_failed'
   notes: string[]
 }
 
@@ -625,7 +629,8 @@ export function buildPortableBootstrapVenues(city: string): Venue[] {
       placeTypes: [seed.category, ...seed.tags.slice(0, 2)],
       sourceTypes: [seed.category, 'portable-bootstrap'],
       normalizedFromRawType: 'raw-place',
-      sourceOrigin: 'live',
+      sourceOrigin: 'curated',
+      curatedSubtype: 'bootstrap-portable',
       sourceQueryLabel: 'portable-bootstrap',
       sourceConfidence: 0.62,
       isChain: false,
@@ -651,6 +656,7 @@ export async function fetchHybridPortableVenues(
         city: city,
         liveAttempted: false,
         liveSucceeded: false,
+        liveUsableCount: 0,
         liveRawFetched: 0,
         liveMapped: 0,
         liveMappedDropped: 0,
@@ -667,7 +673,10 @@ export async function fetchHybridPortableVenues(
         geoSpreadScore: 0,
         geoDiversityDownsampledCount: 0,
         bootstrapCount: 0,
+        bootstrapSupplemental: false,
+        bootstrapRequired: false,
         selectedCount: 0,
+        failureCategory: 'none',
         notes: ['No city provided for hybrid retrieval.'],
       },
     }
@@ -736,6 +745,7 @@ export async function fetchHybridPortableVenues(
         city: normalizedCity,
         liveAttempted,
         liveSucceeded,
+        liveUsableCount: liveVenues.length,
         liveRawFetched,
         liveMapped,
         liveMappedDropped,
@@ -752,7 +762,10 @@ export async function fetchHybridPortableVenues(
         geoSpreadScore: geoShapedLiveVenues.geoSpreadScore,
         geoDiversityDownsampledCount: geoShapedLiveVenues.downsampledCount,
         bootstrapCount: 0,
+        bootstrapSupplemental: false,
+        bootstrapRequired: false,
         selectedCount: selectedLiveVenues.length,
+        failureCategory: 'none',
         notes: [
           'Live hybrid retrieval provided enough entities without bootstrap support.',
           ...(dedupeDropped > 0 ? [`${dedupeDropped} duplicate live entities collapsed during merge.`] : []),
@@ -782,6 +795,7 @@ export async function fetchHybridPortableVenues(
       city: normalizedCity,
       liveAttempted,
       liveSucceeded,
+      liveUsableCount: liveVenues.length,
       liveRawFetched,
       liveMapped,
       liveMappedDropped,
@@ -798,7 +812,10 @@ export async function fetchHybridPortableVenues(
       geoSpreadScore: geoShapedLiveVenues.geoSpreadScore,
       geoDiversityDownsampledCount: geoShapedLiveVenues.downsampledCount,
       bootstrapCount: bootstrapVenues.length,
+      bootstrapSupplemental: mode === 'hybrid_live_plus_bootstrap',
+      bootstrapRequired: mode === 'hybrid_bootstrap',
       selectedCount: selectedMergedVenues.length,
+      failureCategory: liveSucceeded ? 'live_unavailable_or_thin' : 'live_request_failed',
       notes:
         mode === 'hybrid_bootstrap'
           ? [

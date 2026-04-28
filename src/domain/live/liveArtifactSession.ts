@@ -1,59 +1,33 @@
 import type { Itinerary, UserStopRole } from '../types/itinerary'
-import type { PersonaMode, VibeAnchor } from '../types/intent'
+import type {
+  RuntimeRouteArtifact,
+  RuntimeRouteStop,
+} from '../artifacts/runtimeRouteArtifact'
+import {
+  sanitizeLiveArtifactSessionPayload,
+  validateLockedLiveArtifactSessionPayload,
+  type LiveArtifactRouteError,
+} from './validateLiveArtifact'
 
 const LIVE_ARTIFACT_SESSION_KEY = 'id8.liveArtifact.v1'
+const LIVE_ARTIFACT_SESSION_PREFIX = 'id8.liveArtifact.session.v1.'
+const LIVE_ARTIFACT_ACTIVE_SESSION_ID_KEY = 'id8.liveArtifact.activeSessionId.v1'
 const LIVE_ARTIFACT_EXIT_NOTICE_KEY = 'id8.liveArtifact.exitNotice.v1'
 const LIVE_ARTIFACT_SHARED_PLAN_PREFIX = 'id8.liveArtifact.sharedPlan.v1.'
 const LIVE_ARTIFACT_HOME_STATE_KEY = 'id8.liveArtifact.home.v1'
 
 export interface LiveArtifactSessionPayload {
+  sessionId: string
   city: string
   itinerary: Itinerary
   selectedClusterConfirmation: string
   initialActiveRole: UserStopRole
   lockedAt: number
-  finalRoute?: FinalRoute
+  finalRoute?: RuntimeRouteArtifact
 }
 
-export interface FinalRouteStop {
-  id: string
-  sourceStopId: string
-  displayName: string
-  providerRecordId: string
-  latitude: number
-  longitude: number
-  address: string
-  role: UserStopRole
-  stopIndex: number
-  venueId: string
-  title: string
-  subtitle: string
-  neighborhood: string
-  driveMinutes: number
-  imageUrl: string
-}
-
-export interface FinalRoute {
-  routeId: string
-  selectedDirectionId: string
-  location: string
-  persona: PersonaMode
-  vibe: VibeAnchor
-  stops: FinalRouteStop[]
-  activeStopIndex: number
-  routeHeadline: string
-  routeSummary: string
-  mapMarkers: Array<{
-    id: string
-    displayName: string
-    role: UserStopRole
-    stopIndex: number
-    latitude: number
-    longitude: number
-  }>
-  liveNotices: string[]
-  updatedAt: number
-}
+export type FinalRouteStop = RuntimeRouteStop
+export type FinalRoute = RuntimeRouteArtifact
 
 export interface LiveArtifactExitNotice {
   title?: string
@@ -72,26 +46,153 @@ export interface SharedLiveArtifactPlanEntry {
   payload: LiveArtifactSessionPayload
 }
 
-export function saveLiveArtifactSession(payload: LiveArtifactSessionPayload): void {
+export type LockedLiveArtifactLoadResult =
+  | {
+      status: 'missing'
+    }
+  | {
+      status: 'ok'
+      payload: LiveArtifactSessionPayload
+    }
+  | {
+      status: 'error'
+      error: LiveArtifactRouteError
+    }
+
+export interface LiveArtifactStorageDebugSnapshot {
+  activeSessionId: string | null
+  activeSessionIdPresent: boolean
+  sessionKey: string | null
+  sessionPayloadPresent: boolean
+}
+
+let lastLiveArtifactSaveError: LiveArtifactRouteError | null = null
+
+function getLiveArtifactSessionKey(sessionId: string): string {
+  return `${LIVE_ARTIFACT_SESSION_PREFIX}${sessionId}`
+}
+
+export function saveLiveArtifactSession(payload: LiveArtifactSessionPayload): string | null {
   if (typeof window === 'undefined') {
-    return
+    return null
   }
-  window.sessionStorage.setItem(LIVE_ARTIFACT_SESSION_KEY, JSON.stringify(payload))
+  const validated = validateLockedLiveArtifactSessionPayload(payload)
+  if (!validated.ok) {
+    lastLiveArtifactSaveError = validated.error
+    return null
+  }
+  lastLiveArtifactSaveError = null
+  const previousActiveSessionId = window.sessionStorage
+    .getItem(LIVE_ARTIFACT_ACTIVE_SESSION_ID_KEY)
+    ?.trim()
+  if (
+    previousActiveSessionId &&
+    previousActiveSessionId !== validated.payload.sessionId
+  ) {
+    window.sessionStorage.removeItem(getLiveArtifactSessionKey(previousActiveSessionId))
+  }
+  window.sessionStorage.setItem(
+    getLiveArtifactSessionKey(validated.payload.sessionId),
+    JSON.stringify(validated.payload),
+  )
+  window.sessionStorage.setItem(LIVE_ARTIFACT_ACTIVE_SESSION_ID_KEY, validated.payload.sessionId)
+  window.sessionStorage.setItem(LIVE_ARTIFACT_SESSION_KEY, JSON.stringify(validated.payload))
+  return validated.payload.sessionId
+}
+
+export function getLastLiveArtifactSaveError(): LiveArtifactRouteError | null {
+  return lastLiveArtifactSaveError
+}
+
+export function getLiveArtifactStorageDebugSnapshot(
+  sessionId: string | null,
+): LiveArtifactStorageDebugSnapshot {
+  if (typeof window === 'undefined') {
+    return {
+      activeSessionId: null,
+      activeSessionIdPresent: false,
+      sessionKey: sessionId ? getLiveArtifactSessionKey(sessionId) : null,
+      sessionPayloadPresent: false,
+    }
+  }
+  const activeSessionId = window.sessionStorage.getItem(LIVE_ARTIFACT_ACTIVE_SESSION_ID_KEY)?.trim() || null
+  const sessionKey = sessionId ? getLiveArtifactSessionKey(sessionId) : null
+  return {
+    activeSessionId,
+    activeSessionIdPresent: Boolean(activeSessionId),
+    sessionKey,
+    sessionPayloadPresent: Boolean(
+      sessionKey && window.sessionStorage.getItem(sessionKey),
+    ),
+  }
 }
 
 export function loadLiveArtifactSession(): LiveArtifactSessionPayload | null {
   if (typeof window === 'undefined') {
     return null
   }
-  const raw = window.sessionStorage.getItem(LIVE_ARTIFACT_SESSION_KEY)
+  const activeSessionId = window.sessionStorage.getItem(LIVE_ARTIFACT_ACTIVE_SESSION_ID_KEY)?.trim()
+  if (!activeSessionId) {
+    return null
+  }
+  const raw = window.sessionStorage.getItem(getLiveArtifactSessionKey(activeSessionId))
   if (!raw) {
     return null
   }
   try {
-    return JSON.parse(raw) as LiveArtifactSessionPayload
+    const result = validateLockedLiveArtifactSessionPayload(JSON.parse(raw))
+    return result.ok ? result.payload : null
   } catch {
     return null
   }
+}
+
+export function loadValidatedLiveArtifactSession(): LockedLiveArtifactLoadResult {
+  if (typeof window === 'undefined') {
+    return { status: 'missing' }
+  }
+  const activeSessionId = window.sessionStorage.getItem(LIVE_ARTIFACT_ACTIVE_SESSION_ID_KEY)?.trim()
+  if (!activeSessionId) {
+    return { status: 'missing' }
+  }
+  const raw = window.sessionStorage.getItem(getLiveArtifactSessionKey(activeSessionId))
+  if (!raw) {
+    return { status: 'missing' }
+  }
+  try {
+    const result = validateLockedLiveArtifactSessionPayload(JSON.parse(raw))
+    if (!result.ok) {
+      return {
+        status: 'error',
+        error: result.error,
+      }
+    }
+    return {
+      status: 'ok',
+      payload: result.payload,
+    }
+  } catch {
+    return {
+      status: 'error',
+      error: {
+        code: 'invalid_payload_shape',
+        detail: 'Stored live artifact could not be parsed.',
+      },
+    }
+  }
+}
+
+export function endLiveArtifactSession(): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+  const activeSessionId = window.sessionStorage.getItem(LIVE_ARTIFACT_ACTIVE_SESSION_ID_KEY)?.trim()
+  if (activeSessionId) {
+    window.sessionStorage.removeItem(getLiveArtifactSessionKey(activeSessionId))
+  }
+  window.sessionStorage.removeItem(LIVE_ARTIFACT_ACTIVE_SESSION_ID_KEY)
+  window.sessionStorage.removeItem(LIVE_ARTIFACT_SESSION_KEY)
+  window.sessionStorage.removeItem(LIVE_ARTIFACT_HOME_STATE_KEY)
 }
 
 export function createLiveArtifactPlanId(): string {
@@ -112,8 +213,12 @@ export function saveSharedLiveArtifactPlan(
   if (typeof window === 'undefined' || !planId) {
     return
   }
+  const validated = validateLockedLiveArtifactSessionPayload(payload)
+  if (!validated.ok) {
+    return
+  }
   try {
-    window.localStorage.setItem(getSharedPlanKey(planId), JSON.stringify(payload))
+    window.localStorage.setItem(getSharedPlanKey(planId), JSON.stringify(validated.payload))
   } catch {
     // noop
   }
@@ -128,9 +233,41 @@ export function loadSharedLiveArtifactPlan(planId: string): LiveArtifactSessionP
     return null
   }
   try {
-    return JSON.parse(raw) as LiveArtifactSessionPayload
+    const result = validateLockedLiveArtifactSessionPayload(JSON.parse(raw))
+    return result.ok ? result.payload : null
   } catch {
     return null
+  }
+}
+
+export function loadValidatedSharedLiveArtifactPlan(planId: string): LockedLiveArtifactLoadResult {
+  if (typeof window === 'undefined' || !planId) {
+    return { status: 'missing' }
+  }
+  const raw = window.localStorage.getItem(getSharedPlanKey(planId))
+  if (!raw) {
+    return { status: 'missing' }
+  }
+  try {
+    const result = validateLockedLiveArtifactSessionPayload(JSON.parse(raw))
+    if (!result.ok) {
+      return {
+        status: 'error',
+        error: result.error,
+      }
+    }
+    return {
+      status: 'ok',
+      payload: result.payload,
+    }
+  } catch {
+    return {
+      status: 'error',
+      error: {
+        code: 'invalid_payload_shape',
+        detail: 'Stored shared live artifact could not be parsed.',
+      },
+    }
   }
 }
 
@@ -158,7 +295,7 @@ export function listSharedLiveArtifactPlans(): SharedLiveArtifactPlanEntry[] {
       }
 
       try {
-        const payload = JSON.parse(raw) as LiveArtifactSessionPayload
+        const payload = sanitizeLiveArtifactSessionPayload(JSON.parse(raw))
         if (!payload || typeof payload.lockedAt !== 'number') {
           continue
         }
@@ -175,6 +312,17 @@ export function listSharedLiveArtifactPlans(): SharedLiveArtifactPlanEntry[] {
   }
 
   return entries.sort((left, right) => right.payload.lockedAt - left.payload.lockedAt)
+}
+
+export function removeSharedLiveArtifactPlan(planId: string): void {
+  if (typeof window === 'undefined' || !planId) {
+    return
+  }
+  try {
+    window.localStorage.removeItem(getSharedPlanKey(planId))
+  } catch {
+    // noop
+  }
 }
 
 export function saveLiveArtifactHomeState(state: LiveArtifactHomeState): void {

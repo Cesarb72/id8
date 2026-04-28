@@ -1,6 +1,10 @@
 import type { DurationClass } from './pacing'
 import type { BusinessStatus, HoursPressureLevel } from './hours'
-import type { LiveDataProvider, VenueSourceOrigin } from './sourceMode'
+import type {
+  CuratedSourceSubtype,
+  LiveDataProvider,
+  VenueSourceOrigin,
+} from './sourceMode'
 
 export type NormalizedVenueSourceType = 'seed' | 'raw-place' | 'raw-event'
 
@@ -54,6 +58,7 @@ export interface VenueDurationProfile {
 export interface VenueSourceMetadata {
   normalizedFromRawType: NormalizedVenueSourceType
   sourceOrigin: VenueSourceOrigin
+  curatedSubtype?: CuratedSourceSubtype
   provider?: LiveDataProvider
   providerRecordId?: string
   formattedAddress?: string

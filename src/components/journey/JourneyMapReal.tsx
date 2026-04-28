@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import type { UserStopRole } from '../../domain/types/itinerary'
-import { getGooglePlacesConfig, hasGooglePlacesConfig } from '../../domain/sources/getSourceMode'
+import {
+  fetchNearbyPlacesForWaypoint,
+  type NearbyPlaceRecord,
+} from '../../domain/nearby/fetchNearbyPlacesForWaypoint'
 
 const MAPBOX_ACCESS_TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN
-const ENABLE_NEARBY_DEBUG = import.meta.env.DEV
-const DEBUG_LOG_PREFIX = '[JourneyMapReal::NearbyDebug]'
-
 interface JourneyMapRealProps {
   activeRole: UserStopRole
   onNearbySummaryChange?: (role: UserStopRole, summary: string | null) => void
@@ -43,20 +43,7 @@ interface RealWaypoint {
   coordinates: [number, number]
 }
 
-interface NearbyPlaceRecord {
-  id: string
-  name: string
-  category: 'nightlife' | 'dessert' | 'cafe' | 'fallback'
-  coordinates: [number, number]
-}
-
-export interface JourneyNearbyOption {
-  id: string
-  name: string
-  category: NearbyPlaceRecord['category']
-  minutesAway: number
-  coordinates: [number, number]
-}
+export type JourneyNearbyOption = NearbyPlaceRecord
 
 export interface JourneyWaypointOverride {
   name?: string
@@ -68,45 +55,6 @@ export interface JourneyContinuationStop {
   name: string
   descriptor: string
   coordinates: [number, number]
-}
-
-interface GoogleNearbyPlaceRecord {
-  id?: string
-  displayName?: { text?: string }
-  primaryType?: string
-  types?: string[]
-  location?: {
-    latitude?: number
-    longitude?: number
-  }
-}
-
-interface GoogleNearbySearchResponse {
-  places?: GoogleNearbyPlaceRecord[]
-}
-
-interface NearbyFetchQueryDiagnostic {
-  queryText: string
-  status: 'ok' | 'error'
-  responseCount: number
-  error?: string
-}
-
-interface NearbyFetchDiagnostic {
-  places: NearbyPlaceRecord[]
-  reason:
-    | 'ok'
-    | 'missing-api-key'
-    | 'request-error'
-    | 'zero-results'
-    | 'filtered-out'
-  requestPath: string
-  keyPresent: boolean
-  role: UserStopRole
-  waypointName: string
-  queryDiagnostics: NearbyFetchQueryDiagnostic[]
-  rawResultCount: number
-  parsedCount: number
 }
 
 function getRoleLabel(role: UserStopRole): string {
@@ -122,14 +70,7 @@ function getRoleLabel(role: UserStopRole): string {
   return 'Surprise'
 }
 
-function getRouteSequenceLabel(routeStops: JourneyMapRouteStop[]): string {
-  if (routeStops.length === 0) {
-    return 'Start -> Highlight -> Wind-down'
-  }
-  return routeStops.map((stop) => getRoleLabel(stop.role)).join(' -> ')
-}
-
-function getActiveRoleContextLine(
+function getCurrentStateLine(
   activeStop: JourneyMapRouteStop | undefined,
   activeStopIndex: number | undefined,
   stopCount: number,
@@ -145,11 +86,19 @@ function getActiveRoleContextLine(
   return `${positionLabel}: ${roleLabel} - ${activeStop.name}`
 }
 
-function getNowViewingLine(activeStop: JourneyMapRouteStop | undefined): string {
-  if (!activeStop) {
-    return `Now viewing: ${getRoleLabel('start')} — Route overview`
+function getNextStateLine(
+  routeStops: JourneyMapRouteStop[],
+  activeStopIndex: number | undefined,
+): string {
+  if (routeStops.length === 0) {
+    return 'Next: No upcoming stop'
   }
-  return `Now viewing: ${getRoleLabel(activeStop.role)} — ${activeStop.name}`
+  const hasActiveIndex = typeof activeStopIndex === 'number' && activeStopIndex >= 0
+  const nextStop = hasActiveIndex ? routeStops[activeStopIndex + 1] : routeStops[1]
+  if (!nextStop) {
+    return 'Next: No upcoming stop'
+  }
+  return `Next: ${getRoleLabel(nextStop.role)} - ${nextStop.name}`
 }
 
 const REAL_WAYPOINTS: RealWaypoint[] = [
@@ -184,27 +133,6 @@ const DEFAULT_COORDINATES_BY_ROLE: Record<UserStopRole, [number, number]> = {
   highlight: [-121.8892, 37.3331],
   surprise: [-121.9078, 37.3292],
   windDown: [-121.9275, 37.3229],
-}
-
-const NEARBY_LIMIT_BY_ROLE: Record<UserStopRole, number> = {
-  start: 4,
-  highlight: 6,
-  windDown: 5,
-  surprise: 4,
-}
-
-const NEARBY_RADIUS_BY_ROLE: Record<UserStopRole, number> = {
-  start: 900,
-  highlight: 700,
-  windDown: 950,
-  surprise: 850,
-}
-
-const NEARBY_QUERIES_BY_ROLE: Record<UserStopRole, string[]> = {
-  start: ['coffee shop', 'cafe', 'bakery'],
-  highlight: ['cocktail bar', 'live music venue', 'nightlife'],
-  windDown: ['dessert shop', 'gelato', 'tea house'],
-  surprise: ['cocktail bar', 'dessert shop', 'cafe'],
 }
 
 const NEARBY_RENDER_OFFSETS: Array<[number, number]> = [
@@ -279,39 +207,6 @@ function buildActiveClusterGeoJson(role: UserStopRole, waypoints: RealWaypoint[]
   }
 }
 
-function normalizeType(value: string): string {
-  return value.trim().toLowerCase().replace(/[\s_]+/g, '-')
-}
-
-function classifyNearbyCategory(place: GoogleNearbyPlaceRecord): NearbyPlaceRecord['category'] {
-  const types = [place.primaryType, ...(place.types ?? [])]
-    .filter((value): value is string => Boolean(value))
-    .map(normalizeType)
-
-  if (
-    types.some((value) =>
-      ['bar', 'cocktail-bar', 'night-club', 'pub', 'live-music-venue'].includes(value),
-    )
-  ) {
-    return 'nightlife'
-  }
-  if (
-    types.some((value) =>
-      ['dessert-shop', 'ice-cream-shop', 'bakery', 'pastry-shop'].includes(value),
-    )
-  ) {
-    return 'dessert'
-  }
-  if (
-    types.some((value) =>
-      ['cafe', 'coffee-shop', 'tea-house', 'brunch-restaurant'].includes(value),
-    )
-  ) {
-    return 'cafe'
-  }
-  return 'fallback'
-}
-
 function buildNearbySummary(places: NearbyPlaceRecord[]): string | null {
   if (places.length === 0) {
     return null
@@ -324,49 +219,6 @@ function buildNearbySummary(places: NearbyPlaceRecord[]): string | null {
     return `Nearby now: ${names[0]} and ${names[1]}.`
   }
   return `Nearby now: ${names[0]}, ${names[1]}, and ${names[2]}.`
-}
-
-function toRadians(value: number): number {
-  return (value * Math.PI) / 180
-}
-
-function computeDistanceMeters(from: [number, number], to: [number, number]): number {
-  const [fromLng, fromLat] = from
-  const [toLng, toLat] = to
-  const earthRadiusMeters = 6371000
-  const deltaLat = toRadians(toLat - fromLat)
-  const deltaLng = toRadians(toLng - fromLng)
-  const fromLatRadians = toRadians(fromLat)
-  const toLatRadians = toRadians(toLat)
-  const haversine =
-    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
-    Math.cos(fromLatRadians) *
-      Math.cos(toLatRadians) *
-      Math.sin(deltaLng / 2) *
-      Math.sin(deltaLng / 2)
-  const angularDistance = 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine))
-  return earthRadiusMeters * angularDistance
-}
-
-function estimateMinutesAway(distanceMeters: number): number {
-  const walkingMetersPerMinute = 85
-  return Math.max(1, Math.round(distanceMeters / walkingMetersPerMinute))
-}
-
-function buildNearbyOptionsForRole(
-  waypoint: RealWaypoint,
-  places: NearbyPlaceRecord[],
-): JourneyNearbyOption[] {
-  return places.slice(0, 6).map((place) => {
-    const distanceMeters = computeDistanceMeters(waypoint.coordinates, place.coordinates)
-    return {
-      id: place.id,
-      name: place.name,
-      category: place.category,
-      minutesAway: estimateMinutesAway(distanceMeters),
-      coordinates: place.coordinates,
-    }
-  })
 }
 
 function resolveWaypoints(
@@ -488,139 +340,6 @@ function buildContinuationPointsGeoJson(
         coordinates: stop.coordinates,
       },
     })),
-  }
-}
-
-async function fetchNearbyPlacesForWaypoint(waypoint: RealWaypoint): Promise<NearbyFetchDiagnostic> {
-  const config = getGooglePlacesConfig()
-  const keyPresent = Boolean(config.apiKey)
-  const requestPath = config.endpoint
-  if (!hasGooglePlacesConfig() || !keyPresent) {
-    return {
-      places: [],
-      reason: 'missing-api-key',
-      requestPath,
-      keyPresent,
-      role: waypoint.role,
-      waypointName: waypoint.name,
-      queryDiagnostics: [],
-      rawResultCount: 0,
-      parsedCount: 0,
-    }
-  }
-
-  const nearbyQueries = NEARBY_QUERIES_BY_ROLE[waypoint.role] ?? NEARBY_QUERIES_BY_ROLE.highlight
-  const nearbyRadius = NEARBY_RADIUS_BY_ROLE[waypoint.role] ?? 850
-  const nearbyLimit = NEARBY_LIMIT_BY_ROLE[waypoint.role] ?? 4
-  const fieldMask = [
-    'places.id',
-    'places.displayName',
-    'places.primaryType',
-    'places.types',
-    'places.location',
-  ].join(',')
-
-  const settled = await Promise.allSettled(
-    nearbyQueries.map(async (queryText) => {
-      const response = await fetch(config.endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': config.apiKey!,
-          'X-Goog-FieldMask': fieldMask,
-        },
-        body: JSON.stringify({
-          textQuery: `${queryText} near ${waypoint.name}, San Jose`,
-          pageSize: 6,
-          languageCode: config.languageCode,
-          regionCode: config.regionCode,
-          rankPreference: 'DISTANCE',
-          locationBias: {
-            circle: {
-              center: {
-                latitude: waypoint.coordinates[1],
-                longitude: waypoint.coordinates[0],
-              },
-              radius: nearbyRadius,
-            },
-          },
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error(`Nearby query failed (${response.status})`)
-      }
-
-      const payload = (await response.json()) as GoogleNearbySearchResponse
-      return payload.places ?? []
-    }),
-  )
-
-  const byId = new Map<string, NearbyPlaceRecord>()
-  let requestErrorCount = 0
-  let rawResultCount = 0
-  const queryDiagnostics: NearbyFetchQueryDiagnostic[] = []
-
-  for (let index = 0; index < settled.length; index += 1) {
-    const result = settled[index]
-    const queryText = nearbyQueries[index] ?? 'unknown'
-    if (result.status !== 'fulfilled') {
-      requestErrorCount += 1
-      queryDiagnostics.push({
-        queryText,
-        status: 'error',
-        responseCount: 0,
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-      })
-      continue
-    }
-    queryDiagnostics.push({
-      queryText,
-      status: 'ok',
-      responseCount: result.value.length,
-    })
-    rawResultCount += result.value.length
-    for (const place of result.value) {
-      const id = place.id?.trim()
-      const name = place.displayName?.text?.trim()
-      const latitude = place.location?.latitude
-      const longitude = place.location?.longitude
-      if (!id || !name || typeof latitude !== 'number' || typeof longitude !== 'number') {
-        continue
-      }
-      if (byId.has(id)) {
-        continue
-      }
-      byId.set(id, {
-        id,
-        name,
-        category: classifyNearbyCategory(place),
-        coordinates: [longitude, latitude],
-      })
-    }
-  }
-
-  const places = Array.from(byId.values()).slice(0, nearbyLimit)
-  const parsedCount = places.length
-  const reason: NearbyFetchDiagnostic['reason'] =
-    parsedCount > 0
-      ? 'ok'
-      : requestErrorCount > 0
-        ? 'request-error'
-        : rawResultCount === 0
-          ? 'zero-results'
-          : 'filtered-out'
-
-  return {
-    places,
-    reason,
-    requestPath,
-    keyPresent,
-    role: waypoint.role,
-    waypointName: waypoint.name,
-    queryDiagnostics,
-    rawResultCount,
-    parsedCount,
   }
 }
 
@@ -1229,7 +948,7 @@ export function JourneyMapReal({
           ),
         )
         onNearbySummaryChange?.(activeWaypoint.role, buildNearbySummary(cached))
-        onNearbyOptionsChange?.(activeWaypoint.role, buildNearbyOptionsForRole(activeWaypoint, cached))
+        onNearbyOptionsChange?.(activeWaypoint.role, cached.slice(0, 6))
       } else {
         nearbySource.setData(
           buildNearbyGeoJson(
@@ -1268,7 +987,7 @@ export function JourneyMapReal({
             ),
           )
           onNearbySummaryChange?.(activeWaypoint.role, buildNearbySummary(places))
-          onNearbyOptionsChange?.(activeWaypoint.role, buildNearbyOptionsForRole(activeWaypoint, places))
+          onNearbyOptionsChange?.(activeWaypoint.role, places.slice(0, 6))
 
           const bounds = map.getBounds()
           const plottedPlaces = places.map((place) => ({
@@ -1283,39 +1002,11 @@ export function JourneyMapReal({
             return accumulator
           }, {})
 
-          if (ENABLE_NEARBY_DEBUG) {
-            console.info(`${DEBUG_LOG_PREFIX} request`, {
-              role: diagnostic.role,
-              waypoint: diagnostic.waypointName,
-              requestPath: diagnostic.requestPath,
-              keyPresent: diagnostic.keyPresent,
-              reason: diagnostic.reason,
-              queryDiagnostics: diagnostic.queryDiagnostics,
-              rawResultCount: diagnostic.rawResultCount,
-              parsedCount: diagnostic.parsedCount,
-            })
-            console.info(`${DEBUG_LOG_PREFIX} plotting`, {
-              plottedCount: plottedPlaces.length,
-              categoryCounts,
-              inBoundsCount,
-              mapBounds: {
-                west: bounds.getWest(),
-                south: bounds.getSouth(),
-                east: bounds.getEast(),
-                north: bounds.getNorth(),
-              },
-              places: plottedPlaces,
-            })
-            if (diagnostic.reason !== 'ok') {
-              console.warn(`${DEBUG_LOG_PREFIX} no nearby places rendered`, {
-                role: diagnostic.role,
-                reason: diagnostic.reason,
-                requestPath: diagnostic.requestPath,
-                keyPresent: diagnostic.keyPresent,
-                queryDiagnostics: diagnostic.queryDiagnostics,
-              })
-            }
-          }
+          void diagnostic
+          void plottedPlaces
+          void categoryCounts
+          void inBoundsCount
+          void bounds
         })
         .catch((error) => {
           if (nearbyEpochRef.current !== epoch) {
@@ -1335,14 +1026,7 @@ export function JourneyMapReal({
           )
           onNearbySummaryChange?.(activeWaypoint.role, null)
           onNearbyOptionsChange?.(activeWaypoint.role, [])
-          if (ENABLE_NEARBY_DEBUG) {
-            console.error(`${DEBUG_LOG_PREFIX} unexpected fetch crash`, {
-              role: activeWaypoint.role,
-              requestPath: getGooglePlacesConfig().endpoint,
-              keyPresent: hasGooglePlacesConfig(),
-              error: error instanceof Error ? error.message : String(error),
-            })
-          }
+          void error
         })
     }
 
@@ -1364,19 +1048,18 @@ export function JourneyMapReal({
         <div>
           <p className="journey-map-kicker">Journey Map</p>
           <h2>{cityLabel?.trim() || 'Selected route'}</h2>
-          <p className="journey-map-subcopy">
-            Map follows your selected route: {getRouteSequenceLabel(orderedRouteStops)}.
-          </p>
           <p className="journey-map-focus">
-            {getActiveRoleContextLine(
+            {getCurrentStateLine(
               activeRouteStop,
               activeRouteStopIndex,
               orderedRouteStops.length,
             )}
           </p>
-          <p className="journey-map-now-viewing">{getNowViewingLine(activeRouteStop)}</p>
+          <p className="journey-map-now-viewing">
+            {getNextStateLine(orderedRouteStops, activeRouteStopIndex)}
+          </p>
           <p className="journey-map-nearby-key" aria-hidden="true">
-            ◆ nightlife · ● cafe/dessert · ■ other nearby
+            nightlife - cafe/dessert - other nearby
           </p>
         </div>
       </div>
@@ -1390,3 +1073,5 @@ export function JourneyMapReal({
     </section>
   )
 }
+
+

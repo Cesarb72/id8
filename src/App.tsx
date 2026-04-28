@@ -1,4 +1,5 @@
 import { AppShell } from './app/AppShell'
+import { DevHomePage } from './pages/DevHomePage'
 import { DemoPage } from './pages/DemoPage'
 import { HomePage } from './pages/HomePage'
 import { LiveJourneyPage } from './pages/LiveJourneyPage'
@@ -26,7 +27,6 @@ function EnvironmentAccessBar({ currentPath }: { currentPath: string }) {
                     currentPath === '/dev' ||
                     currentPath === '/sandbox' ||
                     currentPath === '/dev/home' ||
-                    currentPath === '/home' ||
                     currentPath.startsWith('/dev/') ||
                     currentPath.startsWith('/sandbox/')
                   )
@@ -65,10 +65,11 @@ function App() {
   } else if (startModeMatch?.[1]) {
     page = <AppShell initialMode={startModeMatch[1] as ExperienceMode} />
   }
-  if (
+  if (normalizedPathname === '/dev/home') {
+    page = <DevHomePage />
+  } else if (
     normalizedPathname === '/dev' ||
     normalizedPathname === '/sandbox' ||
-    normalizedPathname === '/dev/home' ||
     normalizedPathname === '/dev/choose' ||
     normalizedPathname === '/dev/preview' ||
     normalizedPathname === '/dev/confirm' ||

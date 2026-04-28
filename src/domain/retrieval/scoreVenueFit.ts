@@ -136,6 +136,178 @@ function hasAnyTag(venue: Venue, tags: string[]): boolean {
   return tags.some((tag) => normalized.has(tag.toLowerCase()))
 }
 
+function normalizeSignalToken(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+function tokenizeSignal(value: string | undefined): string[] {
+  if (!value) {
+    return []
+  }
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3)
+}
+
+function computeWeightedTokenAlignment(
+  weightedTokens: Map<string, number>,
+  venueTokens: Set<string>,
+): number {
+  if (weightedTokens.size === 0) {
+    return 0
+  }
+  let matchedWeight = 0
+  let totalWeight = 0
+  for (const [token, weight] of weightedTokens.entries()) {
+    totalWeight += weight
+    if (venueTokens.has(token)) {
+      matchedWeight += weight
+    }
+  }
+  return totalWeight > 0 ? clamp01(matchedWeight / totalWeight) : 0
+}
+
+function computeSurpriseDirectionSignal(
+  venue: Venue,
+  intent: IntentProfile,
+): {
+  fitBonus: number
+  warmupBoost: number
+  peakBoost: number
+  wildcardBoost: number
+  cooldownBoost: number
+} {
+  if (intent.mode !== 'surprise' || !intent.selectedDirectionContext) {
+    return {
+      fitBonus: 0,
+      warmupBoost: 0,
+      peakBoost: 0,
+      wildcardBoost: 0,
+      cooldownBoost: 0,
+    }
+  }
+
+  const context = intent.selectedDirectionContext
+  const directionTokenWeights = new Map<string, number>()
+  const addWeightedTokens = (tokens: string[], weight: number) => {
+    for (const token of tokens) {
+      directionTokenWeights.set(token, Math.max(weight, directionTokenWeights.get(token) ?? 0))
+    }
+  }
+  addWeightedTokens(tokenizeSignal(context.label), 1)
+  addWeightedTokens(tokenizeSignal(context.subtitle), 1.1)
+  addWeightedTokens(tokenizeSignal(context.archetype), 1.4)
+  addWeightedTokens(tokenizeSignal(context.pocketId), 1.8)
+  addWeightedTokens(tokenizeSignal(context.directionId), 1.6)
+
+  const pocketTokens = new Set(tokenizeSignal(context.pocketId))
+  const archetypeTokens = new Set(tokenizeSignal(context.archetype))
+  const venueTokens = new Set<string>([
+    ...tokenizeSignal(venue.name),
+    ...tokenizeSignal(venue.neighborhood),
+    ...tokenizeSignal(venue.subcategory),
+    ...venue.tags.map(normalizeSignalToken).filter((token) => token.length >= 3),
+    normalizeSignalToken(venue.category),
+  ])
+  const tokenAlignment = computeWeightedTokenAlignment(directionTokenWeights, venueTokens)
+  const pocketAlignment =
+    pocketTokens.size > 0
+      ? clamp01([...pocketTokens].filter((token) => venueTokens.has(token)).length / pocketTokens.size)
+      : 0
+  const archetypeAlignment =
+    archetypeTokens.size > 0
+      ? clamp01(
+          [...archetypeTokens].filter((token) => venueTokens.has(token)).length / archetypeTokens.size,
+        )
+      : 0
+
+  const family = context.family
+  const identity = context.identity
+  const cluster = context.cluster
+  const familyConfidence = context.familyConfidence ?? 0
+  const directionConfidence = clamp01(
+    tokenAlignment * 0.6 +
+      pocketAlignment * 0.25 +
+      archetypeAlignment * 0.15 +
+      familyConfidence * 0.12,
+  )
+
+  const socialCategory =
+    venue.category === 'bar' || venue.category === 'live_music' || venue.category === 'event'
+  const culturalCategory =
+    venue.category === 'museum' ||
+    venue.category === 'event' ||
+    hasAnyTag(venue, ['gallery', 'curated', 'historic'])
+  const exploratoryCategory =
+    venue.category === 'activity' ||
+    venue.category === 'park' ||
+    hasAnyTag(venue, ['discovery', 'walkable', 'district', 'market', 'interactive'])
+  const calmCategory =
+    venue.category === 'cafe' ||
+    venue.category === 'dessert' ||
+    venue.category === 'park' ||
+    hasAnyTag(venue, ['cozy', 'quiet', 'calm', 'slow'])
+
+  let warmupBoost = tokenAlignment * 0.06 + pocketAlignment * 0.025
+  let peakBoost = tokenAlignment * 0.12 + archetypeAlignment * 0.05 + pocketAlignment * 0.02
+  let wildcardBoost = tokenAlignment * 0.11 + archetypeAlignment * 0.045
+  let cooldownBoost = tokenAlignment * 0.055 + pocketAlignment * 0.035
+
+  if (cluster === 'lively') {
+    peakBoost += socialCategory ? 0.085 : -0.02
+    wildcardBoost += socialCategory || exploratoryCategory ? 0.06 : -0.015
+    cooldownBoost -= calmCategory ? 0 : 0.02
+  } else if (cluster === 'chill') {
+    warmupBoost += calmCategory ? 0.055 : 0
+    cooldownBoost += calmCategory ? 0.075 : -0.02
+    peakBoost += culturalCategory ? 0.045 : -0.025
+  } else if (cluster === 'explore') {
+    wildcardBoost += exploratoryCategory ? 0.09 : -0.02
+    peakBoost += culturalCategory || exploratoryCategory ? 0.045 : -0.01
+  }
+
+  if (identity === 'social') {
+    peakBoost += socialCategory ? 0.06 : -0.015
+    wildcardBoost += socialCategory ? 0.04 : -0.01
+  } else if (identity === 'intimate') {
+    warmupBoost += calmCategory ? 0.045 : 0
+    cooldownBoost += calmCategory ? 0.06 : -0.015
+    peakBoost += socialCategory ? -0.03 : 0.015
+  } else if (identity === 'exploratory') {
+    wildcardBoost += exploratoryCategory ? 0.065 : -0.01
+    peakBoost += culturalCategory ? 0.03 : 0
+  }
+
+  if (family === 'social' || family === 'eventful') {
+    peakBoost += socialCategory ? 0.05 : -0.01
+    wildcardBoost += socialCategory ? 0.03 : 0
+  } else if (family === 'cultural' || family === 'ritual') {
+    peakBoost += culturalCategory ? 0.05 : -0.02
+    cooldownBoost += calmCategory ? 0.03 : 0
+  } else if (family === 'exploratory' || family === 'playful') {
+    wildcardBoost += exploratoryCategory ? 0.07 : -0.01
+    warmupBoost += exploratoryCategory ? 0.03 : 0
+  } else if (family === 'ambient' || family === 'intimate' || family === 'indulgent') {
+    warmupBoost += calmCategory ? 0.03 : 0
+    cooldownBoost += calmCategory ? 0.05 : 0
+  }
+
+  if (directionConfidence >= 0.4 && tokenAlignment < 0.12) {
+    peakBoost -= 0.03
+    wildcardBoost -= 0.03
+  }
+
+  return {
+    fitBonus: tokenAlignment * 0.095 + pocketAlignment * 0.045 + archetypeAlignment * 0.03,
+    warmupBoost: Math.max(-0.08, Math.min(0.24, warmupBoost)),
+    peakBoost: Math.max(-0.12, Math.min(0.32, peakBoost)),
+    wildcardBoost: Math.max(-0.12, Math.min(0.3, wildcardBoost)),
+    cooldownBoost: Math.max(-0.08, Math.min(0.24, cooldownBoost)),
+  }
+}
+
 function textIncludesAny(value: string | undefined, terms: string[]): boolean {
   const normalized = value?.trim().toLowerCase()
   if (!normalized) {
@@ -1015,6 +1187,7 @@ export function scoreVenueFit(
   const peakHoursPressure = computeRoleAwareHoursPressure(venue, 'peak')
   const wildcardHoursPressure = computeRoleAwareHoursPressure(venue, 'wildcard')
   const cooldownHoursPressure = computeRoleAwareHoursPressure(venue, 'cooldown')
+  const surpriseDirectionSignal = computeSurpriseDirectionSignal(venue, intent)
   const fitScore = clamp01(
     normalizeWeightedScore(
       {
@@ -1030,6 +1203,7 @@ export function scoreVenueFit(
       weights,
     ) +
       discoveryFitBonus +
+      surpriseDirectionSignal.fitBonus +
       (venue.source.sourceOrigin === 'curated' ? 0.003 : 0) +
       (strongLiveWindow ? 0.06 : softLiveWindow ? 0.025 : 0) +
       hybridLiveLift.fitLift +
@@ -1504,6 +1678,7 @@ export function scoreVenueFit(
       dominanceControl.byRole.warmup * 0.7 -
       warmupContractInfluence.penalty +
       discoveryWarmupBoost +
+      surpriseDirectionSignal.warmupBoost +
       relaxedPenalty * 0.4 -
       closerByPenalty * 0.4 +
       warmupContractInfluence.bonus +
@@ -1551,6 +1726,7 @@ export function scoreVenueFit(
       lensCompatibility * 0.11 +
       energyFactor * 0.06 +
       discoveryPeakBoost +
+      surpriseDirectionSignal.peakBoost +
       highlightAnchorStrengthLift +
       highlightPersonalityLift +
       highlightSpecificityLift +
@@ -1622,6 +1798,7 @@ export function scoreVenueFit(
       lensCompatibility * 0.1 +
       crewPolicy.wildcardBias * 0.08 +
       wildcardLift +
+      surpriseDirectionSignal.wildcardBoost +
       discoveryLift -
       (1 - surpriseMomentRoleFit) * 0.06 -
       dominanceControl.byRole.wildcard * 0.9 -
@@ -1662,6 +1839,7 @@ export function scoreVenueFit(
       (1 - energyFactor) * 0.09 +
       proximityFit * 0.08 +
       discoveryCooldownBoost +
+      surpriseDirectionSignal.cooldownBoost +
       windDownMomentRoleFit * 0.11 +
       windDownSoftModeAlignmentBoost +
       windDownCloseLingerBoost +

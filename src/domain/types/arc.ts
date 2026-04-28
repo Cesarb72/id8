@@ -303,6 +303,10 @@ export interface ArcScoreBreakdown {
   eliteFieldLaneCandidates?: string[]
   eliteFieldCandidateNames?: string[]
   eliteFieldCandidateLanes?: string[]
+  surpriseDirectionAlignmentScore?: number
+  surpriseDirectionAlignmentPenalty?: number
+  surpriseDirectionAlignmentApplied?: boolean
+  surpriseDirectionAlignment?: number
 }
 
 export interface ArcCandidate {

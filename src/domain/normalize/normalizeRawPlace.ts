@@ -6,7 +6,7 @@ import { inferVenueSignals } from './inferVenueSignals'
 import type { PlanningTimeWindowSignal } from '../types/hours'
 import type { RawPlace } from '../types/rawPlace'
 import type { Venue } from '../types/venue'
-import type { VenueSourceOrigin } from '../types/sourceMode'
+import type { CuratedSourceSubtype, VenueSourceOrigin } from '../types/sourceMode'
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
@@ -42,6 +42,26 @@ interface NormalizeRawPlaceOptions {
   timeWindowSignal?: PlanningTimeWindowSignal
 }
 
+function inferCuratedSubtype(raw: RawPlace, sourceOrigin: VenueSourceOrigin): CuratedSourceSubtype | undefined {
+  if (sourceOrigin !== 'curated') {
+    return undefined
+  }
+  if (raw.curatedSubtype) {
+    return raw.curatedSubtype
+  }
+  if (raw.normalizedFromRawType === 'seed') {
+    return 'seed'
+  }
+  const sourceQueryLabel = raw.sourceQueryLabel?.trim().toLowerCase()
+  if (sourceQueryLabel === 'portable-bootstrap') {
+    return 'bootstrap-portable'
+  }
+  if (sourceQueryLabel === 'draft-compose-custom') {
+    return 'manual-custom'
+  }
+  return undefined
+}
+
 export function normalizeRawPlace(raw: RawPlace, options: NormalizeRawPlaceOptions = {}): Venue {
   const categoryResult = getNormalizedCategory(raw)
   const inferred = inferVenueSignals({
@@ -63,6 +83,7 @@ export function normalizeRawPlace(raw: RawPlace, options: NormalizeRawPlaceOptio
 
   const sourceOrigin: VenueSourceOrigin =
     raw.sourceOrigin ?? (raw.normalizedFromRawType === 'seed' ? 'curated' : 'live')
+  const curatedSubtype = inferCuratedSubtype(raw, sourceOrigin)
   const baseVenue: Venue = {
     id: raw.id,
     name: raw.name,
@@ -96,6 +117,7 @@ export function normalizeRawPlace(raw: RawPlace, options: NormalizeRawPlaceOptio
     source: {
       normalizedFromRawType: raw.normalizedFromRawType ?? 'raw-place',
       sourceOrigin,
+      curatedSubtype,
       provider: raw.provider,
       providerRecordId: raw.providerRecordId,
       formattedAddress: raw.formattedAddress,

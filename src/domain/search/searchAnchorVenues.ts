@@ -1,9 +1,16 @@
 import { normalizeRawPlace } from '../normalize/normalizeRawPlace'
-import { getGooglePlacesConfig, hasGooglePlacesConfig } from '../sources/getSourceMode'
+import {
+  getGooglePlacesConfig,
+  hasGooglePlacesConfig,
+  isDevOrSandboxCloseoutFlow,
+} from '../sources/getSourceMode'
 import { curatedVenues } from '../../data/venues'
-import type { GooglePlaceRecord } from '../sources/mapLivePlaceToRawPlace'
-import type { RawPlace } from '../types/rawPlace'
-import type { Venue, VenueCategory } from '../types/venue'
+import {
+  mapLivePlaceToRawPlace,
+  type GooglePlaceRecord,
+} from '../sources/mapLivePlaceToRawPlace'
+import type { LivePlaceKind } from '../sources/buildLiveQueryPlan'
+import type { Venue } from '../types/venue'
 
 export type AnchorSearchChip = 'restaurant' | 'movie' | 'drinks' | 'park' | 'activity'
 
@@ -49,71 +56,6 @@ function unique(values: string[]): string[] {
   return [...new Set(values)]
 }
 
-function hasAny(values: string[], candidates: string[]): boolean {
-  return candidates.some((candidate) => values.includes(candidate))
-}
-
-function getNormalizedTypes(place: GooglePlaceRecord): string[] {
-  return unique(
-    [place.primaryType, ...(place.types ?? [])]
-      .filter((value): value is string => Boolean(value))
-      .map(normalizeValue)
-      .filter(
-        (value) =>
-          !['food', 'establishment', 'point-of-interest', 'store', 'tourist-attraction'].includes(
-            value,
-          ),
-      ),
-  )
-}
-
-function resolveAnchorCategory(placeTypes: string[], chip?: AnchorSearchChip): VenueCategory {
-  if (hasAny(placeTypes, ['bar', 'cocktail-bar', 'wine-bar', 'pub', 'brewery', 'sports-bar'])) {
-    return 'bar'
-  }
-  if (hasAny(placeTypes, ['cafe', 'coffee-shop', 'tea-house', 'espresso-bar'])) {
-    return 'cafe'
-  }
-  if (
-    hasAny(placeTypes, ['restaurant', 'brunch-restaurant', 'fine-dining-restaurant']) ||
-    placeTypes.some((type) => type.endsWith('-restaurant'))
-  ) {
-    return 'restaurant'
-  }
-  if (hasAny(placeTypes, ['park', 'national-park', 'dog-park', 'garden', 'playground'])) {
-    return 'park'
-  }
-  if (hasAny(placeTypes, ['museum', 'art-gallery'])) {
-    return 'museum'
-  }
-  if (hasAny(placeTypes, ['concert-hall', 'event-venue', 'amphitheater'])) {
-    return 'event'
-  }
-  if (
-    hasAny(placeTypes, [
-      'movie-theater',
-      'bowling-alley',
-      'mini-golf-course',
-      'escape-room-center',
-      'arcade',
-      'tourist-attraction',
-    ])
-  ) {
-    return 'activity'
-  }
-
-  if (chip === 'drinks') {
-    return 'bar'
-  }
-  if (chip === 'park') {
-    return 'park'
-  }
-  if (chip === 'movie' || chip === 'activity') {
-    return 'activity'
-  }
-  return 'restaurant'
-}
-
 function mapChipToQueryHint(chip?: AnchorSearchChip): string | undefined {
   if (chip === 'restaurant') {
     return 'restaurant'
@@ -144,108 +86,60 @@ function buildTextQuery(
   return hint ? `${query} ${hint} in ${locationLabel}` : `${query} in ${locationLabel}`
 }
 
-function getAddressComponent(
-  components: GooglePlaceRecord['addressComponents'],
-  candidates: string[],
-): string | undefined {
-  return components?.find((component) =>
-    component.types?.some((type) => candidates.includes(normalizeValue(type))),
-  )?.longText
+function mapChipToRequestedKind(chip?: AnchorSearchChip): LivePlaceKind {
+  if (chip === 'drinks') {
+    return 'bar'
+  }
+  if (chip === 'park') {
+    return 'park'
+  }
+  if (chip === 'movie' || chip === 'activity') {
+    return 'activity'
+  }
+  return 'restaurant'
 }
 
-function inferCity(place: GooglePlaceRecord, fallback: string): string {
-  return (
-    getAddressComponent(place.addressComponents, ['locality']) ??
-    getAddressComponent(place.addressComponents, ['administrative-area-level-2']) ??
-    fallback
-  )
-}
-
-function inferNeighborhood(place: GooglePlaceRecord, fallback?: string): string | undefined {
-  return (
-    getAddressComponent(place.addressComponents, ['neighborhood']) ??
-    getAddressComponent(place.addressComponents, ['sublocality-level-1', 'sublocality']) ??
-    place.shortFormattedAddress?.split(',')[0]?.trim() ??
-    fallback
-  )
-}
-
-function mapPriceTier(priceLevel: string | undefined): RawPlace['priceTier'] {
-  if (priceLevel === 'PRICE_LEVEL_FREE' || priceLevel === 'PRICE_LEVEL_INEXPENSIVE') {
-    return '$'
-  }
-  if (priceLevel === 'PRICE_LEVEL_MODERATE') {
-    return '$$'
-  }
-  if (priceLevel === 'PRICE_LEVEL_EXPENSIVE') {
-    return '$$$'
-  }
-  if (priceLevel === 'PRICE_LEVEL_VERY_EXPENSIVE') {
-    return '$$$$'
-  }
-  return '$$'
+function buildAnchorQueryTerms(query: string, chip?: AnchorSearchChip): string[] {
+  const terms = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 3)
+    .slice(0, 4)
+  const chipHint = mapChipToQueryHint(chip)
+  return unique(chipHint ? [...terms, chipHint] : terms)
 }
 
 function mapGooglePlaceToVenue(
   place: GooglePlaceRecord,
+  rank: number,
+  query: string,
   city: string,
   neighborhood?: string,
   chip?: AnchorSearchChip,
 ): Venue | undefined {
-  const name = place.displayName?.text?.trim()
-  const placeId = place.id?.trim()
-  if (!name || !placeId) {
+  const requestedKind = mapChipToRequestedKind(chip)
+  const queryTerms = buildAnchorQueryTerms(query, chip)
+  const rawPlace = mapLivePlaceToRawPlace(place, {
+    city,
+    neighborhood,
+    requestedKind,
+    queryLabel: 'anchor-search',
+    queryTerms,
+    rank,
+  })
+  if (!rawPlace) {
     return undefined
   }
 
-  const placeTypes = getNormalizedTypes(place)
-  const category = resolveAnchorCategory(placeTypes, chip)
-  const rawPlace: RawPlace = {
-    rawType: 'place',
-    id: `live_google_${placeId}`,
-    name,
-    city: inferCity(place, city),
-    neighborhood: inferNeighborhood(place, neighborhood) ?? city,
+  const anchorName = rawPlace.name.trim()
+  return normalizeRawPlace({
+    ...rawPlace,
     driveMinutes: neighborhood ? 10 : 12,
-    priceTier: mapPriceTier(place.priceLevel),
-    tags: unique([
-      ...placeTypes,
-      ...(chip ? [chip] : []),
-      ...(place.editorialSummary?.text
-        ?.toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .filter((token) => token.length >= 4)
-        .slice(0, 5) ?? []),
-    ]).slice(0, 12),
     shortDescription:
-      place.editorialSummary?.text?.trim() ?? `${name} was selected as a user-led plan anchor.`,
-    narrativeFlavor: `${name} is the chosen anchor for a user-led outing.`,
-    imageUrl: '',
-    categoryHint: category,
-    subcategoryHint: placeTypes[0] ?? category,
-    placeTypes,
-    sourceTypes: placeTypes,
-    normalizedFromRawType: 'raw-place',
-    sourceOrigin: 'live',
-    provider: 'google-places',
-    providerRecordId: placeId,
-    sourceQueryLabel: 'anchor-search',
-    queryTerms: chip ? [chip] : undefined,
-    sourceConfidence: 0.88,
-    formattedAddress: place.formattedAddress,
-    rating: place.rating,
-    ratingCount: place.userRatingCount,
-    openNow: place.currentOpeningHours?.openNow,
-    businessStatus: place.businessStatus,
-    hoursPeriods: undefined,
-    currentOpeningHoursText: place.currentOpeningHours?.weekdayDescriptions,
-    regularOpeningHoursText: place.regularOpeningHours?.weekdayDescriptions,
-    utcOffsetMinutes: place.utcOffsetMinutes,
-    latitude: place.location?.latitude,
-    longitude: place.location?.longitude,
-  }
-
-  return normalizeRawPlace(rawPlace)
+      place.editorialSummary?.text?.trim() ??
+      `${anchorName} was selected as a user-led plan anchor.`,
+    narrativeFlavor: `${anchorName} is the chosen anchor for a user-led outing.`,
+  })
 }
 
 async function searchGooglePlaces(
@@ -281,8 +175,8 @@ async function searchGooglePlaces(
 
   const payload = (await response.json()) as { places?: GooglePlaceRecord[] }
   return (payload.places ?? [])
-    .map((place) => {
-      const venue = mapGooglePlaceToVenue(place, city, neighborhood, chip)
+    .map((place, index) => {
+      const venue = mapGooglePlaceToVenue(place, index, query, city, neighborhood, chip)
       if (!venue) {
         return undefined
       }
@@ -336,7 +230,7 @@ function searchFallbackVenues(
     .map((venue) => ({
       venue,
       score: scoreFallbackVenue(venue, query, chip),
-      subtitle: `${venue.neighborhood} · ${venue.category.replace('_', ' ')}`,
+      subtitle: `${venue.neighborhood} - ${venue.category.replace('_', ' ')}`,
     }))
     .filter((result) => result.score > 0)
     .sort((left, right) => right.score - left.score || left.venue.driveMinutes - right.venue.driveMinutes)
@@ -355,6 +249,10 @@ export async function searchAnchorVenues(input: {
     return []
   }
 
+  if (isDevOrSandboxCloseoutFlow()) {
+    return searchFallbackVenues(trimmedQuery, input.city, input.neighborhood, input.chip)
+  }
+
   if (!hasGooglePlacesConfig()) {
     return searchFallbackVenues(trimmedQuery, input.city, input.neighborhood, input.chip)
   }
@@ -370,7 +268,7 @@ export async function searchAnchorVenues(input: {
       return googleResults
     }
   } catch (error) {
-    console.error(error)
+    void error
   }
 
   return searchFallbackVenues(trimmedQuery, input.city, input.neighborhood, input.chip)

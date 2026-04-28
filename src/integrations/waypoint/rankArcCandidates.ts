@@ -1,6 +1,7 @@
 import { rankWithWaypointBoundary } from './core'
 import type { ArcCandidate } from '../../domain/types/arc'
 import type { IntentProfile } from '../../domain/types/intent'
+import type { WaypointRankResponse } from './core'
 
 export interface RankedArcResult {
   rankedCandidates: ArcCandidate[]
@@ -16,4 +17,11 @@ export function rankArcCandidates(
     rankedCandidates: response.ranked.map((entry) => entry.candidate),
     rankingEngine: response.engine,
   }
+}
+
+export function rankArcCandidatesWithDiagnostics(
+  candidates: ArcCandidate[],
+  intent: IntentProfile,
+): WaypointRankResponse {
+  return rankWithWaypointBoundary({ candidates, intent })
 }

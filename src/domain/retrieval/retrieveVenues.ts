@@ -1,8 +1,10 @@
 import { applyLensToVenue, type LensShapedVenue } from './applyLensToVenue'
 import {
+  classifyProviderAuthority,
   getFieldAuthorityTargets,
   resolveAllowCuratedFallback,
   resolveDefaultCityFallback,
+  resolveFieldGovernancePolicy,
   resolveFieldRetrievalSourceMode,
   sanitizeCityKey,
 } from './fieldPolicy'
@@ -16,14 +18,27 @@ import {
   isWithinStrictNearbyWindow,
 } from '../constraints/localStretchPolicy'
 import { fetchLivePlaces } from '../sources/fetchLivePlaces'
+import { isDevOrSandboxCloseoutFlow } from '../sources/getSourceMode'
 import type { LiveDedupeLossDiagnostics } from '../types/diagnostics'
 import type { LiveTrustBreakdownDiagnostics } from '../types/diagnostics'
 import type { FallbackRelaxationLevel } from '../types/diagnostics'
 import type { ExperienceLens } from '../types/experienceLens'
 import { curatedVenues as baseCuratedVenues } from '../../data/venues'
+import {
+  devGreatStopFixtureVenueIds,
+  normalizeDevGreatStopFixtures,
+  readDevGreatStopFixturesEnvRaw,
+  readDevGreatStopFixturesEnabled,
+} from '../sources/devGreatStopFixtures'
 import type { IntentProfile } from '../types/intent'
 import type { ExcludedVenueDiagnostics } from '../types/normalization'
-import type { SourceMode } from '../types/sourceMode'
+import type {
+  FieldFallbackSource,
+  FieldGovernanceRuntimeMode,
+  FieldInventoryTruth,
+  ProviderAuthorityClass,
+  SourceMode,
+} from '../types/sourceMode'
 import type { StarterPack } from '../types/starterPack'
 import type { Venue } from '../types/venue'
 
@@ -71,6 +86,8 @@ interface RetrieveVenuesOptions {
   sourceModeOverrideApplied?: boolean
   starterPack?: StarterPack
 }
+
+type ProviderAuthoritySummary = Partial<Record<ProviderAuthorityClass, number>>
 
 export interface RetrieveVenuesResult {
   venues: Venue[]
@@ -139,6 +156,21 @@ export interface RetrieveVenuesResult {
     hybridAdapterMode?: string
     hybridAdapterNotes?: string[]
     hybridAdapterCount?: number
+    devGreatStopFixturesEnvRaw: string
+    devGreatStopFixturesEnabled: boolean
+    devGreatStopFixtureCount: number
+    devGreatStopFixtureVenueIds: string[]
+    runtimeMode?: FieldGovernanceRuntimeMode
+    liveUsableInventory?: boolean
+    fallbackUsed?: boolean
+    fallbackReason?: string
+    fallbackSources?: FieldFallbackSource[]
+    inventoryTruth?: FieldInventoryTruth
+    liveFailureVisible?: boolean
+    fixtureInjectionUsed?: boolean
+    bootstrapInjectionUsed?: boolean
+    defaultCityFallbackUsed?: boolean
+    providerAuthoritySummary?: ProviderAuthoritySummary
   }
   stageCounts: {
     totalSeed: number
@@ -606,11 +638,24 @@ export async function retrieveVenues(
   lens: ExperienceLens,
   options: RetrieveVenuesOptions = {},
 ): Promise<RetrieveVenuesResult> {
-  const curatedVenues = (options.seedVenues
-    ? [...options.seedVenues, ...baseCuratedVenues]
-    : baseCuratedVenues).map(ensureVenueHasHappenings)
+  const governancePolicy = resolveFieldGovernancePolicy()
+  const devGreatStopFixturesEnvRaw = readDevGreatStopFixturesEnvRaw()
+  const devGreatStopFixturesEnabled = readDevGreatStopFixturesEnabled()
+  const devGreatStopFixtureVenues = devGreatStopFixturesEnabled ? normalizeDevGreatStopFixtures() : []
+  const fixtureInjectionUsed =
+    governancePolicy.allowFixtureInjection && devGreatStopFixtureVenues.length > 0
+  const curatedFixtureVenues = governancePolicy.allowFixtureInjection
+    ? devGreatStopFixtureVenues
+    : []
+  const curatedVenues = (
+    options.seedVenues
+      ? [...options.seedVenues, ...curatedFixtureVenues, ...baseCuratedVenues]
+      : [...curatedFixtureVenues, ...baseCuratedVenues]
+  ).map(ensureVenueHasHappenings)
   const cityQuery = sanitizeCity(intent.city)
-  const requestedSourceMode = options.requestedSourceMode ?? 'curated'
+  const requestedSourceMode = isDevOrSandboxCloseoutFlow()
+    ? 'curated'
+    : options.requestedSourceMode ?? 'curated'
   const retrievalSourceMode: SourceMode = resolveFieldRetrievalSourceMode({
     cityQuery,
     requestedSourceMode,
@@ -665,9 +710,11 @@ export async function retrieveVenues(
             approvedCount: 0,
             demotedCount: 0,
             suppressedCount: 0,
+            usableCount: 0,
             partialFailure: false,
             success: false,
             failureReason: undefined,
+            failureCategory: undefined,
             errors: [] as string[],
           },
         }
@@ -677,9 +724,16 @@ export async function retrieveVenues(
     retrievalSourceMode !== 'curated' && cityQuery.length > 0 && !curatedCoverageForCity
       ? await fetchHybridPortableVenues(intent.city)
       : undefined
+  const hybridPortableVenues = hybridPortable?.venues ?? []
+  const bootstrapPortableVenues = hybridPortableVenues.filter(
+    (venue) => venue.source.curatedSubtype === 'bootstrap-portable',
+  )
+  const bootstrapInjectionUsed = bootstrapPortableVenues.length > 0
+  const governanceBlockedBootstrap =
+    governancePolicy.runtimeMode === 'api_governed' && !governancePolicy.allowBootstrapFallback
   const effectiveLiveVenues = [
     ...liveFetch.venues,
-    ...(hybridPortable?.venues ?? []),
+    ...(!governanceBlockedBootstrap ? hybridPortableVenues : []),
   ].filter(
     (venue, index, collection) =>
       collection.findIndex((candidate) => candidate.id === venue.id) === index,
@@ -698,17 +752,25 @@ export async function retrieveVenues(
   const effectiveLiveSuppressedCount = effectiveLiveVenues.filter(
     (venue) => venue.source.qualityGateStatus === 'suppressed',
   ).length
+  const effectiveLiveUsableCount = effectiveLiveVenues.filter(
+    (venue) =>
+      venue.source.sourceOrigin === 'live' && venue.source.qualityGateStatus !== 'suppressed',
+  ).length
+  const liveUsableInventory = effectiveLiveUsableCount > 0
   const hasEffectiveLiveCoverage = liveFetch.diagnostics.success || effectiveLiveVenues.length > 0
   const allowCuratedFallbackForCity = resolveAllowCuratedFallback({
     cityQuery,
     curatedCoverageForCity,
   })
-  const shouldFallbackToCurated =
+  const shouldFallbackToCuratedByAvailability =
     retrievalSourceMode !== 'curated' &&
     allowCuratedFallbackForCity &&
     (!hasEffectiveLiveCoverage ||
       mergedRequested.countsBySource.live === 0 ||
       (retrievalSourceMode === 'live' && mergedRequested.venues.length < 10))
+  const shouldFallbackToCurated =
+    shouldFallbackToCuratedByAvailability &&
+    (governancePolicy.runtimeMode !== 'api_governed' || governancePolicy.allowCuratedFallback)
 
   const sourcePool = shouldFallbackToCurated
     ? curatedVenues
@@ -732,6 +794,21 @@ export async function retrieveVenues(
   )
   const excludedByQualityGate = buildExcludedDiagnostics(qualitySuppressed)
 
+  const blockedFallbackSources = new Set<FieldFallbackSource>()
+  if (shouldFallbackToCuratedByAvailability && !shouldFallbackToCurated) {
+    blockedFallbackSources.add('curated')
+  }
+  if (bootstrapInjectionUsed && governanceBlockedBootstrap) {
+    blockedFallbackSources.add('bootstrap')
+  }
+  if (
+    governancePolicy.runtimeMode === 'api_governed' &&
+    devGreatStopFixtureVenues.length > 0 &&
+    !governancePolicy.allowFixtureInjection
+  ) {
+    blockedFallbackSources.add('fixture')
+  }
+
   const cityMatches = qualityEligibleVenues.filter(
     (venue) =>
       sanitizeCity(venue.city) === cityQuery &&
@@ -741,7 +818,21 @@ export async function retrieveVenues(
     cityQuery,
     shouldFallbackToCurated,
     retrievalSourceMode,
+    allowDefaultCityFallback: governancePolicy.allowDefaultCityFallback,
   })
+  const governanceBlockedDefaultCityFallback =
+    governancePolicy.runtimeMode === 'api_governed' &&
+    !governancePolicy.allowDefaultCityFallback &&
+    cityMatches.length === 0 &&
+    qualityEligibleVenues.some(
+      (venue) =>
+        sanitizeCity(venue.city) !== cityQuery &&
+        venue.driveMinutes <= maxDriveMinutes,
+    )
+  if (governanceBlockedDefaultCityFallback) {
+    blockedFallbackSources.add('default_city')
+  }
+  const defaultCityFallbackUsed = cityMatches.length === 0 && Boolean(defaultFallbackCity)
   const fallbackMatches =
     cityMatches.length > 0
       ? cityMatches
@@ -752,6 +843,12 @@ export async function retrieveVenues(
               venue.driveMinutes <= maxDriveMinutes,
           )
         : []
+  const shouldFailClosedForLiveInventory =
+    governancePolicy.runtimeMode === 'api_governed' &&
+    governancePolicy.failClosedOnLiveInventoryFailure &&
+    (retrievalSourceMode === 'live' || retrievalSourceMode === 'hybrid') &&
+    !liveUsableInventory &&
+    blockedFallbackSources.size > 0
 
   const shapedCandidates = fallbackMatches
     .map((venue) => applyLensToVenue(venue, intent, lens))
@@ -807,7 +904,39 @@ export async function retrieveVenues(
       : lensShapedVenues
   const buildResult = (venues: Venue[], neighborhoodPreferred: number): RetrieveVenuesResult => {
     const finalCountsBySource = countBySource(venues)
-    return {
+    const providerAuthoritySummary = countByProviderAuthority(venues)
+    const blockedFallbackList = [...blockedFallbackSources]
+    const finalBootstrapUsed = venues.some(
+      (venue) => venue.source.curatedSubtype === 'bootstrap-portable',
+    )
+    const fallbackUsed = shouldFailClosedForLiveInventory
+      ? false
+      : shouldFallbackToCurated || finalBootstrapUsed || defaultCityFallbackUsed || fixtureInjectionUsed
+    const liveFailureVisible =
+      (retrievalSourceMode === 'live' || retrievalSourceMode === 'hybrid') &&
+      (liveFetch.diagnostics.attempted || Boolean(liveFetch.diagnostics.failureReason)) &&
+      !liveUsableInventory
+    let fallbackReason = liveFetch.diagnostics.failureReason
+    if (shouldFailClosedForLiveInventory) {
+      fallbackReason = `Governance blocked fallback masking after live inventory failure: ${blockedFallbackList.join(', ')}.`
+    } else if (shouldFallbackToCurated && retrievalSourceMode === 'live' && mergedRequested.venues.length < 10) {
+      fallbackReason = 'Live-only inventory was too thin for safe plan generation, so curated fallback was used.'
+    } else if (defaultCityFallbackUsed) {
+      fallbackReason = `Default-city fallback used ${defaultFallbackCity ?? 'the fallback city'} because no exact city matches survived.`
+    } else if (finalBootstrapUsed && hybridPortable?.diagnostics.bootstrapRequired) {
+      fallbackReason = 'Portable bootstrap supplied coverage because live inventory was unavailable or too thin.'
+    }
+    let inventoryTruth: FieldInventoryTruth = 'curated_only'
+    if (shouldFailClosedForLiveInventory) {
+      inventoryTruth = 'live_failed_empty'
+    } else if (finalCountsBySource.live > 0 && finalBootstrapUsed) {
+      inventoryTruth = 'hybrid_live_bootstrap'
+    } else if (finalCountsBySource.live > 0) {
+      inventoryTruth = 'real_live'
+    } else if (fallbackUsed && retrievalSourceMode !== 'curated') {
+      inventoryTruth = 'fallback_filled'
+    }
+    const result: RetrieveVenuesResult = {
       venues,
       totalVenueCount: mergedPool.venues.length,
       lensCompatibleCount: happeningsPreservedCandidates.length,
@@ -819,14 +948,9 @@ export async function retrieveVenues(
         debugOverrideApplied: Boolean(options.sourceModeOverrideApplied),
         fallbackToCurated: shouldFallbackToCurated,
         liveFetchAttempted: liveFetch.diagnostics.attempted,
-        liveFetchSucceeded: hasEffectiveLiveCoverage,
+        liveFetchSucceeded: liveFetch.diagnostics.success,
         provider: liveFetch.diagnostics.provider,
-        failureReason:
-          shouldFallbackToCurated && liveFetch.diagnostics.failureReason
-            ? liveFetch.diagnostics.failureReason
-            : shouldFallbackToCurated && retrievalSourceMode === 'live' && mergedRequested.venues.length < 10
-              ? 'Live-only inventory was too thin for safe plan generation, so curated fallback was used.'
-              : liveFetch.diagnostics.failureReason,
+        failureReason: fallbackReason,
         queryLocationLabel: liveFetch.diagnostics.queryLocationLabel,
         queryCentersCount: liveFetch.diagnostics.queryCentersCount,
         queryCentersUsed: liveFetch.diagnostics.queryCentersUsed,
@@ -866,6 +990,26 @@ export async function retrieveVenues(
         hybridAdapterMode: hybridPortable?.diagnostics.mode,
         hybridAdapterNotes: hybridPortable?.diagnostics.notes,
         hybridAdapterCount: hybridPortable?.diagnostics.selectedCount,
+        devGreatStopFixturesEnvRaw,
+        devGreatStopFixturesEnabled,
+        devGreatStopFixtureCount: devGreatStopFixtureVenues.length,
+        devGreatStopFixtureVenueIds: devGreatStopFixturesEnabled ? devGreatStopFixtureVenueIds : [],
+        runtimeMode: governancePolicy.runtimeMode,
+        liveUsableInventory,
+        fallbackUsed,
+        fallbackReason,
+        fallbackSources: shouldFailClosedForLiveInventory ? blockedFallbackList : [
+          ...(shouldFallbackToCurated ? (['curated'] as FieldFallbackSource[]) : []),
+          ...(finalBootstrapUsed ? (['bootstrap'] as FieldFallbackSource[]) : []),
+          ...(defaultCityFallbackUsed ? (['default_city'] as FieldFallbackSource[]) : []),
+          ...(fixtureInjectionUsed ? (['fixture'] as FieldFallbackSource[]) : []),
+        ],
+        inventoryTruth,
+        liveFailureVisible,
+        fixtureInjectionUsed,
+        bootstrapInjectionUsed,
+        defaultCityFallbackUsed,
+        providerAuthoritySummary,
       },
       stageCounts: {
         totalSeed: mergedPool.venues.length,
@@ -894,11 +1038,39 @@ export async function retrieveVenues(
         finalLive: finalCountsBySource.live,
       },
     }
+
+    if (
+      shouldTraceGovernedBuild() &&
+      (requestedSourceMode === 'live' || requestedSourceMode === 'hybrid')
+    ) {
+      console.info('[ID8 TRACE] retrieveVenues sourceMode', {
+        requestedSourceMode,
+        retrievalSourceMode,
+        effectiveMode: result.sourceMode.effectiveMode,
+        runtimeMode: result.sourceMode.runtimeMode,
+        inventoryTruth: result.sourceMode.inventoryTruth,
+        liveFailureVisible: result.sourceMode.liveFailureVisible,
+        fallbackUsed: result.sourceMode.fallbackUsed,
+        fallbackSources: result.sourceMode.fallbackSources,
+        liveUsableInventory: result.sourceMode.liveUsableInventory,
+        fixtureInjectionUsed: result.sourceMode.fixtureInjectionUsed,
+        countsBySource: result.sourceMode.countsBySource,
+      })
+    }
+
+    return result
+  }
+
+  if (shouldFailClosedForLiveInventory) {
+    return buildResult([], 0)
   }
 
   if (!normalizedNeighborhood) {
     return buildResult(
-      mergeRequiredVenues(localFirstLensShapedVenues, requiredInventoryVenues),
+      mergeRequiredVenues(localFirstLensShapedVenues, [
+        ...requiredInventoryVenues,
+        ...curatedFixtureVenues,
+      ]),
       0,
     )
   }
@@ -912,14 +1084,35 @@ export async function retrieveVenues(
 
   if (intent.distanceMode === 'nearby' && neighborhoodMatches.length > 0) {
     return buildResult(
-      mergeRequiredVenues([...neighborhoodMatches, ...nearbyMatches], requiredInventoryVenues),
+      mergeRequiredVenues([...neighborhoodMatches, ...nearbyMatches], [
+        ...requiredInventoryVenues,
+        ...curatedFixtureVenues,
+      ]),
       neighborhoodMatches.length,
     )
   }
 
   return buildResult(
-    mergeRequiredVenues(localFirstLensShapedVenues, requiredInventoryVenues),
+    mergeRequiredVenues(localFirstLensShapedVenues, [
+      ...requiredInventoryVenues,
+      ...curatedFixtureVenues,
+    ]),
     neighborhoodMatches.length,
   )
+}
+
+function countByProviderAuthority(venues: Venue[]): ProviderAuthoritySummary {
+  return venues.reduce<ProviderAuthoritySummary>((acc, venue) => {
+    const authority = classifyProviderAuthority(venue.source)
+    acc[authority] = (acc[authority] ?? 0) + 1
+    return acc
+  }, {})
+}
+
+function shouldTraceGovernedBuild(): boolean {
+  if (typeof window === 'undefined') {
+    return false
+  }
+  return window.location.search.includes('debug=1')
 }
 

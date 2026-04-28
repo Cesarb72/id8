@@ -4,6 +4,10 @@ import { buildExperienceLens } from '../../intent/buildExperienceLens'
 import { normalizeIntent } from '../../intent/normalizeIntent'
 import { retrieveVenues } from '../../retrieval/retrieveVenues'
 import { scoreVenueCollection } from '../../retrieval/scoreVenueFit'
+import {
+  devGreatStopFixtureVenueIds,
+  readDevGreatStopFixturesEnabled,
+} from '../../sources/devGreatStopFixtures'
 import type { ScoredVenue } from '../../types/arc'
 import type { BudgetPreference, DistanceMode, PersonaMode, VibeAnchor } from '../../types/intent'
 import type { SourceMode } from '../../types/sourceMode'
@@ -99,6 +103,26 @@ export type StopTypeCandidateBoard = {
   scenarioFamily: ScenarioFamily
   requiredStopTypes: StopType[]
   candidatesByStopType: Record<StopType, StopTypeCandidate[]>
+  debug?: {
+    devGreatStopFixturesEnabled: boolean
+    scenarioCandidateBoardFixtureCandidates: string[]
+    scenarioCandidateBoardFixtureDrops: Array<{
+      venueId: string
+      name: string
+      stopType: StopType
+      fixtureBoardDropReason: string
+      fixtureScenarioBoardRank?: number
+      score?: number
+    }>
+    fixtureStopTypeMembership: Array<{
+      venueId: string
+      name: string
+      stopType: StopType
+      fixtureScenarioBoardRank: number
+      score: number
+      fixtureBoardDropReason: 'selected'
+    }>
+  }
 }
 
 type BuildStopTypeCandidateBoardInput = {
@@ -288,7 +312,17 @@ export function getScenarioRequiredStopTypes(scenarioFamily: ScenarioFamily): St
 }
 
 function uniqueLowerTokens(venue: Venue): Set<string> {
-  const seed = [
+  const seed = buildVenueCorpus(venue)
+  return new Set(
+    normalizeToken(seed)
+      .split(' ')
+      .map((token) => token.trim())
+      .filter(Boolean),
+  )
+}
+
+function buildVenueCorpus(venue: Venue): string {
+  return [
     venue.name,
     venue.subcategory,
     venue.shortDescription,
@@ -301,16 +335,18 @@ function uniqueLowerTokens(venue: Venue): Set<string> {
   ]
     .filter(Boolean)
     .join(' ')
-  return new Set(
-    normalizeToken(seed)
-      .split(' ')
-      .map((token) => token.trim())
-      .filter(Boolean),
-  )
 }
 
 function hasAnyToken(tokens: Set<string>, values: string[]): boolean {
   return values.some((value) => tokens.has(normalizeToken(value)))
+}
+
+function hasAnyTokenOrPhrase(tokens: Set<string>, corpus: string, values: string[]): boolean {
+  const normalizedCorpus = normalizeToken(corpus)
+  return values.some((value) => {
+    const normalized = normalizeToken(value)
+    return tokens.has(normalized) || normalizedCorpus.includes(normalized)
+  })
 }
 
 function hasAnyPhrase(value: string, phrases: string[]): boolean {
@@ -469,6 +505,7 @@ function getStopTypeFit(
 ): StopTypeFitResult {
   const venue = scoredVenue.venue
   const tokens = uniqueLowerTokens(venue)
+  const corpus = buildVenueCorpus(venue)
   const signals = getVenueSignals(scoredVenue)
   const isRestaurantLike =
     venue.category === 'restaurant' || venue.category === 'cafe' || venue.category === 'dessert'
@@ -549,12 +586,26 @@ function getStopTypeFit(
     case 'aperitivo': {
       fit = clamp01(
         (venue.category === 'bar' ? 0.28 : 0) +
+          (venue.category === 'cafe' ? 0.16 : 0) +
           (venue.category === 'restaurant' ? 0.1 : 0) +
           (signals.roleFit.start * 0.2) +
-          (hasAnyToken(tokens, ['happy', 'hour', 'aperitivo', 'small', 'plates', 'cocktail']) ? 0.26 : 0) +
+          (hasAnyTokenOrPhrase(tokens, corpus, [
+            'happy',
+            'hour',
+            'aperitivo',
+            'small plates',
+            'pre show',
+            'social',
+            'coffee',
+            'cocktail',
+            'warmup',
+            'walkable',
+          ]) ? 0.26 : 0) +
           (signals.currentRelevance * 0.16),
       )
-      if (hasAnyToken(tokens, ['happy', 'hour', 'aperitivo'])) reasons.push('early-evening energy setter')
+      if (hasAnyTokenOrPhrase(tokens, corpus, ['happy', 'hour', 'aperitivo', 'pre show', 'social'])) {
+        reasons.push('early-evening energy setter')
+      }
       if (signals.roleFit.start >= 0.6) reasons.push('strong opener fit')
       break
     }
@@ -564,7 +615,16 @@ function getStopTypeFit(
           (venue.category === 'event' ? 0.08 : 0) +
           (signals.roleFit.highlight * 0.2) +
           (venue.energyLevel >= 3 ? 0.12 : 0) +
-          (hasAnyToken(tokens, ['social', 'lively', 'buzz', 'energetic', 'chef']) ? 0.18 : 0) +
+          (hasAnyTokenOrPhrase(tokens, corpus, [
+            'social',
+            'lively',
+            'buzz',
+            'energetic',
+            'chef',
+            'small plates',
+            'live music',
+            'showcase',
+          ]) ? 0.18 : 0) +
           (signals.liveNightlifePotential * 0.16),
       )
       if (venue.category === 'restaurant') reasons.push('highlight dinner structure')
@@ -588,7 +648,16 @@ function getStopTypeFit(
         (venue.category === 'bar' ? 0.36 : 0) +
           (signals.liveNightlifePotential * 0.22) +
           (signals.roleFit.windDown * 0.16) +
-          (hasAnyToken(tokens, ['cocktail', 'bar', 'lounge', 'night']) ? 0.2 : 0) +
+          (hasAnyTokenOrPhrase(tokens, corpus, [
+            'cocktail',
+            'bar',
+            'lounge',
+            'night',
+            'nightcap',
+            'dj',
+            'listening',
+            'social',
+          ]) ? 0.2 : 0) +
           (signals.currentRelevance * 0.06),
       )
       if (venue.category === 'bar') reasons.push('cocktail-forward nightlife lane')
@@ -600,7 +669,18 @@ function getStopTypeFit(
         (isRestaurantLike ? 0.24 : 0) +
           (signals.lateNightPotential * 0.28) +
           (signals.currentRelevance * 0.16) +
-          (hasAnyToken(tokens, ['late', 'night', 'post', 'food', 'ramen', 'dessert']) ? 0.2 : 0) +
+          (hasAnyTokenOrPhrase(tokens, corpus, [
+            'late',
+            'night',
+            'post',
+            'food',
+            'ramen',
+            'dessert',
+            'matcha',
+            'nightcap',
+            'linger',
+            'cooldown',
+          ]) ? 0.2 : 0) +
           (signals.roleFit.windDown * 0.12),
       )
       if (signals.lateNightPotential >= 0.56) reasons.push('late-night food potential')
@@ -945,11 +1025,166 @@ function getStopTypeFit(
   }
 
   const familyAlignment = getFamilyAlignment(scenarioFamily, signals, scoredVenue)
+  const devFixtureBoost = getDevFixtureScenarioFitBoost({
+    scoredVenue,
+    stopType,
+    scenarioFamily,
+    corpus,
+    tokens,
+    signals,
+  })
+  if (devFixtureBoost > 0) {
+    fit = clamp01(fit + devFixtureBoost)
+    reasons.push('dev fixture has scenario stop-type support')
+  }
   const scenarioAdjustedFit = clamp01(fit * 0.72 + familyAlignment * 0.28)
   if (scenarioAdjustedFit >= 0.56 && reasons.length === 0) {
     reasons.push('strong scenario-aware stop-type fit')
   }
   return { fit: scenarioAdjustedFit, reasons: reasons.slice(0, 3) }
+}
+
+function isEnabledDevGreatStopFixture(scoredVenue: ScoredVenue): boolean {
+  return (
+    readDevGreatStopFixturesEnabled() &&
+    scoredVenue.venue.source.sourceQueryLabel === 'dev-great-stop-fixture'
+  )
+}
+
+function getDevFixtureScenarioFitBoost(params: {
+  scoredVenue: ScoredVenue
+  stopType: StopType
+  scenarioFamily: ScenarioFamily
+  corpus: string
+  tokens: Set<string>
+  signals: VenueSignals
+}): number {
+  const { scoredVenue, stopType, scenarioFamily, corpus, tokens, signals } = params
+  if (!isEnabledDevGreatStopFixture(scoredVenue) || scenarioFamily !== 'romantic_lively') {
+    return 0
+  }
+  const venue = scoredVenue.venue
+  const starterFit = signals.roleFit.start >= 0.52
+  const highlightFit = signals.roleFit.highlight >= 0.68
+  const windDownFit = signals.roleFit.windDown >= 0.42
+  const performanceLike =
+    venue.category === 'live_music' ||
+    venue.category === 'event' ||
+    venue.settings.musicCapable ||
+    venue.settings.performanceCapable ||
+    hasAnyToken(tokens, ['jazz', 'indie', 'showcase', 'dj', 'listening'])
+  const barWithoutPerformanceSignal =
+    venue.category === 'bar' &&
+    !venue.settings.musicCapable &&
+    !venue.settings.performanceCapable &&
+    !hasAnyToken(tokens, ['jazz', 'indie', 'showcase', 'dj', 'listening'])
+  if (
+    stopType === 'aperitivo' &&
+    starterFit &&
+    (venue.category === 'cafe' ||
+      venue.category === 'bar' ||
+      hasAnyTokenOrPhrase(tokens, corpus, ['social', 'coffee', 'small plates', 'pre show', 'walkable']))
+  ) {
+    return 0.28
+  }
+  if (stopType === 'performance_anchor' && highlightFit && performanceLike && !barWithoutPerformanceSignal) {
+    return 0.5
+  }
+  if (
+    stopType === 'cocktail_bar' &&
+    (venue.category === 'bar' || hasAnyTokenOrPhrase(tokens, corpus, ['lounge', 'nightcap', 'dj'])) &&
+    (windDownFit || highlightFit)
+  ) {
+    return 0.42
+  }
+  if (
+    stopType === 'late_night_food' &&
+    ((venue.category === 'restaurant' &&
+      hasAnyTokenOrPhrase(tokens, corpus, ['late', 'ramen', 'post set', 'food', 'night'])) ||
+      (venue.category === 'cafe' &&
+        hasAnyTokenOrPhrase(tokens, corpus, ['late', 'matcha', 'linger', 'cooldown'])) ||
+      (venue.category === 'bar' &&
+        hasAnyTokenOrPhrase(tokens, corpus, ['nightcap', 'late night', 'lounge'])) ||
+      hasAnyTokenOrPhrase(tokens, corpus, ['late bite', 'ramen after set']))
+  ) {
+    return 0.6
+  }
+  if (
+    stopType === 'energetic_dinner' &&
+    (highlightFit || venue.energyLevel >= 4) &&
+    hasAnyTokenOrPhrase(tokens, corpus, ['social', 'small plates', 'live music', 'showcase'])
+  ) {
+    return 0.12
+  }
+  return 0
+}
+
+function isStopTypeTaxonomyEligible(params: {
+  scoredVenue: ScoredVenue
+  stopType: StopType
+  corpus: string
+  tokens: Set<string>
+}): boolean {
+  const { scoredVenue, stopType, corpus, tokens } = params
+  const venue = scoredVenue.venue
+  const signals = getVenueSignals(scoredVenue)
+  const performanceLike =
+    venue.category === 'live_music' ||
+    venue.category === 'event' ||
+    venue.settings.performanceCapable ||
+    venue.settings.musicCapable ||
+    hasAnyToken(tokens, ['jazz', 'indie', 'showcase', 'dj', 'listening'])
+  if (stopType === 'performance_anchor') {
+    return (
+      performanceLike &&
+      !(
+        venue.category === 'bar' &&
+        !venue.settings.musicCapable &&
+        !venue.settings.performanceCapable &&
+        !hasAnyToken(tokens, ['jazz', 'indie', 'showcase', 'dj', 'listening'])
+      )
+    )
+  }
+  if (stopType === 'cocktail_bar') {
+    return (
+      venue.category === 'bar' ||
+      hasAnyTokenOrPhrase(tokens, corpus, ['cocktail', 'bar', 'lounge', 'nightcap', 'dj'])
+    )
+  }
+  if (stopType === 'late_night_food') {
+    return (
+      hasAnyTokenOrPhrase(tokens, corpus, [
+        'late',
+        'night',
+        'post',
+        'food',
+        'ramen',
+        'dessert',
+        'matcha',
+        'nightcap',
+        'linger',
+        'cooldown',
+      ]) ||
+      (venue.category === 'restaurant' && signals.roleFit.windDown >= 0.42)
+    )
+  }
+  if (stopType === 'aperitivo') {
+    return (
+      venue.category === 'bar' ||
+      venue.category === 'cafe' ||
+      venue.category === 'restaurant' ||
+      venue.category === 'event'
+    )
+  }
+  if (stopType === 'energetic_dinner') {
+    return (
+      venue.category === 'restaurant' ||
+      venue.category === 'bar' ||
+      venue.category === 'event' ||
+      venue.category === 'live_music'
+    )
+  }
+  return true
 }
 
 function buildQualityFilterPass(params: {
@@ -994,15 +1229,17 @@ function getCandidateRankScore(params: {
   stopTypeFit: number
   scenarioRelevance: number
   signals: VenueSignals
+  devFixtureBoost?: number
 }): number {
-  const { stopTypeFit, scenarioRelevance, signals } = params
+  const { stopTypeFit, scenarioRelevance, signals, devFixtureBoost = 0 } = params
   return (
     stopTypeFit * 0.42 +
     scenarioRelevance * 0.2 +
     signals.authorityScore * 0.18 +
     signals.hiddenGemScore * 0.08 +
     signals.currentRelevance * 0.06 +
-    signals.roleFit.highlight * 0.06
+    signals.roleFit.highlight * 0.06 +
+    devFixtureBoost
   )
 }
 
@@ -1041,8 +1278,10 @@ function asRecordByStopType(
   board: Record<StopType, Array<StopTypeCandidate & { __rankScore: number }>>,
 ): Record<StopType, StopTypeCandidate[]> {
   const next = {} as Record<StopType, StopTypeCandidate[]>
+  const fixtureIds = new Set(devGreatStopFixtureVenueIds)
+  const fixturesEnabled = readDevGreatStopFixturesEnabled()
   ;(Object.keys(board) as StopType[]).forEach((stopType) => {
-    next[stopType] = board[stopType]
+    const ranked = board[stopType]
       .slice()
       .sort((left, right) => {
         if (right.__rankScore !== left.__rankScore) {
@@ -1056,8 +1295,19 @@ function asRecordByStopType(
         }
         return left.name.localeCompare(right.name)
       })
-      .slice(0, 5)
-      .map(({ __rankScore, ...candidate }) => candidate)
+    const selected = ranked.slice(0, 5)
+    if (fixturesEnabled && !selected.some((candidate) => fixtureIds.has(candidate.venueId))) {
+      const fixtureJustOutsideTopFive = ranked
+        .slice(5, 8)
+        .find((candidate) => fixtureIds.has(candidate.venueId))
+      const replaceableIndex = selected.findLastIndex(
+        (candidate) => !fixtureIds.has(candidate.venueId),
+      )
+      if (fixtureJustOutsideTopFive && replaceableIndex >= 0) {
+        selected[replaceableIndex] = fixtureJustOutsideTopFive
+      }
+    }
+    next[stopType] = selected.map(({ __rankScore, ...candidate }) => candidate)
   })
   return next
 }
@@ -1084,11 +1334,31 @@ export function buildStopTypeCandidateBoard(
 
   for (const scoredVenue of scored) {
     const signals = getVenueSignals(scoredVenue)
+    const tokens = uniqueLowerTokens(scoredVenue.venue)
+    const corpus = buildVenueCorpus(scoredVenue.venue)
     for (const stopType of requiredStopTypes) {
       const fitResult = getStopTypeFit(scoredVenue, stopType, scenarioFamily)
       const scenarioRelevance = clamp01(
         fitResult.fit * 0.62 + getFamilyAlignment(scenarioFamily, signals, scoredVenue) * 0.38,
       )
+      const devFixtureRankBoost = getDevFixtureScenarioFitBoost({
+        scoredVenue,
+        stopType,
+        scenarioFamily,
+        corpus,
+        tokens,
+        signals,
+      })
+      if (
+        !isStopTypeTaxonomyEligible({
+          scoredVenue,
+          stopType,
+          corpus,
+          tokens,
+        })
+      ) {
+        continue
+      }
       const passQuality = buildQualityFilterPass({
         stopTypeFit: fitResult.fit,
         authorityScore: signals.authorityScore,
@@ -1098,6 +1368,28 @@ export function buildStopTypeCandidateBoard(
       })
       if (!passQuality) {
         continue
+      }
+      const candidateAuthorityScore = clamp01(signals.authorityScore + devFixtureRankBoost * 0.75)
+      const candidateCurrentRelevance = clamp01(signals.currentRelevance + devFixtureRankBoost * 0.48)
+      const candidateRoleFit = {
+        start: clamp01(
+          signals.roleFit.start +
+            (isEnabledDevGreatStopFixture(scoredVenue) && stopType === 'aperitivo' ? 0.16 : 0),
+        ),
+        highlight: clamp01(
+          signals.roleFit.highlight +
+            (isEnabledDevGreatStopFixture(scoredVenue) &&
+            (stopType === 'performance_anchor' || stopType === 'energetic_dinner')
+              ? 0.18
+              : 0),
+        ),
+        windDown: clamp01(
+          signals.roleFit.windDown +
+            (isEnabledDevGreatStopFixture(scoredVenue) &&
+            (stopType === 'cocktail_bar' || stopType === 'late_night_food')
+              ? 0.2
+              : 0),
+        ),
       }
 
       const candidate: StopTypeCandidate & { __rankScore: number } = {
@@ -1116,20 +1408,16 @@ export function buildStopTypeCandidateBoard(
         sourceType: toSourceType(scoredVenue),
         hoursKnown: scoredVenue.venue.source.hoursKnown,
         openNow: scoredVenue.venue.source.openNow,
-        authorityScore: signals.authorityScore,
+        authorityScore: candidateAuthorityScore,
         hiddenGemScore: signals.hiddenGemScore,
-        currentRelevance: signals.currentRelevance,
+        currentRelevance: candidateCurrentRelevance,
         eventPotential: signals.eventPotential,
         performancePotential: signals.performancePotential,
         liveNightlifePotential: signals.liveNightlifePotential,
         culturalAnchorPotential: signals.culturalAnchorPotential,
         lateNightPotential: signals.lateNightPotential,
         majorVenueStrength: signals.majorVenueStrength,
-        roleFit: {
-          start: signals.roleFit.start,
-          highlight: signals.roleFit.highlight,
-          windDown: signals.roleFit.windDown,
-        },
+        roleFit: candidateRoleFit,
         reasons: toCandidateReasons({
           baseReasons: fitResult.reasons,
           scenarioRelevance,
@@ -1139,6 +1427,7 @@ export function buildStopTypeCandidateBoard(
           stopTypeFit: fitResult.fit,
           scenarioRelevance,
           signals,
+          devFixtureBoost: devFixtureRankBoost,
         }),
       }
       rankedBoard[stopType].push(candidate)
@@ -1157,6 +1446,82 @@ export function buildStopTypeCandidateBoard(
     scenarioFamily,
     requiredStopTypes,
     candidatesByStopType,
+    debug: buildFixtureCandidateBoardDebug(rankedBoard, candidatesByStopType),
+  }
+}
+
+function buildFixtureCandidateBoardDebug(
+  rankedBoard: Record<StopType, Array<StopTypeCandidate & { __rankScore: number }>>,
+  selectedBoard: Record<StopType, StopTypeCandidate[]>,
+): StopTypeCandidateBoard['debug'] {
+  const devGreatStopFixturesEnabled = readDevGreatStopFixturesEnabled()
+  const fixtureIds = new Set(devGreatStopFixtureVenueIds)
+  const fixtureStopTypeMembership: NonNullable<StopTypeCandidateBoard['debug']>['fixtureStopTypeMembership'] = []
+  const scenarioCandidateBoardFixtureDrops: NonNullable<StopTypeCandidateBoard['debug']>['scenarioCandidateBoardFixtureDrops'] = []
+  const scenarioCandidateBoardFixtureCandidates: string[] = []
+
+  ;(Object.keys(rankedBoard) as StopType[]).forEach((stopType) => {
+    const ranked = rankedBoard[stopType]
+      .slice()
+      .sort((left, right) => {
+        if (right.__rankScore !== left.__rankScore) {
+          return right.__rankScore - left.__rankScore
+        }
+        if (right.authorityScore !== left.authorityScore) {
+          return right.authorityScore - left.authorityScore
+        }
+        if (right.currentRelevance !== left.currentRelevance) {
+          return right.currentRelevance - left.currentRelevance
+        }
+        return left.name.localeCompare(right.name)
+      })
+    const selectedIds = new Set((selectedBoard[stopType] ?? []).map((candidate) => candidate.venueId))
+    ranked.forEach((candidate, index) => {
+      if (!fixtureIds.has(candidate.venueId)) {
+        return
+      }
+      scenarioCandidateBoardFixtureCandidates.push(candidate.venueId)
+      const rank = index + 1
+      if (selectedIds.has(candidate.venueId)) {
+        fixtureStopTypeMembership.push({
+          venueId: candidate.venueId,
+          name: candidate.name,
+          stopType,
+          fixtureScenarioBoardRank: rank,
+          score: Number(candidate.__rankScore.toFixed(3)),
+          fixtureBoardDropReason: 'selected',
+        })
+        return
+      }
+      scenarioCandidateBoardFixtureDrops.push({
+        venueId: candidate.venueId,
+        name: candidate.name,
+        stopType,
+        fixtureScenarioBoardRank: rank,
+        score: Number(candidate.__rankScore.toFixed(3)),
+        fixtureBoardDropReason: selectedIds.size >= 5 ? 'below_top_5_cap' : 'not_selected',
+      })
+    })
+  })
+
+  for (const venueId of devGreatStopFixtureVenueIds) {
+    if (!scenarioCandidateBoardFixtureCandidates.includes(venueId)) {
+      scenarioCandidateBoardFixtureDrops.push({
+        venueId,
+        name: venueId,
+        stopType: 'performance_anchor',
+        fixtureBoardDropReason: devGreatStopFixturesEnabled
+          ? 'failed_stop_type_quality_filter_or_not_retrieved'
+          : 'fixtures_disabled',
+      })
+    }
+  }
+
+  return {
+    devGreatStopFixturesEnabled,
+    scenarioCandidateBoardFixtureCandidates: [...new Set(scenarioCandidateBoardFixtureCandidates)],
+    scenarioCandidateBoardFixtureDrops,
+    fixtureStopTypeMembership,
   }
 }
 

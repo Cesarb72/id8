@@ -1,7 +1,7 @@
 import { getTimeWindowSignal } from '../retrieval/getTimeWindowSignal'
 import { normalizeVenue } from '../normalize/normalizeVenue'
 import { buildLiveQueryPlan, type LivePlaceKind } from './buildLiveQueryPlan'
-import { getGooglePlacesConfig } from './getSourceMode'
+import { getGooglePlacesConfig, isDevOrSandboxCloseoutFlow } from './getSourceMode'
 import {
   mapLivePlaceToRawPlaceWithDiagnostics,
   type GooglePlaceRecord,
@@ -63,9 +63,16 @@ export interface LiveSourceDiagnostics {
   approvedCount: number
   demotedCount: number
   suppressedCount: number
+  usableCount: number
   partialFailure: boolean
   success: boolean
   failureReason?: string
+  failureCategory?:
+    | 'disabled_dev_closeout'
+    | 'missing_api_key'
+    | 'request_failure'
+    | 'partial_failure'
+    | 'attrition_or_empty'
   errors: string[]
 }
 
@@ -408,6 +415,47 @@ export async function fetchLivePlaces(
   const roleIntentQueryNotes = [...new Set(baseQueryPlan.flatMap((entry) => entry.notes))]
   const requestedKindsForPlan = [...new Set(baseQueryPlan.map((entry) => entry.kind))]
 
+  if (isDevOrSandboxCloseoutFlow()) {
+    return {
+      venues: [],
+      diagnostics: {
+        attempted: false,
+        provider: 'google-places',
+        queryLocationLabel,
+        queryCentersCount: queryCenters.length,
+        queryCentersUsed: queryCenters,
+        queryRadiusM: config.queryRadiusM,
+        requestedKinds: requestedKindsForPlan,
+        queryCount: 0,
+        liveQueryTemplatesUsed: queryTemplatesUsed,
+        liveQueryLabelsUsed: queryLabelsUsed,
+        liveCandidatesByQuery: [],
+        liveRoleIntentQueryNotes: roleIntentQueryNotes,
+        fetchedCount: 0,
+        rawFetchedCount: 0,
+        mappedCount: 0,
+        mappedDroppedCount: 0,
+        mappedDropReasons: emptyMapDropReasons(),
+        normalizedCount: 0,
+        dedupedByPlaceIdCount: 0,
+        normalizationDroppedCount: 0,
+        normalizationDropReasons: {},
+        acceptedCount: 0,
+        acceptanceDroppedCount: 0,
+        acceptanceDropReasons: {},
+        approvedCount: 0,
+        demotedCount: 0,
+        suppressedCount: 0,
+        usableCount: 0,
+        partialFailure: false,
+        success: false,
+        failureReason: 'Live adapter disabled in dev/sandbox closeout flow.',
+        failureCategory: 'disabled_dev_closeout',
+        errors: [],
+      },
+    }
+  }
+
   if (!config.apiKey) {
     return {
       venues: [],
@@ -439,9 +487,11 @@ export async function fetchLivePlaces(
         approvedCount: 0,
         demotedCount: 0,
         suppressedCount: 0,
+        usableCount: 0,
         partialFailure: false,
         success: false,
         failureReason: 'Live adapter disabled because the Google Places API key is missing.',
+        failureCategory: 'missing_api_key',
         errors: [],
       },
     }
@@ -535,12 +585,21 @@ export async function fetchLivePlaces(
       approvedCount: countByGateStatus(venues, 'approved'),
       demotedCount: countByGateStatus(venues, 'demoted'),
       suppressedCount: countByGateStatus(venues, 'suppressed'),
+      usableCount: venues.length - countByGateStatus(venues, 'suppressed'),
       partialFailure: errors.length > 0 && successfulQueries > 0,
       success: successfulQueries > 0,
       failureReason:
         successfulQueries === 0 && errors.length > 0
           ? errors[0]
           : undefined,
+      failureCategory:
+        successfulQueries === 0 && errors.length > 0
+          ? 'request_failure'
+          : errors.length > 0 && successfulQueries > 0
+            ? 'partial_failure'
+            : venues.length - countByGateStatus(venues, 'suppressed') === 0
+              ? 'attrition_or_empty'
+              : undefined,
       errors,
     },
   }

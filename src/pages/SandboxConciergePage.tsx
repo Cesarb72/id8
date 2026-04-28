@@ -1,5 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ID8Butler } from '../components/butler/ID8Butler'
+import { StarterPackCard } from '../components/cards/StarterPackCard'
+import { PreviewVenueCard } from '../components/cards/PreviewVenueCard'
 import { DistrictPreviewPanel } from '../components/dev/DistrictPreviewPanel'
 import {
   RealityCommitStep,
@@ -17,11 +19,20 @@ import { selectBestDistinctDirections } from '../domain/direction/selectBestDist
 import { JourneyMapReal } from '../components/journey/JourneyMapReal'
 import type { JourneyWaypointOverride } from '../components/journey/JourneyMapReal'
 import { RouteSpine } from '../components/journey/RouteSpine'
+import { DevTopNav } from '../components/layout/DevTopNav'
 import { PageShell } from '../components/layout/PageShell'
 import {
   assertCanonicalSelectedDirectionContext,
   enforceSelectedDirectionLineage,
 } from '../app/wrapper/arcWrapperBoundary'
+import {
+  buildCurateRefinementEntryPayload,
+  type CurateRefinementEntryPayload,
+} from '../app/wrapper/curateRefinementEntry'
+import {
+  resolveArcFlowPhase,
+  type ArcFlowMode,
+} from '../app/wrapper/arcFlowPhase'
 import { swapArcStop } from '../domain/arc/swapArcStop'
 import { scoreAnchoredRoleFit } from '../domain/arc/scoreAnchoredRoleFit'
 import { inverseRoleProjection } from '../domain/config/roleProjection'
@@ -38,6 +49,7 @@ import {
   type HardStructuralSwapCompatibilityEvaluation,
   type HardStructuralSwapCompatibilityInput,
 } from '../domain/arc/directionPlanning'
+import { resolveDirectionValidationIdentity } from '../domain/arc/resolveDirectionValidationIdentity'
 import {
   assessDirectionContractBuildability as assessDirectionContractBuildabilityEngine,
   type DirectionContractBuildability,
@@ -48,22 +60,32 @@ import {
   type PocketType,
 } from '../domain/directions/buildHyperlocalDirectionExpression'
 import {
+  createLiveArtifactPlanId,
+  getLastLiveArtifactSaveError,
+  getLiveArtifactStorageDebugSnapshot,
   saveLiveArtifactSession,
-  type FinalRoute,
-  type FinalRouteStop,
 } from '../domain/live/liveArtifactSession'
-import {
-  searchAnchorVenues,
-  type AnchorSearchChip,
-  type AnchorSearchResult,
-} from '../domain/search/searchAnchorVenues'
 import { getCrewPolicy } from '../domain/intent/getCrewPolicy'
 import { projectItinerary } from '../domain/itinerary/projectItinerary'
 import { buildTonightSignals } from '../domain/journey/buildTonightSignals'
 import { deriveContractAwareStopNarrative } from '../domain/journey/deriveStopNarrative'
-import { previewDistrictRecommendations } from '../domain/previewDistrictRecommendations'
-import { runGeneratePlan, type GenerationTrace } from '../domain/runGeneratePlan'
 import { dedupeStringIds } from '../domain/utils/dedupeStringIds'
+import type {
+  CanonicalCandidateRouteArtifact,
+  ContractEntryArtifact,
+  ContractEntryArtifactLineage,
+} from '../domain/artifacts/contractEntryArtifact'
+import { buildContractEntryArtifactLineage } from '../domain/artifacts/contractEntryArtifact'
+import type {
+  RuntimeRouteArtifact,
+  RuntimeRouteStop,
+} from '../domain/artifacts/runtimeRouteArtifact'
+import type {
+  DirectionPreviewModel,
+  DirectionPreviewStop,
+  SelectedRouteArtifact,
+  SelectedRouteSummaryArtifact,
+} from '../domain/artifacts/selectedRouteArtifact'
 import {
   areStageOverlapFingerprintsEqual,
   computeJaccardOverlap,
@@ -96,6 +118,12 @@ import {
 } from '../domain/bearings/buildContractGateWorld'
 import { buildGreatStopAdmissibilitySignal } from '../domain/bearings/buildGreatStopAdmissibilitySignal'
 import {
+  devGreatStopFixtureVenueIds,
+  normalizeDevGreatStopFixtures,
+  readDevGreatStopFixturesEnvRaw,
+  readDevGreatStopFixturesEnabled,
+} from '../domain/sources/devGreatStopFixtures'
+import {
   buildStrategyAdmissibleWorlds,
   type StrategyAdmissibleWorld,
 } from '../domain/bearings/buildStrategyAdmissibleWorlds'
@@ -112,6 +140,18 @@ import type {
 import { applyScenarioContractToAggregation } from '../domain/interpretation/taste/applyScenarioContractToOpportunityAggregation'
 import { applyExperienceContractToAggregation } from '../domain/interpretation/taste/applyExperienceContractToOpportunityAggregation'
 import { buildExperienceContractFromScenarioContract } from '../domain/interpretation/contracts/experienceContract'
+import {
+  buildVenueCardStopRepresentation,
+  normalizePreviewField,
+} from '../domain/adapters/buildVenueCardStopRepresentation'
+import {
+  previewDistrictRecommendationsForPlanBuild,
+  runPlanBuild,
+  searchAnchorVenueOptions,
+  type AnchorSearchChip,
+  type AnchorSearchResult,
+  type GenerationTrace,
+} from '../app/services/arcApplicationService'
 import { deriveStep2AuthoritySignals } from '../domain/interpretation/taste/step2AuthorityConviction'
 import {
   getHospitalityScenarioContract,
@@ -123,6 +163,7 @@ import type {
   ConciergeIntent,
   ContractConstraints,
   ExperienceContract,
+  IntentInput,
   IntentProfile,
   PersonaMode,
   ResolvedDirectionContext,
@@ -134,6 +175,59 @@ import type { Itinerary, ItineraryStop, UserStopRole } from '../domain/types/iti
 import type { RefinementMode } from '../domain/types/refinement'
 import type { DistrictRecommendation } from '../domain/types/district'
 import type { TasteSignals } from '../domain/interpretation/taste/types'
+import { starterPacks } from '../data/starterPacks'
+import { curatedVenues } from '../data/venues'
+import type { StarterPack } from '../domain/types/starterPack'
+import type {
+  VenueCardFallbackStopSeed,
+  VenueCardStopRepresentationWithSource,
+} from '../domain/types/stopRepresentation'
+import type { Venue } from '../domain/types/venue'
+
+const DEV_CLOSEOUT_ORIGIN_MODE_KEY = 'id8.dev.closeout.originMode'
+const DEV_CLOSEOUT_CURATE_STARTER_PACK_ID_KEY = 'id8.dev.closeout.curateStarterPackId'
+const DEV_CLOSEOUT_CURATE_READY_KEY = 'id8.dev.closeout.curateReady'
+const DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY = 'id8.dev.closeout.buildAnchorSelection'
+const DEV_CLOSEOUT_BUILD_READY_KEY = 'id8.dev.closeout.buildReady'
+const DEV_CLOSEOUT_BUILD_QUERY_KEY = 'id8.dev.closeout.buildQuery'
+
+function readSessionStorageValue(key: string): string | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  try {
+    return window.sessionStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function writeSessionStorageValue(key: string, value: string): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+  try {
+    window.sessionStorage.setItem(key, value)
+  } catch {
+    // noop
+  }
+}
+
+function readDebugQueryFlag(): boolean {
+  if (typeof window === 'undefined') {
+    return false
+  }
+  try {
+    const debugRaw = new URLSearchParams(window.location.search).get('debug')
+    if (!debugRaw) {
+      return false
+    }
+    const normalized = debugRaw.trim().toLowerCase()
+    return normalized === '1' || normalized === 'true' || normalized === 'on'
+  } catch {
+    return false
+  }
+}
 
 interface DemoPlanState {
   itinerary: Itinerary
@@ -152,6 +246,16 @@ interface DemoPlanState {
   routeShapeContract: RouteShapeContract
   tasteCurationDebug?: TasteCurationDebug
   selectedDirectionPreviewContext?: SelectedDirectionPreviewContext
+  selectedCandidateRouteArtifactId?: string | null
+}
+
+interface CanonicalRouteArtifact {
+  selectedDirectionId: string
+  selectedClusterConfirmation: string
+  itinerary: Itinerary
+  finalRoute: RuntimeRouteArtifact
+  canonicalStopByRole: Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
+  planSnapshot: DemoPlanState
 }
 
 type CityOpportunityStopOption = {
@@ -190,6 +294,7 @@ type VerifiedCityOpportunity = {
     verificationReasons: string[]
   }
   starts: CityOpportunityStopOption[]
+  highlightAlternates?: CityOpportunityStopOption[]
   closes: CityOpportunityStopOption[]
   nearbyHappenings: CityOpportunityHappening[]
   districtContext: {
@@ -231,6 +336,19 @@ type VerifiedCityOpportunity = {
     modeExcellence: number
   }
   whyTonightProofLine?: string
+  scenarioWindDownDebug?: {
+    originalVenueId: string | null
+    originalName: string | null
+    originalRoleEligible: boolean
+    repairApplied: boolean
+    repairReplacementVenueId: string | null
+    repairReplacementName: string | null
+    repairSource: string | null
+    repairReason: string | null
+    finalVenueId: string | null
+    finalName: string | null
+    finalRoleEligible: boolean
+  }
   scenarioNight?: BuiltScenarioNight
   scenarioPreviewModel?: BuiltScenarioNightPreviewModel
 }
@@ -261,26 +379,6 @@ type BuiltScenarioNightPreviewModel = {
   whyThisWorks: string
   evaluation?: BuiltScenarioNight['evaluation']
   stops: BuiltScenarioPreviewStop[]
-}
-
-type Step2BuiltNightCard = {
-  id: string
-  anchorName: string
-  flavorLine: string
-  traits: string[]
-  storySpine: {
-    start: string
-    highlight: string
-    windDown: string
-  }
-  districtLine: string
-  whyChooseLine: string
-  whyTonightProofLine?: string
-  scenarioEvaluation?: BuiltScenarioNight['evaluation']
-  selection: {
-    pocketId?: string
-    directionId?: string
-  }
 }
 
 type ExplorationControlState = {
@@ -392,7 +490,7 @@ interface SwapCommitInvocation {
   role: UserStopRole
   swapSnapshot?: PreviewSwapState
   planSnapshot?: DemoPlanState
-  finalRouteSnapshot?: FinalRoute
+  finalRouteSnapshot?: RuntimeRouteArtifact
   routeVersionAtClick: number
 }
 
@@ -408,14 +506,367 @@ interface SwapCompatibilityResult {
 }
 
 interface GenerationContractDebugBreadcrumb {
+  validatorMode?: 'surprise' | 'curate' | 'build' | 'unknown'
+  validatorValid?: boolean
   generationDriftReason: string | null
+  directionAlignmentScore?: number
+  surpriseSoftAlignmentFloor?: number
+  surpriseHardAlignmentFloor?: number
+  surpriseMaterialAlignmentFloor?: number
+  lowAlignment?: boolean
+  hardAlignmentFailure?: boolean
+  materialAlignmentFailure?: boolean
+  severeGreatStopRisk?: boolean
   missingRoleForContract: DirectionCoreRole | null
   contractBuildabilityStatus: DirectionContractBuildability['contractBuildabilityStatus']
   candidatePoolSufficiencyByRole: Record<DirectionCoreRole, number>
   expectedDirectionIdentity: DirectionIdentityMode
   observedDirectionIdentity: DirectionIdentityMode
   fallbackApplied: boolean
+  errorMessageRaw?: string | null
   thinPoolRelaxationTrace?: DirectionContractValidationResult['thinPoolRelaxationTrace']
+  curateHardCommit?: GenerationTrace['curateHardCommit']
+  curateCommitSemantics?: 'seed_guided' | 'approved_route_hard_commit' | null
+  hardCommitRequired?: boolean
+  selectedDirectionIdSnapshot?: string | null
+  activeDistrictPocketIdSnapshot?: string
+  selectedArtifactLineageSummary?: string
+  plannerInputSummary?: string
+  postPlannerStagesSummary?: string
+}
+
+interface CuratePreviewCommitabilityState {
+  status: 'checking' | 'committable' | 'infeasible'
+  artifactId: string
+  hardCommitCandidateCount: number
+  rankedCandidateCount: number
+  explicitFallbackReason?: string
+  failureKind?: 'structural_infeasibility' | 'validation_failure' | 'runtime_error'
+  failedCheck?: string | null
+  errorName?: string | null
+  errorMessageRaw?: string | null
+  curateCommitSemantics?: 'seed_guided' | 'approved_route_hard_commit' | null
+  hardCommitRequired?: boolean
+  failedRoles: Array<'start' | 'highlight' | 'windDown'>
+  contractBuildabilityStatus?: DirectionContractBuildability['contractBuildabilityStatus']
+  missingRoleForContract: DirectionCoreRole | null
+  candidatePoolSufficiencyByRole?: Record<DirectionCoreRole, number>
+  selectedDirectionId?: string | null
+  activeDistrictPocketId?: string
+  selectedArtifactLineageSummary?: string
+  plannerInputSummary?: string
+  selectedTargetSummary?: string
+  exactPreservingCandidateIds?: string[]
+  finalWinnerSummary?: string
+  sampledCandidatesSummary?: string
+  rolePoolVenueIdsByRole?: Record<DirectionCoreRole, string[]>
+  approvedRefinementEntryPayload?: CurateRefinementEntryPayload<
+    DemoPlanState,
+    Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
+  >
+  windDownRepairAttempted?: boolean
+  windDownRepairSucceeded?: boolean
+  windDownRepairOriginal?: string | null
+  windDownRepairReplacement?: string | null
+  windDownRepairReplacementId?: string | null
+  windDownRepairReason?: string | null
+  windDownRepairSource?: string | null
+  windDownRepairPreferenceApplied?: boolean
+  windDownRepairPreferenceTarget?: string | null
+  repairedDiscoveryPrefsWindDown?: string | null
+  repairedLineageWindDown?: string | null
+  repairedCandidatePoolSufficiencyByRole?: Record<DirectionCoreRole, number>
+  repairedHardCommitCandidateCount?: number | null
+  repairedFailureReason?: string | null
+  repairedQualificationStatus?: 'committable' | 'infeasible' | null
+}
+
+interface CurateParityRunSummary {
+  runType: 'preflight' | 'continue'
+  curateCommitSemantics: 'seed_guided' | 'approved_route_hard_commit' | 'n/a'
+  hardCommitRequired: boolean | null
+  artifactId: string | null
+  selectedDirectionId: string | null
+  activeDistrictPocketId: string
+  selectedArtifactLineageSummary: string
+  plannerInputSummary: string
+  selectedTargetSummary: string
+  rankedCandidateCount: number | null
+  hardCommitCandidateCount: number | null
+  hardCommitPreservationSucceeded: boolean | null
+  explicitFallbackTriggered: boolean | null
+  explicitFallbackReason: string | null
+  failureKind: CuratePreviewCommitabilityState['failureKind'] | null
+  failedCheck: string | null
+  errorName: string | null
+  errorMessageRaw: string | null
+  failedRolesSummary: string
+  exactPreservingCandidateIdsSummary: string
+  finalWinnerSummary: string
+  contractBuildabilityStatus: DirectionContractBuildability['contractBuildabilityStatus'] | null
+  missingRoleForContract: DirectionCoreRole | null
+  candidatePoolSufficiencySummary: string
+  postPlannerStagesSummary: string
+}
+
+interface CurateCardAuditRow {
+  displayIndex: string
+  artifactId: string
+  directionId: string
+  anchorName: string
+  anchorVenueId: string
+  sourceOpportunityId: string
+  routeTitle: string
+  storySpineFingerprint: string
+  storySpineStart: string
+  storySpineHighlight: string
+  storySpineWindDown: string
+  discoveryPreferencesSummary: string
+  selectedStartPreferenceVenueId: string
+  selectedHighlightPreferenceVenueId: string
+  selectedWindDownPreferenceVenueId: string
+  selectedArtifactLineageSummary: string
+  isCurrentlySelected: string
+  selectedStep2CandidateArtifactId: string
+  preflightStatus: 'unchecked' | 'checking' | 'committable' | 'infeasible' | 'validation_failure' | 'runtime_error'
+  failureKind: string
+  failedCheck: string
+  errorName: string
+  errorMessageRaw: string
+  hardCommitCandidateCount: string
+  hardCommitPreservationSucceeded: string
+  explicitFallbackTriggered: string
+  explicitFallbackReason: string
+  failedRolesSummary: string
+  missingRoleForContract: string
+  candidatePoolSufficiencySummary: string
+  approvedRouteSummary: string
+  cardPromiseMatch: 'n/a' | 'exact' | 'partial' | 'mismatch'
+  duplicateSummary: string
+  duplicateDirectionCount: string
+  duplicateAnchorCount: string
+  duplicateStoryFingerprintCount: string
+  duplicateSourceOpportunityCount: string
+  duplicateDisplayTitleCount: string
+  starterPackId: string
+  starterMatchScore: string
+  matchedPreferredCategories: string
+  matchedPreferredTags: string
+  matchedPreferredStopShapes: string
+  secondaryAnchorMatch: string
+  distanceModeMatch: string
+  starterMismatchReasons: string
+  starterAwareCandidateSource: 'starter_ranked' | 'starter_ranked_fallback' | 'legacy_fallback' | 'n/a'
+  preDisplayBuildabilityTier: string
+  preDisplayBuildabilityScore: string
+  preDisplayRoleSupportSummary: string
+  preDisplayMissingRoles: string
+  preDisplayFallbackReason: string
+  wasDeprioritizedForRoleSupport: string
+  qualificationStatus: string
+  qualifiedRouteStart: string
+  qualifiedRouteHighlight: string
+  qualifiedRouteWindDown: string
+  finalRouteStarterFitScore: string
+  finalRouteStarterFitTier: string
+  finalRouteMatchedPreferredCategories: string
+  finalRouteMatchedPreferredTags: string
+  finalRouteMatchedPreferredStopShapes: string
+  finalRouteMismatchReasons: string
+  finalRouteDisplayReason: string
+  qualifiedDisplayRankReason: string
+  cardDisplaySource: string
+  qualificationReason: string
+  qualificationCacheHit: string
+  windDownRepairAttempted: string
+  windDownRepairSucceeded: string
+  windDownRepairOriginal: string
+  windDownRepairReplacement: string
+  windDownRepairReplacementId: string
+  windDownRepairReason: string
+  windDownRepairSource: string
+  windDownRepairPreferenceApplied: string
+  windDownRepairPreferenceTarget: string
+  repairedDiscoveryPrefsWindDown: string
+  repairedLineageWindDown: string
+  repairedCandidatePoolSufficiencySummary: string
+  repairedHardCommitCandidateCount: string
+  repairedFailureReason: string
+  repairedQualificationStatus: string
+}
+
+interface CurateDemoCloseoutVisibleCardRow {
+  artifactId: string
+  qualificationStatus: string
+  failedCheck: string
+  missingRole: string
+  hardCommitCandidateCount: string
+  cardDisplaySource: string
+}
+
+const DEMO_CLOSEOUT_TARGET_ARTIFACT_ID = 'step2_scenario_built_romantic_lively_4'
+
+interface FixtureQualificationTraceRow {
+  scenarioNightId: string
+  sourceOpportunityId: string
+  fixtureStopIdsPresent: string
+  scenarioWindDownOriginal: string
+  scenarioWindDownOriginalRoleEligible: string
+  scenarioWindDownRepairApplied: string
+  scenarioWindDownRepairReplacement: string
+  scenarioWindDownRepairSource: string
+  scenarioWindDownRepairReason: string
+  scenarioWindDownFinal: string
+  scenarioWindDownFinalRoleEligible: string
+  scenarioStart: string
+  scenarioHighlight: string
+  scenarioWindDown: string
+  opportunityId: string
+  opportunityStart: string
+  opportunityHighlight: string
+  opportunityWindDown: string
+  artifactId: string
+  artifactDirectionId: string
+  artifactAnchorVenueId: string
+  artifactStoryStart: string
+  artifactStoryHighlight: string
+  artifactStoryWindDown: string
+  discoveryStart: string
+  discoveryHighlight: string
+  discoveryWindDown: string
+  discoveryFixtureFlags: string
+  lineageSummary: string
+  qualificationCacheHit: string
+  rolePoolMembership: string
+  rolePoolVenueIdsSummary: string
+  candidatePoolSufficiencySummary: string
+  missingRoleForContract: string
+  hardCommitCandidateCount: string
+  failedCheck: string
+  explicitFallbackReason: string
+  sampledCandidatesSummary: string
+}
+
+interface CurateWindDownRepairTarget {
+  role: 'windDown'
+  venueId: string | null
+  name: string
+  category: string | null
+  source:
+    | 'opportunity_close'
+    | 'curated_nearby_fallback'
+    | 'scenario_fixture_pool'
+    | 'scenario_stop_pool'
+    | 'fixture_pool_fallback'
+}
+
+interface CurateDisplayDedupeDebug {
+  visibleCardCountBeforeDedupe: number
+  visibleCardCountAfterDedupe: number
+  droppedDuplicateArtifactIds: string[]
+  droppedDuplicateStoryFingerprints: string[]
+  dedupeFillCount: number
+  finalVisibleArtifactIds: string[]
+}
+
+interface CuratePreDisplayBuildability {
+  tier: 'cached_committable' | 'full_support' | 'partial_support' | 'known_role_hole'
+  score: number
+  roleSupportByRole: Record<DirectionCoreRole, number>
+  missingRoles: DirectionCoreRole[]
+  fallbackReason: string | null
+  wasDeprioritizedForRoleSupport: boolean
+}
+
+interface CurateVisibleCardModel {
+  artifact: ContractEntryArtifact
+  title: string
+  summary: string | null
+  start: string
+  highlight: string
+  windDown: string
+  cardDisplaySource: 'approved_payload' | 'candidate_draft' | 'fallback_unqualified'
+  qualificationStatus: 'unchecked' | 'checking' | 'qualified' | 'rejected' | 'runtime_error'
+  hasApprovedPayload: boolean
+  qualifiedRouteStart: string | null
+  qualifiedRouteHighlight: string | null
+  qualifiedRouteWindDown: string | null
+  finalRouteStarterFitScore: number | null
+  finalRouteStarterFitTier: 'strong_starter_fit' | 'starter_aligned' | 'nearby_alternative' | 'weak_starter_fit' | 'n/a'
+  finalRouteMatchedPreferredCategories: string[]
+  finalRouteMatchedPreferredTags: string[]
+  finalRouteMatchedPreferredStopShapes: string[]
+  finalRouteMismatchReasons: string[]
+  finalRouteDisplayReason: string | null
+  qualifiedDisplayRankReason: string | null
+  qualificationReason: string | null
+  isSelectable: boolean
+}
+
+interface FinalApprovedRouteStarterFitDebug {
+  finalRouteStarterFitScore: number | null
+  finalRouteStarterFitTier: CurateVisibleCardModel['finalRouteStarterFitTier']
+  finalRouteMatchedPreferredCategories: string[]
+  finalRouteMatchedPreferredTags: string[]
+  finalRouteMatchedPreferredStopShapes: string[]
+  finalRouteSecondaryAnchorMatch: boolean | null
+  finalRouteDistanceModeFit: boolean | null
+  finalRouteMismatchReasons: string[]
+  finalRouteDisplayReason: string | null
+}
+
+type StarterAwareCandidateSource =
+  | 'starter_ranked'
+  | 'starter_ranked_fallback'
+  | 'legacy_fallback'
+
+interface StarterAwareOpportunityDebug {
+  starterPackId: string
+  starterMatchScore: number
+  matchedPreferredCategories: string[]
+  matchedPreferredTags: string[]
+  matchedPreferredStopShapes: string[]
+  secondaryAnchorMatch: boolean
+  distanceModeMatch: boolean
+  starterMismatchReasons: string[]
+  starterAwareCandidateSource: StarterAwareCandidateSource
+}
+
+interface Step2RerollOwnershipTrace {
+  clickId: string
+  clickedAt: string
+  currentSelectedDirectionId_before: string | null
+  currentSelectedArtifactId_before: string | null
+  nextDirectionId_selected: string | null
+  nextArtifactId_selected: string | null
+  handleTryAnotherDirection_entered: boolean
+  handleSelectDirection_called: boolean
+  handleSelectDirection_args: {
+    directionId: string
+    forceReset: boolean
+  } | null
+  selectedDirectionId_afterSelect: string | null
+  selectedStep2CandidateArtifactId_afterSelect: string | null
+  generatePlan_called: boolean
+  generatePlan_directionId: string | null
+  generatePlan_artifactIdOverride: string | null
+  generatePlan_success: boolean | null
+  generatePlan_errorRaw: string | null
+  selectedCandidateRouteArtifact_id_after: string | null
+  selectedRouteArtifact_source_after: string | null
+  selectedRouteArtifact_directionId_after: string | null
+  selectedRouteArtifact_candidateArtifactId_after: string | null
+  selectedRouteSummaryArtifact_routeTitle_after: string | null
+  selectedRouteSummaryArtifact_flavorLine_after: string | null
+  previewRenderSource: string | null
+  previewRenderedDirectionId: string | null
+  previewRenderedArtifactId: string | null
+  whyThisWorksSourceSummary: string | null
+  reconciliationEffectRan: boolean
+  committedArtifactPreferred: boolean
+  directionFallbackUsed: boolean
+  staleCommittedMatchUsed: boolean
+  anyOverrideReason: string | null
 }
 
 type CoreTasteRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
@@ -526,6 +977,108 @@ interface SignatureHighlightShortlistEntry {
   score: number
 }
 
+function buildVisibleNightFingerprint(params: {
+  routeTitle?: string
+  routeSummary?: string
+  flavorLine?: string
+  traits?: string[]
+  proofLines?: string[]
+  districtAnchorLine?: string
+  stops?: string[]
+  stopVenueIds?: string[]
+}): string {
+  const normalize = (value?: string): string =>
+    value
+      ?.trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ') ?? ''
+  const normalizeList = (values?: string[]): string =>
+    (values ?? [])
+      .map((value) => normalize(value))
+      .filter(Boolean)
+      .join('|')
+  return [
+    normalize(params.routeTitle),
+    normalize(params.routeSummary),
+    normalize(params.flavorLine),
+    normalizeList(params.traits),
+    normalizeList(params.proofLines),
+    normalize(params.districtAnchorLine),
+    normalizeList(params.stops),
+    normalizeList(params.stopVenueIds),
+  ].join('::')
+}
+
+function computeVisibleNightDifferenceScore(
+  current: {
+    routeTitle?: string
+    routeSummary?: string
+    flavorLine?: string
+    traits?: string[]
+    proofLines?: string[]
+    districtAnchorLine?: string
+    stops?: string[]
+    stopVenueIds?: string[]
+  },
+  candidate: {
+    routeTitle?: string
+    routeSummary?: string
+    flavorLine?: string
+    traits?: string[]
+    proofLines?: string[]
+    districtAnchorLine?: string
+    stops?: string[]
+    stopVenueIds?: string[]
+  },
+): number {
+  const normalize = (value?: string): string =>
+    value
+      ?.trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ') ?? ''
+  const normalizeStops = (stops?: string[]): string[] =>
+    (stops ?? [])
+      .map((stop) => normalize(stop))
+      .filter((stop) => stop.length > 0)
+  const normalizeList = (values?: string[]): string[] =>
+    (values ?? [])
+      .map((value) => normalize(value))
+      .filter((value) => value.length > 0)
+  const scoreScalarDifference = (left?: string, right?: string, weight = 1): number =>
+    normalize(left) !== normalize(right) ? weight : 0
+  const scoreListDifference = (left?: string[], right?: string[], weight = 1): number => {
+    const leftValues = normalizeList(left)
+    const rightValues = normalizeList(right)
+    const maxCount = Math.max(leftValues.length, rightValues.length)
+    let listScore = 0
+    for (let index = 0; index < maxCount; index += 1) {
+      if ((leftValues[index] ?? '') !== (rightValues[index] ?? '')) {
+        listScore += weight
+      }
+    }
+    return listScore
+  }
+  const currentStops = normalizeStops(current.stops)
+  const candidateStops = normalizeStops(candidate.stops)
+  let score =
+    scoreScalarDifference(current.routeTitle, candidate.routeTitle) +
+    scoreScalarDifference(current.routeSummary, candidate.routeSummary) +
+    scoreScalarDifference(current.flavorLine, candidate.flavorLine) +
+    scoreListDifference(current.traits, candidate.traits) +
+    scoreListDifference(current.proofLines, candidate.proofLines) +
+    scoreScalarDifference(current.districtAnchorLine, candidate.districtAnchorLine, 2) +
+    scoreListDifference(current.stopVenueIds, candidate.stopVenueIds)
+
+  const maxStopCount = Math.max(currentStops.length, candidateStops.length)
+  for (let index = 0; index < maxStopCount; index += 1) {
+    if ((currentStops[index] ?? '') !== (candidateStops[index] ?? '')) {
+      score += 1
+    }
+  }
+
+  return score
+}
+
 const personaOptions: Array<{ label: string; value: PersonaMode }> = [
   { label: 'Romantic', value: 'romantic' },
   { label: 'Friends', value: 'friends' },
@@ -537,6 +1090,19 @@ const vibeOptions: Array<{ label: string; value: VibeAnchor }> = [
   { label: 'Cozy', value: 'cozy' },
   { label: 'Cultured', value: 'cultured' },
 ]
+
+function getBuildDefaultVibe(category: AnchorSearchResult['venue']['category']): VibeAnchor {
+  if (category === 'park') {
+    return 'chill'
+  }
+  if (category === 'museum' || category === 'event') {
+    return 'cultured'
+  }
+  if (category === 'bar' || category === 'live_music') {
+    return 'lively'
+  }
+  return 'cozy'
+}
 
 const clusterRefinementMap: Record<RealityCluster, RefinementMode[]> = {
   lively: ['more-exciting'],
@@ -618,6 +1184,1074 @@ function getPreviewStopDetailLines(role: PreviewAdjustableRole): [string, string
     'Land cleanly with a softer finish.',
     'Close calmly without stretching the route.',
   ]
+}
+
+type PreviewFallbackStopSeed = VenueCardFallbackStopSeed
+type SurprisePreviewStopRepresentation = VenueCardStopRepresentationWithSource
+const devGreatStopFixtureVenues = normalizeDevGreatStopFixtures()
+const devGreatStopFixtureVenueById = new Map(
+  devGreatStopFixtureVenues.map((venue) => [venue.id, venue] as const),
+)
+
+function getScenarioPreviewStopForRole(
+  model: BuiltScenarioNightPreviewModel | undefined,
+  role: PreviewAdjustableRole,
+): BuiltScenarioPreviewStop | undefined {
+  if (!model || model.stops.length === 0) {
+    return undefined
+  }
+  if (role === 'start') {
+    return model.stops.find((stop) => stop.position === 'start') ?? model.stops[0]
+  }
+  if (role === 'highlight') {
+    return (
+      model.stops.find((stop) => stop.position === 'highlight') ??
+      model.stops.find((stop) => stop.stopType === 'anchor') ??
+      model.stops[Math.min(1, model.stops.length - 1)]
+    )
+  }
+  return (
+    model.stops.find((stop) => stop.position === 'closer') ??
+    model.stops[model.stops.length - 1]
+  )
+}
+
+function buildFallbackPreviewSeedByRole(params: {
+  selectedCandidateRouteArtifact: CanonicalCandidateRouteArtifact | null
+  verifiedCityOpportunityById: Map<string, VerifiedCityOpportunity>
+  scenarioPreviewModelByOpportunityId: Map<string, BuiltScenarioNightPreviewModel>
+}): Partial<Record<PreviewAdjustableRole, PreviewFallbackStopSeed>> {
+  const sourceOpportunityId = params.selectedCandidateRouteArtifact?.sourceOpportunityId
+  if (!sourceOpportunityId) {
+    return {}
+  }
+
+  const sourceOpportunity = params.verifiedCityOpportunityById.get(sourceOpportunityId)
+  if (!sourceOpportunity) {
+    return {}
+  }
+
+  const scenarioModel = params.scenarioPreviewModelByOpportunityId.get(sourceOpportunityId)
+  const scenarioStart = getScenarioPreviewStopForRole(scenarioModel, 'start')
+  const scenarioHighlight = getScenarioPreviewStopForRole(scenarioModel, 'highlight')
+  const scenarioWindDown = getScenarioPreviewStopForRole(scenarioModel, 'windDown')
+
+  const scenarioKnownFor = (stop: BuiltScenarioPreviewStop | undefined): string => {
+    const features = (stop?.venueFeatures ?? [])
+      .map((feature) => normalizePreviewField(feature))
+      .filter(Boolean)
+      .slice(0, 2)
+    if (features.length > 0) {
+      return features.join(' & ')
+    }
+    return ''
+  }
+
+  const startFallback = sourceOpportunity.starts[0]
+  const windDownFallback = sourceOpportunity.closes[0]
+  const highlightFallback = sourceOpportunity.anchor
+  const areaName = normalizePreviewField(sourceOpportunity.districtContext.primaryDistrict)
+
+  const startFitSummary = normalizePreviewField(
+    scenarioStart?.whyThisStop ??
+      scenarioStart?.factualSummary ??
+      startFallback?.reason ??
+      sourceOpportunity.fit.confidenceLine,
+  )
+  const highlightFitSummary = normalizePreviewField(
+    scenarioHighlight?.whyThisStop ??
+      scenarioHighlight?.factualSummary ??
+      highlightFallback?.verificationReasons?.[0] ??
+      sourceOpportunity.fit.confidenceLine,
+  )
+  const windDownFitSummary = normalizePreviewField(
+    scenarioWindDown?.whyThisStop ??
+      scenarioWindDown?.factualSummary ??
+      windDownFallback?.reason ??
+      sourceOpportunity.fit.confidenceLine,
+  )
+
+  return {
+    start: {
+      venueId: normalizePreviewField(scenarioStart?.venueId ?? startFallback?.venueId),
+      venueName: normalizePreviewField(scenarioStart?.name ?? startFallback?.name),
+      fitSummary: startFitSummary,
+      knownFor: scenarioKnownFor(scenarioStart),
+      areaName: normalizePreviewField(scenarioStart?.neighborhoodLabel ?? scenarioStart?.district ?? areaName),
+      venueType: normalizePreviewField(scenarioStart?.venueTypeLabel),
+      areaFitSummary: normalizePreviewField(
+        scenarioStart?.whyTonight ?? sourceOpportunity.whyTonightProofLine,
+      ),
+    },
+    highlight: {
+      venueId: normalizePreviewField(scenarioHighlight?.venueId ?? highlightFallback?.venueId),
+      venueName: normalizePreviewField(scenarioHighlight?.name ?? highlightFallback?.name),
+      fitSummary: highlightFitSummary,
+      knownFor: scenarioKnownFor(scenarioHighlight),
+      areaName: normalizePreviewField(
+        scenarioHighlight?.neighborhoodLabel ?? scenarioHighlight?.district ?? areaName,
+      ),
+      venueType: normalizePreviewField(scenarioHighlight?.venueTypeLabel),
+      areaFitSummary: normalizePreviewField(
+        scenarioHighlight?.whyTonight ?? sourceOpportunity.whyTonightProofLine,
+      ),
+    },
+    windDown: {
+      venueId: normalizePreviewField(scenarioWindDown?.venueId ?? windDownFallback?.venueId),
+      venueName: normalizePreviewField(scenarioWindDown?.name ?? windDownFallback?.name),
+      fitSummary: windDownFitSummary,
+      knownFor: scenarioKnownFor(scenarioWindDown),
+      areaName: normalizePreviewField(
+        scenarioWindDown?.neighborhoodLabel ?? scenarioWindDown?.district ?? areaName,
+      ),
+      venueType: normalizePreviewField(scenarioWindDown?.venueTypeLabel),
+      areaFitSummary: normalizePreviewField(
+        scenarioWindDown?.whyTonight ?? sourceOpportunity.whyTonightProofLine,
+      ),
+    },
+  }
+}
+
+function formatSelectedArtifactLineageSummary(
+  lineage: ContractEntryArtifactLineage | undefined,
+): string {
+  if (!lineage) {
+    return 'n/a'
+  }
+  return [
+    `artifact:${lineage.artifactId}`,
+    `direction:${lineage.directionId ?? 'n/a'}`,
+    `pocket:${lineage.pocketId ?? 'n/a'}`,
+    `anchor:${lineage.anchorVenueId}`,
+    `role:${lineage.anchorRole ?? 'n/a'}`,
+  ].join(' | ')
+}
+
+function formatCuratePlannerInputSummary(params: {
+  mode: 'curate' | 'surprise' | 'build'
+  planningMode: 'engine-led' | 'user-led'
+  district: string | undefined
+  city: string
+  directionId: string | null | undefined
+  pocketId: string | undefined
+  discoveryPreferences: Array<{ venueId: string; role: string }>
+}): string {
+  return [
+    `mode:${params.mode}`,
+    `planning:${params.planningMode}`,
+    `city:${params.city}`,
+    `district:${params.district ?? 'n/a'}`,
+    `direction:${params.directionId ?? 'n/a'}`,
+    `pocket:${params.pocketId ?? 'n/a'}`,
+    `prefs:${
+      params.discoveryPreferences.length > 0
+        ? params.discoveryPreferences
+            .map((preference) => `${preference.role}:${preference.venueId}`)
+            .join(',')
+        : 'none'
+    }`,
+  ].join(' | ')
+}
+
+function formatCurateSelectedTargetSummary(
+  curateHardCommit: GenerationTrace['curateHardCommit'] | undefined,
+): string {
+  if (!curateHardCommit) {
+    return 'n/a'
+  }
+  return [
+    `start:${curateHardCommit.selectedTarget.start?.venueName ?? curateHardCommit.selectedTarget.start?.venueId ?? 'n/a'}`,
+    `highlight:${curateHardCommit.selectedTarget.highlight?.venueName ?? curateHardCommit.selectedTarget.highlight?.venueId ?? 'n/a'}`,
+    `windDown:${curateHardCommit.selectedTarget.windDown?.venueName ?? curateHardCommit.selectedTarget.windDown?.venueId ?? 'n/a'}`,
+  ].join(' | ')
+}
+
+function formatCurateFinalWinnerSummary(
+  curateHardCommit: GenerationTrace['curateHardCommit'] | undefined,
+): string {
+  if (!curateHardCommit) {
+    return 'n/a'
+  }
+  return [
+    curateHardCommit.finalWinner.candidateId,
+    `start:${curateHardCommit.finalWinner.start.venueName ?? curateHardCommit.finalWinner.start.venueId ?? 'n/a'}`,
+    `highlight:${curateHardCommit.finalWinner.highlight.venueName ?? curateHardCommit.finalWinner.highlight.venueId ?? 'n/a'}`,
+    `windDown:${curateHardCommit.finalWinner.windDown.venueName ?? curateHardCommit.finalWinner.windDown.venueId ?? 'n/a'}`,
+    `matchType:${curateHardCommit.finalWinnerMatchType}`,
+  ].join(' | ')
+}
+
+function formatCurateHardCommitSampleCandidatesSummary(
+  curateHardCommit: GenerationTrace['curateHardCommit'] | undefined,
+): string {
+  if (!curateHardCommit?.sampledCandidates || curateHardCommit.sampledCandidates.length === 0) {
+    return 'n/a'
+  }
+  return curateHardCommit.sampledCandidates
+    .map(
+      (candidate) =>
+        `${candidate.candidateId} | start:${candidate.start.venueName ?? candidate.start.venueId ?? 'n/a'}(${String(candidate.start.exactMatch)}) | highlight:${candidate.highlight.venueName ?? candidate.highlight.venueId ?? 'n/a'}(${String(candidate.highlight.exactMatch)}) | windDown:${candidate.windDown.venueName ?? candidate.windDown.venueId ?? 'n/a'}(${String(candidate.windDown.exactMatch)}) | overall:${String(candidate.overallMatch)}`,
+    )
+    .join(' || ')
+}
+
+function formatCurateDiscoveryPreferencesSummary(
+  discoveryPreferences: Array<{ venueId: string; role: string }> | undefined,
+): string {
+  if (!discoveryPreferences || discoveryPreferences.length === 0) {
+    return 'none'
+  }
+  return discoveryPreferences
+    .map((preference) => `${preference.role}:${preference.venueId}`)
+    .join(', ')
+}
+
+function getCurateDiscoveryPreferenceVenueId(
+  discoveryPreferences: Array<{ venueId: string; role: string }> | undefined,
+  role: 'start' | 'highlight' | 'windDown',
+): string {
+  return discoveryPreferences?.find((preference) => preference.role === role)?.venueId ?? 'n/a'
+}
+
+function normalizeCurateAuditStopName(value: string | undefined): string {
+  return value?.trim().toLowerCase().replace(/\s+/g, ' ') ?? ''
+}
+
+function getContractEntryArtifactStorySpineFingerprint(
+  artifact: Pick<ContractEntryArtifact, 'storySpine'>,
+): string {
+  return [
+    artifact.storySpine.start,
+    artifact.storySpine.highlight,
+    artifact.storySpine.windDown,
+  ]
+    .map(normalizeCurateAuditStopName)
+    .join('>')
+}
+
+function getCurateQualificationStatus(
+  preflight: CuratePreviewCommitabilityState | undefined,
+): CurateVisibleCardModel['qualificationStatus'] {
+  if (!preflight) {
+    return 'unchecked'
+  }
+  if (preflight.status === 'checking') {
+    return 'checking'
+  }
+  if (preflight.status === 'committable' && preflight.approvedRefinementEntryPayload) {
+    return 'qualified'
+  }
+  if (preflight.failureKind === 'runtime_error') {
+    return 'runtime_error'
+  }
+  return 'rejected'
+}
+
+function findOpportunityStopOptionByName(
+  opportunity: VerifiedCityOpportunity | undefined,
+  role: 'start' | 'highlight' | 'windDown',
+  stopName: string | undefined,
+): CityOpportunityStopOption | null {
+  const normalizedStopName = normalizeCurateAuditStopName(stopName)
+  if (!opportunity || !normalizedStopName) {
+    return null
+  }
+  const candidates =
+    role === 'start'
+      ? opportunity.starts
+      : role === 'highlight'
+        ? [
+            {
+              venueId: opportunity.anchor.venueId,
+              name: opportunity.anchor.name,
+              reason: opportunity.anchor.verificationReasons.join(' '),
+            },
+            ...(opportunity.highlightAlternates ?? []),
+          ]
+        : opportunity.closes
+  return (
+    candidates.find((candidate) => normalizeCurateAuditStopName(candidate.name) === normalizedStopName) ??
+    null
+  )
+}
+
+function attemptStarterAwareWindDownRepair(params: {
+  artifact: ContractEntryArtifact
+  opportunity: VerifiedCityOpportunity | undefined
+  starterDebug: StarterAwareOpportunityDebug | undefined
+  eligibleWindDownVenueIds?: string[]
+}): {
+  repairedArtifact: ContractEntryArtifact | null
+  repairReason: string
+  originalWindDown: string | null
+  repairedWindDown: string | null
+  repairedWindDownTarget: CurateWindDownRepairTarget | null
+  repairSource: string | null
+  repairScore: number | null
+} {
+  const { artifact, opportunity, starterDebug, eligibleWindDownVenueIds } = params
+  const originalWindDown = artifact.storySpine.windDown
+  if (!opportunity) {
+    return {
+      repairedArtifact: null,
+      repairReason: 'repair_unavailable:no_source_opportunity',
+      originalWindDown,
+      repairedWindDown: null,
+      repairedWindDownTarget: null,
+      repairSource: null,
+      repairScore: null,
+    }
+  }
+  const eligibleWindDownVenueIdSet =
+    eligibleWindDownVenueIds && eligibleWindDownVenueIds.length > 0
+      ? new Set(eligibleWindDownVenueIds)
+      : null
+  const meaningfulStarterFit = Boolean(
+    starterDebug &&
+      (starterDebug.starterMatchScore >= 0.3 ||
+        starterDebug.matchedPreferredStopShapes.includes('highlight') ||
+        starterDebug.matchedPreferredCategories.length > 0 ||
+        starterDebug.matchedPreferredTags.length > 0),
+  )
+  if (!meaningfulStarterFit) {
+    return {
+      repairedArtifact: null,
+      repairReason: 'repair_skipped:starter_fit_not_strong_enough',
+      originalWindDown,
+      repairedWindDown: null,
+      repairedWindDownTarget: null,
+      repairSource: null,
+      repairScore: null,
+    }
+  }
+  const blockedNames = [
+    artifact.storySpine.start,
+    artifact.storySpine.highlight,
+    artifact.storySpine.windDown,
+  ].map(normalizeCurateAuditStopName)
+  const blockedVenueIds = new Set(
+    [
+      findOpportunityStopOptionByName(opportunity, 'start', artifact.storySpine.start)?.venueId,
+      findOpportunityStopOptionByName(opportunity, 'highlight', artifact.storySpine.highlight)?.venueId,
+      findOpportunityStopOptionByName(opportunity, 'windDown', artifact.storySpine.windDown)?.venueId,
+    ].filter((value): value is string => Boolean(value)),
+  )
+  const highlightVenue =
+    curatedVenues.find((venue) => venue.id === artifact.anchorVenueId) ??
+    devGreatStopFixtureVenueById.get(artifact.anchorVenueId) ??
+    curatedVenues.find(
+      (venue) => normalizeCurateAuditStopName(venue.name) === normalizeCurateAuditStopName(artifact.storySpine.highlight),
+    ) ??
+    null
+  const preferredWindDownCategories = new Set(['bar', 'restaurant', 'cafe', 'dessert'])
+  const preferredWindDownTags = new Set(['social', 'quiet', 'linger', 'cozy', 'conversation', 'craft'])
+  const sameDistrictVenueIds = new Set(
+    [...curatedVenues, ...devGreatStopFixtureVenues]
+      .filter((venue) => venue.neighborhood === highlightVenue?.neighborhood)
+      .map((venue) => venue.id),
+  )
+  const scenarioNightCandidates =
+    opportunity.scenarioNight?.stops.map((stop, index) => {
+      const venue =
+        curatedVenues.find((entry) => entry.id === stop.venueId) ??
+        devGreatStopFixtureVenueById.get(stop.venueId) ??
+        null
+      let score = 110 - index * 5
+      if (devGreatStopFixtureVenueById.has(stop.venueId)) {
+        score += 24
+      }
+      if (stop.position === 'closer') {
+        score += 16
+      } else if (stop.position === 'windDown') {
+        score += 12
+      }
+      if (venue && preferredWindDownCategories.has(venue.category)) {
+        score += 20
+      }
+      if (venue) {
+        score += venue.tags.filter((tag) => preferredWindDownTags.has(tag)).length * 8
+        if (highlightVenue && venue.energyLevel <= highlightVenue.energyLevel) {
+          score += 14
+        }
+        if (sameDistrictVenueIds.has(venue.id)) {
+          score += 18
+        }
+      }
+      return {
+        venueId: stop.venueId,
+        name: stop.name,
+        category: venue?.category ?? stop.venueCategory ?? null,
+        source: devGreatStopFixtureVenueById.has(stop.venueId)
+          ? 'scenario_fixture_pool'
+          : 'scenario_stop_pool',
+        score,
+      }
+    }) ?? []
+  const closeCandidates = opportunity.closes.map((close, index) => {
+    const venue =
+      curatedVenues.find((entry) => entry.id === close.venueId) ??
+      devGreatStopFixtureVenueById.get(close.venueId) ??
+      null
+    let score = 100 - index * 5
+    if (venue) {
+      if (preferredWindDownCategories.has(venue.category)) {
+        score += 24
+      }
+      score += venue.tags.filter((tag) => preferredWindDownTags.has(tag)).length * 8
+      if (highlightVenue && venue.energyLevel <= highlightVenue.energyLevel) {
+        score += 18
+      }
+      if (sameDistrictVenueIds.has(venue.id)) {
+        score += 20
+      }
+      if (starterDebug?.distanceModeMatch) {
+        score += 6
+      }
+    }
+    return {
+      venueId: close.venueId,
+      name: close.name,
+      category: venue?.category ?? null,
+      source: 'opportunity_close',
+      score,
+    }
+  })
+  const curatedFallbackCandidates = [...curatedVenues, ...devGreatStopFixtureVenues]
+    .filter((venue) => preferredWindDownCategories.has(venue.category))
+    .filter((venue) => !blockedVenueIds.has(venue.id))
+    .filter((venue) => !blockedNames.includes(normalizeCurateAuditStopName(venue.name)))
+    .filter((venue) => (eligibleWindDownVenueIdSet ? eligibleWindDownVenueIdSet.has(venue.id) : true))
+    .filter((venue) =>
+      highlightVenue ? venue.energyLevel <= Math.max(3, highlightVenue.energyLevel) : venue.energyLevel <= 3,
+    )
+    .map((venue) => {
+      let score = 0
+      if (sameDistrictVenueIds.has(venue.id)) {
+        score += 30
+      }
+      if (highlightVenue && venue.neighborhood === highlightVenue.neighborhood) {
+        score += 18
+      }
+      score += venue.tags.filter((tag) => preferredWindDownTags.has(tag)).length * 8
+      score += venue.roleAffinity.cooldown * 20
+      score += venue.socialDensity <= 3 ? 12 : 0
+      if (highlightVenue && venue.energyLevel <= highlightVenue.energyLevel) {
+        score += 14
+      }
+      return {
+        venueId: venue.id,
+        name: venue.name,
+        category: venue.category,
+        source: devGreatStopFixtureVenueById.has(venue.id)
+          ? 'fixture_pool_fallback'
+          : 'curated_nearby_fallback',
+        score,
+      }
+    })
+  const candidate = [...scenarioNightCandidates, ...closeCandidates, ...curatedFallbackCandidates]
+    .filter((entry) =>
+      eligibleWindDownVenueIdSet ? eligibleWindDownVenueIdSet.has(entry.venueId) : true,
+    )
+    .filter((entry, index, list) => list.findIndex((candidateEntry) => candidateEntry.venueId === entry.venueId) === index)
+    .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
+    .find((entry) => !blockedNames.includes(normalizeCurateAuditStopName(entry.name)))
+  if (!candidate) {
+    return {
+      repairedArtifact: null,
+      repairReason: eligibleWindDownVenueIdSet
+        ? 'repair_unavailable:no_pool_admitted_windDown_candidate'
+        : 'repair_unavailable:no_compatible_windDown_candidate',
+      originalWindDown,
+      repairedWindDown: null,
+      repairedWindDownTarget: null,
+      repairSource: null,
+      repairScore: null,
+    }
+  }
+  return {
+    repairedArtifact: {
+      ...artifact,
+      storySpine: {
+        ...artifact.storySpine,
+        windDown: candidate.name,
+      },
+      whyTonightProofLine:
+        artifact.whyTonightProofLine ?? `Wind-down repaired to ${candidate.name} for role support.`,
+    },
+    repairReason: 'windDown_repaired_for_curate_qualification',
+    originalWindDown,
+    repairedWindDown: candidate.name,
+    repairedWindDownTarget: {
+      role: 'windDown',
+      venueId: candidate.venueId,
+      name: candidate.name,
+      category: candidate.category,
+      source: candidate.source,
+    },
+    repairSource: candidate.source,
+    repairScore: candidate.score,
+  }
+}
+
+function compareCurateCardPromiseToApprovedRoute(params: {
+  storySpine: ContractEntryArtifact['storySpine']
+  approvedFinalRoute?: RuntimeRouteArtifact
+}): {
+  approvedRouteSummary: string
+  cardPromiseMatch: CurateCardAuditRow['cardPromiseMatch']
+} {
+  const approvedStops = params.approvedFinalRoute
+    ? [...params.approvedFinalRoute.stops]
+        .filter((stop) => stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown')
+        .sort((left, right) => left.stopIndex - right.stopIndex)
+    : []
+  if (approvedStops.length === 0) {
+    return {
+      approvedRouteSummary: 'n/a',
+      cardPromiseMatch: 'n/a',
+    }
+  }
+  const stopNameByRole = new Map(
+    approvedStops.map((stop) => [stop.role, stop.displayName] as const),
+  )
+  const roles = ['start', 'highlight', 'windDown'] as const
+  const exactMatchCount = roles.filter(
+    (role) =>
+      normalizeCurateAuditStopName(params.storySpine[role]) ===
+      normalizeCurateAuditStopName(stopNameByRole.get(role)),
+  ).length
+  return {
+    approvedRouteSummary: roles
+      .map((role) => `${role}:${stopNameByRole.get(role) ?? 'n/a'}`)
+      .join(' | '),
+    cardPromiseMatch:
+      exactMatchCount === roles.length ? 'exact' : exactMatchCount > 0 ? 'partial' : 'mismatch',
+  }
+}
+
+function normalizeStarterAuditToken(value: string | undefined): string {
+  return value?.trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ') ?? ''
+}
+
+function hasStarterAuditToken(corpus: string, token: string): boolean {
+  const normalized = normalizeStarterAuditToken(token)
+  if (!normalized) {
+    return false
+  }
+  return corpus.includes(normalized)
+}
+
+function buildStarterOpportunityCorpus(opportunity: VerifiedCityOpportunity): string {
+  const scenarioStopText =
+    opportunity.scenarioNight?.stops.flatMap((stop) => [
+      stop.name,
+      stop.venueCategory,
+      stop.venueSubcategory,
+      stop.venueTypeLabel,
+      ...(stop.venueFeatures ?? []),
+      ...(stop.reasons ?? []),
+      stop.momentLabel,
+      stop.whyThisStop,
+      stop.whyTonight,
+    ]) ?? []
+  return [
+    opportunity.id,
+    opportunity.flavor,
+    opportunity.anchor.name,
+    opportunity.anchor.sourceType,
+    ...opportunity.anchor.verificationReasons,
+    ...opportunity.starts.flatMap((stop) => [stop.name, stop.reason]),
+    ...(opportunity.highlightAlternates ?? []).flatMap((stop) => [stop.name, stop.reason]),
+    ...opportunity.closes.flatMap((stop) => [stop.name, stop.reason]),
+    ...opportunity.nearbyHappenings.flatMap((happening) => [
+      happening.name,
+      happening.type,
+      happening.reason,
+      happening.hasPerformance ? 'performance live music' : undefined,
+      happening.hasEvent ? 'event' : undefined,
+    ]),
+    opportunity.fit.confidenceLine,
+    opportunity.fit.matchLine,
+    opportunity.storySpine.start,
+    opportunity.storySpine.highlight,
+    opportunity.storySpine.windDown,
+    opportunity.whyTonightProofLine,
+    ...scenarioStopText,
+  ]
+    .map(normalizeStarterAuditToken)
+    .filter(Boolean)
+    .join(' | ')
+}
+
+function getScenarioStopForStarterRole(
+  opportunity: VerifiedCityOpportunity,
+  role: 'start' | 'highlight' | 'windDown',
+): BuiltScenarioStop | undefined {
+  if (!opportunity.scenarioNight) {
+    return undefined
+  }
+  if (role === 'start') {
+    return (
+      opportunity.scenarioNight.stops.find((stop) => stop.position === 'start') ??
+      opportunity.scenarioNight.stops[0]
+    )
+  }
+  if (role === 'highlight') {
+    return (
+      opportunity.scenarioNight.stops.find((stop) => stop.position === 'highlight') ??
+      opportunity.scenarioNight.stops.find((stop) => stop.stopType === 'anchor')
+    )
+  }
+  return (
+    opportunity.scenarioNight.stops.find((stop) => stop.position === 'closer') ??
+    opportunity.scenarioNight.stops.find((stop) => stop.position === 'windDown') ??
+    opportunity.scenarioNight.stops[opportunity.scenarioNight.stops.length - 1]
+  )
+}
+
+function getStarterRoleCorpus(
+  opportunity: VerifiedCityOpportunity,
+  role: 'start' | 'highlight' | 'windDown',
+): string {
+  const scenarioStop = getScenarioStopForStarterRole(opportunity, role)
+  const stopOptions =
+    role === 'start'
+      ? opportunity.starts
+      : role === 'highlight'
+        ? [
+            {
+              venueId: opportunity.anchor.venueId,
+              name: opportunity.anchor.name,
+              reason: opportunity.anchor.verificationReasons.join(' '),
+            },
+            ...(opportunity.highlightAlternates ?? []),
+          ]
+        : opportunity.closes
+  return [
+    scenarioStop?.name,
+    scenarioStop?.venueCategory,
+    scenarioStop?.venueSubcategory,
+    scenarioStop?.venueTypeLabel,
+    ...(scenarioStop?.venueFeatures ?? []),
+    ...(scenarioStop?.reasons ?? []),
+    scenarioStop?.whyThisStop,
+    ...stopOptions.flatMap((stop) => [stop.name, stop.reason]),
+  ]
+    .map(normalizeStarterAuditToken)
+    .filter(Boolean)
+    .join(' | ')
+}
+
+function getRuntimeRouteStopStarterCorpus(
+  routeStop: RuntimeRouteArtifact['stops'][number] | undefined,
+): string {
+  if (!routeStop) {
+    return ''
+  }
+  const venue = curatedVenues.find((entry) => entry.id === routeStop.venueId) ?? null
+  return [
+    routeStop.displayName,
+    routeStop.title,
+    routeStop.subtitle,
+    routeStop.neighborhood,
+    venue?.category,
+    venue?.subcategory,
+    ...(venue?.tags ?? []),
+  ]
+    .map(normalizeStarterAuditToken)
+    .filter(Boolean)
+    .join(' | ')
+}
+
+function evaluateApprovedRouteStarterFit(params: {
+  finalRoute: RuntimeRouteArtifact | undefined
+  starterPack: StarterPack | null
+}): FinalApprovedRouteStarterFitDebug {
+  const { finalRoute, starterPack } = params
+  if (!starterPack || !finalRoute) {
+    return {
+      finalRouteStarterFitScore: null,
+      finalRouteStarterFitTier: 'n/a',
+      finalRouteMatchedPreferredCategories: [],
+      finalRouteMatchedPreferredTags: [],
+      finalRouteMatchedPreferredStopShapes: [],
+      finalRouteSecondaryAnchorMatch: null,
+      finalRouteDistanceModeFit: null,
+      finalRouteMismatchReasons: !starterPack ? ['no_starter_pack'] : ['no_final_route'],
+      finalRouteDisplayReason: !starterPack ? 'starter_fit_unavailable' : 'final_route_unavailable',
+    }
+  }
+  const routeStops = finalRoute.stops.filter(
+    (stop) => stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown',
+  )
+  const corpus = routeStops
+    .map((stop) => getRuntimeRouteStopStarterCorpus(stop))
+    .filter(Boolean)
+    .join(' | ')
+  const preferredCategories = starterPack.lensPreset?.preferredCategories ?? []
+  const preferredTags = starterPack.lensPreset?.preferredTags ?? []
+  const matchedPreferredCategories = preferredCategories.filter((category) =>
+    hasStarterAuditToken(corpus, category),
+  )
+  const matchedPreferredTags = preferredTags.filter((tag) => hasStarterAuditToken(corpus, tag))
+  const matchedPreferredStopShapes: string[] = []
+  const preferredStopShapes = starterPack.lensPreset?.preferredStopShapes ?? {}
+  ;(['start', 'highlight', 'windDown'] as const).forEach((role) => {
+    const shape = preferredStopShapes[role]
+    if (!shape) {
+      return
+    }
+    const stop = routeStops.find((entry) => entry.role === role)
+    const roleCorpus = getRuntimeRouteStopStarterCorpus(stop)
+    const categoryMatch = (shape.preferredCategories ?? []).some((category) =>
+      hasStarterAuditToken(roleCorpus, category),
+    )
+    const tagMatch = (shape.preferredTags ?? []).some((tag) =>
+      hasStarterAuditToken(roleCorpus, tag),
+    )
+    if (categoryMatch || tagMatch) {
+      matchedPreferredStopShapes.push(role)
+    }
+  })
+  const secondaryAnchorMatch = (starterPack.secondaryAnchors ?? []).some((anchor) =>
+    hasStarterAuditToken(corpus, anchor),
+  )
+  const routeNeighborhoods = new Set(
+    routeStops.map((stop) => normalizeStarterAuditToken(stop.neighborhood)).filter(Boolean),
+  )
+  const maxDriveMinutes = routeStops.reduce((maxMinutes, stop) => Math.max(maxMinutes, stop.driveMinutes), 0)
+  const distanceModeFit =
+    starterPack.distanceMode === 'short-drive'
+      ? routeNeighborhoods.size > 1 || maxDriveMinutes >= 8
+      : starterPack.distanceMode === 'nearby'
+        ? maxDriveMinutes <= 12
+        : null
+  const categoryScore =
+    preferredCategories.length > 0
+      ? matchedPreferredCategories.length / preferredCategories.length
+      : 0
+  const tagScore =
+    preferredTags.length > 0 ? matchedPreferredTags.length / preferredTags.length : 0
+  const stopShapeCount = Object.keys(preferredStopShapes).length
+  const stopShapeScore =
+    stopShapeCount > 0 ? matchedPreferredStopShapes.length / stopShapeCount : 0
+  const finalRouteStarterFitScore = clampScore(
+    categoryScore * 0.3 +
+      tagScore * 0.3 +
+      stopShapeScore * 0.26 +
+      (secondaryAnchorMatch ? 0.07 : 0) +
+      (distanceModeFit ? 0.07 : 0),
+  )
+  const finalRouteMismatchReasons = [
+    preferredCategories.length > 0 && matchedPreferredCategories.length === 0
+      ? 'no_preferred_category_match'
+      : null,
+    preferredTags.length > 0 && matchedPreferredTags.length === 0
+      ? 'no_preferred_tag_match'
+      : null,
+    stopShapeCount > 0 && matchedPreferredStopShapes.length === 0
+      ? 'no_preferred_stop_shape_match'
+      : null,
+    (starterPack.secondaryAnchors?.length ?? 0) > 0 && !secondaryAnchorMatch
+      ? 'no_secondary_anchor_match'
+      : null,
+    starterPack.distanceMode && distanceModeFit === false ? 'distance_mode_weak_match' : null,
+  ].filter((reason): reason is string => Boolean(reason))
+  const finalRouteStarterFitTier: FinalApprovedRouteStarterFitDebug['finalRouteStarterFitTier'] =
+    finalRouteStarterFitScore >= 0.7
+      ? 'strong_starter_fit'
+      : finalRouteStarterFitScore >= 0.5
+        ? 'starter_aligned'
+        : finalRouteStarterFitScore >= 0.32
+          ? 'nearby_alternative'
+          : 'weak_starter_fit'
+  const finalRouteDisplayReason =
+    finalRouteStarterFitTier === 'strong_starter_fit'
+      ? 'starter_fit_strong'
+      : finalRouteStarterFitTier === 'starter_aligned'
+        ? 'starter_fit_aligned'
+        : finalRouteStarterFitTier === 'nearby_alternative'
+          ? 'starter_fit_broader_alternative'
+          : 'starter_fit_weak_but_qualified'
+  return {
+    finalRouteStarterFitScore,
+    finalRouteStarterFitTier,
+    finalRouteMatchedPreferredCategories: matchedPreferredCategories,
+    finalRouteMatchedPreferredTags: matchedPreferredTags,
+    finalRouteMatchedPreferredStopShapes: matchedPreferredStopShapes,
+    finalRouteSecondaryAnchorMatch: secondaryAnchorMatch,
+    finalRouteDistanceModeFit: distanceModeFit,
+    finalRouteMismatchReasons,
+    finalRouteDisplayReason,
+  }
+}
+
+function evaluateStarterAwareOpportunity(params: {
+  opportunity: VerifiedCityOpportunity
+  starterPack: StarterPack | null
+}): StarterAwareOpportunityDebug {
+  const { opportunity, starterPack } = params
+  if (!starterPack) {
+    return {
+      starterPackId: 'none',
+      starterMatchScore: 0,
+      matchedPreferredCategories: [],
+      matchedPreferredTags: [],
+      matchedPreferredStopShapes: [],
+      secondaryAnchorMatch: false,
+      distanceModeMatch: false,
+      starterMismatchReasons: ['no_starter_pack'],
+      starterAwareCandidateSource: 'legacy_fallback',
+    }
+  }
+  const corpus = buildStarterOpportunityCorpus(opportunity)
+  const preferredCategories = starterPack.lensPreset?.preferredCategories ?? []
+  const preferredTags = starterPack.lensPreset?.preferredTags ?? []
+  const matchedPreferredCategories = preferredCategories.filter((category) =>
+    hasStarterAuditToken(corpus, category),
+  )
+  const matchedPreferredTags = preferredTags.filter((tag) => hasStarterAuditToken(corpus, tag))
+  const matchedPreferredStopShapes: string[] = []
+  const preferredStopShapes = starterPack.lensPreset?.preferredStopShapes ?? {}
+  ;(['start', 'highlight', 'windDown'] as const).forEach((role) => {
+    const shape = preferredStopShapes[role]
+    if (!shape) {
+      return
+    }
+    const roleCorpus = getStarterRoleCorpus(opportunity, role)
+    const categoryMatch = (shape.preferredCategories ?? []).some((category) =>
+      hasStarterAuditToken(roleCorpus, category),
+    )
+    const tagMatch = (shape.preferredTags ?? []).some((tag) =>
+      hasStarterAuditToken(roleCorpus, tag),
+    )
+    if (categoryMatch || tagMatch) {
+      matchedPreferredStopShapes.push(role)
+    }
+  })
+  const roleContractMatches = Object.entries(starterPack.roleContracts ?? {}).filter(
+    ([role, contract]) => {
+      if (role !== 'start' && role !== 'highlight' && role !== 'windDown') {
+        return false
+      }
+      const roleCorpus = getStarterRoleCorpus(opportunity, role)
+      return (
+        (contract.requiredCategories ?? []).some((category) =>
+          hasStarterAuditToken(roleCorpus, category),
+        ) ||
+        (contract.preferredCategories ?? []).some((category) =>
+          hasStarterAuditToken(roleCorpus, category),
+        ) ||
+        (contract.requiredTags ?? []).some((tag) => hasStarterAuditToken(roleCorpus, tag)) ||
+        (contract.preferredTags ?? []).some((tag) => hasStarterAuditToken(roleCorpus, tag))
+      )
+    },
+  )
+  const secondaryAnchorMatch = (starterPack.secondaryAnchors ?? []).some((anchor) =>
+    hasStarterAuditToken(corpus, anchor),
+  )
+  const distanceModeMatch =
+    starterPack.distanceMode === 'short-drive'
+      ? Boolean(opportunity.districtContext.secondaryDistricts?.length) ||
+        normalizeStarterAuditToken(starterPack.lensPreset?.movementTolerance).includes('high')
+      : starterPack.distanceMode === 'nearby'
+        ? !opportunity.districtContext.secondaryDistricts?.length
+        : Boolean(starterPack.distanceMode)
+  const categoryScore =
+    preferredCategories.length > 0
+      ? matchedPreferredCategories.length / preferredCategories.length
+      : 0
+  const tagScore =
+    preferredTags.length > 0 ? matchedPreferredTags.length / preferredTags.length : 0
+  const stopShapeCount = Object.keys(preferredStopShapes).length
+  const stopShapeScore =
+    stopShapeCount > 0 ? matchedPreferredStopShapes.length / stopShapeCount : 0
+  const roleContractCount = Object.keys(starterPack.roleContracts ?? {}).length
+  const roleContractScore =
+    roleContractCount > 0 ? roleContractMatches.length / roleContractCount : 0
+  const starterMatchScore = clampScore(
+    categoryScore * 0.24 +
+      tagScore * 0.24 +
+      stopShapeScore * 0.24 +
+      roleContractScore * 0.12 +
+      (secondaryAnchorMatch ? 0.08 : 0) +
+      (distanceModeMatch ? 0.08 : 0),
+  )
+  const starterMismatchReasons = [
+    preferredCategories.length > 0 && matchedPreferredCategories.length === 0
+      ? 'no_preferred_category_match'
+      : null,
+    preferredTags.length > 0 && matchedPreferredTags.length === 0
+      ? 'no_preferred_tag_match'
+      : null,
+    stopShapeCount > 0 && matchedPreferredStopShapes.length === 0
+      ? 'no_preferred_stop_shape_match'
+      : null,
+    (starterPack.secondaryAnchors?.length ?? 0) > 0 && !secondaryAnchorMatch
+      ? 'no_secondary_anchor_match'
+      : null,
+    starterPack.distanceMode && !distanceModeMatch ? 'distance_mode_weak_match' : null,
+  ].filter((reason): reason is string => Boolean(reason))
+
+  return {
+    starterPackId: starterPack.id,
+    starterMatchScore,
+    matchedPreferredCategories,
+    matchedPreferredTags,
+    matchedPreferredStopShapes,
+    secondaryAnchorMatch,
+    distanceModeMatch,
+    starterMismatchReasons,
+    starterAwareCandidateSource: 'starter_ranked',
+  }
+}
+
+function getStarterOpportunityDiversityKey(opportunity: VerifiedCityOpportunity): string {
+  return [
+    opportunity.selection.directionId ?? 'no_direction',
+    opportunity.anchor.venueId,
+    opportunity.storySpine.start,
+    opportunity.storySpine.highlight,
+    opportunity.storySpine.windDown,
+  ]
+    .map(normalizeStarterAuditToken)
+    .join('|')
+}
+
+function selectStarterAwareOpportunities(params: {
+  opportunities: VerifiedCityOpportunity[]
+  starterPack: StarterPack | null
+  targetCount: number
+}): {
+  opportunities: VerifiedCityOpportunity[]
+  rankedOpportunities: VerifiedCityOpportunity[]
+  debugByOpportunityId: Map<string, StarterAwareOpportunityDebug>
+} {
+  const { opportunities, starterPack, targetCount } = params
+  const debugByOpportunityId = new Map<string, StarterAwareOpportunityDebug>()
+  if (!starterPack || opportunities.length === 0) {
+    opportunities.forEach((opportunity) => {
+      debugByOpportunityId.set(
+        opportunity.id,
+        evaluateStarterAwareOpportunity({ opportunity, starterPack: null }),
+      )
+    })
+    return {
+      opportunities: opportunities.slice(0, targetCount),
+      rankedOpportunities: opportunities,
+      debugByOpportunityId,
+    }
+  }
+  const ranked = opportunities
+    .map((opportunity, index) => {
+      const debug = evaluateStarterAwareOpportunity({ opportunity, starterPack })
+      debugByOpportunityId.set(opportunity.id, debug)
+      return { opportunity, debug, index }
+    })
+    .sort((left, right) => {
+      if (right.debug.starterMatchScore !== left.debug.starterMatchScore) {
+        return right.debug.starterMatchScore - left.debug.starterMatchScore
+      }
+      if (right.opportunity.excellence.score !== left.opportunity.excellence.score) {
+        return right.opportunity.excellence.score - left.opportunity.excellence.score
+      }
+      return left.index - right.index
+    })
+  const selected: VerifiedCityOpportunity[] = []
+  const selectedDirectionIds = new Set<string>()
+  const selectedAnchorVenueIds = new Set<string>()
+  const selectedStoryFingerprints = new Set<string>()
+  const addIfDiverse = (entry: (typeof ranked)[number], allowDuplicates: boolean) => {
+    if (selected.length >= targetCount) {
+      return
+    }
+    const directionId = entry.opportunity.selection.directionId ?? ''
+    const storyFingerprint = getStarterOpportunityDiversityKey(entry.opportunity)
+    const duplicate =
+      (directionId && selectedDirectionIds.has(directionId)) ||
+      selectedAnchorVenueIds.has(entry.opportunity.anchor.venueId) ||
+      selectedStoryFingerprints.has(storyFingerprint)
+    if (duplicate && !allowDuplicates) {
+      return
+    }
+    selected.push(entry.opportunity)
+    if (directionId) {
+      selectedDirectionIds.add(directionId)
+    }
+    selectedAnchorVenueIds.add(entry.opportunity.anchor.venueId)
+    selectedStoryFingerprints.add(storyFingerprint)
+  }
+  ranked.forEach((entry) => addIfDiverse(entry, false))
+  ranked.forEach((entry) => addIfDiverse(entry, true))
+  const usedFallback = selected.some((opportunity) => {
+    const debug = debugByOpportunityId.get(opportunity.id)
+    return !debug || debug.starterMatchScore < 0.2
+  })
+  selected.forEach((opportunity) => {
+    const debug = debugByOpportunityId.get(opportunity.id)
+    if (!debug) {
+      return
+    }
+    debugByOpportunityId.set(opportunity.id, {
+      ...debug,
+      starterAwareCandidateSource: usedFallback ? 'starter_ranked_fallback' : 'starter_ranked',
+    })
+  })
+  return {
+    opportunities: selected,
+    rankedOpportunities: ranked.map((entry) => entry.opportunity),
+    debugByOpportunityId,
+  }
+}
+
+function buildPreviewSeedByRoleFromSelectedRouteSummaryArtifact(
+  summary: SelectedRouteSummaryArtifact | null,
+): Partial<Record<PreviewAdjustableRole, PreviewFallbackStopSeed>> {
+  if (!summary) {
+    return {}
+  }
+
+  const areaName = normalizePreviewField(summary.districtAnchorLine ?? summary.districtLine)
+  const defaultFitSummary = normalizePreviewField(summary.routeSummary ?? summary.whyChooseLine)
+  const highlightKnownFor = normalizePreviewField(summary.authorityLine)
+  const areaFitSummary = normalizePreviewField(
+    summary.whyTonightProofLine ?? summary.happeningsLine ?? summary.authorityLine,
+  )
+
+  return PREVIEW_ADJUSTABLE_ROLES.reduce<
+    Partial<Record<PreviewAdjustableRole, PreviewFallbackStopSeed>>
+  >((accumulator, role) => {
+    const previewStop = summary.preview.stops.find((stop) => stop.role === role)
+    const venueName = normalizePreviewField(previewStop?.name)
+    if (!venueName) {
+      return accumulator
+    }
+    accumulator[role] = {
+      venueName,
+      fitSummary: defaultFitSummary,
+      knownFor: role === 'highlight' ? highlightKnownFor : '',
+      areaName,
+      areaFitSummary,
+    }
+    return accumulator
+  }, {})
+}
+
+function buildSurprisePreviewStopRepresentation(params: {
+  role: PreviewAdjustableRole
+  detail: InlineStopDetail | undefined
+  planningStop: ItineraryStop | undefined
+  fallbackSeed: PreviewFallbackStopSeed | undefined
+  curatedVenueById: Map<string, Venue>
+}): SurprisePreviewStopRepresentation | null {
+  const { role, detail, planningStop, fallbackSeed, curatedVenueById } = params
+  return buildVenueCardStopRepresentation({
+    role,
+    detail,
+    planningStop,
+    fallbackSeed,
+    curatedVenueById,
+  })
 }
 
 function getPreviewSwapFeedback(role: UserStopRole | null): string | null {
@@ -974,7 +2608,7 @@ function toConciseRoleReason(
     return fallbackReason
   }
   if (reason.includes('soft') || reason.includes('calm') || reason.includes('landing')) {
-    return 'soft close'
+    return 'softer ending'
   }
   if (reason.includes('quiet')) {
     return 'quiet finish'
@@ -1111,17 +2745,35 @@ function getCityOpportunityAnchorReason(
 function toCityOpportunityStopOptions(
   candidates: TasteOpportunityRoleCandidate[] | undefined,
   role: 'start' | 'windDown',
+  maxCount = 2,
 ): CityOpportunityStopOption[] {
   return (candidates ?? [])
-    .slice(0, 2)
+    .slice(0, maxCount)
     .map((candidate) => ({
       venueId: candidate.venueId,
       name: candidate.venueName,
       reason: toConciseRoleReason(
         role,
         candidate.reason,
-        role === 'start' ? 'easy opener' : 'soft close nearby',
+        role === 'start' ? 'easy opener' : 'softer ending',
       ),
+      score: candidate.score,
+    }))
+    .filter((candidate) => candidate.name.trim().length > 0)
+}
+
+function toCityOpportunityHighlightAlternates(
+  candidates: TasteOpportunityRoleCandidate[] | undefined,
+  selectedAnchorVenueId: string | undefined,
+  maxCount = 2,
+): CityOpportunityStopOption[] {
+  return (candidates ?? [])
+    .filter((candidate) => candidate.venueId !== selectedAnchorVenueId)
+    .slice(0, maxCount)
+    .map((candidate) => ({
+      venueId: candidate.venueId,
+      name: candidate.venueName,
+      reason: toLowerSentence(candidate.reason) || 'strong centerpiece option',
       score: candidate.score,
     }))
     .filter((candidate) => candidate.name.trim().length > 0)
@@ -3061,7 +4713,7 @@ function firstDistinctStop(candidates: string[], blocked: string[]): string | nu
 
 function validateOrRepairStep2StorySpine(
   opportunity: VerifiedCityOpportunity,
-): Step2BuiltNightCard['storySpine'] {
+): CanonicalCandidateRouteArtifact['storySpine'] {
   const fallbackHighlight = opportunity.anchor.name || opportunity.storySpine.highlight
   const highlight = fallbackHighlight.trim()
   const startCandidates = uniqueStopNames([
@@ -3088,6 +4740,25 @@ function validateOrRepairStep2StorySpine(
     highlight: highlight || opportunity.storySpine.highlight,
     windDown: windDown || opportunity.storySpine.windDown,
   }
+}
+
+function resolveBuildAnchorRoleInOpportunity(
+  opportunity: VerifiedCityOpportunity,
+  anchorVenueId: string,
+): 'start' | 'highlight' | 'windDown' | null {
+  if (opportunity.anchor.venueId === anchorVenueId) {
+    return 'highlight'
+  }
+  if (opportunity.starts.some((entry) => entry.venueId === anchorVenueId)) {
+    return 'start'
+  }
+  if (opportunity.closes.some((entry) => entry.venueId === anchorVenueId)) {
+    return 'windDown'
+  }
+  if (opportunity.highlightAlternates?.some((entry) => entry.venueId === anchorVenueId)) {
+    return 'highlight'
+  }
+  return null
 }
 
 function getScenarioStopByPosition(
@@ -3203,49 +4874,379 @@ function buildScenarioSelectionContext(params: {
   }
 }
 
+function isScenarioWindDownPreferredCategory(category: VenueCategory | undefined): boolean {
+  return (
+    category === 'restaurant' ||
+    category === 'bar' ||
+    category === 'cafe' ||
+    category === 'dessert'
+  )
+}
+
+function isScenarioWindDownDisallowedCategory(category: VenueCategory | undefined): boolean {
+  return (
+    category === 'event' ||
+    category === 'museum' ||
+    category === 'activity' ||
+    category === 'live_music'
+  )
+}
+
+function isBuiltScenarioStopRoleEligibleForWindDown(params: {
+  stop: BuiltScenarioStop | undefined
+  contractConstraints?: ContractConstraints
+}): boolean {
+  const { stop, contractConstraints } = params
+  if (!stop) {
+    return false
+  }
+  const category = stop.venueCategory ?? curatedVenues.find((venue) => venue.id === stop.venueId)?.category
+  const roleFitWindDown = stop.roleFit.windDown ?? 0
+  const roleFitHighlight = stop.roleFit.highlight ?? 0
+  const isPreferredCategory = isScenarioWindDownPreferredCategory(category)
+  if (isScenarioWindDownDisallowedCategory(category)) {
+    return false
+  }
+  if (stop.sourceType === 'event') {
+    return false
+  }
+  if ((stop.eventPotential ?? 0) >= 0.58 || (stop.performancePotential ?? 0) >= 0.66) {
+    return false
+  }
+  if (roleFitWindDown < 0.5) {
+    return false
+  }
+  if (!isPreferredCategory && roleFitWindDown < 0.62) {
+    return false
+  }
+  if (roleFitHighlight >= roleFitWindDown + 0.12) {
+    return false
+  }
+  if (
+    contractConstraints?.windDownStrictness === 'soft_required' &&
+    roleFitWindDown < (isPreferredCategory ? 0.56 : 0.64)
+  ) {
+    return false
+  }
+  return true
+}
+
+function scoreBuiltScenarioStopForWindDown(params: {
+  stop: BuiltScenarioStop
+  sameNightFixture: boolean
+  sameDistrictFixture: boolean
+}): number {
+  const { stop, sameNightFixture, sameDistrictFixture } = params
+  const category = stop.venueCategory ?? curatedVenues.find((venue) => venue.id === stop.venueId)?.category
+  let score = stop.roleFit.windDown ?? 0
+  if (sameNightFixture) {
+    score += 0.3
+  } else if (sameDistrictFixture) {
+    score += 0.18
+  }
+  if (stop.position === 'closer') {
+    score += 0.08
+  } else if (stop.position === 'windDown') {
+    score += 0.12
+  }
+  if (isScenarioWindDownPreferredCategory(category)) {
+    score += 0.08
+  }
+  if (stop.currentRelevance >= 0.6) {
+    score += 0.03
+  }
+  if (stop.authorityScore >= 0.6) {
+    score += 0.02
+  }
+  return score
+}
+
+function buildScenarioWindDownFallbackStop(params: {
+  venueId: string
+  primaryDistrict: string
+}): BuiltScenarioStop | null {
+  const venue = curatedVenues.find((entry) => entry.id === params.venueId)
+  if (!venue) {
+    return null
+  }
+  return {
+    position: 'closer',
+    stopType: 'nightcap',
+    venueId: venue.id,
+    name: venue.name,
+    address: undefined,
+    district: venue.neighborhood || params.primaryDistrict,
+    neighborhoodLabel: venue.neighborhood,
+    venueTypeLabel: venue.subcategory,
+    sourceType: 'venue',
+    factualSummary: venue.shortDescription,
+    venueFeatures: undefined,
+    serviceOptions: undefined,
+    isHiddenGem: venue.isHiddenGem,
+    authorityScore: venue.localSignals.localFavoriteScore,
+    currentRelevance: 0.56,
+    reasons: [venue.narrativeFlavor || venue.shortDescription || 'Valid wind-down fallback.'],
+    momentLabel: 'Repaired wind-down landing',
+    whyThisStop: venue.narrativeFlavor || venue.shortDescription || 'Valid wind-down fallback.',
+    whyTonight: undefined,
+    venueCategory: venue.category,
+    venueSubcategory: venue.subcategory,
+    sourceTypes: venue.tags,
+    roleFit: {
+      windDown: venue.roleAffinity.cooldown,
+      highlight: venue.roleAffinity.peak,
+      start: venue.roleAffinity.warmup,
+    },
+    eventPotential: 0,
+    performancePotential: 0,
+    liveNightlifePotential: venue.category === 'bar' ? 0.32 : 0,
+    culturalAnchorPotential: 0,
+    lateNightPotential: venue.tags.some((tag) => tag.toLowerCase().includes('late')) ? 0.22 : 0,
+    majorVenueStrength: 0,
+    evaluation: undefined,
+  }
+}
+
+function resolveScenarioWindDownSelection(params: {
+  night: BuiltScenarioNight
+  primaryDistrict: string
+  contractConstraints?: ContractConstraints
+}): {
+  originalStop: BuiltScenarioStop | undefined
+  finalStop: BuiltScenarioStop | null
+  repairApplied: boolean
+  repairReplacement: BuiltScenarioStop | null
+  repairSource: string | null
+  repairReason: string | null
+} {
+  const { night, primaryDistrict, contractConstraints } = params
+  const originalStop =
+    getScenarioStopByPosition(night, 'closer') ?? night.stops[night.stops.length - 1]
+  const originalRoleEligible = isBuiltScenarioStopRoleEligibleForWindDown({
+    stop: originalStop,
+    contractConstraints,
+  })
+  if (originalRoleEligible && originalStop) {
+    return {
+      originalStop,
+      finalStop: originalStop,
+      repairApplied: false,
+      repairReplacement: null,
+      repairSource: null,
+      repairReason: null,
+    }
+  }
+
+  const highlightStop = getScenarioHighlightStop(night)
+  const startStop = getScenarioStopByPosition(night, 'start') ?? night.stops[0]
+  const blockedIds = new Set(
+    [startStop?.venueId, highlightStop?.venueId].filter((value): value is string => Boolean(value)),
+  )
+  const fixtureIdSet = new Set(devGreatStopFixtureVenueIds)
+  const eligibleSameNightFixture = night.stops
+    .filter((stop) => fixtureIdSet.has(stop.venueId))
+    .filter((stop) => !blockedIds.has(stop.venueId))
+    .filter((stop) =>
+      isBuiltScenarioStopRoleEligibleForWindDown({
+        stop,
+        contractConstraints,
+      }),
+    )
+    .sort(
+      (left, right) =>
+        scoreBuiltScenarioStopForWindDown({
+          stop: right,
+          sameNightFixture: true,
+          sameDistrictFixture: true,
+        }) -
+          scoreBuiltScenarioStopForWindDown({
+            stop: left,
+            sameNightFixture: true,
+            sameDistrictFixture: true,
+          }) || left.name.localeCompare(right.name),
+    )
+  if (eligibleSameNightFixture[0]) {
+    return {
+      originalStop,
+      finalStop: eligibleSameNightFixture[0],
+      repairApplied: true,
+      repairReplacement: eligibleSameNightFixture[0],
+      repairSource: 'same_scenario_fixture',
+      repairReason: 'original_windDown_not_role_eligible',
+    }
+  }
+
+  const eligibleDistrictFixture = devGreatStopFixtureVenueIds
+    .map((venueId) => buildScenarioWindDownFallbackStop({ venueId, primaryDistrict }))
+    .filter((stop): stop is BuiltScenarioStop => Boolean(stop))
+    .filter((stop) => !blockedIds.has(stop.venueId))
+    .filter((stop) =>
+      hasLoosePhraseMatch(stop.district ?? '', primaryDistrict) ||
+      hasLoosePhraseMatch(stop.neighborhoodLabel ?? '', primaryDistrict),
+    )
+    .filter((stop) =>
+      isBuiltScenarioStopRoleEligibleForWindDown({
+        stop,
+        contractConstraints,
+      }),
+    )
+    .sort(
+      (left, right) =>
+        scoreBuiltScenarioStopForWindDown({
+          stop: right,
+          sameNightFixture: false,
+          sameDistrictFixture: true,
+        }) -
+          scoreBuiltScenarioStopForWindDown({
+            stop: left,
+            sameNightFixture: false,
+            sameDistrictFixture: true,
+          }) || left.name.localeCompare(right.name),
+    )
+  if (eligibleDistrictFixture[0]) {
+    return {
+      originalStop,
+      finalStop: eligibleDistrictFixture[0],
+      repairApplied: true,
+      repairReplacement: eligibleDistrictFixture[0],
+      repairSource: 'same_district_fixture',
+      repairReason: 'original_windDown_not_role_eligible',
+    }
+  }
+
+  const eligibleSameNightSupport = night.stops
+    .filter((stop) => !blockedIds.has(stop.venueId))
+    .filter((stop) =>
+      isBuiltScenarioStopRoleEligibleForWindDown({
+        stop,
+        contractConstraints,
+      }),
+    )
+    .sort(
+      (left, right) =>
+        scoreBuiltScenarioStopForWindDown({
+          stop: right,
+          sameNightFixture: false,
+          sameDistrictFixture: false,
+        }) -
+          scoreBuiltScenarioStopForWindDown({
+            stop: left,
+            sameNightFixture: false,
+            sameDistrictFixture: false,
+          }) || left.name.localeCompare(right.name),
+    )
+  if (eligibleSameNightSupport[0]) {
+    return {
+      originalStop,
+      finalStop: eligibleSameNightSupport[0],
+      repairApplied: true,
+      repairReplacement: eligibleSameNightSupport[0],
+      repairSource: 'same_scenario_support',
+      repairReason: 'original_windDown_not_role_eligible',
+    }
+  }
+
+  return {
+    originalStop,
+    finalStop: null,
+    repairApplied: false,
+    repairReplacement: null,
+    repairSource: null,
+    repairReason: 'no_role_eligible_windDown_available',
+  }
+}
+
 function mapBuiltScenarioNightToVerifiedOpportunity(params: {
   night: BuiltScenarioNight
   districtDiscoveryCards: Array<{ id: string; name: string }>
   directionCards: RealityDirectionCard[]
   personaLabel: string
   vibeLabel: string
+  expandedProjection?: boolean
+  contractConstraints?: ContractConstraints
 }): VerifiedCityOpportunity | null {
-  const { night, districtDiscoveryCards, directionCards, personaLabel, vibeLabel } = params
+  const {
+    night,
+    districtDiscoveryCards,
+    directionCards,
+    personaLabel,
+    vibeLabel,
+    expandedProjection = false,
+    contractConstraints,
+  } = params
   if (!night.complete || night.stops.length === 0) {
     return null
   }
   const firstStop = night.stops[0]
   const highlightStop = getScenarioHighlightStop(night) ?? firstStop
-  const windDownStop = getScenarioStopByPosition(night, 'closer') ?? night.stops[night.stops.length - 1]
-  if (!highlightStop || !windDownStop) {
-    return null
-  }
   const dominantDistrict =
     highlightStop.district ??
     getDominantScenarioDistrict(night) ??
     districtDiscoveryCards[0]?.name ??
     'San Jose'
+  const resolvedWindDown = resolveScenarioWindDownSelection({
+    night,
+    primaryDistrict: dominantDistrict,
+    contractConstraints,
+  })
+  const windDownStop = resolvedWindDown.finalStop ?? resolvedWindDown.originalStop
+  if (!highlightStop || !windDownStop) {
+    return null
+  }
   const secondaryDistricts = uniqueStopNames(
     night.stops.map((stop) => stop.district).filter((entry) => !hasLoosePhraseMatch(entry ?? '', dominantDistrict)),
   ).slice(0, 2)
-  const starts: CityOpportunityStopOption[] = [
-    {
-      venueId: firstStop.venueId,
-      name: firstStop.name,
-      address: firstStop.address,
-      reason: firstStop.whyThisStop || firstStop.reasons[0] || 'Strong scenario start.',
-      score: clampScore(firstStop.authorityScore * 0.62 + firstStop.currentRelevance * 0.38),
-    },
-  ]
-  const closes: CityOpportunityStopOption[] = [
-    {
-      venueId: windDownStop.venueId,
-      name: windDownStop.name,
-      address: windDownStop.address,
-      reason: windDownStop.whyThisStop || windDownStop.reasons[0] || 'Strong scenario landing.',
-      score: clampScore(windDownStop.authorityScore * 0.58 + windDownStop.currentRelevance * 0.42),
-    },
-  ]
+  const startProjectionStops = expandedProjection
+    ? night.stops.filter((stop) => stop.position === 'start' || stop.position === 'mid').slice(0, 4)
+    : [firstStop]
+  const closeProjectionStops = expandedProjection
+    ? dedupeStringIds([
+        windDownStop.venueId,
+        ...night.stops
+          .filter((stop) => stop.position === 'windDown' || stop.position === 'closer')
+          .map((stop) => stop.venueId),
+      ])
+        .map(
+          (venueId) =>
+            [windDownStop, ...night.stops].find((stop) => stop.venueId === venueId) ?? null,
+        )
+        .filter((stop): stop is BuiltScenarioStop => Boolean(stop))
+        .slice(0, 4)
+    : [windDownStop]
+  const starts: CityOpportunityStopOption[] = startProjectionStops.map((stop) => ({
+    venueId: stop.venueId,
+    name: stop.name,
+    address: stop.address,
+    reason: stop.whyThisStop || stop.reasons[0] || 'Strong scenario start.',
+    score: clampScore(stop.authorityScore * 0.62 + stop.currentRelevance * 0.38),
+  }))
+  const closes: CityOpportunityStopOption[] = closeProjectionStops.map((stop) => ({
+    venueId: stop.venueId,
+    name: stop.name,
+    address: stop.address,
+    reason: stop.whyThisStop || stop.reasons[0] || 'Strong scenario landing.',
+    score: clampScore(stop.authorityScore * 0.58 + stop.currentRelevance * 0.42),
+  }))
+  const highlightAlternates: CityOpportunityStopOption[] | undefined = expandedProjection
+    ? night.stops
+        .filter((stop) => stop.venueId !== highlightStop.venueId)
+        .sort((left, right) => {
+          const leftScore = left.roleFit.highlight ?? 0
+          const rightScore = right.roleFit.highlight ?? 0
+          if (rightScore !== leftScore) {
+            return rightScore - leftScore
+          }
+          return left.name.localeCompare(right.name)
+        })
+        .slice(0, 4)
+        .map((stop) => ({
+          venueId: stop.venueId,
+          name: stop.name,
+          address: stop.address,
+          reason: stop.whyThisStop || stop.reasons[0] || 'Strong scenario centerpiece option.',
+          score: clampScore((stop.roleFit.highlight ?? 0) * 0.68 + stop.currentRelevance * 0.32),
+        }))
+    : undefined
   const whyTonightStrength = clampScore(
     night.stops.reduce((sum, stop) => sum + stop.currentRelevance, 0) / Math.max(1, night.stops.length),
   )
@@ -3270,6 +5271,7 @@ function mapBuiltScenarioNightToVerifiedOpportunity(params: {
       verificationReasons: highlightStop.reasons.slice(0, 2),
     },
     starts,
+    highlightAlternates,
     closes,
     nearbyHappenings: [],
     districtContext: {
@@ -3308,6 +5310,25 @@ function mapBuiltScenarioNightToVerifiedOpportunity(params: {
       modeExcellence: 0.8,
     },
     whyTonightProofLine: buildScenarioCanonicalWhyTonightProofLine(night),
+    scenarioWindDownDebug: {
+      originalVenueId: resolvedWindDown.originalStop?.venueId ?? null,
+      originalName: resolvedWindDown.originalStop?.name ?? null,
+      originalRoleEligible: isBuiltScenarioStopRoleEligibleForWindDown({
+        stop: resolvedWindDown.originalStop,
+        contractConstraints,
+      }),
+      repairApplied: resolvedWindDown.repairApplied,
+      repairReplacementVenueId: resolvedWindDown.repairReplacement?.venueId ?? null,
+      repairReplacementName: resolvedWindDown.repairReplacement?.name ?? null,
+      repairSource: resolvedWindDown.repairSource,
+      repairReason: resolvedWindDown.repairReason,
+      finalVenueId: resolvedWindDown.finalStop?.venueId ?? windDownStop.venueId,
+      finalName: resolvedWindDown.finalStop?.name ?? windDownStop.name,
+      finalRoleEligible: isBuiltScenarioStopRoleEligibleForWindDown({
+        stop: resolvedWindDown.finalStop ?? windDownStop,
+        contractConstraints,
+      }),
+    },
     // Boundary: Scenario Builder fields are canonical for supported romantic flows.
     scenarioNight: night,
     scenarioPreviewModel: mapBuiltScenarioNightToPreviewModel(night),
@@ -3503,7 +5524,7 @@ async function resolveCanonicalPlanningStopIdentity(
   const chip = getAnchorSearchChip(stop.category)
 
   for (const query of uniqueQueries) {
-    const candidates = await searchAnchorVenues({
+    const candidates = await searchAnchorVenueOptions({
       query,
       city: searchCity,
       neighborhood: searchNeighborhood,
@@ -3671,6 +5692,74 @@ function buildCanonicalAddressLine(
   return neighborhood ?? city
 }
 
+type BuildAnchorSelection = {
+  venueId: string
+  name: string
+  category: AnchorSearchResult['venue']['category']
+  city: string
+  neighborhood: string
+}
+
+function normalizeCanonicalCity(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/\./g, '')
+  const [head] = normalized.split(',')
+  return (head ?? normalized).replace(/\s+/g, ' ').trim()
+}
+
+function hashCanonicalValue(value: string): number {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+function hashToUnitInterval(value: string): number {
+  return hashCanonicalValue(value) / 4294967295
+}
+
+function resolveOfflineCityCenter(city: string): { lat: number; lng: number } {
+  const key = normalizeCanonicalCity(city)
+  const knownCenters: Record<string, { lat: number; lng: number }> = {
+    'san jose': { lat: 37.3382, lng: -121.8863 },
+    denver: { lat: 39.7392, lng: -104.9903 },
+    austin: { lat: 30.2672, lng: -97.7431 },
+  }
+  const known = knownCenters[key]
+  if (known) {
+    return known
+  }
+  return {
+    lat: Number((30.5 + hashToUnitInterval(`${key}:lat`) * 11.5).toFixed(4)),
+    lng: Number((-121.5 + hashToUnitInterval(`${key}:lng`) * 23.5).toFixed(4)),
+  }
+}
+
+function resolveOfflineCanonicalCoordinates(params: {
+  city: string
+  neighborhood?: string
+  role: UserStopRole
+  venueId: string
+}): { latitude: number; longitude: number } {
+  const cityCenter = resolveOfflineCityCenter(params.city)
+  const neighborhoodToken = (params.neighborhood ?? '').trim().toLowerCase()
+  const identity = `${normalizeCanonicalCity(params.city)}|${neighborhoodToken}|${params.role}|${params.venueId}`
+  const roleOffsetByRole: Record<UserStopRole, { lat: number; lng: number }> = {
+    start: { lat: 0.0015, lng: -0.0014 },
+    highlight: { lat: 0.0001, lng: 0.0008 },
+    windDown: { lat: -0.0013, lng: 0.0011 },
+    surprise: { lat: 0.0009, lng: 0.0002 },
+  }
+  const roleOffset = roleOffsetByRole[params.role]
+  const neighborhoodLatOffset = (hashToUnitInterval(`${identity}:lat`) - 0.5) * 0.012
+  const neighborhoodLngOffset = (hashToUnitInterval(`${identity}:lng`) - 0.5) * 0.012
+  return {
+    latitude: Number((cityCenter.lat + roleOffset.lat + neighborhoodLatOffset).toFixed(6)),
+    longitude: Number((cityCenter.lng + roleOffset.lng + neighborhoodLngOffset).toFixed(6)),
+  }
+}
+
 function resolveCanonicalPlanningStopIdentityFromScoredVenue(
   stop: ItineraryStop,
   scoredVenue?: ScoredVenue,
@@ -3678,16 +5767,24 @@ function resolveCanonicalPlanningStopIdentityFromScoredVenue(
   if (!scoredVenue) {
     return undefined
   }
-  const providerRecordId = scoredVenue.venue.source.providerRecordId?.trim()
-  const latitude = scoredVenue.venue.source.latitude
-  const longitude = scoredVenue.venue.source.longitude
-  if (!providerRecordId || typeof latitude !== 'number' || typeof longitude !== 'number') {
-    return undefined
-  }
   const addressLine = buildCanonicalAddressLine(stop, scoredVenue)
   if (!addressLine) {
     return undefined
   }
+  const providerRecordId =
+    scoredVenue.venue.source.providerRecordId?.trim() ?? `seed:${scoredVenue.venue.id}`
+  const sourceLatitude = scoredVenue.venue.source.latitude
+  const sourceLongitude = scoredVenue.venue.source.longitude
+  const fallbackCoordinates = resolveOfflineCanonicalCoordinates({
+    city: stop.city || scoredVenue.venue.city,
+    neighborhood: stop.neighborhood || scoredVenue.venue.neighborhood,
+    role: stop.role,
+    venueId: scoredVenue.venue.id,
+  })
+  const latitude =
+    typeof sourceLatitude === 'number' ? sourceLatitude : fallbackCoordinates.latitude
+  const longitude =
+    typeof sourceLongitude === 'number' ? sourceLongitude : fallbackCoordinates.longitude
   const display = resolvePlanningStopDisplay(stop, scoredVenue)
   return {
     role: stop.role,
@@ -3853,11 +5950,51 @@ function applyCanonicalIdentityToItinerary(
   }
 }
 
+function getNonEmptyRuntimeRouteString(value: string | null | undefined): string | null {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : null
+}
+
+function getSharedItineraryStopFallbackImageUrl(stops: ItineraryStop[]): string {
+  const stopByRole = new Map(stops.map((stop) => [stop.role, stop] as const))
+  return (
+    getNonEmptyRuntimeRouteString(stopByRole.get('highlight')?.imageUrl) ??
+    getNonEmptyRuntimeRouteString(stopByRole.get('start')?.imageUrl) ??
+    getNonEmptyRuntimeRouteString(stopByRole.get('windDown')?.imageUrl) ??
+    getNonEmptyRuntimeRouteString(stops.find((stop) => getNonEmptyRuntimeRouteString(stop.imageUrl))?.imageUrl) ??
+    ''
+  )
+}
+
+function hydrateRuntimeRouteStopDisplayFields(params: {
+  stop: ItineraryStop
+  existingRouteStop?: Partial<RuntimeRouteStop>
+  fallbackImageUrl: string
+}): Pick<RuntimeRouteStop, 'title' | 'subtitle' | 'driveMinutes' | 'imageUrl'> {
+  const { stop, existingRouteStop, fallbackImageUrl } = params
+  return {
+    title: getNonEmptyRuntimeRouteString(existingRouteStop?.title) ?? stop.title,
+    subtitle:
+      getNonEmptyRuntimeRouteString(existingRouteStop?.subtitle) ??
+      getNonEmptyRuntimeRouteString(stop.subtitle) ??
+      stop.neighborhood,
+    driveMinutes:
+      typeof existingRouteStop?.driveMinutes === 'number' && Number.isFinite(existingRouteStop.driveMinutes)
+        ? existingRouteStop.driveMinutes
+        : stop.driveMinutes,
+    imageUrl:
+      getNonEmptyRuntimeRouteString(existingRouteStop?.imageUrl) ??
+      getNonEmptyRuntimeRouteString(stop.imageUrl) ??
+      fallbackImageUrl,
+  }
+}
+
 function toFinalRouteStop(
   stop: ItineraryStop,
   stopIndex: number,
   canonicalStopByRole: Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>,
-): FinalRouteStop | null {
+  fallbackImageUrl: string,
+): RuntimeRouteStop | null {
   const canonical = canonicalStopByRole[stop.role]
   if (
     !canonical ||
@@ -3869,6 +6006,10 @@ function toFinalRouteStop(
   ) {
     return null
   }
+  const displayFields = hydrateRuntimeRouteStopDisplayFields({
+    stop,
+    fallbackImageUrl,
+  })
   return {
     id: stop.id,
     sourceStopId: stop.id,
@@ -3880,11 +6021,11 @@ function toFinalRouteStop(
     role: stop.role,
     stopIndex,
     venueId: stop.venueId,
-    title: stop.title,
-    subtitle: stop.subtitle,
+    title: displayFields.title,
+    subtitle: displayFields.subtitle,
     neighborhood: canonical.neighborhood || stop.neighborhood,
-    driveMinutes: stop.driveMinutes,
-    imageUrl: stop.imageUrl,
+    driveMinutes: displayFields.driveMinutes,
+    imageUrl: displayFields.imageUrl,
   }
 }
 
@@ -3896,15 +6037,35 @@ function buildFinalRoute(params: {
   persona: PersonaMode
   vibe: VibeAnchor
   activeRole: UserStopRole
+  mode: 'surprise' | 'curate' | 'build'
   selectedCluster: RealityCluster
   selectedDirectionPreviewContext?: SelectedDirectionPreviewContext
-}): FinalRoute | null {
-  const stops = params.itinerary.stops
-    .map((stop, stopIndex) => toFinalRouteStop(stop, stopIndex, params.canonicalStopByRole))
+}): RuntimeRouteArtifact | null {
+  const visibleStops = params.itinerary.stops.filter((stop) => {
+    if (stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown') {
+      return true
+    }
+    return (
+      params.mode === 'surprise' &&
+      stop.role === 'surprise' &&
+      Boolean(params.canonicalStopByRole.surprise)
+    )
+  })
+  const hasStart = visibleStops.some((stop) => stop.role === 'start')
+  const hasHighlight = visibleStops.some((stop) => stop.role === 'highlight')
+  const hasWindDown = visibleStops.some((stop) => stop.role === 'windDown')
+  if (!hasStart || !hasHighlight || !hasWindDown) {
+    return null
+  }
+  const fallbackImageUrl = getSharedItineraryStopFallbackImageUrl(visibleStops)
+  const stops = visibleStops
+    .map((stop, stopIndex) =>
+      toFinalRouteStop(stop, stopIndex, params.canonicalStopByRole, fallbackImageUrl),
+    )
   if (stops.some((stop) => !stop)) {
     return null
   }
-  const committedStops = stops.filter((stop): stop is FinalRouteStop => Boolean(stop))
+  const committedStops = stops.filter((stop): stop is RuntimeRouteStop => Boolean(stop))
   const routeHeadline = getPreviewOneLiner(
     params.selectedCluster,
     params.itinerary,
@@ -3942,9 +6103,147 @@ function buildFinalRoute(params: {
   }
 }
 
+interface PostPlannerCommitParityStagesResult {
+  strongCurationPass: StrongCurationTastePassResult
+  anchoredPlan: FullStopRealityContractOutcome
+  canonicalItinerary: Itinerary
+  contractBuildability: DirectionContractBuildability
+  directionValidation: DirectionContractValidationResult
+  nextFinalRoute: RuntimeRouteArtifact
+}
+
+class PostPlannerCommitParityValidationError extends Error {
+  readonly directionValidation: DirectionContractValidationResult
+  readonly contractBuildability: DirectionContractBuildability
+  readonly failedCheck: string
+
+  constructor(params: {
+    message: string
+    directionValidation: DirectionContractValidationResult
+    contractBuildability: DirectionContractBuildability
+    failedCheck: string
+  }) {
+    super(params.message)
+    this.name = 'PostPlannerCommitParityValidationError'
+    Object.setPrototypeOf(this, PostPlannerCommitParityValidationError.prototype)
+    this.directionValidation = params.directionValidation
+    this.contractBuildability = params.contractBuildability
+    this.failedCheck = params.failedCheck
+  }
+}
+
+function getErrorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error
+}
+
+function getErrorMessageRaw(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function getCuratePreflightRuntimeReason(error: unknown): string {
+  const errorName = getErrorName(error)
+  return errorName ? `curate_preflight_runtime_error:${errorName}` : 'curate_preflight_runtime_error'
+}
+
+async function runPostPlannerCommitParityStages(params: {
+  result: Awaited<ReturnType<typeof runPlanBuild>>
+  contractConstraints: ContractConstraints
+  expectedDirectionIdentity: DirectionIdentityMode
+  selectedDirectionContextForValidation: ResolvedDirectionContext
+  selectedDirectionContractForValidation: DirectionPlanningSelection
+  selectedDirectionId: string
+  selectedDirectionPreviewContext?: SelectedDirectionPreviewContext
+  selectedCluster: RealityCluster
+  city: string
+  persona: PersonaMode
+  vibe: VibeAnchor
+}): Promise<PostPlannerCommitParityStagesResult> {
+  const strongCurationPass =
+    params.result.intentProfile.mode === 'surprise'
+      ? buildPassthroughStrongCurationTastePass({
+          itinerary: params.result.itinerary,
+          selectedArc: params.result.selectedArc,
+          scoredVenues: params.result.scoredVenues,
+        })
+      : applyStrongCurationTastePass({
+          itinerary: params.result.itinerary,
+          selectedArc: params.result.selectedArc,
+          scoredVenues: params.result.scoredVenues,
+          intentProfile: params.result.intentProfile,
+          lens: params.result.lens,
+          contractConstraints: params.contractConstraints,
+        })
+  const anchoredPlan = await enforceFullStopRealityContract({
+    itinerary: strongCurationPass.itinerary,
+    selectedArc: strongCurationPass.selectedArc,
+    scoredVenues: strongCurationPass.scoredVenues,
+    intentProfile: params.result.intentProfile,
+    lens: params.result.lens,
+  })
+  const canonicalItinerary = applyCanonicalIdentityToItinerary(
+    anchoredPlan.itinerary,
+    anchoredPlan.canonicalStopByRole,
+  )
+  const contractBuildability = assessDirectionContractBuildability({
+    expectedDirectionIdentity: params.expectedDirectionIdentity,
+    scoredVenues: strongCurationPass.scoredVenues,
+  })
+  const directionValidation = validateDirectionRouteContract({
+    selectedDirectionContext: params.selectedDirectionContextForValidation,
+    selectedDirection: params.selectedDirectionContractForValidation,
+    itinerary: canonicalItinerary,
+    buildability: contractBuildability,
+    mode: params.result.intentProfile.mode,
+  })
+  if (!directionValidation.valid) {
+    throw new PostPlannerCommitParityValidationError({
+      message: 'Route drifted from selected direction contract. Please regenerate.',
+      directionValidation,
+      contractBuildability,
+      failedCheck: directionValidation.generationDriftReason ?? 'directionValidation.valid',
+    })
+  }
+  const nextFinalRoute = buildFinalRoute({
+    itinerary: canonicalItinerary,
+    canonicalStopByRole: anchoredPlan.canonicalStopByRole,
+    selectedDirectionId: params.selectedDirectionId,
+    city: params.city,
+    persona: params.persona,
+    vibe: params.vibe,
+    activeRole: 'start',
+    mode: params.result.intentProfile.mode,
+    selectedCluster: params.selectedCluster,
+    selectedDirectionPreviewContext: params.selectedDirectionPreviewContext,
+  })
+  if (!nextFinalRoute) {
+    throw new PostPlannerCommitParityValidationError({
+      message: 'Route commit failed: one or more stops are missing canonical identity.',
+      directionValidation,
+      contractBuildability,
+      failedCheck: 'buildFinalRoute.canonicalIdentity',
+    })
+  }
+  if (nextFinalRoute.selectedDirectionId !== params.selectedDirectionId) {
+    throw new PostPlannerCommitParityValidationError({
+      message: 'Route drifted from selected direction contract. Please regenerate.',
+      directionValidation,
+      contractBuildability,
+      failedCheck: 'nextFinalRoute.selectedDirectionId',
+    })
+  }
+  return {
+    strongCurationPass,
+    anchoredPlan,
+    canonicalItinerary,
+    contractBuildability,
+    directionValidation,
+    nextFinalRoute,
+  }
+}
+
 function buildFinalRouteMapMarkers(
-  stops: FinalRouteStop[],
-): FinalRoute['mapMarkers'] {
+  stops: RuntimeRouteStop[],
+): RuntimeRouteArtifact['mapMarkers'] {
   return stops
     .slice()
     .sort((left, right) => left.stopIndex - right.stopIndex)
@@ -3959,16 +6258,16 @@ function buildFinalRouteMapMarkers(
 }
 
 function patchFinalRouteStop(params: {
-  route: FinalRoute
+  route: RuntimeRouteArtifact
   targetRole: UserStopRole
   targetStopId?: string
   targetStopIndex?: number
-  replacementStop: FinalRouteStop
+  replacementStop: RuntimeRouteStop
   notice?: string
   activeRole?: UserStopRole
 }): {
-  route: FinalRoute
-  resolvedStop: FinalRouteStop
+  route: RuntimeRouteArtifact
+  resolvedStop: RuntimeRouteStop
   resolution: 'id' | 'index' | 'role'
 } | null {
   const orderedStops = params.route.stops
@@ -4001,7 +6300,7 @@ function patchFinalRouteStop(params: {
   if (!currentStop) {
     return null
   }
-  const replacementStop: FinalRouteStop = {
+  const replacementStop: RuntimeRouteStop = {
     ...currentStop,
     ...params.replacementStop,
     title: currentStop.title,
@@ -4030,31 +6329,6 @@ function patchFinalRouteStop(params: {
     resolvedStop: currentStop,
     resolution,
   }
-}
-
-function logSwapCommitChecks(
-  route: FinalRoute,
-  swappedRole: UserStopRole,
-  surfaces: string[],
-): void {
-  if (!import.meta.env.DEV) {
-    return
-  }
-  const stopNames = route.stops.map((stop) => stop.displayName)
-  const stopIds = route.stops.map((stop) => stop.providerRecordId || stop.id)
-  console.log('SWAP COMMIT CHECK', {
-    routeId: route.routeId,
-    swappedRole,
-    stopNames,
-    stopIds,
-  })
-  surfaces.forEach((surface) => {
-    console.log('SURFACE ROUTE CHECK', {
-      surface,
-      routeId: route.routeId,
-      stopNames,
-    })
-  })
 }
 
 function clampTasteScore(value: number): number {
@@ -5649,6 +7923,75 @@ function applyStrongCurationTastePass(params: {
   }
 }
 
+function buildPassthroughStrongCurationTastePass(params: {
+  selectedArc: ArcCandidate
+  itinerary: Itinerary
+  scoredVenues: ScoredVenue[]
+}): StrongCurationTastePassResult {
+  const rolePoolVenueIdsByRole: Record<CoreTasteRole, string[]> = {
+    start: dedupeStringIds(
+      params.selectedArc.stops
+        .filter((stop) => stop.role === 'warmup')
+        .map((stop) => stop.scoredVenue.venue.id),
+    ),
+    highlight: dedupeStringIds(
+      params.selectedArc.stops
+        .filter((stop) => stop.role === 'peak')
+        .map((stop) => stop.scoredVenue.venue.id),
+    ),
+    windDown: dedupeStringIds(
+      params.selectedArc.stops
+        .filter((stop) => stop.role === 'cooldown')
+        .map((stop) => stop.scoredVenue.venue.id),
+    ),
+  }
+  const rolePoolVenueIdsCombined = dedupeStringIds([
+    ...rolePoolVenueIdsByRole.start,
+    ...rolePoolVenueIdsByRole.highlight,
+    ...rolePoolVenueIdsByRole.windDown,
+  ])
+  const hasHighlight = params.selectedArc.stops.some((stop) => stop.role === 'peak')
+  return {
+    selectedArc: params.selectedArc,
+    itinerary: params.itinerary,
+    scoredVenues: params.scoredVenues,
+    qualificationByCandidateId: {},
+    personaVibeTasteBiasSummary: 'surprise_passthrough',
+    thinPoolHighlightFallbackApplied: false,
+    highlightPoolCountBefore: rolePoolVenueIdsByRole.highlight.length,
+    highlightPoolCountAfter: rolePoolVenueIdsByRole.highlight.length,
+    rolePoolCountByRoleBefore: {
+      start: rolePoolVenueIdsByRole.start.length,
+      highlight: rolePoolVenueIdsByRole.highlight.length,
+      windDown: rolePoolVenueIdsByRole.windDown.length,
+    },
+    rolePoolCountByRoleAfter: {
+      start: rolePoolVenueIdsByRole.start.length,
+      highlight: rolePoolVenueIdsByRole.highlight.length,
+      windDown: rolePoolVenueIdsByRole.windDown.length,
+    },
+    signatureHighlightShortlistCount: hasHighlight ? 1 : 0,
+    signatureHighlightShortlistIds: rolePoolVenueIdsByRole.highlight,
+    highlightShortlistScoreSummary: hasHighlight ? 'surprise_passthrough' : 'n/a',
+    selectedHighlightFromShortlist: hasHighlight,
+    selectedHighlightShortlistRank: hasHighlight ? 1 : null,
+    fallbackToQualifiedHighlightPool: false,
+    upstreamPoolSelectionApplied: false,
+    postGenerationRepairCount: 0,
+    rolePoolVenueIdsByRole,
+    rolePoolVenueIdsCombined,
+    thinPoolRelaxationTrace: {
+      triggered: false,
+      baseQualifiedHighlightCount: rolePoolVenueIdsByRole.highlight.length,
+      baseHighlightFloor: 0,
+      relaxedHighlightFloor: 0,
+      triggerReason: 'surprise_passthrough',
+      relaxedRule: 'none',
+      effectSummary: 'none',
+    },
+  }
+}
+
 function assessDirectionContractBuildability(params: {
   expectedDirectionIdentity: DirectionIdentityMode
   scoredVenues: ScoredVenue[]
@@ -5661,6 +8004,7 @@ function validateDirectionRouteContract(params: {
   selectedDirection?: Pick<DirectionPlanningSelection, 'identity'>
   itinerary: Itinerary
   buildability: DirectionContractBuildability
+  mode?: 'surprise' | 'curate' | 'build'
 }): DirectionContractValidationResult {
   return validateDirectionRouteContractEngine(params)
 }
@@ -5693,7 +8037,7 @@ function evaluateSwapCompatibility(params: {
   swapSnapshot: PreviewSwapState
   canonicalItinerary: Itinerary
   planSnapshot: DemoPlanState
-  finalRouteSnapshot: FinalRoute
+  finalRouteSnapshot: RuntimeRouteArtifact
   routeShapeContract: RouteShapeContract
 }): SwapCompatibilityResult {
   const {
@@ -6088,7 +8432,7 @@ function getMixProofToken(candidate: DirectionCandidate): string {
 
 function getDirectionProofLine(candidate: DirectionCandidate, selected: boolean): string {
   if (selected && candidate.nearbyExamples.length > 0) {
-    return candidate.nearbyExamples.slice(0, 2).join(' Â· ')
+    return candidate.nearbyExamples.slice(0, 2).join(' - ')
   }
 
   const seedTokens = candidate.derivedFrom.momentSeeds
@@ -6098,14 +8442,14 @@ function getDirectionProofLine(candidate: DirectionCandidate, selected: boolean)
 
   if (!selected) {
     const compact = Array.from(new Set([mixToken, ...seedTokens])).slice(0, 2)
-    return compact.join(' Â· ')
+    return compact.join(' - ')
   }
 
   const highlightTokens = candidate.highlights
     .map((value) => toProofToken(value))
     .filter((value) => value.length > 0)
   if (highlightTokens.length > 0) {
-    return highlightTokens.slice(0, 2).join(' Â· ')
+    return highlightTokens.slice(0, 2).join(' - ')
   }
 
   return toProofToken(candidate.pocketLabel)
@@ -6367,7 +8711,7 @@ function getAlternativeDescriptor(
       return 'quicker start nearby'
     }
     if (role === 'windDown' && reason === 'softer ending' && movementSignal === 'nearby') {
-      return 'soft close nearby'
+      return 'softer ending nearby'
     }
     if (role === 'windDown' && reason === 'quieter landing' && movementSignal === 'nearby') {
       return 'quiet finish nearby'
@@ -6517,7 +8861,7 @@ function getRoleAlternatives(
   options?: {
     routeShapeContract?: RouteShapeContract
     baselineItinerary?: Itinerary
-    finalRouteSnapshot?: FinalRoute
+    finalRouteSnapshot?: RuntimeRouteArtifact
     canonicalSwapIdentityByVenueId?: Record<string, CanonicalPlanningStopIdentity>
     contractConstraints?: ContractConstraints
   },
@@ -6736,7 +9080,7 @@ function buildVenueLinkUrl(
   },
 ): string {
   const providerRecordId = anchorSource?.providerRecordId?.trim()
-  if (providerRecordId) {
+  if (providerRecordId && !providerRecordId.startsWith('seed:')) {
     return `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(providerRecordId)}`
   }
   const latitude = anchorSource?.latitude
@@ -6966,6 +9310,79 @@ function buildRouteShapeContract(params: {
   return buildRouteShapeContractEngine(params)
 }
 
+function buildSelectedArtifactDiscoveryPreferences(params: {
+  artifact: ContractEntryArtifact | null
+  opportunity?: VerifiedCityOpportunity
+  windDownOverride?: CurateWindDownRepairTarget | null
+}): NonNullable<IntentInput['discoveryPreferences']> | undefined {
+  const { artifact, opportunity, windDownOverride } = params
+  if (!artifact) {
+    return undefined
+  }
+
+  const preferences = new Map<string, NonNullable<IntentInput['discoveryPreferences']>[number]>()
+  const addPreference = (
+    venueId: string | undefined,
+    role: NonNullable<IntentInput['discoveryPreferences']>[number]['role'],
+  ) => {
+    const normalizedVenueId = venueId?.trim()
+    if (!normalizedVenueId) {
+      return
+    }
+    preferences.set(normalizedVenueId, {
+      venueId: normalizedVenueId,
+      role,
+    })
+  }
+
+  const scenarioStart = opportunity?.scenarioNight?.stops.find((stop) => stop.position === 'start')
+  const scenarioHighlight =
+    opportunity?.scenarioNight?.stops.find((stop) => stop.position === 'highlight') ??
+    opportunity?.scenarioNight?.stops.find((stop) => stop.stopType === 'anchor')
+  const scenarioWindDown =
+    opportunity?.scenarioNight?.stops.find((stop) => stop.position === 'closer') ??
+    opportunity?.scenarioNight?.stops[opportunity.scenarioNight.stops.length - 1]
+
+  const artifactStartOption = findOpportunityStopOptionByName(opportunity, 'start', artifact.storySpine.start)
+  const artifactHighlightOption = findOpportunityStopOptionByName(
+    opportunity,
+    'highlight',
+    artifact.storySpine.highlight,
+  )
+  const artifactWindDownOption = findOpportunityStopOptionByName(
+    opportunity,
+    'windDown',
+    artifact.storySpine.windDown,
+  )
+
+  addPreference(
+    artifactStartOption?.venueId ?? scenarioStart?.venueId ?? opportunity?.starts[0]?.venueId,
+    'start',
+  )
+  addPreference(
+    artifactHighlightOption?.venueId ??
+      scenarioHighlight?.venueId ??
+      artifact.anchorVenueId ??
+      opportunity?.anchor.venueId,
+    artifact.anchorRole ?? 'highlight',
+  )
+  addPreference(
+    windDownOverride?.venueId ??
+      artifactWindDownOption?.venueId ??
+      scenarioWindDown?.venueId ??
+      opportunity?.closes[0]?.venueId,
+    'windDown',
+  )
+
+  return preferences.size > 0 ? [...preferences.values()] : undefined
+}
+
+function resolveSelectedArtifactPlanningLineage(
+  artifact: ContractEntryArtifact | null,
+): ContractEntryArtifactLineage | undefined {
+  return artifact ? buildContractEntryArtifactLineage(artifact) : undefined
+}
+
 function getRouteShapeHints(routeShapeContract: RouteShapeContract): {
   grammarHint: string
   movementHint: string
@@ -7003,19 +9420,6 @@ function getRouteShapeHints(routeShapeContract: RouteShapeContract): {
 type PreviewFamilyMode = DirectionCandidate['experienceFamily'] | 'neutral'
 type NightPreviewMode = 'social' | 'exploratory' | 'intimate'
 type DirectionPreviewStopRole = Extract<UserStopRole, 'start' | 'highlight' | 'surprise' | 'windDown'>
-
-interface DirectionPreviewStop {
-  role: DirectionPreviewStopRole
-  name: string
-}
-
-interface DirectionPreviewModel {
-  directionId: string
-  headline: string
-  tone: string
-  stops: DirectionPreviewStop[]
-  continuityLine: string
-}
 
 function getPreviewFamilyMode(
   context?: SelectedDirectionPreviewContext,
@@ -7230,7 +9634,7 @@ function buildPreviewFromDirection(
   }
 }
 
-function buildPreviewFromFinalRoute(route: FinalRoute): DirectionPreviewModel {
+function buildPreviewFromFinalRoute(route: RuntimeRouteArtifact): DirectionPreviewModel {
   return {
     directionId: route.selectedDirectionId,
     headline: route.routeHeadline,
@@ -7266,36 +9670,36 @@ function buildDirectionIdentity(direction: RealityDirectionCard): string {
 function getDirectionPreviewStopLine(stop: DirectionPreviewStop, persona: PersonaMode): string {
   if (persona === 'family') {
     if (stop.role === 'start') {
-      return `Start easy at ${stop.name} â€” a simple stop to ease everyone in.`
+      return `Start easy at ${stop.name} - a simple stop to ease everyone in.`
     }
     if (stop.role === 'highlight') {
-      return `Head to ${stop.name} â€” this is the central stop of the plan.`
+      return `Head to ${stop.name} - this is the central stop of the plan.`
     }
     if (stop.role === 'windDown') {
-      return `Wrap up at ${stop.name} â€” an easy place to wind down.`
+      return `Wrap up at ${stop.name} - an easy place to wind down.`
     }
     return `If you want a change, ${stop.name} is an easy detour.`
   }
   if (persona === 'romantic') {
     if (stop.role === 'start') {
-      return `Start easy at ${stop.name} â€” a calm opener with atmosphere.`
+      return `Start easy at ${stop.name} - a calm opener with atmosphere.`
     }
     if (stop.role === 'highlight') {
-      return `Head to ${stop.name} â€” this is where the night peaks.`
+      return `Head to ${stop.name} - this is where the night peaks.`
     }
     if (stop.role === 'windDown') {
-      return `Wrap up at ${stop.name} â€” a softer place to land together.`
+      return `Wrap up at ${stop.name} - a softer place to land together.`
     }
     return `If you want a pivot, ${stop.name} adds a flexible detour.`
   }
   if (stop.role === 'start') {
-    return `Start easy at ${stop.name} â€” an easy start for the group.`
+    return `Start easy at ${stop.name} - an easy start for the group.`
   }
   if (stop.role === 'highlight') {
-    return `Head to ${stop.name} â€” this is where the night peaks.`
+    return `Head to ${stop.name} - this is where the night peaks.`
   }
   if (stop.role === 'windDown') {
-    return `Wrap up at ${stop.name} â€” a relaxed place to close things out.`
+    return `Wrap up at ${stop.name} - a relaxed place to close things out.`
   }
   return `If you want a pivot, ${stop.name} adds a flexible detour.`
 }
@@ -7537,7 +9941,7 @@ function getRouteThesis(
   context?: SelectedDirectionPreviewContext,
 ): string {
   const highlight = getCoreStop(itinerary, 'highlight')
-  const waypoint = highlight ? `${highlight.venueName} (${getHighlightTypeLabel(highlight)})` : 'TBD'
+  const waypoint = highlight ? `${highlight.venueName} (${getHighlightTypeLabel(highlight)})` : 'selected highlight'
   const cue = getPreviewDirectionCue(context)
   const interpretation = getClusterInterpretation(cluster, context)
   if (cue) {
@@ -7649,13 +10053,13 @@ function getPreviewStopDescription(
     return 'This stop keeps the night moving.'
   }
   if (stop.role === 'start') {
-    return `Start easy at ${stop.venueName} â€” a low-key spot to ease in.`
+    return `Start easy at ${stop.venueName} - a low-key spot to ease in.`
   }
   if (stop.role === 'highlight') {
-    return `Head to ${stop.venueName} â€” this is where the night peaks.`
+    return `Head to ${stop.venueName} - this is where the night peaks.`
   }
   if (stop.role === 'windDown') {
-    return `Wrap up at ${stop.venueName} â€” a relaxed place to land softly.`
+    return `Wrap up at ${stop.venueName} - a relaxed place to land softly.`
   }
   return `If you want a pivot, ${stop.venueName} adds a flexible detour.`
 }
@@ -7807,7 +10211,7 @@ function getInlineStopNarrative(
     contractConstraints: options?.contractConstraints,
   })
   const flavorLine =
-    stopNarrative.flavorTags.length > 0 ? `Flavor: ${stopNarrative.flavorTags.join(' Â· ')}` : undefined
+    stopNarrative.flavorTags.length > 0 ? `Flavor: ${stopNarrative.flavorTags.join(' - ')}` : undefined
   const tonightSignals = Array.from(
     new Set([flavorLine, ...baseTonightSignals].filter((value): value is string => Boolean(value))),
   ).slice(0, 4)
@@ -7843,7 +10247,7 @@ function getInlineStopDetail(
     nearbySummary?: string
     routeShapeContract?: RouteShapeContract
     baselineItinerary?: Itinerary
-    finalRouteSnapshot?: FinalRoute
+    finalRouteSnapshot?: RuntimeRouteArtifact
     canonicalSwapIdentityByVenueId?: Record<string, CanonicalPlanningStopIdentity>
     experienceContract?: ExperienceContract
     contractConstraints?: ContractConstraints
@@ -7886,11 +10290,53 @@ export function SandboxConciergePage() {
    * Owns orchestration + debug rendering only.
    * Must consume canonical engine artifacts and avoid re-authoring engine truth.
    */
+  const verticalDebugEnvValue = String(import.meta.env.VITE_VERTICAL_DEBUG ?? '')
+  const verticalDebugEnvEnabled = ['1', 'true', 'on'].includes(
+    verticalDebugEnvValue.trim().toLowerCase(),
+  )
+  const devGreatStopFixturesEnvRaw = readDevGreatStopFixturesEnvRaw()
+  const devGreatStopFixturesEnabled = readDevGreatStopFixturesEnabled()
+  const debugQueryEnabled = readDebugQueryFlag()
   const [city, setCity] = useState('San Jose')
   const [persona, setPersona] = useState<PersonaMode>('romantic')
   const [primaryVibe, setPrimaryVibe] = useState<VibeAnchor>('lively')
+  const [selectedStarterPackId, setSelectedStarterPackId] = useState<string | null>(() =>
+    readSessionStorageValue(DEV_CLOSEOUT_CURATE_STARTER_PACK_ID_KEY),
+  )
+  const [curateStarterReady, setCurateStarterReady] = useState<boolean>(() =>
+    readSessionStorageValue(DEV_CLOSEOUT_CURATE_READY_KEY) === '1',
+  )
+  const [buildAnchorQuery, setBuildAnchorQuery] = useState<string>(
+    () => readSessionStorageValue(DEV_CLOSEOUT_BUILD_QUERY_KEY) ?? '',
+  )
+  const [selectedBuildAnchor, setSelectedBuildAnchor] = useState<BuildAnchorSelection | null>(() => {
+    const raw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY)
+    if (!raw) {
+      return null
+    }
+    try {
+      return JSON.parse(raw) as BuildAnchorSelection
+    } catch {
+      return null
+    }
+  })
+  const [buildAnchorReady, setBuildAnchorReady] = useState<boolean>(
+    () => readSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY) === '1',
+  )
+  const [buildAnchorResults, setBuildAnchorResults] = useState<AnchorSearchResult[]>([])
+  const [buildAnchorLoading, setBuildAnchorLoading] = useState(false)
+  const [buildAnchorError, setBuildAnchorError] = useState<string>()
+  const [buildRefinementVibe, setBuildRefinementVibe] = useState<VibeAnchor | 'auto'>('auto')
   const [activeDistrictPocketId, setActiveDistrictPocketId] = useState<string>(ALL_DISTRICTS_CONTEXT_ID)
   const [selectedDirectionId, setSelectedDirectionId] = useState<string | null>(null)
+  const [selectedStep2CandidateArtifactId, setSelectedStep2CandidateArtifactId] = useState<string | null>(
+    null,
+  )
+  const [curatePreviewCommitabilityByArtifactId, setCuratePreviewCommitabilityByArtifactId] = useState<
+    Record<string, CuratePreviewCommitabilityState>
+  >({})
+  const [curateQualificationCacheHitByArtifactId, setCurateQualificationCacheHitByArtifactId] =
+    useState<Record<string, boolean>>({})
   const [selectedIdReconciled, setSelectedIdReconciled] = useState(false)
   const [userSelectedDirection, setUserSelectedDirection] = useState<{
     setKey: string
@@ -7898,7 +10344,9 @@ export function SandboxConciergePage() {
   } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
-  const [showDebug, setShowDebug] = useState(false)
+  const [surpriseContractValidationFailedDirectionId, setSurpriseContractValidationFailedDirectionId] =
+    useState<string | null>(null)
+  const [showDebug] = useState(() => debugQueryEnabled || verticalDebugEnvEnabled)
   const [showDistrictPanel, setShowDistrictPanel] = useState(false)
   const [ecsState, setEcsState] = useState<ExplorationControlState>(DEFAULT_ECS_STATE)
   const [activePreviewShapeIntent, setActivePreviewShapeIntent] = useState<PreviewShapeIntent | null>(
@@ -7909,7 +10357,13 @@ export function SandboxConciergePage() {
     null,
   )
   const [plan, setPlan] = useState<DemoPlanState>()
-  const [finalRoute, setFinalRoute] = useState<FinalRoute | null>(null)
+  const [finalRoute, setFinalRoute] = useState<RuntimeRouteArtifact | null>(null)
+  const [curateRefinementEntryPayload, setCurateRefinementEntryPayload] = useState<
+    CurateRefinementEntryPayload<
+      DemoPlanState,
+      Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
+    > | null
+  >(null)
   const [routeVersion, setRouteVersion] = useState(0)
   const [hasRevealed, setHasRevealed] = useState(false)
   const [activeRole, setActiveRole] = useState<UserStopRole>('start')
@@ -7932,6 +10386,9 @@ export function SandboxConciergePage() {
   >({})
   const [generationContractDebug, setGenerationContractDebug] =
     useState<GenerationContractDebugBreadcrumb | null>(null)
+  const [step2RerollTrace, setStep2RerollTrace] = useState<Step2RerollOwnershipTrace | null>(
+    null,
+  )
   const [appliedSwapRole, setAppliedSwapRole] = useState<UserStopRole | null>(null)
   const [canonicalStopByRole, setCanonicalStopByRole] =
     useState<Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>>({})
@@ -7951,8 +10408,29 @@ export function SandboxConciergePage() {
     Record<string, StageOverlapFingerprint>
   >({})
   const [debugExpandedByKey, setDebugExpandedByKey] = useState<Record<string, boolean>>({})
-  const [selectionPreview, setSelectionPreview] = useState<DirectionPreviewModel | null>(null)
-  const verticalDebugEnabled = false
+  useEffect(() => {
+    curatePreviewCommitabilityByArtifactIdRef.current = curatePreviewCommitabilityByArtifactId
+  }, [curatePreviewCommitabilityByArtifactId])
+  const verticalDebugEnabled = debugQueryEnabled || verticalDebugEnvEnabled
+  const currentPath = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : ''
+  const shouldLogLiveArtifactDebug = currentPath.startsWith('/dev') || showDebug
+  const isSurpriseEntryRoute = currentPath === '/dev/start/surprise'
+  const isCurateEntryRoute = currentPath === '/dev/start/curate'
+  const isBuildEntryRoute = currentPath === '/dev/start/build'
+  const isChooseRoute = currentPath === '/dev/choose'
+  const isSurpriseOrigin = readSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY) === 'surprise'
+  const isCurateOrigin = readSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY) === 'curate'
+  const isBuildOrigin = readSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY) === 'build'
+  const isSurpriseWrapperActive = isSurpriseEntryRoute || (isChooseRoute && isSurpriseOrigin)
+  const isCurateWrapperActive = isCurateEntryRoute || (isChooseRoute && isCurateOrigin)
+  const isBuildWrapperActive = isBuildEntryRoute || (isChooseRoute && isBuildOrigin)
+  const isModeWrapperActive = isCurateWrapperActive || isSurpriseWrapperActive || isBuildWrapperActive
+  const selectedStarterPack = useMemo<StarterPack | null>(
+    () => starterPacks.find((pack) => pack.id === selectedStarterPackId) ?? null,
+    [selectedStarterPackId],
+  )
+  const showCurateStarterGate = isCurateWrapperActive && !curateStarterReady
+  const showBuildAnchorGate = isBuildWrapperActive && !buildAnchorReady
   const districtLocationQuery = useMemo(() => city.trim(), [city])
   const selectedPersonaLabel = useMemo(
     () => personaOptions.find((option) => option.value === persona)?.label ?? persona,
@@ -7985,26 +10463,113 @@ export function SandboxConciergePage() {
     () => buildExperienceContractFromScenarioContract(activeScenarioContract),
     [activeScenarioContract],
   )
+  useEffect(() => {
+    if (isSurpriseEntryRoute) {
+      writeSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY, 'surprise')
+      return
+    }
+    if (isBuildEntryRoute) {
+      setBuildAnchorReady(false)
+      writeSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY, 'build')
+      writeSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY, '0')
+      return
+    }
+    if (isChooseRoute && isBuildOrigin) {
+      const persistedSelectionRaw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY)
+      if (persistedSelectionRaw) {
+        try {
+          const persistedSelection = JSON.parse(persistedSelectionRaw) as BuildAnchorSelection
+          if (persistedSelection?.venueId && persistedSelection.venueId !== selectedBuildAnchor?.venueId) {
+            setSelectedBuildAnchor(persistedSelection)
+            if (buildRefinementVibe === 'auto') {
+              setPrimaryVibe(getBuildDefaultVibe(persistedSelection.category))
+            }
+          }
+        } catch {
+          // noop
+        }
+      }
+      setBuildAnchorReady(true)
+      writeSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY, '1')
+      return
+    }
+    if (!isCurateWrapperActive) {
+      return
+    }
+    if (isCurateEntryRoute) {
+      setCurateStarterReady(false)
+      writeSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY, 'curate')
+      writeSessionStorageValue(DEV_CLOSEOUT_CURATE_READY_KEY, '0')
+      return
+    }
+    if (isChooseRoute && isCurateOrigin) {
+      const persistedStarterPackId = readSessionStorageValue(DEV_CLOSEOUT_CURATE_STARTER_PACK_ID_KEY)
+      if (persistedStarterPackId && persistedStarterPackId !== selectedStarterPackId) {
+        setSelectedStarterPackId(persistedStarterPackId)
+      }
+      setCurateStarterReady(true)
+      writeSessionStorageValue(DEV_CLOSEOUT_CURATE_READY_KEY, '1')
+    }
+  }, [
+    isChooseRoute,
+    isBuildEntryRoute,
+    isBuildOrigin,
+    buildRefinementVibe,
+    isCurateEntryRoute,
+    isCurateOrigin,
+    isCurateWrapperActive,
+    isSurpriseEntryRoute,
+    selectedBuildAnchor?.venueId,
+    selectedStarterPackId,
+  ])
   const intentBriefLine = useMemo(() => {
     const location = districtLocationQuery.length > 0 ? districtLocationQuery : 'Location not set'
-    return `${location} Â· ${selectedPersonaLabel} Â· ${selectedVibeLabel}`
+    return `${location} - ${selectedPersonaLabel} - ${selectedVibeLabel}`
   }, [districtLocationQuery, selectedPersonaLabel, selectedVibeLabel])
   const previousDirectionIdentityRef = useRef<Map<string, string>>(new Map())
   const previousPersonaVibeRef = useRef<{ persona: PersonaMode; vibe: VibeAnchor } | null>(null)
   const selectionEpochRef = useRef(0)
   const autoDirectionSyncAttemptRef = useRef<string | null>(null)
   const planRef = useRef<DemoPlanState | undefined>(plan)
-  const finalRouteRef = useRef<FinalRoute | null>(finalRoute)
+  const finalRouteRef = useRef<RuntimeRouteArtifact | null>(finalRoute)
+  const lastGeneratedVisibleNightFingerprintRef = useRef<string | null>(null)
   const canonicalStopByRoleRef =
     useRef<Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>>(canonicalStopByRole)
   const swapCanonicalIdentityByVenueIdRef = useRef<Record<string, CanonicalPlanningStopIdentity>>(
     swapCanonicalIdentityByVenueId,
   )
   const routeVersionRef = useRef(routeVersion)
-  const updateFinalRoute = useCallback((nextRoute: FinalRoute | null) => {
+  const surpriseAutoGenerateAttemptRef = useRef<string | null>(null)
+  const buildValidationAttemptRef = useRef<string | null>(null)
+  const curatePreviewCommitabilityAttemptRef = useRef<Record<string, string>>({})
+  const curateQualificationInFlightRef = useRef<Record<string, true>>({})
+  const curateQualificationSourceFingerprintRef = useRef<string>('')
+  const curatePreviewCommitabilityByArtifactIdRef = useRef<
+    Record<string, CuratePreviewCommitabilityState>
+  >({})
+  const buildAnchorSearchAttemptRef = useRef(0)
+  const updateFinalRoute = useCallback((nextRoute: RuntimeRouteArtifact | null) => {
     setFinalRoute(nextRoute)
     setRouteVersion((current) => (nextRoute ? current + 1 : 0))
   }, [])
+  const applyCurateRefinementEntryPayload = useCallback(
+    (
+      nextPayload: CurateRefinementEntryPayload<
+        DemoPlanState,
+        Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
+      > | null,
+    ) => {
+      setCurateRefinementEntryPayload(nextPayload)
+      if (!nextPayload) {
+        return
+      }
+      setPlan(nextPayload.planSnapshot)
+      updateFinalRoute(nextPayload.finalRoute)
+      setCanonicalStopByRole(nextPayload.canonicalStopByRole)
+      setRejectedStopRoles(nextPayload.rejectedStopRoles)
+    },
+    [updateFinalRoute],
+  )
   useEffect(() => {
     planRef.current = plan
   }, [plan])
@@ -8033,7 +10598,7 @@ export function SandboxConciergePage() {
           city: districtLocationQuery,
           persona,
           vibe: primaryVibe,
-          sourceMode: 'hybrid',
+          sourceMode: 'curated',
         })
         if (cancelled) {
           return
@@ -8322,7 +10887,7 @@ export function SandboxConciergePage() {
       if (hyperlocalExpression.pocketType) {
         usedPocketTypes.add(hyperlocalExpression.pocketType)
       }
-      const confirmation = `You're starting in ${candidate.pocketLabel} â€” ${getDirectionTrajectoryHint(candidate, primaryVibe)}`
+      const confirmation = `You're starting in ${candidate.pocketLabel} - ${getDirectionTrajectoryHint(candidate, primaryVibe)}`
       const candidateDirectionSelection = buildDirectionPlanningSelectionEngine({
         id: candidate.pocketId,
         label: hyperlocalExpression.title,
@@ -8744,6 +11309,8 @@ export function SandboxConciergePage() {
         }
         const startCandidates = aggregation?.ingredients.startCandidates ?? []
         const closeCandidates = aggregation?.ingredients.windDownCandidates ?? []
+        const highlightCandidates = aggregation?.ingredients.highlightCandidates ?? []
+        const roleProjectionDepth = isBuildWrapperActive ? 6 : 2
         const hasSupportStructure = startCandidates.length > 0 || closeCandidates.length > 0
         if (!hasSupportStructure) {
           return null
@@ -8756,8 +11323,13 @@ export function SandboxConciergePage() {
         const anchorName = anchorCandidate?.venueName ?? fallbackAnchorName
         const confidenceLine = getNightOptionConfidenceLine(aggregation)
         const anchorMoment = getAnchorMoment(aggregation, anchorCandidate?.venueId)
-        const starts = toCityOpportunityStopOptions(startCandidates, 'start')
-        const closes = toCityOpportunityStopOptions(closeCandidates, 'windDown')
+        const starts = toCityOpportunityStopOptions(startCandidates, 'start', roleProjectionDepth)
+        const closes = toCityOpportunityStopOptions(closeCandidates, 'windDown', roleProjectionDepth)
+        const highlightAlternates = toCityOpportunityHighlightAlternates(
+          highlightCandidates,
+          anchorCandidate?.venueId,
+          roleProjectionDepth,
+        )
         const nearbyHappenings = getCityOpportunityHappenings(aggregation)
         const authoritySignals = buildCityOpportunityAuthoritySignals({
           aggregation,
@@ -8827,6 +11399,7 @@ export function SandboxConciergePage() {
             verificationReasons,
           },
           starts,
+          highlightAlternates: highlightAlternates.length > 0 ? highlightAlternates : undefined,
           closes,
           nearbyHappenings,
           districtContext: {
@@ -8841,9 +11414,9 @@ export function SandboxConciergePage() {
             matchLine: district.matchSignal,
           },
           storySpine: {
-            start: starts[0]?.name ?? 'Nearby opener',
+            start: starts[0]?.name ?? anchorName,
             highlight: anchorName,
-            windDown: closes[0]?.name ?? 'Soft close nearby',
+            windDown: closes[0]?.name ?? closeCandidates[0]?.venueName ?? starts[0]?.name ?? anchorName,
           },
           selection: {
             pocketId: district.id,
@@ -9006,6 +11579,7 @@ export function SandboxConciergePage() {
     directionCardsByPocketId,
     districtDiscoveryCards,
     ecsState,
+    isBuildWrapperActive,
     persona,
     primaryVibe,
     selectedPersonaLabel,
@@ -9024,26 +11598,124 @@ export function SandboxConciergePage() {
           directionCards: allDirectionCards,
           personaLabel: selectedPersonaLabel,
           vibeLabel: selectedVibeLabel,
+          expandedProjection: isBuildWrapperActive,
+          contractConstraints: canonicalContractConstraints,
         }),
       )
       .filter((entry): entry is VerifiedCityOpportunity => Boolean(entry))
   }, [
     allDirectionCards,
+    canonicalContractConstraints,
     districtDiscoveryCards,
+    isBuildWrapperActive,
     resolvedScenarioFamily,
     scenarioBuiltNights,
     scenarioCandidateBoard,
     selectedPersonaLabel,
     selectedVibeLabel,
   ])
+  const devGreatStopFixtureDebugSource = plan?.generationTrace.retrievalDiagnostics.liveSource
+  const debugDevGreatStopFixturesEnvRaw =
+    devGreatStopFixtureDebugSource?.devGreatStopFixturesEnvRaw ?? devGreatStopFixturesEnvRaw
+  const debugDevGreatStopFixturesEnabled =
+    devGreatStopFixtureDebugSource?.devGreatStopFixturesEnabled ?? devGreatStopFixturesEnabled
+  const debugDevGreatStopFixtureCount =
+    devGreatStopFixtureDebugSource?.devGreatStopFixtureCount ??
+    (devGreatStopFixturesEnabled ? devGreatStopFixtureVenueIds.length : 0)
+  const debugDevGreatStopFixtureVenueIds =
+    devGreatStopFixtureDebugSource?.devGreatStopFixtureVenueIds ??
+    (devGreatStopFixturesEnabled ? devGreatStopFixtureVenueIds : [])
+  const scenarioCandidateBoardFixtureCandidates =
+    scenarioCandidateBoard?.debug?.scenarioCandidateBoardFixtureCandidates ?? []
+  const scenarioCandidateBoardFixtureDrops =
+    scenarioCandidateBoard?.debug?.scenarioCandidateBoardFixtureDrops ?? []
+  const fixtureStopTypeMembership =
+    scenarioCandidateBoard?.debug?.fixtureStopTypeMembership ?? []
+  const builtScenarioNightFixtureStopIds = useMemo(
+    () =>
+      dedupeStringIds(
+        scenarioBuiltNights.flatMap((night) =>
+          night.stops
+            .map((stop) => stop.venueId)
+            .filter((venueId) => devGreatStopFixtureVenueIds.includes(venueId)),
+        ),
+      ),
+    [scenarioBuiltNights],
+  )
+  const scenarioBackedOpportunityFixtureStopIds = useMemo(
+    () =>
+      dedupeStringIds(
+        scenarioBackedVerifiedCityOpportunities.flatMap((opportunity) => [
+          opportunity.anchor.venueId,
+          ...opportunity.starts.map((stop) => stop.venueId),
+          ...(opportunity.highlightAlternates?.map((stop) => stop.venueId) ?? []),
+          ...opportunity.closes.map((stop) => stop.venueId),
+        ]).filter((venueId) => devGreatStopFixtureVenueIds.includes(venueId)),
+      ),
+    [scenarioBackedVerifiedCityOpportunities],
+  )
+  const fixtureCandidateSourceFingerprint = useMemo(
+    () =>
+      [
+        String(debugDevGreatStopFixturesEnabled),
+        scenarioCandidateBoardFixtureCandidates.join(','),
+        builtScenarioNightFixtureStopIds.join(','),
+        scenarioBackedOpportunityFixtureStopIds.join(','),
+      ].join('|'),
+    [
+      builtScenarioNightFixtureStopIds,
+      debugDevGreatStopFixturesEnabled,
+      scenarioBackedOpportunityFixtureStopIds,
+      scenarioCandidateBoardFixtureCandidates,
+    ],
+  )
 
   const step2PrimarySourceOpportunities = useMemo<VerifiedCityOpportunity[]>(() => {
+    if (isBuildWrapperActive) {
+      const combined = [
+        ...scenarioBackedVerifiedCityOpportunities,
+        ...verifiedCityOpportunities,
+      ]
+      const dedupedById = new Map<string, VerifiedCityOpportunity>()
+      combined.forEach((opportunity) => {
+        if (!dedupedById.has(opportunity.id)) {
+          dedupedById.set(opportunity.id, opportunity)
+        }
+      })
+      return [...dedupedById.values()]
+    }
     // TODO(step2-integration): Scenario Builder output is the primary source of truth for supported families.
     if (resolvedScenarioFamily && scenarioBackedVerifiedCityOpportunities.length > 0) {
       return scenarioBackedVerifiedCityOpportunities
     }
     return verifiedCityOpportunities
-  }, [resolvedScenarioFamily, scenarioBackedVerifiedCityOpportunities, verifiedCityOpportunities])
+  }, [
+    isBuildWrapperActive,
+    resolvedScenarioFamily,
+    scenarioBackedVerifiedCityOpportunities,
+    verifiedCityOpportunities,
+  ])
+
+  const starterAwareOpportunitySelection = useMemo(
+    () =>
+      selectStarterAwareOpportunities({
+        opportunities: step2PrimarySourceOpportunities,
+        starterPack: isCurateWrapperActive ? selectedStarterPack : null,
+        targetCount:
+          isBuildWrapperActive || step2PrimarySourceOpportunities.length > 3
+            ? 4
+            : Math.max(2, step2PrimarySourceOpportunities.length),
+      }),
+    [
+      isBuildWrapperActive,
+      isCurateWrapperActive,
+      selectedStarterPack,
+      step2PrimarySourceOpportunities,
+    ],
+  )
+  const starterAwareStep2SourceOpportunities = starterAwareOpportunitySelection.opportunities
+  const starterAwareRankedStep2SourceOpportunities = starterAwareOpportunitySelection.rankedOpportunities
+  const starterAwareOpportunityDebugById = starterAwareOpportunitySelection.debugByOpportunityId
 
   const verifiedCityOpportunityById = useMemo(
     () =>
@@ -9059,64 +11731,69 @@ export function SandboxConciergePage() {
         .map((opportunity) => [opportunity.id, opportunity.scenarioPreviewModel!] as const),
     )
   }, [step2PrimarySourceOpportunities])
-
-  const step2BuiltNightCards = useMemo<Step2BuiltNightCard[]>(() => {
-    if (resolvedScenarioFamily && scenarioBackedVerifiedCityOpportunities.length > 0) {
-      return scenarioBackedVerifiedCityOpportunities.slice(0, 4).map((opportunity) => {
-        const canonicalNight = opportunity.scenarioNight
-        const canonicalStart = canonicalNight?.stops.find((stop) => stop.position === 'start')
-        const canonicalHighlight = canonicalNight?.stops.find((stop) => stop.position === 'highlight')
-        const canonicalWindDown =
-          canonicalNight?.stops.find((stop) => stop.position === 'closer') ??
-          canonicalNight?.stops[canonicalNight.stops.length - 1]
-        const secondaryDistrictContext =
-          opportunity.districtContext.secondaryDistricts &&
-          opportunity.districtContext.secondaryDistricts.length > 0
-            ? ` / ${opportunity.districtContext.secondaryDistricts.join(', ')}`
-            : ''
-        return {
-          id: opportunity.id,
-          anchorName: opportunity.anchor.name,
-          flavorLine: opportunity.flavor,
-          traits: buildStep2CardTraits(opportunity, ecsState),
-          // Boundary: use canonical Scenario Builder stop sequence when available.
-          storySpine: {
-            start: canonicalStart?.name ?? opportunity.storySpine.start,
-            highlight: canonicalHighlight?.name ?? opportunity.storySpine.highlight,
-            windDown: canonicalWindDown?.name ?? opportunity.storySpine.windDown,
-          },
-          districtLine: `Mostly in ${opportunity.districtContext.primaryDistrict}${secondaryDistrictContext}`,
-          whyChooseLine:
-            canonicalHighlight?.whyThisStop ??
-            opportunity.fit.confidenceLine,
-          whyTonightProofLine: opportunity.whyTonightProofLine,
-          scenarioEvaluation: canonicalNight?.evaluation,
-          selection: opportunity.selection,
-        }
-      })
-    }
-
-    const survivors = selectStep2ExcellentSurvivors({
-      rankedCards: verifiedCityOpportunities,
-      persona,
-      vibe: primaryVibe,
-      scenarioContract: activeScenarioContract,
-    })
-    // Legacy fallback path for unsupported flows; semantic reconstruction remains here intentionally.
-    return survivors.map((opportunity) => {
+  const shouldUseScenarioBackedArtifacts = Boolean(
+    resolvedScenarioFamily && scenarioBackedVerifiedCityOpportunities.length > 0,
+  )
+  const buildStep2CandidateRouteArtifact = useCallback(
+    (opportunity: VerifiedCityOpportunity): ContractEntryArtifact | null => {
       const secondaryDistrictContext =
         opportunity.districtContext.secondaryDistricts &&
         opportunity.districtContext.secondaryDistricts.length > 0
           ? ` / ${opportunity.districtContext.secondaryDistricts.join(', ')}`
           : ''
+      const districtLine = `Mostly in ${opportunity.districtContext.primaryDistrict}${secondaryDistrictContext}`
+      const authorityLine = `Authority ${Math.round(opportunity.excellence.localAuthority * 100)}%`
+      const happeningsLine = opportunity.nearbyHappenings[0]?.reason
+      if (shouldUseScenarioBackedArtifacts) {
+        if (opportunity.scenarioWindDownDebug?.finalRoleEligible === false) {
+          return null
+        }
+        const canonicalNight = opportunity.scenarioNight
+        const canonicalStart = canonicalNight?.stops.find((stop) => stop.position === 'start')
+        const canonicalHighlight = canonicalNight?.stops.find((stop) => stop.position === 'highlight')
+        const canonicalWindDownName =
+          opportunity.scenarioWindDownDebug?.finalName ?? opportunity.storySpine.windDown
+        return {
+          id: opportunity.id,
+          sourceOpportunityId: opportunity.id,
+          anchorVenueId: opportunity.anchor.venueId,
+          anchorRole: 'highlight',
+          anchorName: opportunity.anchor.name,
+          routeTitle: opportunity.anchor.name,
+          flavorLine: opportunity.flavor,
+          routeSummary: opportunity.fit.confidenceLine,
+          traits: buildStep2CardTraits(opportunity, ecsState),
+          storySpine: {
+            start: canonicalStart?.name ?? opportunity.storySpine.start,
+            highlight: canonicalHighlight?.name ?? opportunity.storySpine.highlight,
+            windDown: canonicalWindDownName,
+          },
+          districtLine,
+          districtAnchorLine: `District anchor: ${opportunity.districtContext.primaryDistrict}`,
+          authorityLine,
+          happeningsLine,
+          whyChooseLine: canonicalHighlight?.whyThisStop ?? opportunity.fit.confidenceLine,
+          whyTonightProofLine: opportunity.whyTonightProofLine,
+          scenarioEvaluation: canonicalNight?.evaluation,
+          selection: opportunity.selection,
+        }
+      }
       const repairedStorySpine = validateOrRepairStep2StorySpine(opportunity)
       return {
         id: opportunity.id,
+        sourceOpportunityId: opportunity.id,
+        anchorVenueId: opportunity.anchor.venueId,
+        anchorRole: 'highlight',
         anchorName: opportunity.anchor.name,
+        routeTitle: opportunity.anchor.name,
         flavorLine: opportunity.flavor,
+        routeSummary: opportunity.fit.confidenceLine,
         traits: buildStep2CardTraits(opportunity, ecsState),
         storySpine: repairedStorySpine,
-        districtLine: `Mostly in ${opportunity.districtContext.primaryDistrict}${secondaryDistrictContext}`,
+        districtLine,
+        districtAnchorLine: `District anchor: ${opportunity.districtContext.primaryDistrict}`,
+        authorityLine,
+        happeningsLine,
         whyChooseLine:
           opportunity.anchor.verificationReasons[0] ??
           opportunity.fit.matchLine ??
@@ -9124,16 +11801,176 @@ export function SandboxConciergePage() {
         whyTonightProofLine: opportunity.whyTonightProofLine,
         selection: opportunity.selection,
       }
+    },
+    [ecsState, shouldUseScenarioBackedArtifacts],
+  )
+
+  const step2CandidateRouteArtifacts = useMemo<ContractEntryArtifact[]>(() => {
+    if (shouldUseScenarioBackedArtifacts) {
+      const sourceOpportunities =
+        isBuildWrapperActive
+          ? step2PrimarySourceOpportunities
+          : isCurateWrapperActive && selectedStarterPack
+            ? starterAwareStep2SourceOpportunities
+            : scenarioBackedVerifiedCityOpportunities.slice(0, 4)
+      return sourceOpportunities
+        .map(buildStep2CandidateRouteArtifact)
+        .filter((artifact): artifact is ContractEntryArtifact => Boolean(artifact))
+    }
+
+    const survivors = selectStep2ExcellentSurvivors({
+      rankedCards:
+        isCurateWrapperActive && selectedStarterPack
+          ? starterAwareStep2SourceOpportunities
+          : verifiedCityOpportunities,
+      persona,
+      vibe: primaryVibe,
+      scenarioContract: activeScenarioContract,
     })
+    // Legacy fallback path for unsupported flows; semantic reconstruction remains here intentionally.
+    return survivors
+      .map(buildStep2CandidateRouteArtifact)
+      .filter((artifact): artifact is ContractEntryArtifact => Boolean(artifact))
   }, [
     activeScenarioContract,
-    ecsState,
+    buildStep2CandidateRouteArtifact,
+    isBuildWrapperActive,
+    isCurateWrapperActive,
     persona,
     primaryVibe,
-    resolvedScenarioFamily,
+    selectedStarterPack,
+    step2PrimarySourceOpportunities,
+    starterAwareStep2SourceOpportunities,
     scenarioBackedVerifiedCityOpportunities,
+    shouldUseScenarioBackedArtifacts,
     verifiedCityOpportunities,
   ])
+  const curateQualificationSourceFingerprint = useMemo(
+    () =>
+      [
+        fixtureCandidateSourceFingerprint,
+        step2CandidateRouteArtifacts
+          .map((artifact) => `${artifact.id}:${artifact.sourceOpportunityId}`)
+          .join(','),
+      ].join('|'),
+    [fixtureCandidateSourceFingerprint, step2CandidateRouteArtifacts],
+  )
+  const curateDisplayFallbackRouteArtifacts = useMemo<ContractEntryArtifact[]>(() => {
+    if (!isCurateWrapperActive) {
+      return []
+    }
+    if (selectedStarterPack) {
+      return starterAwareRankedStep2SourceOpportunities
+        .map(buildStep2CandidateRouteArtifact)
+        .filter((artifact): artifact is ContractEntryArtifact => Boolean(artifact))
+    }
+    if (shouldUseScenarioBackedArtifacts) {
+      return scenarioBackedVerifiedCityOpportunities
+        .slice(0, Math.max(4, scenarioBackedVerifiedCityOpportunities.length))
+        .map(buildStep2CandidateRouteArtifact)
+        .filter((artifact): artifact is ContractEntryArtifact => Boolean(artifact))
+    }
+    return selectStep2ExcellentSurvivors({
+      rankedCards: verifiedCityOpportunities,
+      persona,
+      vibe: primaryVibe,
+      scenarioContract: activeScenarioContract,
+    })
+      .map(buildStep2CandidateRouteArtifact)
+      .filter((artifact): artifact is ContractEntryArtifact => Boolean(artifact))
+  }, [
+    activeScenarioContract,
+    buildStep2CandidateRouteArtifact,
+    isCurateWrapperActive,
+    persona,
+    primaryVibe,
+    scenarioBackedVerifiedCityOpportunities,
+    selectedStarterPack,
+    shouldUseScenarioBackedArtifacts,
+    starterAwareRankedStep2SourceOpportunities,
+    verifiedCityOpportunities,
+  ])
+  const curatePreDisplayBuildabilityByArtifactId = useMemo(
+    () => {
+      const byArtifactId = new Map<string, CuratePreDisplayBuildability>()
+      ;[...step2CandidateRouteArtifacts, ...curateDisplayFallbackRouteArtifacts].forEach((artifact) => {
+        if (byArtifactId.has(artifact.id)) {
+          return
+        }
+        const cachedPreflight = curatePreviewCommitabilityByArtifactId[artifact.id]
+        const opportunity = verifiedCityOpportunityById.get(artifact.sourceOpportunityId)
+        const roleSupportByRole: Record<DirectionCoreRole, number> = {
+          start: opportunity?.starts.length ?? 0,
+          highlight: (artifact.anchorName.trim() ? 1 : 0) + (opportunity?.highlightAlternates?.length ?? 0),
+          windDown: opportunity?.closes.length ?? 0,
+        }
+        const missingRoles = (['start', 'highlight', 'windDown'] as DirectionCoreRole[]).filter(
+          (role) => roleSupportByRole[role] === 0,
+        )
+        let tier: CuratePreDisplayBuildability['tier'] = 'full_support'
+        let score =
+          roleSupportByRole.start * 18 +
+          roleSupportByRole.highlight * 12 +
+          roleSupportByRole.windDown * 24
+        let fallbackReason: string | null = null
+        let wasDeprioritizedForRoleSupport = false
+
+        if (cachedPreflight?.status === 'committable') {
+          tier = 'cached_committable'
+          score += 1000
+        } else if (missingRoles.length === 0) {
+          tier = 'full_support'
+          score += 200
+        } else if (
+          roleSupportByRole.start > 0 ||
+          roleSupportByRole.highlight > 0 ||
+          roleSupportByRole.windDown > 0
+        ) {
+          tier = 'partial_support'
+          score -= 120 * missingRoles.length
+          fallbackReason = `missing_core_roles:${missingRoles.join(',')}`
+          wasDeprioritizedForRoleSupport = true
+        } else {
+          tier = 'known_role_hole'
+          score -= 300
+          fallbackReason = 'no_core_role_support'
+          wasDeprioritizedForRoleSupport = true
+        }
+        if (roleSupportByRole.windDown === 0) {
+          score -= 160
+          fallbackReason = fallbackReason ?? 'windDown_support_missing'
+          wasDeprioritizedForRoleSupport = true
+          if (tier === 'full_support') {
+            tier = 'partial_support'
+          }
+        }
+        byArtifactId.set(artifact.id, {
+          tier,
+          score,
+          roleSupportByRole,
+          missingRoles,
+          fallbackReason,
+          wasDeprioritizedForRoleSupport,
+        })
+      })
+      return byArtifactId
+    },
+    [
+      curateDisplayFallbackRouteArtifacts,
+      curatePreviewCommitabilityByArtifactId,
+      step2CandidateRouteArtifacts,
+      verifiedCityOpportunityById,
+    ],
+  )
+  const step2CandidateRouteArtifactByDirectionId = useMemo(
+    () =>
+      new Map(
+        step2CandidateRouteArtifacts
+          .filter((artifact) => Boolean(artifact.selection.directionId))
+          .map((artifact) => [artifact.selection.directionId!, artifact] as const),
+      ),
+    [step2CandidateRouteArtifacts],
+  )
 
   const directionView = useMemo(() => {
     if (activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID) {
@@ -9215,9 +12052,1069 @@ export function SandboxConciergePage() {
   const selectedDirection = useMemo(
     () =>
       selectedDirectionId
-        ? directionCards.find((entry) => entry.id === selectedDirectionId)
+        ? directionCards.find((entry) => entry.id === selectedDirectionId) ??
+          allDirectionCards.find((entry) => entry.id === selectedDirectionId)
         : undefined,
-    [directionCards, selectedDirectionId],
+    [allDirectionCards, directionCards, selectedDirectionId],
+  )
+  const resolveDirectionForCandidateArtifact = useCallback(
+    (artifact: CanonicalCandidateRouteArtifact) => {
+      const artifactDirectionId = artifact.selection.directionId
+      if (artifactDirectionId) {
+        return (
+          directionCards.find((entry) => entry.id === artifactDirectionId) ??
+          allDirectionCards.find((entry) => entry.id === artifactDirectionId) ??
+          null
+        )
+      }
+      const artifactPocketId = artifact.selection.pocketId
+      if (artifactPocketId) {
+        return (
+          directionCards.find((entry) => (entry.debugMeta?.pocketId ?? entry.id) === artifactPocketId) ??
+          allDirectionCards.find((entry) => (entry.debugMeta?.pocketId ?? entry.id) === artifactPocketId) ??
+          null
+        )
+      }
+      return directionCards[0] ?? allDirectionCards[0] ?? null
+    },
+    [allDirectionCards, directionCards],
+  )
+  const selectedCandidateRouteArtifactRaw = useMemo(() => {
+    if (!selectedDirectionId) {
+      return null
+    }
+    return step2CandidateRouteArtifactByDirectionId.get(selectedDirectionId) ?? null
+  }, [selectedDirectionId, step2CandidateRouteArtifactByDirectionId])
+  const buildAnchorMatchedCandidateArtifacts = useMemo(
+    () => {
+      if (!isBuildWrapperActive || !selectedBuildAnchor) {
+        return step2CandidateRouteArtifacts
+      }
+      const matched: CanonicalCandidateRouteArtifact[] = []
+      step2CandidateRouteArtifacts.forEach((artifact) => {
+        if (artifact.anchorVenueId === selectedBuildAnchor.venueId) {
+          matched.push({
+            ...artifact,
+            anchorRole: artifact.anchorRole ?? 'highlight',
+            anchorName: selectedBuildAnchor.name,
+          })
+          return
+        }
+        const sourceOpportunity = verifiedCityOpportunityById.get(artifact.sourceOpportunityId)
+        if (!sourceOpportunity) {
+          return
+        }
+        const anchorRole = resolveBuildAnchorRoleInOpportunity(
+          sourceOpportunity,
+          selectedBuildAnchor.venueId,
+        )
+        if (!anchorRole) {
+          return
+        }
+        matched.push({
+          ...artifact,
+          id: `${artifact.id}__build_anchor_${selectedBuildAnchor.venueId}_${anchorRole}`,
+          anchorVenueId: selectedBuildAnchor.venueId,
+          anchorRole,
+          anchorName: selectedBuildAnchor.name,
+          storySpine: {
+            start:
+              anchorRole === 'start'
+                ? selectedBuildAnchor.name
+                : sourceOpportunity.starts[0]?.name ?? artifact.storySpine.start,
+            highlight:
+              anchorRole === 'highlight'
+                ? selectedBuildAnchor.name
+                : sourceOpportunity.anchor.name || artifact.storySpine.highlight,
+            windDown:
+              anchorRole === 'windDown'
+                ? selectedBuildAnchor.name
+                : sourceOpportunity.closes[0]?.name ?? artifact.storySpine.windDown,
+          },
+        })
+      })
+      return matched
+    },
+    [
+      isBuildWrapperActive,
+      selectedBuildAnchor,
+      step2CandidateRouteArtifacts,
+      verifiedCityOpportunityById,
+    ],
+  )
+  const curateDisplayArtifactsBeforeDedupe = useMemo(
+    () =>
+      isBuildWrapperActive && selectedBuildAnchor
+        ? buildAnchorMatchedCandidateArtifacts
+        : step2CandidateRouteArtifacts,
+    [
+      buildAnchorMatchedCandidateArtifacts,
+      isBuildWrapperActive,
+      selectedBuildAnchor,
+      step2CandidateRouteArtifacts,
+    ],
+  )
+  const curateQualificationCandidateArtifacts = useMemo(() => {
+    if (!isCurateWrapperActive) {
+      return [] as ContractEntryArtifact[]
+    }
+    return [...curateDisplayArtifactsBeforeDedupe, ...curateDisplayFallbackRouteArtifacts]
+      .map((artifact, index) => ({
+        artifact,
+        index,
+        starterScore:
+          starterAwareOpportunityDebugById.get(artifact.sourceOpportunityId)?.starterMatchScore ?? 0,
+        buildability:
+          curatePreDisplayBuildabilityByArtifactId.get(artifact.id)?.score ?? Number.NEGATIVE_INFINITY,
+      }))
+      .filter(
+        (entry, index, list) =>
+          list.findIndex((candidate) => candidate.artifact.id === entry.artifact.id) === index,
+      )
+      .sort((left, right) => {
+        if (right.buildability !== left.buildability) {
+          return right.buildability - left.buildability
+        }
+        if (right.starterScore !== left.starterScore) {
+          return right.starterScore - left.starterScore
+        }
+        return left.index - right.index
+      })
+      .slice(0, 8)
+      .map((entry) => entry.artifact)
+  }, [
+    curateDisplayArtifactsBeforeDedupe,
+    curateDisplayFallbackRouteArtifacts,
+    curatePreDisplayBuildabilityByArtifactId,
+    isCurateWrapperActive,
+    starterAwareOpportunityDebugById,
+  ])
+  const curateQualificationPoolFingerprint = useMemo(
+    () => curateQualificationCandidateArtifacts.map((artifact) => artifact.id).join('|'),
+    [curateQualificationCandidateArtifacts],
+  )
+  const curateDisplayDedupeResult = useMemo<{
+    artifacts: ContractEntryArtifact[]
+    debug: CurateDisplayDedupeDebug
+  }>(() => {
+    const before = curateDisplayArtifactsBeforeDedupe
+    const defaultDebug: CurateDisplayDedupeDebug = {
+      visibleCardCountBeforeDedupe: before.length,
+      visibleCardCountAfterDedupe: before.length,
+      droppedDuplicateArtifactIds: [],
+      droppedDuplicateStoryFingerprints: [],
+      dedupeFillCount: 0,
+      finalVisibleArtifactIds: before.map((artifact) => artifact.id),
+    }
+    if (!isCurateWrapperActive) {
+      return {
+        artifacts: before,
+        debug: defaultDebug,
+      }
+    }
+    const desiredCount = before.length
+    const dedupedBefore: ContractEntryArtifact[] = []
+    const seenIdentityKeys = new Set<string>()
+    const droppedDuplicateArtifactIds: string[] = []
+    const droppedDuplicateStoryFingerprints = new Set<string>()
+    const selectedIdentityKeys = new Set<string>()
+    const getArtifactIdentityKey = (artifact: ContractEntryArtifact): string => {
+      if (artifact.id.trim()) {
+        return `artifact:${artifact.id}`
+      }
+      if (artifact.sourceOpportunityId.trim()) {
+        return `source:${artifact.sourceOpportunityId}`
+      }
+      if (artifact.anchorVenueId.trim()) {
+        return `anchor:${artifact.anchorVenueId}`
+      }
+      const storyFingerprint = getContractEntryArtifactStorySpineFingerprint(artifact)
+      if (storyFingerprint.trim()) {
+        return `story:${storyFingerprint}`
+      }
+      const directionId = artifact.selection.directionId?.trim()
+      if (directionId) {
+        return `direction:${directionId}|title:${normalizeCurateAuditStopName(artifact.routeTitle)}`
+      }
+      return `title:${normalizeCurateAuditStopName(artifact.routeTitle)}`
+    }
+    const tryAddUniqueBeforeArtifact = (artifact: ContractEntryArtifact) => {
+      const identityKey = getArtifactIdentityKey(artifact)
+      if (seenIdentityKeys.has(identityKey)) {
+        droppedDuplicateArtifactIds.push(artifact.id)
+        droppedDuplicateStoryFingerprints.add(getContractEntryArtifactStorySpineFingerprint(artifact))
+        return
+      }
+      seenIdentityKeys.add(identityKey)
+      dedupedBefore.push(artifact)
+    }
+    before.forEach((artifact) => {
+      tryAddUniqueBeforeArtifact(artifact)
+    })
+    const rankedUniqueCandidates = [...dedupedBefore, ...curateDisplayFallbackRouteArtifacts]
+      .map((artifact, index) => ({
+        artifact,
+        index,
+        identityKey: getArtifactIdentityKey(artifact),
+        buildability:
+          curatePreDisplayBuildabilityByArtifactId.get(artifact.id) ?? {
+            tier: 'known_role_hole',
+            score: -999,
+            roleSupportByRole: { start: 0, highlight: 0, windDown: 0 },
+            missingRoles: ['start', 'highlight', 'windDown'],
+            fallbackReason: 'pre_display_buildability_unavailable',
+            wasDeprioritizedForRoleSupport: true,
+          },
+        qualificationStatus: getCurateQualificationStatus(
+          curatePreviewCommitabilityByArtifactId[artifact.id],
+        ),
+      }))
+      .filter((entry, index, list) => list.findIndex((candidate) => candidate.identityKey === entry.identityKey) === index)
+      .sort((left, right) => {
+        const qualificationPriority = (
+          status: CurateVisibleCardModel['qualificationStatus'],
+        ): number => {
+          switch (status) {
+            case 'qualified':
+              return 0
+            case 'checking':
+              return 1
+            case 'unchecked':
+              return 2
+            case 'rejected':
+              return 3
+            case 'runtime_error':
+              return 4
+          }
+        }
+        const leftQualificationPriority = qualificationPriority(left.qualificationStatus)
+        const rightQualificationPriority = qualificationPriority(right.qualificationStatus)
+        if (leftQualificationPriority !== rightQualificationPriority) {
+          return leftQualificationPriority - rightQualificationPriority
+        }
+        const tierPriority = (tier: CuratePreDisplayBuildability['tier']): number => {
+          switch (tier) {
+            case 'cached_committable':
+              return 0
+            case 'full_support':
+              return 1
+            case 'partial_support':
+              return 2
+            case 'known_role_hole':
+              return 3
+          }
+        }
+        const leftPriority = tierPriority(left.buildability.tier)
+        const rightPriority = tierPriority(right.buildability.tier)
+        if (leftPriority !== rightPriority) {
+          return leftPriority - rightPriority
+        }
+        if (right.buildability.score !== left.buildability.score) {
+          return right.buildability.score - left.buildability.score
+        }
+        return left.index - right.index
+      })
+    const finalArtifacts: ContractEntryArtifact[] = []
+    rankedUniqueCandidates.forEach((entry) => {
+      if (finalArtifacts.length >= desiredCount || selectedIdentityKeys.has(entry.identityKey)) {
+        return
+      }
+      selectedIdentityKeys.add(entry.identityKey)
+      finalArtifacts.push(entry.artifact)
+    })
+    const dedupeFillCount = finalArtifacts.filter(
+      (artifact) => !dedupedBefore.some((beforeArtifact) => beforeArtifact.id === artifact.id),
+    ).length
+    return {
+      artifacts: finalArtifacts,
+      debug: {
+        visibleCardCountBeforeDedupe: before.length,
+        visibleCardCountAfterDedupe: finalArtifacts.length,
+        droppedDuplicateArtifactIds,
+        droppedDuplicateStoryFingerprints: [...droppedDuplicateStoryFingerprints].filter(Boolean),
+        dedupeFillCount,
+        finalVisibleArtifactIds: finalArtifacts.map((artifact) => artifact.id),
+      },
+    }
+  }, [
+    curateDisplayArtifactsBeforeDedupe,
+    curateDisplayFallbackRouteArtifacts,
+    curatePreDisplayBuildabilityByArtifactId,
+    curatePreviewCommitabilityByArtifactId,
+    isCurateWrapperActive,
+  ])
+  const candidateRouteArtifactsForDisplay = curateDisplayDedupeResult.artifacts
+  const curateDisplayDedupeDebug = curateDisplayDedupeResult.debug
+  const curateVisibleCardModels = useMemo<CurateVisibleCardModel[]>(() => {
+    return candidateRouteArtifactsForDisplay.map((artifact) => {
+      const preflight = curatePreviewCommitabilityByArtifactId[artifact.id]
+      const qualificationStatus = getCurateQualificationStatus(preflight)
+      const approvedRefinementEntryPayload = preflight?.approvedRefinementEntryPayload
+      const approvedFinalRoute = approvedRefinementEntryPayload?.finalRoute
+      const hasApprovedPayload = Boolean(
+        qualificationStatus === 'qualified' && approvedRefinementEntryPayload && approvedFinalRoute,
+      )
+      const approvedRouteStarterFit = evaluateApprovedRouteStarterFit({
+        finalRoute: approvedFinalRoute,
+        starterPack: selectedStarterPack,
+      })
+      const qualifiedRouteStart =
+        approvedFinalRoute?.stops.find((stop) => stop.role === 'start')?.displayName ?? null
+      const qualifiedRouteHighlight =
+        approvedFinalRoute?.stops.find((stop) => stop.role === 'highlight')?.displayName ?? null
+      const qualifiedRouteWindDown =
+        approvedFinalRoute?.stops.find((stop) => stop.role === 'windDown')?.displayName ?? null
+      const qualificationReason =
+        preflight?.failedCheck ??
+        preflight?.explicitFallbackReason ??
+        preflight?.missingRoleForContract ??
+        null
+      return {
+        artifact,
+        title: approvedFinalRoute?.routeHeadline ?? artifact.routeTitle,
+        summary: approvedFinalRoute?.routeSummary ?? null,
+        start: approvedFinalRoute ? qualifiedRouteStart ?? artifact.storySpine.start : artifact.storySpine.start,
+        highlight: approvedFinalRoute
+          ? qualifiedRouteHighlight ?? artifact.storySpine.highlight
+          : artifact.storySpine.highlight,
+        windDown: approvedFinalRoute
+          ? qualifiedRouteWindDown ?? artifact.storySpine.windDown
+          : artifact.storySpine.windDown,
+        cardDisplaySource:
+          hasApprovedPayload
+            ? 'approved_payload'
+            : qualificationStatus === 'rejected' || qualificationStatus === 'runtime_error'
+              ? 'fallback_unqualified'
+              : 'candidate_draft',
+        qualificationStatus,
+        hasApprovedPayload,
+        qualifiedRouteStart,
+        qualifiedRouteHighlight,
+        qualifiedRouteWindDown,
+        finalRouteStarterFitScore: approvedRouteStarterFit.finalRouteStarterFitScore,
+        finalRouteStarterFitTier: approvedRouteStarterFit.finalRouteStarterFitTier,
+        finalRouteMatchedPreferredCategories:
+          approvedRouteStarterFit.finalRouteMatchedPreferredCategories,
+        finalRouteMatchedPreferredTags: approvedRouteStarterFit.finalRouteMatchedPreferredTags,
+        finalRouteMatchedPreferredStopShapes:
+          approvedRouteStarterFit.finalRouteMatchedPreferredStopShapes,
+        finalRouteMismatchReasons: approvedRouteStarterFit.finalRouteMismatchReasons,
+        finalRouteDisplayReason: approvedRouteStarterFit.finalRouteDisplayReason,
+        qualifiedDisplayRankReason:
+          hasApprovedPayload
+            ? `qualified_then_ranked_by_final_starter_fit:${approvedRouteStarterFit.finalRouteStarterFitTier}:${approvedRouteStarterFit.finalRouteStarterFitScore?.toFixed(3) ?? 'n/a'}`
+            : null,
+        qualificationReason,
+        isSelectable: hasApprovedPayload,
+      }
+    })
+  }, [
+    candidateRouteArtifactsForDisplay,
+    curatePreviewCommitabilityByArtifactId,
+    selectedStarterPack,
+  ])
+  const curateQualificationSummary = useMemo(() => {
+    const statuses = curateQualificationCandidateArtifacts.map((artifact) =>
+      getCurateQualificationStatus(curatePreviewCommitabilityByArtifactId[artifact.id]),
+    )
+    return {
+      qualificationPoolSize: curateQualificationCandidateArtifacts.length,
+      qualifiedCandidateCount: statuses.filter((status) => status === 'qualified').length,
+      checkedCandidateCount: statuses.filter((status) => status !== 'unchecked').length,
+      rejectedCandidateCount: statuses.filter(
+        (status) => status === 'rejected' || status === 'runtime_error',
+      ).length,
+    }
+  }, [curatePreviewCommitabilityByArtifactId, curateQualificationCandidateArtifacts])
+  const curateQualifiedVisibleCardModels = useMemo(() => {
+    return curateVisibleCardModels
+      .filter((model) => model.hasApprovedPayload)
+      .sort((left, right) => {
+        const leftScore = left.finalRouteStarterFitScore ?? Number.NEGATIVE_INFINITY
+        const rightScore = right.finalRouteStarterFitScore ?? Number.NEGATIVE_INFINITY
+        if (rightScore !== leftScore) {
+          return rightScore - leftScore
+        }
+        return left.artifact.id.localeCompare(right.artifact.id)
+      })
+  }, [curateVisibleCardModels])
+  const curatePrimarySelectableArtifacts = useMemo(
+    () => curateQualifiedVisibleCardModels.map((model) => model.artifact),
+    [curateQualifiedVisibleCardModels],
+  )
+  const curatePrimaryCardDisplay = useMemo(() => {
+    if (!isCurateWrapperActive) {
+      return {
+        models: curateVisibleCardModels,
+        primaryVisibleQualifiedCount: 0,
+        hiddenRejectedFromPrimaryCount: 0,
+        scenarioSeedsCount: 0,
+        qualifiedRouteCardCount: 0,
+        unqualifiedDraftsHiddenCount: 0,
+        primaryCardSource: 'approved_payload' as const,
+        primaryCardDisplayMode: 'qualified_only' as const,
+      }
+    }
+    const checkingInFlight = curateVisibleCardModels.some(
+      (model) =>
+        model.qualificationStatus === 'checking' || model.qualificationStatus === 'unchecked',
+    )
+    const hiddenRejectedFromPrimaryCount = curateVisibleCardModels.filter(
+      (model) =>
+        model.qualificationStatus === 'rejected' || model.qualificationStatus === 'runtime_error',
+    ).length
+    const unqualifiedDraftsHiddenCount = curateVisibleCardModels.filter(
+      (model) => !model.hasApprovedPayload,
+    ).length
+    if (curateQualifiedVisibleCardModels.length > 0) {
+      return {
+        models: curateQualifiedVisibleCardModels,
+        primaryVisibleQualifiedCount: curateQualifiedVisibleCardModels.length,
+        hiddenRejectedFromPrimaryCount,
+        scenarioSeedsCount: candidateRouteArtifactsForDisplay.length,
+        qualifiedRouteCardCount: curateQualifiedVisibleCardModels.length,
+        unqualifiedDraftsHiddenCount,
+        primaryCardSource: 'approved_payload' as const,
+        primaryCardDisplayMode: 'qualified_only' as const,
+      }
+    }
+    if (checkingInFlight) {
+      return {
+        models: [] as CurateVisibleCardModel[],
+        primaryVisibleQualifiedCount: 0,
+        hiddenRejectedFromPrimaryCount,
+        scenarioSeedsCount: candidateRouteArtifactsForDisplay.length,
+        qualifiedRouteCardCount: 0,
+        unqualifiedDraftsHiddenCount,
+        primaryCardSource: 'no_qualified_fallback' as const,
+        primaryCardDisplayMode: 'checking' as const,
+      }
+    }
+    return {
+      models: [] as CurateVisibleCardModel[],
+      primaryVisibleQualifiedCount: 0,
+      hiddenRejectedFromPrimaryCount,
+      scenarioSeedsCount: candidateRouteArtifactsForDisplay.length,
+      qualifiedRouteCardCount: 0,
+      unqualifiedDraftsHiddenCount,
+      primaryCardSource: 'no_qualified_fallback' as const,
+      primaryCardDisplayMode: 'no_qualified_fallback' as const,
+    }
+  }, [
+    candidateRouteArtifactsForDisplay.length,
+    curateQualifiedVisibleCardModels,
+    curateVisibleCardModels,
+    isCurateWrapperActive,
+  ])
+  const candidateRouteArtifactByDirectionIdForDisplay = useMemo(
+    () =>
+      new Map(
+        candidateRouteArtifactsForDisplay
+          .filter((artifact) => Boolean(artifact.selection.directionId))
+          .map((artifact) => [artifact.selection.directionId!, artifact] as const),
+      ),
+    [candidateRouteArtifactsForDisplay],
+  )
+  const curatePrimarySelectableArtifactById = useMemo(
+    () =>
+      new Map(curatePrimarySelectableArtifacts.map((artifact) => [artifact.id, artifact] as const)),
+    [curatePrimarySelectableArtifacts],
+  )
+  const curatePrimarySelectableArtifactsByDirectionId = useMemo(() => {
+    const grouped = new Map<string, ContractEntryArtifact[]>()
+    curatePrimarySelectableArtifacts.forEach((artifact) => {
+      const directionId = artifact.selection.directionId
+      if (!directionId) {
+        return
+      }
+      const existing = grouped.get(directionId)
+      if (existing) {
+        existing.push(artifact)
+        return
+      }
+      grouped.set(directionId, [artifact])
+    })
+    return grouped
+  }, [curatePrimarySelectableArtifacts])
+  const candidateRouteArtifactsByDirectionIdForDisplay = useMemo(() => {
+    const grouped = new Map<string, ContractEntryArtifact[]>()
+    candidateRouteArtifactsForDisplay.forEach((artifact) => {
+      const directionId = artifact.selection.directionId
+      if (!directionId) {
+        return
+      }
+      const existing = grouped.get(directionId)
+      if (existing) {
+        existing.push(artifact)
+        return
+      }
+      grouped.set(directionId, [artifact])
+    })
+    return grouped
+  }, [candidateRouteArtifactsForDisplay])
+  const resolveUniqueCandidateRouteArtifactForDirection = useCallback(
+    (directionId: string | null | undefined) => {
+      const normalizedDirectionId = directionId?.trim()
+      if (!normalizedDirectionId) {
+        return null
+      }
+      const matches = isCurateWrapperActive
+        ? curatePrimarySelectableArtifactsByDirectionId.get(normalizedDirectionId) ?? []
+        : candidateRouteArtifactsByDirectionIdForDisplay.get(normalizedDirectionId) ?? []
+      return matches.length === 1 ? matches[0] ?? null : null
+    },
+    [
+      candidateRouteArtifactsByDirectionIdForDisplay,
+      curatePrimarySelectableArtifactsByDirectionId,
+      isCurateWrapperActive,
+    ],
+  )
+  const candidateRouteArtifactByIdForDisplay = useMemo(
+    () => new Map(candidateRouteArtifactsForDisplay.map((artifact) => [artifact.id, artifact] as const)),
+    [candidateRouteArtifactsForDisplay],
+  )
+  const selectedCandidateRouteArtifact = useMemo(() => {
+    if (selectedStep2CandidateArtifactId) {
+      const selectedByOptionId = isCurateWrapperActive
+        ? curatePrimarySelectableArtifactById.get(selectedStep2CandidateArtifactId)
+        : candidateRouteArtifactByIdForDisplay.get(selectedStep2CandidateArtifactId)
+      if (selectedByOptionId) {
+        return selectedByOptionId
+      }
+      if (isCurateWrapperActive) {
+        return null
+      }
+    }
+    if (!selectedDirectionId) {
+      return null
+    }
+    if (isCurateWrapperActive) {
+      return resolveUniqueCandidateRouteArtifactForDirection(selectedDirectionId)
+    }
+    if (isBuildWrapperActive && selectedBuildAnchor) {
+      return candidateRouteArtifactByDirectionIdForDisplay.get(selectedDirectionId) ?? null
+    }
+    return selectedCandidateRouteArtifactRaw
+  }, [
+    candidateRouteArtifactByIdForDisplay,
+    candidateRouteArtifactsByDirectionIdForDisplay,
+    candidateRouteArtifactsForDisplay,
+    candidateRouteArtifactByDirectionIdForDisplay,
+    curatePrimarySelectableArtifactById,
+    isCurateWrapperActive,
+    isBuildWrapperActive,
+    resolveUniqueCandidateRouteArtifactForDirection,
+    selectedBuildAnchor,
+    selectedCandidateRouteArtifactRaw,
+    selectedDirectionId,
+    selectedStep2CandidateArtifactId,
+  ])
+  const selectedCuratePreviewCommitability = useMemo(() => {
+    if (!isCurateWrapperActive || !selectedCandidateRouteArtifact) {
+      return null
+    }
+    return curatePreviewCommitabilityByArtifactId[selectedCandidateRouteArtifact.id] ?? null
+  }, [
+    curatePreviewCommitabilityByArtifactId,
+    isCurateWrapperActive,
+    selectedCandidateRouteArtifact,
+  ])
+  const selectedCurateQualificationArtifactId =
+    isCurateWrapperActive ? selectedCandidateRouteArtifact?.id ?? null : null
+  const curateCardAuditRows = useMemo<CurateCardAuditRow[]>(() => {
+    if (!isCurateWrapperActive) {
+      return []
+    }
+    const visibleCardModelByArtifactId = new Map(
+      curateVisibleCardModels.map((model) => [model.artifact.id, model] as const),
+    )
+    const countByDirectionId = new Map<string, number>()
+    const countByAnchorVenueId = new Map<string, number>()
+    const countByStorySpineFingerprint = new Map<string, number>()
+    const countBySourceOpportunityId = new Map<string, number>()
+    const countByDisplayTitle = new Map<string, number>()
+    const incrementCount = (map: Map<string, number>, key: string) => {
+      if (!key.trim()) {
+        return
+      }
+      map.set(key, (map.get(key) ?? 0) + 1)
+    }
+    candidateRouteArtifactsForDisplay.forEach((artifact) => {
+      incrementCount(countByDirectionId, artifact.selection.directionId ?? '')
+      incrementCount(countByAnchorVenueId, artifact.anchorVenueId)
+      incrementCount(
+        countByStorySpineFingerprint,
+        getContractEntryArtifactStorySpineFingerprint(artifact),
+      )
+      incrementCount(countBySourceOpportunityId, artifact.sourceOpportunityId)
+      incrementCount(countByDisplayTitle, normalizeCurateAuditStopName(artifact.routeTitle))
+    })
+
+    return candidateRouteArtifactsForDisplay.map((artifact, index) => {
+      const opportunity = verifiedCityOpportunityById.get(artifact.sourceOpportunityId)
+      const discoveryPreferences = buildSelectedArtifactDiscoveryPreferences({
+        artifact,
+        opportunity,
+      })
+      const lineage = resolveSelectedArtifactPlanningLineage(artifact)
+      const preflight = curatePreviewCommitabilityByArtifactId[artifact.id]
+      const starterDebug = starterAwareOpportunityDebugById.get(artifact.sourceOpportunityId)
+      const preDisplayBuildability =
+        curatePreDisplayBuildabilityByArtifactId.get(artifact.id) ?? null
+      const visibleCardModel = visibleCardModelByArtifactId.get(artifact.id) ?? null
+      const approvedFinalRoute = preflight?.approvedRefinementEntryPayload?.finalRoute
+      const approvedRouteComparison = compareCurateCardPromiseToApprovedRoute({
+        storySpine: artifact.storySpine,
+        approvedFinalRoute,
+      })
+      const preflightStatus: CurateCardAuditRow['preflightStatus'] =
+        preflight?.failureKind === 'runtime_error'
+          ? 'runtime_error'
+          : preflight?.failureKind === 'validation_failure'
+            ? 'validation_failure'
+            : preflight?.status ?? 'unchecked'
+      const roleSufficiency = preflight?.candidatePoolSufficiencyByRole
+      const storySpineFingerprint = getContractEntryArtifactStorySpineFingerprint(artifact)
+      const directionDuplicateCount = countByDirectionId.get(artifact.selection.directionId ?? '') ?? 0
+      const anchorDuplicateCount = countByAnchorVenueId.get(artifact.anchorVenueId) ?? 0
+      const storyDuplicateCount = countByStorySpineFingerprint.get(storySpineFingerprint) ?? 0
+      const sourceDuplicateCount = countBySourceOpportunityId.get(artifact.sourceOpportunityId) ?? 0
+      const displayTitleDuplicateCount =
+        countByDisplayTitle.get(normalizeCurateAuditStopName(artifact.routeTitle)) ?? 0
+      const uniqueArtifactForDirection = artifact.selection.directionId
+        ? (candidateRouteArtifactsByDirectionIdForDisplay.get(artifact.selection.directionId) ?? []).length === 1
+          ? artifact
+          : null
+        : null
+      const isCurrentlySelected = selectedStep2CandidateArtifactId
+        ? selectedStep2CandidateArtifactId === artifact.id
+        : (artifact.selection.directionId &&
+            selectedDirectionId === artifact.selection.directionId &&
+            uniqueArtifactForDirection?.id === artifact.id) ||
+          (!artifact.selection.directionId &&
+            artifact.selection.pocketId &&
+            activeDistrictPocketId === artifact.selection.pocketId)
+      const duplicateParts = [
+        directionDuplicateCount > 1
+          ? `direction:${directionDuplicateCount}`
+          : null,
+        anchorDuplicateCount > 1
+          ? `anchor:${anchorDuplicateCount}`
+          : null,
+        storyDuplicateCount > 1
+          ? `story:${storyDuplicateCount}`
+          : null,
+        sourceDuplicateCount > 1
+          ? `source:${sourceDuplicateCount}`
+          : null,
+        displayTitleDuplicateCount > 1
+          ? `title:${displayTitleDuplicateCount}`
+          : null,
+      ].filter((value): value is string => Boolean(value))
+
+      return {
+        displayIndex: String(index),
+        artifactId: artifact.id,
+        directionId: artifact.selection.directionId ?? 'n/a',
+        anchorName: artifact.anchorName,
+        anchorVenueId: artifact.anchorVenueId,
+        sourceOpportunityId: artifact.sourceOpportunityId,
+        routeTitle: artifact.routeTitle,
+        storySpineFingerprint,
+        storySpineStart: artifact.storySpine.start,
+        storySpineHighlight: artifact.storySpine.highlight,
+        storySpineWindDown: artifact.storySpine.windDown,
+        discoveryPreferencesSummary: formatCurateDiscoveryPreferencesSummary(discoveryPreferences),
+        selectedStartPreferenceVenueId: getCurateDiscoveryPreferenceVenueId(
+          discoveryPreferences,
+          'start',
+        ),
+        selectedHighlightPreferenceVenueId: getCurateDiscoveryPreferenceVenueId(
+          discoveryPreferences,
+          'highlight',
+        ),
+        selectedWindDownPreferenceVenueId: getCurateDiscoveryPreferenceVenueId(
+          discoveryPreferences,
+          'windDown',
+        ),
+        selectedArtifactLineageSummary: formatSelectedArtifactLineageSummary(lineage),
+        isCurrentlySelected: String(Boolean(isCurrentlySelected)),
+        selectedStep2CandidateArtifactId: selectedStep2CandidateArtifactId ?? 'n/a',
+        preflightStatus,
+        failureKind: preflight?.failureKind ?? 'none',
+        failedCheck: preflight?.failedCheck ?? 'none',
+        errorName: preflight?.errorName ?? 'none',
+        errorMessageRaw:
+          preflight?.failureKind === 'runtime_error'
+            ? preflight.errorMessageRaw ?? 'none'
+            : 'n/a',
+        hardCommitCandidateCount:
+          preflight?.hardCommitCandidateCount == null
+            ? 'n/a'
+            : String(preflight.hardCommitCandidateCount),
+        hardCommitPreservationSucceeded:
+          preflight?.hardCommitRequired === false
+            ? 'n/a'
+            : preflight?.status === 'committable'
+              ? 'true'
+              : preflight?.failedCheck === 'curateHardCommit.hardCommitPreservationSucceeded'
+                ? 'false'
+                : 'n/a',
+        explicitFallbackTriggered:
+          preflight?.hardCommitRequired === false
+            ? 'n/a'
+            : preflight?.status === 'infeasible' && preflight.explicitFallbackReason
+              ? 'true'
+              : preflight?.status
+                ? 'false'
+                : 'n/a',
+        explicitFallbackReason: preflight?.explicitFallbackReason ?? 'none',
+        failedRolesSummary: preflight?.failedRoles.join(', ') || 'none',
+        missingRoleForContract: preflight?.missingRoleForContract ?? 'none',
+        candidatePoolSufficiencySummary: roleSufficiency
+          ? `start:${roleSufficiency.start} | highlight:${roleSufficiency.highlight} | windDown:${roleSufficiency.windDown}`
+          : 'n/a',
+        approvedRouteSummary: approvedRouteComparison.approvedRouteSummary,
+        cardPromiseMatch: approvedRouteComparison.cardPromiseMatch,
+        duplicateSummary: duplicateParts.join(' | ') || 'none',
+        duplicateDirectionCount: String(directionDuplicateCount),
+        duplicateAnchorCount: String(anchorDuplicateCount),
+        duplicateStoryFingerprintCount: String(storyDuplicateCount),
+        duplicateSourceOpportunityCount: String(sourceDuplicateCount),
+        duplicateDisplayTitleCount: String(displayTitleDuplicateCount),
+        starterPackId: starterDebug?.starterPackId ?? selectedStarterPack?.id ?? 'none',
+        starterMatchScore:
+          starterDebug?.starterMatchScore == null
+            ? 'n/a'
+            : starterDebug.starterMatchScore.toFixed(3),
+        matchedPreferredCategories:
+          starterDebug?.matchedPreferredCategories.join(', ') || 'none',
+        matchedPreferredTags: starterDebug?.matchedPreferredTags.join(', ') || 'none',
+        matchedPreferredStopShapes:
+          starterDebug?.matchedPreferredStopShapes.join(', ') || 'none',
+        secondaryAnchorMatch:
+          starterDebug?.secondaryAnchorMatch == null
+            ? 'n/a'
+            : String(starterDebug.secondaryAnchorMatch),
+        distanceModeMatch:
+          starterDebug?.distanceModeMatch == null ? 'n/a' : String(starterDebug.distanceModeMatch),
+        starterMismatchReasons:
+          starterDebug?.starterMismatchReasons.join(', ') || 'none',
+        starterAwareCandidateSource: starterDebug?.starterAwareCandidateSource ?? 'n/a',
+        preDisplayBuildabilityTier: preDisplayBuildability?.tier ?? 'n/a',
+        preDisplayBuildabilityScore:
+          preDisplayBuildability == null ? 'n/a' : String(preDisplayBuildability.score),
+        preDisplayRoleSupportSummary: preDisplayBuildability
+          ? `start:${preDisplayBuildability.roleSupportByRole.start} | highlight:${preDisplayBuildability.roleSupportByRole.highlight} | windDown:${preDisplayBuildability.roleSupportByRole.windDown}`
+          : 'n/a',
+        preDisplayMissingRoles: preDisplayBuildability?.missingRoles.join(', ') || 'none',
+        preDisplayFallbackReason: preDisplayBuildability?.fallbackReason ?? 'none',
+        wasDeprioritizedForRoleSupport: preDisplayBuildability
+          ? String(preDisplayBuildability.wasDeprioritizedForRoleSupport)
+          : 'n/a',
+        qualificationStatus: visibleCardModel?.qualificationStatus ?? 'unchecked',
+        qualifiedRouteStart: visibleCardModel?.qualifiedRouteStart ?? 'n/a',
+        qualifiedRouteHighlight: visibleCardModel?.qualifiedRouteHighlight ?? 'n/a',
+        qualifiedRouteWindDown: visibleCardModel?.qualifiedRouteWindDown ?? 'n/a',
+        finalRouteStarterFitScore:
+          visibleCardModel?.finalRouteStarterFitScore == null
+            ? 'n/a'
+            : visibleCardModel.finalRouteStarterFitScore.toFixed(3),
+        finalRouteStarterFitTier: visibleCardModel?.finalRouteStarterFitTier ?? 'n/a',
+        finalRouteMatchedPreferredCategories:
+          visibleCardModel?.finalRouteMatchedPreferredCategories.join(', ') || 'none',
+        finalRouteMatchedPreferredTags:
+          visibleCardModel?.finalRouteMatchedPreferredTags.join(', ') || 'none',
+        finalRouteMatchedPreferredStopShapes:
+          visibleCardModel?.finalRouteMatchedPreferredStopShapes.join(', ') || 'none',
+        finalRouteMismatchReasons:
+          visibleCardModel?.finalRouteMismatchReasons.join(', ') || 'none',
+        finalRouteDisplayReason: visibleCardModel?.finalRouteDisplayReason ?? 'none',
+        qualifiedDisplayRankReason: visibleCardModel?.qualifiedDisplayRankReason ?? 'none',
+        cardDisplaySource: visibleCardModel?.cardDisplaySource ?? 'candidate_draft',
+        qualificationReason:
+          visibleCardModel?.qualificationReason ?? preflight?.failedCheck ?? 'none',
+        qualificationCacheHit:
+          curateQualificationCacheHitByArtifactId[artifact.id] == null
+            ? 'n/a'
+            : String(curateQualificationCacheHitByArtifactId[artifact.id]),
+        windDownRepairAttempted:
+          preflight?.windDownRepairAttempted == null
+            ? 'false'
+            : String(preflight.windDownRepairAttempted),
+        windDownRepairSucceeded:
+          preflight?.windDownRepairSucceeded == null
+            ? 'false'
+            : String(preflight.windDownRepairSucceeded),
+        windDownRepairOriginal: preflight?.windDownRepairOriginal ?? 'none',
+        windDownRepairReplacement: preflight?.windDownRepairReplacement ?? 'none',
+        windDownRepairReplacementId: preflight?.windDownRepairReplacementId ?? 'none',
+        windDownRepairReason: preflight?.windDownRepairReason ?? 'none',
+        windDownRepairSource: preflight?.windDownRepairSource ?? 'none',
+        windDownRepairPreferenceApplied:
+          preflight?.windDownRepairPreferenceApplied == null
+            ? 'false'
+            : String(preflight.windDownRepairPreferenceApplied),
+        windDownRepairPreferenceTarget:
+          preflight?.windDownRepairPreferenceTarget ?? 'none',
+        repairedDiscoveryPrefsWindDown:
+          preflight?.repairedDiscoveryPrefsWindDown ?? 'none',
+        repairedLineageWindDown: preflight?.repairedLineageWindDown ?? 'none',
+        repairedCandidatePoolSufficiencySummary: preflight?.repairedCandidatePoolSufficiencyByRole
+          ? `start:${preflight.repairedCandidatePoolSufficiencyByRole.start} | highlight:${preflight.repairedCandidatePoolSufficiencyByRole.highlight} | windDown:${preflight.repairedCandidatePoolSufficiencyByRole.windDown}`
+          : 'n/a',
+        repairedHardCommitCandidateCount:
+          preflight?.repairedHardCommitCandidateCount == null
+            ? 'n/a'
+            : String(preflight.repairedHardCommitCandidateCount),
+        repairedFailureReason: preflight?.repairedFailureReason ?? 'none',
+        repairedQualificationStatus: preflight?.repairedQualificationStatus ?? 'none',
+      }
+    })
+  }, [
+    activeDistrictPocketId,
+    curatePreDisplayBuildabilityByArtifactId,
+    curateQualificationCacheHitByArtifactId,
+    candidateRouteArtifactsByDirectionIdForDisplay,
+    candidateRouteArtifactsForDisplay,
+    curatePreviewCommitabilityByArtifactId,
+    curateVisibleCardModels,
+    isCurateWrapperActive,
+    selectedDirectionId,
+    selectedStep2CandidateArtifactId,
+    selectedStarterPack?.id,
+    starterAwareOpportunityDebugById,
+    verifiedCityOpportunityById,
+  ])
+  const curateDemoCloseoutDebug = useMemo<{
+    finalVisibleArtifactIds: string[]
+    qualificationPoolArtifactIds: string[]
+    checkedCandidateCount: number
+    qualifiedCandidateCount: number
+    rejectedCandidateCount: number
+    scenarioSeedsCount: number
+    qualifiedRouteCardCount: number
+    unqualifiedDraftsHiddenCount: number
+    primaryCardSource: string
+    primaryCardDisplayMode: string
+    primaryVisibleQualifiedCount: number
+    selectedStep2CandidateArtifactId: string
+    visibleCards: CurateDemoCloseoutVisibleCardRow[]
+  }>(
+    () => ({
+      finalVisibleArtifactIds: curatePrimaryCardDisplay.models.map((model) => model.artifact.id),
+      qualificationPoolArtifactIds: curateQualificationCandidateArtifacts.map((artifact) => artifact.id),
+      checkedCandidateCount: curateQualificationSummary.checkedCandidateCount,
+      qualifiedCandidateCount: curateQualificationSummary.qualifiedCandidateCount,
+      rejectedCandidateCount: curateQualificationSummary.rejectedCandidateCount,
+      scenarioSeedsCount: curatePrimaryCardDisplay.scenarioSeedsCount,
+      qualifiedRouteCardCount: curatePrimaryCardDisplay.qualifiedRouteCardCount,
+      unqualifiedDraftsHiddenCount: curatePrimaryCardDisplay.unqualifiedDraftsHiddenCount,
+      primaryCardSource: curatePrimaryCardDisplay.primaryCardSource,
+      primaryCardDisplayMode: curatePrimaryCardDisplay.primaryCardDisplayMode,
+      primaryVisibleQualifiedCount: curatePrimaryCardDisplay.primaryVisibleQualifiedCount,
+      selectedStep2CandidateArtifactId: selectedStep2CandidateArtifactId ?? 'n/a',
+      visibleCards: curateVisibleCardModels.map((model) => {
+        const preflight = curatePreviewCommitabilityByArtifactId[model.artifact.id]
+        return {
+          artifactId: model.artifact.id,
+          qualificationStatus: model.qualificationStatus,
+          failedCheck: preflight?.failedCheck ?? 'none',
+          missingRole: preflight?.missingRoleForContract ?? 'none',
+          hardCommitCandidateCount:
+            preflight?.hardCommitCandidateCount == null
+              ? 'n/a'
+              : String(preflight.hardCommitCandidateCount),
+          cardDisplaySource: model.cardDisplaySource,
+        }
+      }),
+    }),
+    [
+      curatePrimaryCardDisplay.primaryCardDisplayMode,
+      curatePrimaryCardDisplay.primaryCardSource,
+      curatePrimaryCardDisplay.primaryVisibleQualifiedCount,
+      curatePrimaryCardDisplay.models,
+      curatePrimaryCardDisplay.qualifiedRouteCardCount,
+      curatePrimaryCardDisplay.scenarioSeedsCount,
+      curatePrimaryCardDisplay.unqualifiedDraftsHiddenCount,
+      curatePreviewCommitabilityByArtifactId,
+      curateQualificationCandidateArtifacts,
+      curateQualificationSummary.checkedCandidateCount,
+      curateQualificationSummary.qualifiedCandidateCount,
+      curateQualificationSummary.rejectedCandidateCount,
+      curateVisibleCardModels,
+      selectedStep2CandidateArtifactId,
+    ],
+  )
+  const fixtureQualificationTraceRows = useMemo<FixtureQualificationTraceRow[]>(() => {
+    if (!isCurateWrapperActive) {
+      return []
+    }
+    const fixtureIdSet = new Set(debugDevGreatStopFixtureVenueIds)
+    const artifactBySourceOpportunityId = new Map(
+      step2CandidateRouteArtifacts.map((artifact) => [artifact.sourceOpportunityId, artifact] as const),
+    )
+    return scenarioBackedVerifiedCityOpportunities
+      .filter((opportunity) => {
+        const fixtureIds = [
+          opportunity.anchor.venueId,
+          ...opportunity.starts.map((entry) => entry.venueId),
+          ...(opportunity.highlightAlternates?.map((entry) => entry.venueId) ?? []),
+          ...opportunity.closes.map((entry) => entry.venueId),
+        ].filter((venueId) => fixtureIdSet.has(venueId))
+        return fixtureIds.length > 0
+      })
+      .map((opportunity) => {
+        const scenarioNight = opportunity.scenarioNight
+        const scenarioStart =
+          scenarioNight?.stops.find((stop) => stop.position === 'start') ?? scenarioNight?.stops[0]
+        const scenarioHighlight =
+          scenarioNight?.stops.find((stop) => stop.position === 'highlight') ??
+          scenarioNight?.stops.find((stop) => stop.stopType === 'anchor') ??
+          scenarioNight?.stops[0]
+        const scenarioWindDown =
+          scenarioNight?.stops.find((stop) => stop.position === 'closer') ??
+          scenarioNight?.stops[scenarioNight.stops.length - 1]
+        const fixtureStopIdsPresent = dedupeStringIds(
+          scenarioNight?.stops
+            .map((stop) => stop.venueId)
+            .filter((venueId) => fixtureIdSet.has(venueId)) ?? [],
+        )
+        const artifact = artifactBySourceOpportunityId.get(opportunity.id) ?? null
+        const discoveryPreferences = buildSelectedArtifactDiscoveryPreferences({
+          artifact,
+          opportunity,
+        })
+        const preflight = artifact ? curatePreviewCommitabilityByArtifactId[artifact.id] : undefined
+        const rolePoolVenueIdsByRole = preflight?.rolePoolVenueIdsByRole
+        const rolePoolVenueIdsSummary = rolePoolVenueIdsByRole
+          ? `start:${formatIdList(rolePoolVenueIdsByRole.start)} | highlight:${formatIdList(
+              rolePoolVenueIdsByRole.highlight,
+            )} | windDown:${formatIdList(rolePoolVenueIdsByRole.windDown)}`
+          : 'n/a'
+        const selectedStartVenueId =
+          discoveryPreferences?.find((entry) => entry.role === 'start')?.venueId ?? 'n/a'
+        const selectedHighlightVenueId =
+          discoveryPreferences?.find((entry) => entry.role === 'highlight')?.venueId ?? 'n/a'
+        const selectedWindDownVenueId =
+          discoveryPreferences?.find((entry) => entry.role === 'windDown')?.venueId ?? 'n/a'
+        return {
+          scenarioNightId: scenarioNight?.id ?? 'n/a',
+          sourceOpportunityId: opportunity.id,
+          fixtureStopIdsPresent: fixtureStopIdsPresent.join(', ') || 'none',
+          scenarioWindDownOriginal: opportunity.scenarioWindDownDebug?.originalVenueId
+            ? `${opportunity.scenarioWindDownDebug.originalVenueId} / ${opportunity.scenarioWindDownDebug.originalName ?? 'n/a'}`
+            : 'n/a',
+          scenarioWindDownOriginalRoleEligible: String(
+            opportunity.scenarioWindDownDebug?.originalRoleEligible ?? false,
+          ),
+          scenarioWindDownRepairApplied: String(
+            opportunity.scenarioWindDownDebug?.repairApplied ?? false,
+          ),
+          scenarioWindDownRepairReplacement: opportunity.scenarioWindDownDebug?.repairReplacementVenueId
+            ? `${opportunity.scenarioWindDownDebug.repairReplacementVenueId} / ${opportunity.scenarioWindDownDebug.repairReplacementName ?? 'n/a'}`
+            : 'none',
+          scenarioWindDownRepairSource:
+            opportunity.scenarioWindDownDebug?.repairSource ?? 'none',
+          scenarioWindDownRepairReason:
+            opportunity.scenarioWindDownDebug?.repairReason ?? 'none',
+          scenarioWindDownFinal: opportunity.scenarioWindDownDebug?.finalVenueId
+            ? `${opportunity.scenarioWindDownDebug.finalVenueId} / ${opportunity.scenarioWindDownDebug.finalName ?? 'n/a'}`
+            : 'n/a',
+          scenarioWindDownFinalRoleEligible: String(
+            opportunity.scenarioWindDownDebug?.finalRoleEligible ?? false,
+          ),
+          scenarioStart: scenarioStart
+            ? `${scenarioStart.venueId} / ${scenarioStart.name}`
+            : 'n/a',
+          scenarioHighlight: scenarioHighlight
+            ? `${scenarioHighlight.venueId} / ${scenarioHighlight.name}`
+            : 'n/a',
+          scenarioWindDown: scenarioWindDown
+            ? `${scenarioWindDown.venueId} / ${scenarioWindDown.name}`
+            : 'n/a',
+          opportunityId: opportunity.id,
+          opportunityStart: opportunity.starts[0]
+            ? `${opportunity.starts[0].venueId} / ${opportunity.starts[0].name}`
+            : 'n/a',
+          opportunityHighlight: `${opportunity.anchor.venueId} / ${opportunity.anchor.name}`,
+          opportunityWindDown: opportunity.closes[0]
+            ? `${opportunity.closes[0].venueId} / ${opportunity.closes[0].name}`
+            : 'n/a',
+          artifactId: artifact?.id ?? 'n/a',
+          artifactDirectionId: artifact?.selection.directionId ?? 'n/a',
+          artifactAnchorVenueId: artifact?.anchorVenueId ?? 'n/a',
+          artifactStoryStart: artifact?.storySpine.start ?? 'n/a',
+          artifactStoryHighlight: artifact?.storySpine.highlight ?? 'n/a',
+          artifactStoryWindDown: artifact?.storySpine.windDown ?? 'n/a',
+          discoveryStart: selectedStartVenueId,
+          discoveryHighlight: selectedHighlightVenueId,
+          discoveryWindDown: selectedWindDownVenueId,
+          discoveryFixtureFlags: `start:${String(fixtureIdSet.has(selectedStartVenueId))} | highlight:${String(
+            fixtureIdSet.has(selectedHighlightVenueId),
+          )} | windDown:${String(fixtureIdSet.has(selectedWindDownVenueId))}`,
+          lineageSummary: artifact
+            ? formatSelectedArtifactLineageSummary(resolveSelectedArtifactPlanningLineage(artifact))
+            : 'n/a',
+          qualificationCacheHit: artifact
+            ? curateQualificationCacheHitByArtifactId[artifact.id] == null
+              ? 'n/a'
+              : String(curateQualificationCacheHitByArtifactId[artifact.id])
+            : 'n/a',
+          rolePoolMembership: rolePoolVenueIdsByRole
+            ? `start:${String(rolePoolVenueIdsByRole.start.includes(selectedStartVenueId))} | highlight:${String(
+                rolePoolVenueIdsByRole.highlight.includes(selectedHighlightVenueId),
+              )} | windDown:${String(rolePoolVenueIdsByRole.windDown.includes(selectedWindDownVenueId))}`
+            : 'n/a',
+          rolePoolVenueIdsSummary,
+          candidatePoolSufficiencySummary: preflight?.candidatePoolSufficiencyByRole
+            ? `start:${preflight.candidatePoolSufficiencyByRole.start} | highlight:${preflight.candidatePoolSufficiencyByRole.highlight} | windDown:${preflight.candidatePoolSufficiencyByRole.windDown}`
+            : 'n/a',
+          missingRoleForContract: preflight?.missingRoleForContract ?? 'none',
+          hardCommitCandidateCount:
+            preflight?.hardCommitCandidateCount == null
+              ? 'n/a'
+              : String(preflight.hardCommitCandidateCount),
+          failedCheck: preflight?.failedCheck ?? 'none',
+          explicitFallbackReason: preflight?.explicitFallbackReason ?? 'none',
+          sampledCandidatesSummary: preflight?.sampledCandidatesSummary ?? 'n/a',
+        }
+      })
+  }, [
+    curatePreviewCommitabilityByArtifactId,
+    curateQualificationCacheHitByArtifactId,
+    debugDevGreatStopFixtureVenueIds,
+    isCurateWrapperActive,
+    scenarioBackedVerifiedCityOpportunities,
+    step2CandidateRouteArtifacts,
+  ])
+  const surpriseVariationByDirectionId = useMemo(
+    () =>
+      new Map(
+        directionCards.map((entry) => {
+          const artifact = candidateRouteArtifactByDirectionIdForDisplay.get(entry.id)
+          const stopFingerprint = [
+            artifact?.storySpine.start ?? '',
+            artifact?.storySpine.highlight ?? '',
+            artifact?.storySpine.windDown ?? '',
+          ]
+            .map((value) => value.trim().toLowerCase())
+            .join('|')
+          return [
+            entry.id,
+            {
+              scenarioFamily:
+                entry.debugMeta?.directionStrategyFamily ??
+                entry.debugMeta?.experienceFamily ??
+                entry.cluster,
+              pocketId: artifact?.selection.pocketId ?? entry.debugMeta?.pocketId ?? entry.id,
+              anchorVenueId: artifact?.anchorVenueId ?? '',
+              stopFingerprint,
+            },
+          ] as const
+        }),
+      ),
+    [candidateRouteArtifactByDirectionIdForDisplay, directionCards],
   )
   const selectedDirectionGreatStopSignal = useMemo(
     () =>
@@ -9262,35 +13159,146 @@ export function SandboxConciergePage() {
       userSelectedDirection.setKey === directionSetKey &&
       userSelectedDirection.directionId === selectedDirectionId,
   )
+  const toUserSafeGenerateError = useCallback((nextError: unknown): string => {
+    const rawMessage = nextError instanceof Error ? nextError.message : ''
+    if (rawMessage.toLowerCase().includes('fallback arc recovery failed')) {
+      return 'No reliable surprise route is available for this setup yet. Try a nearby location or generate again.'
+    }
+    if (rawMessage) {
+      return rawMessage
+    }
+    return 'Failed to generate plan.'
+  }, [])
   const generatePlan = useCallback(
-    async (directionIdOverride?: string | unknown) => {
+    async (
+      directionIdOverride?: string | unknown,
+      selectedRouteArtifactIdOverride?: string | null,
+    ) => {
       const selectionEpochAtStart = selectionEpochRef.current
       const normalizedDirectionOverride =
         typeof directionIdOverride === 'string' ? directionIdOverride : null
-      const activeDirectionId = normalizedDirectionOverride ?? selectedDirectionId
+      const normalizedSelectedRouteArtifactIdOverride =
+        typeof selectedRouteArtifactIdOverride === 'string' &&
+        selectedRouteArtifactIdOverride.trim().length > 0
+          ? selectedRouteArtifactIdOverride.trim()
+          : null
+      let activeDirectionId = normalizedDirectionOverride ?? selectedDirectionId
+      let activeCandidateRouteArtifact =
+        (normalizedSelectedRouteArtifactIdOverride
+          ? candidateRouteArtifactByIdForDisplay.get(normalizedSelectedRouteArtifactIdOverride) ?? null
+          : null) ??
+        (selectedStep2CandidateArtifactId
+          ? candidateRouteArtifactByIdForDisplay.get(selectedStep2CandidateArtifactId) ?? null
+          : null) ??
+        (activeDirectionId
+          ? isCurateWrapperActive
+            ? resolveUniqueCandidateRouteArtifactForDirection(activeDirectionId)
+            : candidateRouteArtifactByDirectionIdForDisplay.get(activeDirectionId) ?? null
+          : null)
+      let activeSelectedArtifactLineage =
+        resolveSelectedArtifactPlanningLineage(activeCandidateRouteArtifact)
+      if (activeSelectedArtifactLineage?.directionId) {
+        activeDirectionId = activeSelectedArtifactLineage.directionId
+      } else if (!activeDirectionId) {
+        activeDirectionId = activeCandidateRouteArtifact?.selection.directionId ?? null
+      }
+      setStep2RerollTrace((current) =>
+        current
+          ? {
+              ...current,
+              generatePlan_called: true,
+              generatePlan_directionId: activeDirectionId ?? null,
+              generatePlan_artifactIdOverride:
+                normalizedSelectedRouteArtifactIdOverride ?? selectedStep2CandidateArtifactId ?? null,
+              directionFallbackUsed:
+                current.directionFallbackUsed ||
+                Boolean(
+                  !normalizedSelectedRouteArtifactIdOverride &&
+                    !selectedStep2CandidateArtifactId &&
+                    activeDirectionId,
+                ),
+            }
+          : current,
+      )
+      const markGeneratePlanTraceFailure = (message: string) => {
+        setStep2RerollTrace((current) =>
+          current
+            ? {
+                ...current,
+                generatePlan_success: false,
+                generatePlan_errorRaw: message,
+              }
+            : current,
+        )
+      }
       if (!activeDirectionId) {
+        markGeneratePlanTraceFailure('Direction is unavailable before generation.')
         return false
       }
-      const activeDirection = directionCards.find((entry) => entry.id === activeDirectionId)
+      if (
+        isCurateWrapperActive &&
+        (normalizedSelectedRouteArtifactIdOverride || selectedStep2CandidateArtifactId) &&
+        !activeCandidateRouteArtifact
+      ) {
+        const message = 'Selected route option is unavailable. Re-select a route card and continue.'
+        markGeneratePlanTraceFailure(message)
+        setError(message)
+        return false
+      }
+      if (!activeCandidateRouteArtifact) {
+        activeCandidateRouteArtifact = isCurateWrapperActive
+          ? resolveUniqueCandidateRouteArtifactForDirection(activeDirectionId)
+          : candidateRouteArtifactByDirectionIdForDisplay.get(activeDirectionId) ?? null
+        activeSelectedArtifactLineage =
+          resolveSelectedArtifactPlanningLineage(activeCandidateRouteArtifact)
+      }
+      const activeCandidateOpportunity =
+        activeCandidateRouteArtifact?.sourceOpportunityId
+          ? verifiedCityOpportunityById.get(activeCandidateRouteArtifact.sourceOpportunityId)
+          : undefined
+      const activeDirection =
+        directionCards.find((entry) => entry.id === activeDirectionId) ??
+        allDirectionCards.find((entry) => entry.id === activeDirectionId)
       if (!activeDirection) {
+        const message = 'Direction is unavailable. Re-select a direction and try again.'
+        markGeneratePlanTraceFailure(message)
+        setError(message)
         return false
       }
-      const activeDirectionGreatStopSignal = getGreatStopSignalForDirection({
-        direction: activeDirection,
-        opportunities: step2PrimarySourceOpportunities,
-      })
+      const activeDirectionGreatStopSignal =
+        buildGreatStopAdmissibilitySignal(activeCandidateOpportunity?.scenarioNight?.evaluation) ??
+        getGreatStopSignalForDirection({
+          direction: activeDirection,
+          opportunities: step2PrimarySourceOpportunities,
+        })
       const activeDirectionContract = buildDirectionPlanningSelectionFromCard(
         activeDirection,
         activeDirectionGreatStopSignal,
       )
       if (!activeDirectionContract) {
-        setError('Direction contract is unavailable. Re-select a direction and try again.')
+        const message = 'Direction contract is unavailable. Re-select a direction and try again.'
+        markGeneratePlanTraceFailure(message)
+        setError(message)
         return false
       }
       const activeDirectionContext = buildResolvedDirectionContext(activeDirectionContract)
       if (!activeDirectionContext) {
-        setError('Direction context is unavailable. Re-select a direction and try again.')
+        const message = 'Direction context is unavailable. Re-select a direction and try again.'
+        markGeneratePlanTraceFailure(message)
+        setError(message)
         return false
+      }
+      const expectedDirectionIdentity = resolveDirectionValidationIdentity({
+        contractIdentity: activeDirectionContext.identity ?? activeDirectionContract.identity,
+        previewScenarioFamily: activeCandidateOpportunity?.scenarioNight?.scenarioFamily,
+      })
+      const activeDirectionContextForValidation: ResolvedDirectionContext = {
+        ...activeDirectionContext,
+        identity: expectedDirectionIdentity,
+      }
+      const activeDirectionContractForValidation: DirectionPlanningSelection = {
+        ...activeDirectionContract,
+        identity: expectedDirectionIdentity,
       }
       const activeRouteShapeContract = buildRouteShapeContract({
         selectedDirection: activeDirectionContract,
@@ -9298,31 +13306,69 @@ export function SandboxConciergePage() {
         conciergeIntent: canonicalConciergeIntent,
         contractConstraints: canonicalContractConstraints,
       })
-      const activeIntentSelectedDirectionContext =
-        buildIntentSelectedDirectionContextEngine(activeDirectionContract)
+      const activeIntentSelectedDirectionContext = buildIntentSelectedDirectionContextEngine(
+        activeDirectionContractForValidation,
+      )
       if (!activeIntentSelectedDirectionContext) {
-        setError('Direction context is unavailable. Re-select a direction and try again.')
+        const message = 'Direction context is unavailable. Re-select a direction and try again.'
+        markGeneratePlanTraceFailure(message)
+        setError(message)
         return false
       }
       const activeContractConstraints = canonicalContractConstraints
       const activeCluster = activeDirection.cluster
+      const selectedArtifactDiscoveryPreferences = buildSelectedArtifactDiscoveryPreferences({
+        artifact: activeCandidateRouteArtifact,
+        opportunity: activeCandidateOpportunity,
+      })
+      const selectedArtifactLineageSummary = formatSelectedArtifactLineageSummary(
+        activeSelectedArtifactLineage,
+      )
+      const plannerInputSummary = formatCuratePlannerInputSummary({
+        mode: isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build',
+        planningMode: isBuildWrapperActive ? 'user-led' : 'engine-led',
+        district: activeDirectionContract.pocketLabel,
+        city: districtLocationQuery,
+        directionId: activeDirectionContract.id,
+        pocketId: activeDirectionContract.pocketId,
+        discoveryPreferences: selectedArtifactDiscoveryPreferences,
+      })
       if (!activeCluster) {
+        markGeneratePlanTraceFailure('Direction cluster is unavailable before generation.')
         return false
       }
       if (!districtLocationQuery) {
-        setError('Enter a location before generating a plan.')
+        const message = 'Enter a location before generating a plan.'
+        markGeneratePlanTraceFailure(message)
+        setError(message)
         return false
       }
       if (unresolvedLocationReason) {
+        markGeneratePlanTraceFailure(unresolvedLocationReason)
         setError(unresolvedLocationReason)
         return false
       }
       if (districtPreviewResult && districtPreviewResult.ranked.length === 0) {
-        setError('No viable districts for this location. Update the location and try again.')
+        const message = 'No viable districts for this location. Update the location and try again.'
+        markGeneratePlanTraceFailure(message)
+        setError(message)
+        return false
+      }
+      if (isCurateWrapperActive && !selectedStarterPack) {
+        const message = 'Select a starter pack before continuing.'
+        markGeneratePlanTraceFailure(message)
+        setError(message)
+        return false
+      }
+      if (isBuildWrapperActive && !selectedBuildAnchor?.venueId) {
+        const message = 'Select a required anchor before continuing.'
+        markGeneratePlanTraceFailure(message)
+        setError(message)
         return false
       }
       setLoading(true)
       setError(undefined)
+      setSurpriseContractValidationFailedDirectionId(null)
       setIsLocking(false)
       setHasRevealed(false)
       setPreviewSwap(undefined)
@@ -9332,6 +13378,7 @@ export function SandboxConciergePage() {
       setGenerationContractDebug(null)
       setAppliedSwapRole(null)
       setNearbySummaryByRole({})
+      setCurateRefinementEntryPayload(null)
       setCanonicalStopByRole({})
       setRejectedStopRoles([])
 
@@ -9339,15 +13386,18 @@ export function SandboxConciergePage() {
         const selectedClusterConfirmation = activeDirection.card.confirmation
         const selectedDirectionPreviewContext =
           buildSelectedDirectionPreviewContext(activeDirection)
-        // Wrapper seam: selectedDirectionContext is engine-authored; display fields stay out of planning truth.
+        // Wrapper seam: prepare canonical wrapper input/options, then hand off to the shared
+        // Plan Build Orchestrator. The orchestrator owns retrieval/scoring/planning; this page
+        // still performs result projection/runtime assembly after the call, which is the next
+        // extraction seam rather than a second orchestrator.
         assertCanonicalSelectedDirectionContext({
           wrapperSeam: 'sandbox_concierge.generate',
           input: { selectedDirectionContext: activeIntentSelectedDirectionContext },
         })
-        const result = await runGeneratePlan(
+        const result = await runPlanBuild(
           {
-            mode: 'build',
-            planningMode: 'engine-led',
+            mode: isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build',
+            planningMode: isBuildWrapperActive ? 'user-led' : 'engine-led',
             persona,
             primaryVibe,
             city: districtLocationQuery,
@@ -9355,13 +13405,29 @@ export function SandboxConciergePage() {
             distanceMode: 'nearby',
             refinementModes: clusterRefinementMap[activeCluster],
             selectedDirectionContext: activeIntentSelectedDirectionContext,
+            discoveryPreferences: selectedArtifactDiscoveryPreferences,
+            anchor:
+              isBuildWrapperActive && selectedBuildAnchor?.venueId
+                ? {
+                    venueId: selectedBuildAnchor.venueId,
+                    role: activeCandidateRouteArtifact?.anchorRole ?? 'highlight',
+                  }
+                : undefined,
           },
           {
-            sourceMode: 'curated',
-            sourceModeOverrideApplied: true,
-            debugMode: false,
-            experienceContract: canonicalExperienceContract,
-            contractConstraints: canonicalContractConstraints,
+              sourceMode: 'curated',
+              sourceModeOverrideApplied: true,
+              debugMode: false,
+              curateCommitSemantics: isCurateWrapperActive
+                ? 'approved_route_hard_commit'
+                : undefined,
+              starterPack: selectedStarterPack ?? undefined,
+              experienceContract: canonicalExperienceContract,
+              contractConstraints: canonicalContractConstraints,
+              canonicalInterpretationBundle,
+              rankedDistrictPockets: districtPreviewResult?.ranked,
+              contractGateWorld,
+            selectedArtifactLineage: activeSelectedArtifactLineage,
           },
         )
         enforceSelectedDirectionLineage({
@@ -9371,21 +13437,40 @@ export function SandboxConciergePage() {
           errorMessage:
             'Route drifted from selected direction contract. Direction context was not preserved.',
         })
-        const strongCurationPass = applyStrongCurationTastePass({
-          itinerary: result.itinerary,
-          selectedArc: result.selectedArc,
-          scoredVenues: result.scoredVenues,
-          intentProfile: result.intentProfile,
-          lens: result.lens,
+        // Post-orchestrator wrapper work: reconcile the engine-authored plan with current
+        // application/runtime artifacts. Keep this downstream of `runGeneratePlan`.
+        const {
+          strongCurationPass,
+          anchoredPlan,
+          canonicalItinerary,
+          contractBuildability,
+          directionValidation,
+          nextFinalRoute,
+        } = await runPostPlannerCommitParityStages({
+          result,
           contractConstraints: activeContractConstraints,
+          expectedDirectionIdentity,
+          selectedDirectionContextForValidation: activeDirectionContextForValidation,
+          selectedDirectionContractForValidation: activeDirectionContractForValidation,
+          selectedDirectionId: activeDirectionContract.id,
+          selectedDirectionPreviewContext,
+          selectedCluster: activeCluster,
+          city: districtLocationQuery,
+          persona,
+          vibe: primaryVibe,
         })
-        const anchoredPlan = await enforceFullStopRealityContract({
-          itinerary: strongCurationPass.itinerary,
-          selectedArc: strongCurationPass.selectedArc,
-          scoredVenues: strongCurationPass.scoredVenues,
-          intentProfile: result.intentProfile,
-          lens: result.lens,
-        })
+        if (isBuildWrapperActive && selectedBuildAnchor?.venueId) {
+          const requiredAnchorVenueId =
+            result.intentProfile.anchor?.venueId ?? selectedBuildAnchor.venueId
+          const anchorPreserved = anchoredPlan.itinerary.stops.some(
+            (stop) => stop.venueId === requiredAnchorVenueId,
+          )
+          if (!anchorPreserved) {
+            throw new Error(
+              'Required anchor could not be preserved in this route. Choose another direction or anchor.',
+            )
+          }
+        }
         const tasteCurationDebug = buildTasteCurationDebugForArc({
           selectedArc: anchoredPlan.selectedArc,
           qualificationByCandidateId: strongCurationPass.qualificationByCandidateId,
@@ -9412,52 +13497,45 @@ export function SandboxConciergePage() {
           rolePoolVenueIdsCombined: strongCurationPass.rolePoolVenueIdsCombined,
           thinPoolRelaxationTrace: strongCurationPass.thinPoolRelaxationTrace,
         })
-        const canonicalItinerary = applyCanonicalIdentityToItinerary(
-          anchoredPlan.itinerary,
-          anchoredPlan.canonicalStopByRole,
-        )
-        const expectedDirectionIdentity =
-          activeDirectionContext.identity ?? activeDirectionContract.identity ?? 'exploratory'
-        const contractBuildability = assessDirectionContractBuildability({
-          expectedDirectionIdentity,
-          scoredVenues: strongCurationPass.scoredVenues,
-        })
-        const directionValidation = validateDirectionRouteContract({
-          selectedDirectionContext: activeDirectionContext,
-          selectedDirection: activeDirectionContract,
-          itinerary: canonicalItinerary,
-          buildability: contractBuildability,
-        })
         setGenerationContractDebug({
+          validatorMode: directionValidation.validatorMode,
+          validatorValid: directionValidation.valid,
           generationDriftReason: directionValidation.generationDriftReason,
+          directionAlignmentScore: directionValidation.directionAlignmentScore,
+          surpriseSoftAlignmentFloor: directionValidation.surpriseSoftAlignmentFloor,
+          surpriseHardAlignmentFloor: directionValidation.surpriseHardAlignmentFloor,
+          surpriseMaterialAlignmentFloor: directionValidation.surpriseMaterialAlignmentFloor,
+          lowAlignment: directionValidation.lowAlignment,
+          hardAlignmentFailure: directionValidation.hardAlignmentFailure,
+          materialAlignmentFailure: directionValidation.materialAlignmentFailure,
+          severeGreatStopRisk: directionValidation.severeGreatStopRisk,
           missingRoleForContract: directionValidation.missingRoleForContract,
           contractBuildabilityStatus: directionValidation.contractBuildabilityStatus,
           candidatePoolSufficiencyByRole: directionValidation.candidatePoolSufficiencyByRole,
           expectedDirectionIdentity: directionValidation.expectedDirectionIdentity,
           observedDirectionIdentity: directionValidation.observedDirectionIdentity,
           fallbackApplied: directionValidation.fallbackApplied,
+          errorMessageRaw: null,
           thinPoolRelaxationTrace: directionValidation.thinPoolRelaxationTrace,
+          curateHardCommit: result.trace.curateHardCommit,
+          curateCommitSemantics: result.trace.curateHardCommit?.curateCommitSemantics ?? null,
+          hardCommitRequired: result.trace.curateHardCommit?.hardCommitRequired ?? false,
+          selectedDirectionIdSnapshot: activeDirectionContract.id,
+          activeDistrictPocketIdSnapshot: activeDistrictPocketId,
+          selectedArtifactLineageSummary,
+          plannerInputSummary,
+          postPlannerStagesSummary:
+            'applyStrongCurationTastePass -> enforceFullStopRealityContract -> validateDirectionRouteContract -> buildFinalRoute',
         })
-        if (!directionValidation.valid) {
-          throw new Error('Route drifted from selected direction contract. Please regenerate.')
-        }
-        const nextFinalRoute = buildFinalRoute({
-          itinerary: canonicalItinerary,
-          canonicalStopByRole: anchoredPlan.canonicalStopByRole,
-          selectedDirectionId: activeDirectionContract.id,
-          city: districtLocationQuery,
-          persona,
-          vibe: primaryVibe,
-          activeRole: 'start',
-          selectedCluster: activeCluster,
-          selectedDirectionPreviewContext,
+        const generatedPreview = buildPreviewFromFinalRoute(nextFinalRoute)
+        const generatedVisibleStops = generatedPreview.stops
+          .map((stop) => stop.name)
+          .filter((name): name is string => Boolean(name && name.trim()))
+        lastGeneratedVisibleNightFingerprintRef.current = buildVisibleNightFingerprint({
+          districtAnchorLine: `District anchor: ${nextFinalRoute.location || districtLocationQuery}`,
+          stops: generatedVisibleStops,
+          stopVenueIds: nextFinalRoute.stops.map((stop) => stop.venueId),
         })
-        if (!nextFinalRoute) {
-          throw new Error('Route commit failed: one or more stops are missing canonical identity.')
-        }
-        if (nextFinalRoute.selectedDirectionId !== activeDirectionContract.id) {
-          throw new Error('Route drifted from selected direction contract. Please regenerate.')
-        }
         if (selectionEpochRef.current !== selectionEpochAtStart) {
           return false
         }
@@ -9471,25 +13549,77 @@ export function SandboxConciergePage() {
           conciergeIntent: canonicalConciergeIntent,
           experienceContract: canonicalExperienceContract,
           contractConstraints: activeContractConstraints,
-          selectedDirectionContext: activeDirectionContext,
+          selectedDirectionContext: activeDirectionContextForValidation,
           selectedCluster: activeCluster,
           selectedClusterConfirmation,
-          selectedDirectionContract: activeDirectionContract,
+          selectedDirectionContract: activeDirectionContractForValidation,
           routeShapeContract: activeRouteShapeContract,
           tasteCurationDebug,
           selectedDirectionPreviewContext,
+          selectedCandidateRouteArtifactId: activeCandidateRouteArtifact?.id ?? null,
         })
+        setCurateRefinementEntryPayload(null)
         updateFinalRoute(nextFinalRoute)
         setCanonicalStopByRole(anchoredPlan.canonicalStopByRole)
         setRejectedStopRoles(anchoredPlan.rejectedStopRoles)
         setActiveRole('start')
         setNearbySummaryByRole({})
         autoDirectionSyncAttemptRef.current = null
+        setSurpriseContractValidationFailedDirectionId(null)
+        setStep2RerollTrace((current) =>
+          current
+            ? {
+                ...current,
+                generatePlan_success: true,
+                generatePlan_errorRaw: null,
+              }
+            : current,
+        )
         return true
       } catch (nextError) {
-        setError(
-          nextError instanceof Error ? nextError.message : 'Failed to generate plan.',
+        const rawMessage = nextError instanceof Error ? nextError.message : ''
+        setStep2RerollTrace((current) =>
+          current
+            ? {
+                ...current,
+                generatePlan_success: false,
+                generatePlan_errorRaw: rawMessage || null,
+              }
+            : current,
         )
+        setGenerationContractDebug((current) =>
+          current
+            ? {
+                ...current,
+                errorMessageRaw: rawMessage || null,
+              }
+            : {
+                validatorMode: isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build',
+                validatorValid: false,
+                generationDriftReason: null,
+                missingRoleForContract: null,
+                contractBuildabilityStatus: 'thin',
+                candidatePoolSufficiencyByRole: {
+                  start: 0,
+                  highlight: 0,
+                  windDown: 0,
+                },
+                expectedDirectionIdentity: 'exploratory',
+                observedDirectionIdentity: 'exploratory',
+                fallbackApplied: false,
+                errorMessageRaw: rawMessage || null,
+              },
+        )
+        if (
+          isSurpriseWrapperActive &&
+          activeDirectionId &&
+          rawMessage
+            .toLowerCase()
+            .includes('route drifted from selected direction contract')
+        ) {
+          setSurpriseContractValidationFailedDirectionId(activeDirectionId)
+        }
+        setError(toUserSafeGenerateError(nextError))
         return false
       } finally {
         setLoading(false)
@@ -9499,21 +13629,191 @@ export function SandboxConciergePage() {
       canonicalConciergeIntent,
       canonicalContractConstraints,
       canonicalExperienceContract,
+      candidateRouteArtifactByIdForDisplay,
       directionCards,
+      allDirectionCards,
       districtLocationQuery,
       districtPreviewResult,
+      isBuildWrapperActive,
+      isSurpriseWrapperActive,
+      isCurateWrapperActive,
       persona,
       primaryVibe,
+      selectedBuildAnchor?.venueId,
+      selectedStep2CandidateArtifactId,
+      candidateRouteArtifactByDirectionIdForDisplay,
+      resolveUniqueCandidateRouteArtifactForDirection,
+      selectedStarterPack,
       selectedDirectionId,
       step2PrimarySourceOpportunities,
+      toUserSafeGenerateError,
       unresolvedLocationReason,
       updateFinalRoute,
+      verifiedCityOpportunityById,
     ],
   )
 
+  const handleCurateStarterSelect = useCallback(
+    (packId: string) => {
+      const pack = starterPacks.find((entry) => entry.id === packId)
+      if (!pack) {
+        return
+      }
+      setSelectedStarterPackId(pack.id)
+      writeSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY, 'curate')
+      writeSessionStorageValue(DEV_CLOSEOUT_CURATE_STARTER_PACK_ID_KEY, pack.id)
+      if (pack.personaBias) {
+        setPersona(pack.personaBias)
+      }
+      setPrimaryVibe(pack.primaryAnchor)
+      setError(undefined)
+    },
+    [],
+  )
+
+  const handleCurateStarterContinue = useCallback(() => {
+    if (!selectedStarterPack) {
+      setError('Select a starter pack before continuing.')
+      return
+    }
+    writeSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY, 'curate')
+    writeSessionStorageValue(DEV_CLOSEOUT_CURATE_STARTER_PACK_ID_KEY, selectedStarterPack.id)
+    writeSessionStorageValue(DEV_CLOSEOUT_CURATE_READY_KEY, '1')
+    setCurateStarterReady(true)
+    if (typeof window !== 'undefined' && window.location.pathname.toLowerCase() !== '/dev/choose') {
+      window.location.assign('/dev/choose')
+    }
+  }, [selectedStarterPack])
+
+  const resetBuildAttemptState = useCallback(() => {
+    buildAnchorSearchAttemptRef.current += 1
+    setSelectedBuildAnchor(null)
+    setBuildAnchorReady(false)
+    setBuildAnchorResults([])
+    setBuildAnchorError(undefined)
+    setBuildAnchorLoading(false)
+    writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
+    writeSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY, '0')
+    buildValidationAttemptRef.current = null
+    autoDirectionSyncAttemptRef.current = null
+    surpriseAutoGenerateAttemptRef.current = null
+    setSelectedDirectionId(null)
+    setUserSelectedDirection(null)
+    setSelectedIdReconciled(false)
+    setHasRevealed(false)
+    setLoading(false)
+    setIsLocking(false)
+    setPreviewSwap(undefined)
+    setExpandedRole(null)
+    setAppliedSwapRole(null)
+    setNearbySummaryByRole({})
+    setCurateRefinementEntryPayload(null)
+    setCanonicalStopByRole({})
+    setRejectedStopRoles([])
+    setPlan(undefined)
+    updateFinalRoute(null)
+    setError(undefined)
+  }, [updateFinalRoute])
+
+  const handleBuildAnchorQueryChange = useCallback(
+    (value: string) => {
+      setBuildAnchorQuery(value)
+      writeSessionStorageValue(DEV_CLOSEOUT_BUILD_QUERY_KEY, value)
+      resetBuildAttemptState()
+    },
+    [resetBuildAttemptState],
+  )
+
+  const handleBuildAnchorSearch = useCallback(async () => {
+    resetBuildAttemptState()
+    const query = buildAnchorQuery.trim()
+    if (query.length < 2) {
+      setBuildAnchorError('Enter at least 2 characters to find an anchor.')
+      setBuildAnchorResults([])
+      return
+    }
+      setBuildAnchorLoading(true)
+      setBuildAnchorError(undefined)
+      const searchAttempt = buildAnchorSearchAttemptRef.current + 1
+      buildAnchorSearchAttemptRef.current = searchAttempt
+      try {
+        const results = await searchAnchorVenueOptions({
+          query,
+          city: districtLocationQuery,
+        })
+        if (buildAnchorSearchAttemptRef.current !== searchAttempt) {
+          return
+        }
+        setBuildAnchorResults(results)
+        if (results.length === 0) {
+          setBuildAnchorError('No local anchor match found. Try a nearby place or broader kind.')
+        }
+      } catch {
+        if (buildAnchorSearchAttemptRef.current !== searchAttempt) {
+          return
+        }
+        setBuildAnchorResults([])
+        setBuildAnchorError('Anchor search is unavailable right now. Please try again.')
+      } finally {
+        if (buildAnchorSearchAttemptRef.current === searchAttempt) {
+          setBuildAnchorLoading(false)
+        }
+      }
+  }, [buildAnchorQuery, districtLocationQuery, resetBuildAttemptState])
+
+  const handleBuildAnchorSelect = useCallback((result: AnchorSearchResult) => {
+    const selection: BuildAnchorSelection = {
+      venueId: result.venue.id,
+      name: result.venue.name,
+      category: result.venue.category,
+      city: result.venue.city,
+      neighborhood: result.venue.neighborhood,
+    }
+    setSelectedBuildAnchor(selection)
+    setBuildRefinementVibe('auto')
+    setPrimaryVibe(getBuildDefaultVibe(result.venue.category))
+    setBuildAnchorError(undefined)
+  }, [])
+
+  const handleBuildContinue = useCallback(() => {
+    const query = buildAnchorQuery.trim()
+    const selectedAnchorInCurrentResults = Boolean(
+      selectedBuildAnchor &&
+        buildAnchorResults.some((result) => result.venue.id === selectedBuildAnchor.venueId),
+    )
+    if (buildAnchorLoading) {
+      setBuildAnchorError('Wait for anchor search to finish before continuing.')
+      return
+    }
+    if (buildAnchorError) {
+      setBuildAnchorError('Resolve anchor search results before continuing.')
+      return
+    }
+    if (query.length < 2) {
+      setBuildAnchorError('Enter at least 2 characters to find an anchor.')
+      return
+    }
+    if (!selectedBuildAnchor) {
+      setBuildAnchorError('Select a required anchor before continuing.')
+      return
+    }
+    if (!selectedAnchorInCurrentResults) {
+      setBuildAnchorError('Select an anchor from the current results before continuing.')
+      return
+    }
+    writeSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY, 'build')
+    writeSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY, '1')
+    writeSessionStorageValue(DEV_CLOSEOUT_BUILD_QUERY_KEY, query)
+    writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, JSON.stringify(selectedBuildAnchor))
+    setBuildAnchorReady(true)
+    if (typeof window !== 'undefined' && window.location.pathname.toLowerCase() !== '/dev/choose') {
+      window.location.assign('/dev/choose')
+    }
+  }, [buildAnchorError, buildAnchorLoading, buildAnchorQuery, buildAnchorResults, selectedBuildAnchor])
+
   const handleSelectDirection = useCallback(
-    (directionId: string) => {
-      const directionChanged = selectedDirectionId !== directionId
+    (directionId: string, forceReset = false) => {
+      const directionChanged = forceReset || selectedDirectionId !== directionId
       setSelectedDirectionId(directionId)
       setUserSelectedDirection(
         directionSetKey.length > 0
@@ -9529,14 +13829,19 @@ export function SandboxConciergePage() {
       setSwapCompatibilityDebug(null)
       setGenerationContractDebug(null)
       if (directionChanged) {
+        setSelectedStep2CandidateArtifactId(null)
         selectionEpochRef.current += 1
         autoDirectionSyncAttemptRef.current = null
+        surpriseAutoGenerateAttemptRef.current = null
+        buildValidationAttemptRef.current = null
+        setSurpriseContractValidationFailedDirectionId(null)
         setLoading(false)
         setHasRevealed(false)
         setPreviewSwap(undefined)
         setExpandedRole(null)
         setAppliedSwapRole(null)
         setNearbySummaryByRole({})
+        setCurateRefinementEntryPayload(null)
         setCanonicalStopByRole({})
         setRejectedStopRoles([])
         setPlan(undefined)
@@ -9548,32 +13853,37 @@ export function SandboxConciergePage() {
   )
 
   const handleSelectStep2NightOption = useCallback(
-    (option: VerifiedCityOpportunity) => {
+    (option: CanonicalCandidateRouteArtifact) => {
       const optionPocketId = option.selection.pocketId
-      const optionDirectionId = option.selection.directionId
+      const optionDirection = resolveDirectionForCandidateArtifact(option)
       if (optionPocketId && activeDistrictPocketId !== optionPocketId) {
         setActiveDistrictPocketId(optionPocketId)
       }
-      if (optionDirectionId) {
-        handleSelectDirection(optionDirectionId)
+      if (optionDirection) {
+        const artifactChanged = selectedStep2CandidateArtifactId !== option.id
+        handleSelectDirection(optionDirection.id, artifactChanged)
+        setSelectedStep2CandidateArtifactId(option.id)
         return
       }
-      if (!optionPocketId) {
-        const fallback = allDirectionCards[0]
-        if (fallback) {
-          handleSelectDirection(fallback.id)
-        }
-        return
-      }
-      const fallbackDirection = allDirectionCards.find((entry) => {
-        const pocketId = entry.debugMeta?.pocketId ?? entry.id
-        return pocketId === optionPocketId
-      })
-      if (fallbackDirection) {
-        handleSelectDirection(fallbackDirection.id)
-      }
+      setError('Direction is unavailable for this route option. Choose another option.')
     },
-    [activeDistrictPocketId, allDirectionCards, handleSelectDirection],
+    [
+      activeDistrictPocketId,
+      handleSelectDirection,
+      resolveDirectionForCandidateArtifact,
+      selectedStep2CandidateArtifactId,
+    ],
+  )
+
+  const handleSelectAreaContext = useCallback(
+    (pocketId: string) => {
+      // Curate route-card selection stays authoritative once an explicit artifact is chosen.
+      if (isCurateWrapperActive && selectedStep2CandidateArtifactId) {
+        return
+      }
+      setActiveDistrictPocketId(pocketId)
+    },
+    [isCurateWrapperActive, selectedStep2CandidateArtifactId],
   )
 
   const handlePreviewShape = useCallback(
@@ -9636,6 +13946,110 @@ export function SandboxConciergePage() {
   )
 
   useEffect(() => {
+    if (!isBuildWrapperActive || !selectedBuildAnchor) {
+      return
+    }
+    const allowedDirectionIds = new Set(
+      buildAnchorMatchedCandidateArtifacts
+        .map((artifact) => artifact.selection.directionId)
+        .filter((value): value is string => Boolean(value)),
+    )
+    if (allowedDirectionIds.size === 0) {
+      setSelectedDirectionId(null)
+      setUserSelectedDirection(null)
+      setHasRevealed(false)
+      setCurateRefinementEntryPayload(null)
+      setPlan(undefined)
+      updateFinalRoute(null)
+      return
+    }
+    if (selectedDirectionId && allowedDirectionIds.has(selectedDirectionId)) {
+      return
+    }
+    const firstAllowedDirectionId = [...allowedDirectionIds][0]
+    if (!firstAllowedDirectionId) {
+      return
+    }
+    handleSelectDirection(firstAllowedDirectionId)
+  }, [
+    buildAnchorMatchedCandidateArtifacts,
+    handleSelectDirection,
+    isBuildWrapperActive,
+    selectedBuildAnchor,
+    selectedDirectionId,
+  ])
+
+  const surpriseAutoGenerationSettled = Boolean(
+    plan &&
+      finalRoute &&
+      selectedDirectionId &&
+      finalRoute.selectedDirectionId === selectedDirectionId &&
+      (!selectedCandidateRouteArtifact ||
+        plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id),
+  )
+
+  useEffect(() => {
+    if (!isSurpriseWrapperActive || hasRevealed || loading) {
+      return
+    }
+    if (!selectedDirectionId || !selectedCandidateRouteArtifact) {
+      return
+    }
+    if (surpriseAutoGenerationSettled) {
+      return
+    }
+    const surpriseAutoGenerateAttemptKey = `${selectedDirectionId}::${selectedCandidateRouteArtifact.id}`
+    if (surpriseAutoGenerateAttemptRef.current === surpriseAutoGenerateAttemptKey) {
+      return
+    }
+    surpriseAutoGenerateAttemptRef.current = surpriseAutoGenerateAttemptKey
+    void generatePlan(selectedDirectionId, selectedCandidateRouteArtifact.id)
+  }, [
+    generatePlan,
+    hasRevealed,
+    isSurpriseWrapperActive,
+    loading,
+    selectedCandidateRouteArtifact,
+    surpriseAutoGenerationSettled,
+    selectedDirectionId,
+  ])
+
+  useEffect(() => {
+    if (!isBuildWrapperActive || hasRevealed || loading) {
+      return
+    }
+    if (!selectedDirectionId || !selectedCandidateRouteArtifact) {
+      return
+    }
+    const buildPlanSynced = Boolean(
+      plan &&
+        finalRoute &&
+        plan.selectedDirectionContract.id === selectedDirectionId &&
+        finalRoute.selectedDirectionId === selectedDirectionId &&
+        plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id,
+    )
+    if (buildPlanSynced) {
+      buildValidationAttemptRef.current = null
+      return
+    }
+    const buildValidationAttemptKey = `${selectedDirectionId}::${selectedCandidateRouteArtifact.id}`
+    if (buildValidationAttemptRef.current === buildValidationAttemptKey) {
+      return
+    }
+    buildValidationAttemptRef.current = buildValidationAttemptKey
+    void generatePlan(selectedDirectionId, selectedCandidateRouteArtifact.id)
+  }, [
+    finalRoute,
+    generatePlan,
+    hasRevealed,
+    isBuildWrapperActive,
+    loading,
+    plan,
+    selectedCandidateRouteArtifact,
+    selectedDirectionId,
+  ])
+
+  useEffect(() => {
     const currentDirectionId = selectedDirectionId ?? plan?.selectedDirectionContract.id ?? null
     if (!plan || !finalRoute || loading || !currentDirectionId) {
       return
@@ -9649,7 +14063,10 @@ export function SandboxConciergePage() {
     }
     autoDirectionSyncAttemptRef.current = currentDirectionId
     void (async () => {
-      const synced = await generatePlan(currentDirectionId)
+      const synced = await generatePlan(
+        currentDirectionId,
+        isCurateWrapperActive ? selectedCandidateRouteArtifact?.id ?? null : null,
+      )
       if (!synced) {
         setError(
           (current) =>
@@ -9658,9 +14075,769 @@ export function SandboxConciergePage() {
         )
       }
     })()
-  }, [finalRoute, generatePlan, loading, plan, selectedDirectionId])
+  }, [
+    finalRoute,
+    generatePlan,
+    isCurateWrapperActive,
+    loading,
+    plan,
+    selectedCandidateRouteArtifact?.id,
+    selectedDirectionId,
+  ])
 
   useEffect(() => {
+    if (!isCurateWrapperActive) {
+      return
+    }
+    const selectedOption = selectedStep2CandidateArtifactId
+      ? curatePrimarySelectableArtifactById.get(selectedStep2CandidateArtifactId)
+      : null
+    const authoritativeDirectionId = selectedOption?.selection.directionId ?? null
+    if (selectedOption && authoritativeDirectionId) {
+      if (selectedDirectionId !== authoritativeDirectionId) {
+        setStep2RerollTrace((current) =>
+          current
+            ? {
+                ...current,
+                reconciliationEffectRan: true,
+                anyOverrideReason: `curate artifact reconciliation preserved selected artifact ${selectedOption.id} on direction ${authoritativeDirectionId}`,
+              }
+            : current,
+        )
+        setSelectedDirectionId(authoritativeDirectionId)
+      }
+      return
+    }
+    if (!selectedDirectionId) {
+      if (selectedStep2CandidateArtifactId) {
+        setSelectedStep2CandidateArtifactId(null)
+      }
+      return
+    }
+    if (selectedOption?.selection.directionId === selectedDirectionId) {
+      return
+    }
+    const fallbackOption = resolveUniqueCandidateRouteArtifactForDirection(selectedDirectionId)
+    setStep2RerollTrace((current) =>
+      current
+        ? {
+            ...current,
+            reconciliationEffectRan: true,
+            anyOverrideReason: `curate artifact reconciliation reset selected artifact to ${fallbackOption?.id ?? 'null'}`,
+          }
+        : current,
+    )
+    setSelectedStep2CandidateArtifactId(fallbackOption?.id ?? null)
+  }, [
+    curatePrimarySelectableArtifactById,
+    isCurateWrapperActive,
+    resolveUniqueCandidateRouteArtifactForDirection,
+    selectedDirectionId,
+    selectedStep2CandidateArtifactId,
+  ])
+  const qualifyCurateCandidateArtifact = useCallback(
+    async (candidateArtifact: CanonicalCandidateRouteArtifact) => {
+      if (!isCurateWrapperActive) {
+        return
+      }
+      const artifactId = candidateArtifact.id
+      const cached = curatePreviewCommitabilityByArtifactIdRef.current[artifactId]
+      if (
+        curateQualificationInFlightRef.current[artifactId] ||
+        cached?.status === 'checking' ||
+        cached?.status === 'committable' ||
+        cached?.status === 'infeasible'
+      ) {
+        return
+      }
+      curateQualificationInFlightRef.current[artifactId] = true
+      const starterDebug = starterAwareOpportunityDebugById.get(candidateArtifact.sourceOpportunityId)
+      try {
+        const executeQualification = async (
+          artifactToQualify: CanonicalCandidateRouteArtifact,
+          repairState?: {
+            attempted: boolean
+            originalWindDown: string | null
+            repairedWindDown: string | null
+            repairedWindDownTarget: CurateWindDownRepairTarget | null
+            repairReason: string | null
+            repairSource: string | null
+          },
+        ): Promise<void> => {
+          const activeDirectionId = artifactToQualify.selection.directionId ?? selectedDirectionId ?? null
+          const activeDirection =
+            (activeDirectionId
+              ? directionCards.find((entry) => entry.id === activeDirectionId) ??
+                allDirectionCards.find((entry) => entry.id === activeDirectionId)
+              : null) ?? resolveDirectionForCandidateArtifact(artifactToQualify)
+          if (!activeDirection) {
+            return
+          }
+
+          const activeCandidateOpportunity = verifiedCityOpportunityById.get(
+            artifactToQualify.sourceOpportunityId,
+          )
+          const activeDirectionGreatStopSignal =
+            buildGreatStopAdmissibilitySignal(activeCandidateOpportunity?.scenarioNight?.evaluation) ??
+            getGreatStopSignalForDirection({
+              direction: activeDirection,
+              opportunities: step2PrimarySourceOpportunities,
+            })
+          const activeDirectionContract = buildDirectionPlanningSelectionFromCard(
+            activeDirection,
+            activeDirectionGreatStopSignal,
+          )
+          if (!activeDirectionContract) {
+            return
+          }
+          const activeDirectionContext = buildResolvedDirectionContext(activeDirectionContract)
+          if (!activeDirectionContext) {
+            return
+          }
+          const activeRouteShapeContract = buildRouteShapeContract({
+            selectedDirection: activeDirectionContract,
+            selectedDirectionContext: activeDirectionContext,
+            conciergeIntent: canonicalConciergeIntent,
+            contractConstraints: canonicalContractConstraints,
+          })
+          const expectedDirectionIdentityForPreview = resolveDirectionValidationIdentity({
+            contractIdentity: activeDirectionContext.identity ?? activeDirectionContract.identity,
+            previewScenarioFamily: activeCandidateOpportunity?.scenarioNight?.scenarioFamily,
+          })
+          const activeDirectionContextForValidation: ResolvedDirectionContext = {
+            ...activeDirectionContext,
+            identity: expectedDirectionIdentityForPreview,
+          }
+          const activeDirectionContractForValidation: DirectionPlanningSelection = {
+            ...activeDirectionContract,
+            identity: expectedDirectionIdentityForPreview,
+          }
+          const activeIntentSelectedDirectionContext = buildIntentSelectedDirectionContextEngine(
+            activeDirectionContractForValidation,
+          )
+          if (!activeIntentSelectedDirectionContext || !districtLocationQuery) {
+            return
+          }
+
+          const selectedArtifactDiscoveryPreferences = buildSelectedArtifactDiscoveryPreferences({
+            artifact: artifactToQualify,
+            opportunity: activeCandidateOpportunity,
+            windDownOverride: repairState?.repairedWindDownTarget ?? null,
+          })
+          const selectedArtifactLineage = resolveSelectedArtifactPlanningLineage(artifactToQualify)
+          const selectedArtifactLineageSummary = formatSelectedArtifactLineageSummary(
+            selectedArtifactLineage,
+          )
+          const plannerInputSummary = formatCuratePlannerInputSummary({
+            mode: 'curate',
+            planningMode: 'engine-led',
+            district: activeDirectionContract.pocketLabel,
+            city: districtLocationQuery,
+            directionId: activeDirectionContract.id,
+            pocketId: activeDirectionContract.pocketId,
+            discoveryPreferences: selectedArtifactDiscoveryPreferences,
+          })
+          const attemptKey = `${artifactId}::${activeDirectionContract.id}::${artifactToQualify.storySpine.windDown}`
+          curatePreviewCommitabilityAttemptRef.current[artifactId] = attemptKey
+          setCuratePreviewCommitabilityByArtifactId((current) => {
+            const currentEntry = current[artifactId]
+            const windDownRepairAttempted = Boolean(repairState?.attempted)
+            const windDownRepairOriginal = repairState?.originalWindDown ?? null
+            const windDownRepairReplacement = repairState?.repairedWindDown ?? null
+            const windDownRepairReplacementId = repairState?.repairedWindDownTarget?.venueId ?? null
+            const windDownRepairReason = repairState?.repairReason ?? null
+            const windDownRepairSource = repairState?.repairSource ?? null
+            const windDownRepairPreferenceApplied = Boolean(
+              repairState?.repairedWindDownTarget?.venueId &&
+                getCurateDiscoveryPreferenceVenueId(
+                  selectedArtifactDiscoveryPreferences,
+                  'windDown',
+                ) === repairState.repairedWindDownTarget.venueId,
+            )
+            const windDownRepairPreferenceTarget = repairState?.repairedWindDownTarget
+              ? `${repairState.repairedWindDownTarget.name} [${repairState.repairedWindDownTarget.venueId ?? 'n/a'}] (${repairState.repairedWindDownTarget.source})`
+              : null
+            const repairedDiscoveryPrefsWindDown = repairState?.attempted
+              ? getCurateDiscoveryPreferenceVenueId(selectedArtifactDiscoveryPreferences, 'windDown')
+              : null
+            const repairedLineageWindDown = repairState?.repairedWindDownTarget
+              ? `${repairState.repairedWindDownTarget.name} [${repairState.repairedWindDownTarget.venueId ?? 'n/a'}]`
+              : null
+            if (
+              currentEntry?.status === 'checking' &&
+              currentEntry.selectedDirectionId === activeDirectionContract.id &&
+              currentEntry.selectedArtifactLineageSummary === selectedArtifactLineageSummary &&
+              currentEntry.plannerInputSummary === plannerInputSummary &&
+              currentEntry.windDownRepairAttempted === windDownRepairAttempted &&
+              currentEntry.windDownRepairOriginal === windDownRepairOriginal &&
+              currentEntry.windDownRepairReplacement === windDownRepairReplacement &&
+              currentEntry.windDownRepairReplacementId === windDownRepairReplacementId &&
+              currentEntry.windDownRepairReason === windDownRepairReason &&
+              currentEntry.windDownRepairSource === windDownRepairSource &&
+              currentEntry.windDownRepairPreferenceApplied === windDownRepairPreferenceApplied &&
+              currentEntry.windDownRepairPreferenceTarget === windDownRepairPreferenceTarget &&
+              currentEntry.repairedDiscoveryPrefsWindDown === repairedDiscoveryPrefsWindDown &&
+              currentEntry.repairedLineageWindDown === repairedLineageWindDown
+            ) {
+              return current
+            }
+            return {
+              ...current,
+              [artifactId]: {
+                status: 'checking',
+                artifactId,
+                hardCommitCandidateCount: 0,
+                rankedCandidateCount: 0,
+                failedRoles: [],
+                missingRoleForContract: null,
+                selectedDirectionId: activeDirectionContract.id,
+                activeDistrictPocketId,
+                selectedArtifactLineageSummary,
+                plannerInputSummary,
+                sampledCandidatesSummary: undefined,
+                rolePoolVenueIdsByRole: undefined,
+                approvedRefinementEntryPayload: undefined,
+                failureKind: undefined,
+                failedCheck: null,
+                errorName: null,
+                errorMessageRaw: null,
+                curateCommitSemantics: 'seed_guided',
+                hardCommitRequired: false,
+                windDownRepairAttempted,
+                windDownRepairSucceeded: false,
+                windDownRepairOriginal,
+                windDownRepairReplacement,
+                windDownRepairReplacementId,
+                windDownRepairReason,
+                windDownRepairSource,
+                windDownRepairPreferenceApplied,
+                windDownRepairPreferenceTarget,
+                repairedDiscoveryPrefsWindDown,
+                repairedLineageWindDown,
+                repairedCandidatePoolSufficiencyByRole: undefined,
+                repairedHardCommitCandidateCount: null,
+                repairedFailureReason: null,
+                repairedQualificationStatus: null,
+              },
+            }
+          })
+
+          try {
+            const result = await runPlanBuild(
+            {
+              mode: 'curate',
+              planningMode: 'engine-led',
+              persona,
+              primaryVibe,
+              city: districtLocationQuery,
+              district: activeDirectionContract.pocketLabel,
+              distanceMode: 'nearby',
+              refinementModes: clusterRefinementMap[activeDirection.cluster],
+              selectedDirectionContext: activeIntentSelectedDirectionContext,
+              discoveryPreferences: selectedArtifactDiscoveryPreferences,
+            },
+            {
+              sourceMode: 'curated',
+              sourceModeOverrideApplied: true,
+              debugMode: false,
+              curateCommitSemantics: 'seed_guided',
+              starterPack: selectedStarterPack ?? undefined,
+              experienceContract: canonicalExperienceContract,
+              contractConstraints: canonicalContractConstraints,
+              canonicalInterpretationBundle,
+              rankedDistrictPockets: districtPreviewResult?.ranked,
+              contractGateWorld,
+              selectedArtifactLineage,
+            },
+          )
+            if (curatePreviewCommitabilityAttemptRef.current[artifactId] !== attemptKey) {
+              return
+            }
+            enforceSelectedDirectionLineage({
+            wrapperSeam: 'sandbox_concierge.curate_preflight',
+            expectedDirectionId: activeDirectionContract.id,
+            actualSelectedDirectionContext: result.intentProfile.selectedDirectionContext,
+            errorMessage:
+              'Route drifted from selected direction contract. Direction context was not preserved.',
+          })
+            const selectedDirectionPreviewContext =
+              buildSelectedDirectionPreviewContext(activeDirection)
+            const {
+            strongCurationPass,
+            anchoredPlan,
+            canonicalItinerary,
+            directionValidation,
+            nextFinalRoute,
+            }: PostPlannerCommitParityStagesResult = await runPostPlannerCommitParityStages({
+            result,
+            contractConstraints: canonicalContractConstraints,
+            expectedDirectionIdentity: expectedDirectionIdentityForPreview,
+            selectedDirectionContextForValidation: activeDirectionContextForValidation,
+            selectedDirectionContractForValidation: activeDirectionContractForValidation,
+            selectedDirectionId: activeDirectionContract.id,
+            selectedDirectionPreviewContext,
+            selectedCluster: activeDirection.cluster,
+            city: districtLocationQuery,
+            persona,
+            vibe: primaryVibe,
+          })
+            if (curatePreviewCommitabilityAttemptRef.current[artifactId] !== attemptKey) {
+              return
+            }
+            const curateHardCommit = result.trace.curateHardCommit
+            const hardCommitRequired = Boolean(curateHardCommit?.hardCommitRequired)
+            const hardCommitPreservationSucceeded = Boolean(
+              curateHardCommit?.hardCommitPreservationSucceeded,
+            )
+            const exactPreservationSatisfied =
+              !hardCommitRequired || hardCommitPreservationSucceeded
+            const commitParitySucceeded = Boolean(
+              exactPreservationSatisfied &&
+                directionValidation.valid &&
+                nextFinalRoute &&
+                nextFinalRoute.selectedDirectionId === activeDirectionContract.id,
+            )
+            const failedCheck = commitParitySucceeded
+              ? null
+              : hardCommitRequired && !hardCommitPreservationSucceeded
+                ? 'curateHardCommit.hardCommitPreservationSucceeded'
+                : !directionValidation.valid
+                  ? directionValidation.generationDriftReason ?? 'directionValidation.valid'
+                  : nextFinalRoute.selectedDirectionId !== activeDirectionContract.id
+                    ? 'nextFinalRoute.selectedDirectionId'
+                    : 'curate_preflight_commit_parity'
+            const failureKind: CuratePreviewCommitabilityState['failureKind'] | undefined =
+              commitParitySucceeded
+                ? undefined
+                : directionValidation.valid
+                  ? 'structural_infeasibility'
+                  : 'validation_failure'
+
+            if (
+              !commitParitySucceeded &&
+              !repairState?.attempted &&
+              (directionValidation.missingRoleForContract === 'windDown' ||
+                directionValidation.candidatePoolSufficiencyByRole.windDown === 0)
+            ) {
+              const repairAttempt = attemptStarterAwareWindDownRepair({
+                artifact: artifactToQualify,
+                opportunity: activeCandidateOpportunity,
+                starterDebug,
+                eligibleWindDownVenueIds: strongCurationPass.rolePoolVenueIdsByRole.windDown,
+              })
+              if (repairAttempt.repairedArtifact) {
+                await executeQualification(repairAttempt.repairedArtifact, {
+                  attempted: true,
+                  originalWindDown: repairAttempt.originalWindDown,
+                  repairedWindDown: repairAttempt.repairedWindDown,
+                  repairedWindDownTarget: repairAttempt.repairedWindDownTarget,
+                  repairReason: repairAttempt.repairReason,
+                  repairSource: repairAttempt.repairSource,
+                })
+                return
+              }
+              setCuratePreviewCommitabilityByArtifactId((current) => ({
+                ...current,
+                [artifactId]: {
+                  ...(current[artifactId] ?? {
+                    status: 'infeasible',
+                    artifactId,
+                    hardCommitCandidateCount: 0,
+                    rankedCandidateCount: 0,
+                    failedRoles: [],
+                    missingRoleForContract: null,
+                  }),
+                  status: 'infeasible',
+                  failureKind,
+                  failedCheck,
+                  errorName: null,
+                  errorMessageRaw: null,
+                  curateCommitSemantics: 'seed_guided',
+                  hardCommitRequired: false,
+                  failedRoles: curateHardCommit?.failedRoles ?? ['start', 'highlight', 'windDown'],
+                  contractBuildabilityStatus: directionValidation.contractBuildabilityStatus,
+                  missingRoleForContract: directionValidation.missingRoleForContract,
+                  candidatePoolSufficiencyByRole: directionValidation.candidatePoolSufficiencyByRole,
+                  selectedDirectionId: activeDirectionContract.id,
+                  activeDistrictPocketId,
+                  selectedArtifactLineageSummary,
+                  plannerInputSummary,
+                  sampledCandidatesSummary: formatCurateHardCommitSampleCandidatesSummary(
+                    curateHardCommit,
+                  ),
+                  rolePoolVenueIdsByRole: strongCurationPass.rolePoolVenueIdsByRole,
+                  explicitFallbackReason:
+                    `${curateHardCommit?.explicitFallbackReason ?? directionValidation.generationDriftReason ?? failedCheck ?? 'curate_preflight_commit_parity_failed'} | repair:${repairAttempt.repairReason}`,
+                  windDownRepairAttempted: true,
+                  windDownRepairSucceeded: false,
+                  windDownRepairOriginal: repairAttempt.originalWindDown,
+                  windDownRepairReplacement: repairAttempt.repairedWindDown,
+                  windDownRepairReplacementId:
+                    repairAttempt.repairedWindDownTarget?.venueId ?? null,
+                  windDownRepairReason: repairAttempt.repairReason,
+                  windDownRepairSource: repairAttempt.repairSource,
+                  windDownRepairPreferenceApplied: false,
+                  windDownRepairPreferenceTarget: repairAttempt.repairedWindDownTarget
+                    ? `${repairAttempt.repairedWindDownTarget.name} [${repairAttempt.repairedWindDownTarget.venueId ?? 'n/a'}] (${repairAttempt.repairedWindDownTarget.source})`
+                    : null,
+                  repairedDiscoveryPrefsWindDown: null,
+                  repairedLineageWindDown: repairAttempt.repairedWindDownTarget
+                    ? `${repairAttempt.repairedWindDownTarget.name} [${repairAttempt.repairedWindDownTarget.venueId ?? 'n/a'}]`
+                    : null,
+                  repairedCandidatePoolSufficiencyByRole:
+                    directionValidation.candidatePoolSufficiencyByRole,
+                  repairedHardCommitCandidateCount:
+                    curateHardCommit?.hardCommitCandidateCount ?? 0,
+                  repairedFailureReason:
+                    `${curateHardCommit?.explicitFallbackReason ?? directionValidation.generationDriftReason ?? failedCheck ?? 'curate_preflight_commit_parity_failed'} | repair:${repairAttempt.repairReason}`,
+                  repairedQualificationStatus: 'infeasible',
+                  approvedRefinementEntryPayload: undefined,
+                },
+              }))
+              return
+            }
+
+            const selectedClusterConfirmation = activeDirection.card.confirmation
+            const tasteCurationDebug = buildTasteCurationDebugForArc({
+            selectedArc: anchoredPlan.selectedArc,
+            qualificationByCandidateId: strongCurationPass.qualificationByCandidateId,
+            personaVibeTasteBiasSummary: strongCurationPass.personaVibeTasteBiasSummary,
+            thinPoolHighlightFallbackApplied:
+              strongCurationPass.thinPoolHighlightFallbackApplied,
+            highlightPoolCountBefore: strongCurationPass.highlightPoolCountBefore,
+            highlightPoolCountAfter: strongCurationPass.highlightPoolCountAfter,
+            rolePoolCountByRoleBefore: strongCurationPass.rolePoolCountByRoleBefore,
+            rolePoolCountByRoleAfter: strongCurationPass.rolePoolCountByRoleAfter,
+            signatureHighlightShortlistCount:
+              strongCurationPass.signatureHighlightShortlistCount,
+            signatureHighlightShortlistIds: strongCurationPass.signatureHighlightShortlistIds,
+            highlightShortlistScoreSummary: strongCurationPass.highlightShortlistScoreSummary,
+            selectedHighlightFromShortlist:
+              strongCurationPass.selectedHighlightFromShortlist,
+            selectedHighlightShortlistRank:
+              strongCurationPass.selectedHighlightShortlistRank,
+            fallbackToQualifiedHighlightPool:
+              strongCurationPass.fallbackToQualifiedHighlightPool,
+            upstreamPoolSelectionApplied: strongCurationPass.upstreamPoolSelectionApplied,
+            postGenerationRepairCount: strongCurationPass.postGenerationRepairCount,
+            rolePoolVenueIdsByRole: strongCurationPass.rolePoolVenueIdsByRole,
+            rolePoolVenueIdsCombined: strongCurationPass.rolePoolVenueIdsCombined,
+            thinPoolRelaxationTrace: strongCurationPass.thinPoolRelaxationTrace,
+          })
+            setCuratePreviewCommitabilityByArtifactId((current) => ({
+            ...current,
+            [artifactId]: {
+              status: commitParitySucceeded ? 'committable' : 'infeasible',
+              artifactId,
+              hardCommitCandidateCount: curateHardCommit?.hardCommitCandidateCount ?? 0,
+              rankedCandidateCount: curateHardCommit?.rankedCandidateCount ?? 0,
+              explicitFallbackReason: commitParitySucceeded
+                ? curateHardCommit?.explicitFallbackReason
+                : curateHardCommit?.explicitFallbackReason ??
+                  directionValidation.generationDriftReason ??
+                  failedCheck ??
+                  'curate_preflight_commit_parity_failed',
+              failureKind,
+              failedCheck,
+              errorName: null,
+              errorMessageRaw: null,
+              curateCommitSemantics: curateHardCommit?.curateCommitSemantics ?? 'seed_guided',
+              hardCommitRequired: curateHardCommit?.hardCommitRequired ?? false,
+              failedRoles: commitParitySucceeded
+                ? curateHardCommit?.failedRoles ?? []
+                : curateHardCommit?.failedRoles ?? ['start', 'highlight', 'windDown'],
+              contractBuildabilityStatus: directionValidation.contractBuildabilityStatus,
+              missingRoleForContract: directionValidation.missingRoleForContract,
+              candidatePoolSufficiencyByRole: directionValidation.candidatePoolSufficiencyByRole,
+              selectedDirectionId: activeDirectionContract.id,
+              activeDistrictPocketId,
+              selectedArtifactLineageSummary,
+              plannerInputSummary,
+              selectedTargetSummary: formatCurateSelectedTargetSummary(curateHardCommit),
+              exactPreservingCandidateIds: curateHardCommit?.exactPreservingCandidateIds ?? [],
+              finalWinnerSummary: formatCurateFinalWinnerSummary(curateHardCommit),
+              sampledCandidatesSummary: formatCurateHardCommitSampleCandidatesSummary(
+                curateHardCommit,
+              ),
+              rolePoolVenueIdsByRole: strongCurationPass.rolePoolVenueIdsByRole,
+              approvedRefinementEntryPayload: commitParitySucceeded
+                ? buildCurateRefinementEntryPayload({
+                    artifactId,
+                    selectedDirectionId: activeDirectionContract.id,
+                    selectedArtifactLineageSummary,
+                    previewRouteTitle: artifactToQualify.routeTitle,
+                    planSnapshot: {
+                      itinerary: canonicalItinerary,
+                      selectedArc: anchoredPlan.selectedArc,
+                      scoredVenues: strongCurationPass.scoredVenues,
+                      generationTrace: result.trace,
+                      intentProfile: result.intentProfile,
+                      lens: result.lens,
+                      conciergeIntent: canonicalConciergeIntent,
+                      experienceContract: canonicalExperienceContract,
+                      contractConstraints: canonicalContractConstraints,
+                      selectedDirectionContext: activeDirectionContextForValidation,
+                      selectedCluster: activeDirection.cluster,
+                      selectedClusterConfirmation,
+                      selectedDirectionContract: activeDirectionContractForValidation,
+                      routeShapeContract: activeRouteShapeContract,
+                      tasteCurationDebug,
+                      selectedDirectionPreviewContext,
+                      selectedCandidateRouteArtifactId: artifactId,
+                    },
+                    finalRoute: nextFinalRoute,
+                    canonicalStopByRole: anchoredPlan.canonicalStopByRole,
+                    rejectedStopRoles: anchoredPlan.rejectedStopRoles,
+                  })
+                : undefined,
+              windDownRepairAttempted: Boolean(repairState?.attempted),
+              windDownRepairSucceeded: Boolean(repairState?.attempted && commitParitySucceeded),
+              windDownRepairOriginal: repairState?.originalWindDown ?? null,
+              windDownRepairReplacement: repairState?.repairedWindDown ?? null,
+              windDownRepairReplacementId: repairState?.repairedWindDownTarget?.venueId ?? null,
+              windDownRepairReason: repairState?.repairReason ?? null,
+              windDownRepairSource: repairState?.repairSource ?? null,
+              windDownRepairPreferenceApplied: Boolean(
+                repairState?.repairedWindDownTarget?.venueId &&
+                  getCurateDiscoveryPreferenceVenueId(
+                    selectedArtifactDiscoveryPreferences,
+                    'windDown',
+                  ) === repairState.repairedWindDownTarget.venueId,
+              ),
+              windDownRepairPreferenceTarget: repairState?.repairedWindDownTarget
+                ? `${repairState.repairedWindDownTarget.name} [${repairState.repairedWindDownTarget.venueId ?? 'n/a'}] (${repairState.repairedWindDownTarget.source})`
+                : null,
+              repairedDiscoveryPrefsWindDown: repairState?.attempted
+                ? getCurateDiscoveryPreferenceVenueId(
+                    selectedArtifactDiscoveryPreferences,
+                    'windDown',
+                  )
+                : null,
+              repairedLineageWindDown: repairState?.repairedWindDownTarget
+                ? `${repairState.repairedWindDownTarget.name} [${repairState.repairedWindDownTarget.venueId ?? 'n/a'}]`
+                : null,
+              repairedCandidatePoolSufficiencyByRole: repairState?.attempted
+                ? directionValidation.candidatePoolSufficiencyByRole
+                : undefined,
+              repairedHardCommitCandidateCount: repairState?.attempted
+                ? curateHardCommit?.hardCommitCandidateCount ?? 0
+                : null,
+              repairedFailureReason: repairState?.attempted
+                ? commitParitySucceeded
+                  ? null
+                  : curateHardCommit?.explicitFallbackReason ??
+                    directionValidation.generationDriftReason ??
+                    failedCheck ??
+                    'curate_preflight_commit_parity_failed'
+                : null,
+              repairedQualificationStatus: repairState?.attempted
+                ? commitParitySucceeded
+                  ? 'committable'
+                  : 'infeasible'
+                : null,
+            },
+            }))
+          } catch (preflightError) {
+            if (curatePreviewCommitabilityAttemptRef.current[artifactId] !== attemptKey) {
+              return
+            }
+            const isValidationFailure =
+              preflightError instanceof PostPlannerCommitParityValidationError
+            const errorName = getErrorName(preflightError)
+            const errorMessageRaw = getErrorMessageRaw(preflightError)
+            setCuratePreviewCommitabilityByArtifactId((current) => ({
+              ...current,
+              [artifactId]: {
+                status: 'infeasible',
+                artifactId,
+                hardCommitCandidateCount: 0,
+                rankedCandidateCount: 0,
+                explicitFallbackReason: isValidationFailure
+                  ? preflightError.directionValidation.generationDriftReason ??
+                    preflightError.failedCheck
+                  : getCuratePreflightRuntimeReason(preflightError),
+                failureKind: isValidationFailure ? 'validation_failure' : 'runtime_error',
+                failedCheck: isValidationFailure ? preflightError.failedCheck : null,
+                errorName,
+                errorMessageRaw,
+                curateCommitSemantics: 'seed_guided',
+                hardCommitRequired: false,
+                failedRoles: [],
+                contractBuildabilityStatus: isValidationFailure
+                  ? preflightError.directionValidation.contractBuildabilityStatus
+                  : undefined,
+                missingRoleForContract: isValidationFailure
+                  ? preflightError.directionValidation.missingRoleForContract
+                  : null,
+                candidatePoolSufficiencyByRole: isValidationFailure
+                  ? preflightError.directionValidation.candidatePoolSufficiencyByRole
+                  : undefined,
+                selectedDirectionId: activeDirectionContract.id,
+                activeDistrictPocketId,
+                selectedArtifactLineageSummary,
+                plannerInputSummary,
+                sampledCandidatesSummary: undefined,
+                rolePoolVenueIdsByRole: undefined,
+                approvedRefinementEntryPayload: undefined,
+                windDownRepairAttempted: Boolean(repairState?.attempted),
+                windDownRepairSucceeded: false,
+                windDownRepairOriginal: repairState?.originalWindDown ?? null,
+                windDownRepairReplacement: repairState?.repairedWindDown ?? null,
+                windDownRepairReplacementId:
+                  repairState?.repairedWindDownTarget?.venueId ?? null,
+                windDownRepairReason: repairState?.repairReason ?? null,
+                windDownRepairSource: repairState?.repairSource ?? null,
+                windDownRepairPreferenceApplied: Boolean(
+                  repairState?.repairedWindDownTarget?.venueId &&
+                    getCurateDiscoveryPreferenceVenueId(
+                      selectedArtifactDiscoveryPreferences,
+                      'windDown',
+                    ) === repairState.repairedWindDownTarget.venueId,
+                ),
+                windDownRepairPreferenceTarget: repairState?.repairedWindDownTarget
+                  ? `${repairState.repairedWindDownTarget.name} [${repairState.repairedWindDownTarget.venueId ?? 'n/a'}] (${repairState.repairedWindDownTarget.source})`
+                  : null,
+                repairedDiscoveryPrefsWindDown: repairState?.attempted
+                  ? getCurateDiscoveryPreferenceVenueId(
+                      selectedArtifactDiscoveryPreferences,
+                      'windDown',
+                    )
+                  : null,
+                repairedLineageWindDown: repairState?.repairedWindDownTarget
+                  ? `${repairState.repairedWindDownTarget.name} [${repairState.repairedWindDownTarget.venueId ?? 'n/a'}]`
+                  : null,
+                repairedCandidatePoolSufficiencyByRole: repairState?.attempted
+                  ? isValidationFailure
+                    ? preflightError.directionValidation.candidatePoolSufficiencyByRole
+                    : undefined
+                  : undefined,
+                repairedHardCommitCandidateCount: repairState?.attempted ? 0 : null,
+                repairedFailureReason: repairState?.attempted
+                  ? isValidationFailure
+                    ? preflightError.directionValidation.generationDriftReason ??
+                      preflightError.failedCheck
+                    : getCuratePreflightRuntimeReason(preflightError)
+                  : null,
+                repairedQualificationStatus: repairState?.attempted ? 'infeasible' : null,
+              },
+            }))
+          }
+        }
+        await executeQualification(candidateArtifact)
+      } finally {
+        delete curateQualificationInFlightRef.current[artifactId]
+      }
+    },
+    [
+      activeDistrictPocketId,
+      allDirectionCards,
+      canonicalConciergeIntent,
+      canonicalContractConstraints,
+      canonicalExperienceContract,
+      directionCards,
+      districtLocationQuery,
+      isCurateWrapperActive,
+      persona,
+      primaryVibe,
+      resolveDirectionForCandidateArtifact,
+      runPlanBuild,
+      selectedDirectionId,
+      selectedStarterPack,
+      starterAwareOpportunityDebugById,
+      step2PrimarySourceOpportunities,
+      verifiedCityOpportunityById,
+    ],
+  )
+
+  useEffect(() => {
+    if (!isCurateWrapperActive) {
+      curateQualificationSourceFingerprintRef.current = curateQualificationSourceFingerprint
+      return
+    }
+    const previous = curateQualificationSourceFingerprintRef.current
+    if (!previous) {
+      curateQualificationSourceFingerprintRef.current = curateQualificationSourceFingerprint
+      return
+    }
+    if (previous === curateQualificationSourceFingerprint) {
+      return
+    }
+    curateQualificationSourceFingerprintRef.current = curateQualificationSourceFingerprint
+    curatePreviewCommitabilityAttemptRef.current = {}
+    curateQualificationInFlightRef.current = {}
+    setCuratePreviewCommitabilityByArtifactId({})
+    setCurateQualificationCacheHitByArtifactId({})
+  }, [curateQualificationSourceFingerprint, isCurateWrapperActive])
+
+  useEffect(() => {
+    if (!isCurateWrapperActive || hasRevealed || !selectedCandidateRouteArtifact) {
+      return
+    }
+    void qualifyCurateCandidateArtifact(selectedCandidateRouteArtifact)
+  }, [
+    hasRevealed,
+    isCurateWrapperActive,
+    qualifyCurateCandidateArtifact,
+    selectedCurateQualificationArtifactId,
+  ])
+  useEffect(() => {
+    if (!isCurateWrapperActive || hasRevealed || curateQualificationPoolFingerprint.length === 0) {
+      return
+    }
+    const qualificationCacheHitUpdates: Record<string, boolean> = {}
+    const artifactsToQualify = curateQualificationCandidateArtifacts.filter((artifact) => {
+      const cached = curatePreviewCommitabilityByArtifactIdRef.current[artifact.id]
+      if (curateQualificationCacheHitByArtifactId[artifact.id] == null) {
+        qualificationCacheHitUpdates[artifact.id] = Boolean(cached)
+      }
+      return !(
+        curateQualificationInFlightRef.current[artifact.id] ||
+        cached?.status === 'checking' ||
+        cached?.status === 'committable' ||
+        cached?.status === 'infeasible'
+      )
+    })
+    if (Object.keys(qualificationCacheHitUpdates).length > 0) {
+      setCurateQualificationCacheHitByArtifactId((current) => {
+        let changed = false
+        const next = { ...current }
+        Object.entries(qualificationCacheHitUpdates).forEach(([artifactId, cacheHit]) => {
+          if (next[artifactId] == null) {
+            next[artifactId] = cacheHit
+            changed = true
+          }
+        })
+        return changed ? next : current
+      })
+    }
+    if (artifactsToQualify.length === 0) {
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      for (const artifact of artifactsToQualify) {
+        if (cancelled) {
+          return
+        }
+        await qualifyCurateCandidateArtifact(artifact)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    curateQualificationCacheHitByArtifactId,
+    curateQualificationPoolFingerprint,
+    hasRevealed,
+    isCurateWrapperActive,
+    qualifyCurateCandidateArtifact,
+  ])
+
+  useEffect(() => {
+    surpriseAutoGenerateAttemptRef.current = null
+    buildValidationAttemptRef.current = null
+    curatePreviewCommitabilityAttemptRef.current = {}
+    curateQualificationInFlightRef.current = {}
     setHasRevealed(false)
     setIsLocking(false)
     setActiveDistrictPocketId(ALL_DISTRICTS_CONTEXT_ID)
@@ -9669,6 +14846,10 @@ export function SandboxConciergePage() {
     setSwapInteractionBreadcrumb(null)
     setSwapCompatibilityDebug(null)
     setGenerationContractDebug(null)
+    setCurateRefinementEntryPayload(null)
+    setCuratePreviewCommitabilityByArtifactId({})
+    setCurateQualificationCacheHitByArtifactId({})
+    setSelectedStep2CandidateArtifactId(null)
     setAppliedSwapRole(null)
     setNearbySummaryByRole({})
     setCanonicalStopByRole({})
@@ -9690,7 +14871,15 @@ export function SandboxConciergePage() {
 
   useEffect(() => {
     if (directionCards.length === 0 || directionSetKey.length === 0) {
+      surpriseAutoGenerateAttemptRef.current = null
+      buildValidationAttemptRef.current = null
+      curatePreviewCommitabilityAttemptRef.current = {}
+      curateQualificationInFlightRef.current = {}
       setSelectedDirectionId(null)
+      setCurateRefinementEntryPayload(null)
+      setCuratePreviewCommitabilityByArtifactId({})
+      setCurateQualificationCacheHitByArtifactId({})
+      setSelectedStep2CandidateArtifactId(null)
       setUserSelectedDirection(null)
       setSelectedIdReconciled(false)
       setSwapDebugBreadcrumb(null)
@@ -9710,12 +14899,21 @@ export function SandboxConciergePage() {
     )
     const previousIdentityById = previousDirectionIdentityRef.current
     const firstCandidateId = directionCards[0]?.id ?? null
+    const curateSelectedArtifact = isCurateWrapperActive && selectedStep2CandidateArtifactId
+      ? candidateRouteArtifactByIdForDisplay.get(selectedStep2CandidateArtifactId) ?? null
+      : null
+    const curateAuthoritativeDirectionId = curateSelectedArtifact?.selection.directionId ?? null
     const selectedStillExists = Boolean(
-      selectedDirectionId && directionIdentityById.has(selectedDirectionId),
+      selectedDirectionId &&
+        (directionIdentityById.has(selectedDirectionId) ||
+          (Boolean(curateAuthoritativeDirectionId) &&
+            selectedDirectionId === curateAuthoritativeDirectionId)),
     )
 
-    let nextSelectedDirectionId = selectedDirectionId
-    if (!selectedStillExists) {
+    let nextSelectedDirectionId = curateAuthoritativeDirectionId ?? selectedDirectionId
+    if (curateAuthoritativeDirectionId) {
+      nextSelectedDirectionId = curateAuthoritativeDirectionId
+    } else if (!selectedStillExists) {
       nextSelectedDirectionId = firstCandidateId
     } else if (personaOrVibeChanged && selectedDirectionId) {
       const previousIdentity = previousIdentityById.get(selectedDirectionId)
@@ -9733,6 +14931,8 @@ export function SandboxConciergePage() {
     if (reconciled) {
       selectionEpochRef.current += 1
       autoDirectionSyncAttemptRef.current = null
+      surpriseAutoGenerateAttemptRef.current = null
+      buildValidationAttemptRef.current = null
       setGenerationContractDebug(null)
       setSelectedDirectionId(nextSelectedDirectionId)
       setUserSelectedDirection(null)
@@ -9747,12 +14947,15 @@ export function SandboxConciergePage() {
     previousDirectionIdentityRef.current = new Map(directionIdentityById)
     previousPersonaVibeRef.current = { persona, vibe: primaryVibe }
   }, [
+    candidateRouteArtifactByIdForDisplay,
     directionCards,
     directionIdentityById,
     directionSetKey,
+    isCurateWrapperActive,
     persona,
     primaryVibe,
     selectedDirectionId,
+    selectedStep2CandidateArtifactId,
     updateFinalRoute,
     userSelectedDirection,
   ])
@@ -9778,7 +14981,6 @@ export function SandboxConciergePage() {
             )
           }
         } catch (nextError) {
-          console.error(nextError)
           if (!cancelled) {
             setDistrictPreviewError(
               nextError instanceof Error
@@ -9812,7 +15014,7 @@ export function SandboxConciergePage() {
     const timeoutHandle = window.setTimeout(() => {
       void (async () => {
         try {
-          const previewResult = await previewDistrictRecommendations({
+          const previewResult = await previewDistrictRecommendationsForPlanBuild({
             persona,
             primaryVibe,
             city: districtLocationQuery,
@@ -9822,7 +15024,6 @@ export function SandboxConciergePage() {
             setDistrictRecommendations(previewResult.recommendedDistricts)
           }
         } catch (nextError) {
-          console.error(nextError)
           if (!cancelled) {
             setDistrictRecommendations([])
           }
@@ -9860,13 +15061,7 @@ export function SandboxConciergePage() {
   )
 
   const handlePreviewAlternative = useCallback(async (role: UserStopRole, venueId: string) => {
-    console.log('[SWAP CLICK]', venueId)
     const markPreviewGuardFailure = (reason: string, message: string) => {
-      console.warn('[SWAP PREVIEW GUARD]', {
-        reason,
-        role,
-        replacementId: venueId,
-      })
       setSwapInteractionBreadcrumb((current) => ({
         swapClickFired: current?.swapClickFired ?? true,
         swapHandlerEntered: true,
@@ -10092,11 +15287,6 @@ export function SandboxConciergePage() {
     } catch (nextError) {
       const reason =
         nextError instanceof Error ? nextError.message : 'Could not preview this swap option.'
-      console.warn('[SWAP PREVIEW ERROR]', {
-        role,
-        replacementId: venueId,
-        reason,
-      })
       setSwapInteractionBreadcrumb((current) => ({
         swapClickFired: current?.swapClickFired ?? true,
         swapHandlerEntered: true,
@@ -10250,13 +15440,6 @@ export function SandboxConciergePage() {
         currentRouteStop.role !== swapSnapshot.targetRole ||
         currentRouteStop.stopIndex !== swapSnapshot.targetStopIndex
       ) {
-        console.error('Swap aborted due to target mismatch.', {
-          routeId: finalRouteSnapshot.routeId,
-          expectedRole: swapSnapshot.targetRole,
-          expectedStopIndex: swapSnapshot.targetStopIndex,
-          resolvedRole: currentRouteStop.role,
-          resolvedStopIndex: currentRouteStop.stopIndex,
-        })
         throw new Error('Swap target mismatch detected. Please retry from the current route.')
       }
       if (swapSnapshot.candidateStop.venueId !== swapSnapshot.requestedReplacementId) {
@@ -10286,7 +15469,20 @@ export function SandboxConciergePage() {
             }),
           }
         : canonicalItinerary
-      const replacementStop: FinalRouteStop = {
+      const fallbackImageUrl = getSharedItineraryStopFallbackImageUrl(canonicalItineraryAfterSwap.stops)
+      const displayFields = hydrateRuntimeRouteStopDisplayFields({
+        stop: sourceSwapStop,
+        existingRouteStop: {
+          title: currentRouteStop.title,
+          subtitle: currentRouteStop.subtitle,
+          driveMinutes: swapSnapshot.candidateStop.driveMinutes,
+          imageUrl:
+            getNonEmptyRuntimeRouteString(swapSnapshot.candidateStop.imageUrl) ??
+            currentRouteStop.imageUrl,
+        },
+        fallbackImageUrl,
+      })
+      const replacementStop: RuntimeRouteStop = {
         id: swapSnapshot.candidateStop.id,
         sourceStopId: swapSnapshot.candidateStop.id,
         displayName: swapSnapshot.replacementCanonical.displayName,
@@ -10297,12 +15493,12 @@ export function SandboxConciergePage() {
         role: currentRouteStop.role,
         stopIndex: currentRouteStop.stopIndex,
         venueId: swapSnapshot.requestedReplacementId,
-        title: currentRouteStop.title,
-        subtitle: currentRouteStop.subtitle,
+        title: displayFields.title,
+        subtitle: displayFields.subtitle,
         neighborhood:
           swapSnapshot.replacementCanonical.neighborhood || swapSnapshot.candidateStop.neighborhood,
-        driveMinutes: swapSnapshot.candidateStop.driveMinutes,
-        imageUrl: swapSnapshot.candidateStop.imageUrl,
+        driveMinutes: displayFields.driveMinutes,
+        imageUrl: displayFields.imageUrl,
       }
       const patched = patchFinalRouteStop({
         route: finalRouteSnapshot,
@@ -10316,29 +15512,10 @@ export function SandboxConciergePage() {
       if (!patched) {
         throw new Error('Route update failed: canonical route patch did not apply.')
       }
-      if (import.meta.env.DEV) {
-        console.log('SWAP TARGET CHECK', {
-          routeId: finalRouteSnapshot.routeId,
-          modalTargetStopId: swapSnapshot.targetStopId,
-          modalTargetRole: swapSnapshot.targetRole,
-          modalTargetStopIndex: swapSnapshot.targetStopIndex,
-          resolvedStopId: patched.resolvedStop.id,
-          resolvedRole: patched.resolvedStop.role,
-          resolvedStopIndex: patched.resolvedStop.stopIndex,
-        })
-      }
       if (
         patched.resolvedStop.role !== swapSnapshot.targetRole ||
         patched.resolvedStop.stopIndex !== swapSnapshot.targetStopIndex
       ) {
-        console.error('Swap aborted due to patch resolution mismatch.', {
-          routeId: finalRouteSnapshot.routeId,
-          expectedRole: swapSnapshot.targetRole,
-          expectedStopIndex: swapSnapshot.targetStopIndex,
-          resolvedRole: patched.resolvedStop.role,
-          resolvedStopIndex: patched.resolvedStop.stopIndex,
-          resolution: patched.resolution,
-        })
         throw new Error('Swap target mismatch detected. Please retry from the current route.')
       }
       const nextFinalRoute = patched.route
@@ -10380,8 +15557,8 @@ export function SandboxConciergePage() {
         itinerary: canonicalItineraryAfterSwap,
         selectedArc: swapSnapshot.swappedArc,
       })
+      setCurateRefinementEntryPayload(null)
       updateFinalRoute(nextFinalRoute)
-      logSwapCommitChecks(nextFinalRoute, role, ['preview', 'map', 'spine', 'live', 'share', 'calendar'])
       setCanonicalStopByRole(nextCanonicalStopByRole)
       setPreviewSwap(undefined)
       setAppliedSwapRole(role)
@@ -10489,26 +15666,94 @@ export function SandboxConciergePage() {
     }
     setPreviewSwap(undefined)
   }
+  const activeCurateRefinementEntryPayload =
+    isCurateWrapperActive ? curateRefinementEntryPayload : null
+  const canonicalRouteArtifact = useMemo<CanonicalRouteArtifact | null>(() => {
+    const activePlan = activeCurateRefinementEntryPayload?.planSnapshot ?? plan
+    const activeFinalRoute = activeCurateRefinementEntryPayload?.finalRoute ?? finalRoute
+    const activeCanonicalStopByRole =
+      activeCurateRefinementEntryPayload?.canonicalStopByRole ?? canonicalStopByRole
+    if (!activePlan || !activeFinalRoute) {
+      return null
+    }
+    const expectedDirectionId = activePlan.selectedDirectionContract.id
+    if (!expectedDirectionId || activeFinalRoute.selectedDirectionId !== expectedDirectionId) {
+      return null
+    }
+    return {
+      selectedDirectionId: expectedDirectionId,
+      selectedClusterConfirmation: activePlan.selectedClusterConfirmation,
+      itinerary: activePlan.itinerary,
+      finalRoute: activeFinalRoute,
+      canonicalStopByRole: activeCanonicalStopByRole,
+      planSnapshot: activePlan,
+    }
+  }, [activeCurateRefinementEntryPayload, canonicalStopByRole, finalRoute, plan])
 
   const handleLockNight = () => {
-    if (!plan || !finalRoute || isLocking) {
+    if (!canonicalRouteArtifact || isLocking) {
       return
     }
+    setError(undefined)
     setIsLocking(true)
-    saveLiveArtifactSession({
-      city: finalRoute.location || plan.itinerary.city || city.trim(),
-      itinerary: plan.itinerary,
-      selectedClusterConfirmation: plan.selectedClusterConfirmation,
+    const sessionId = createLiveArtifactPlanId()
+    const lockedCity =
+      canonicalRouteArtifact.finalRoute.location ||
+      canonicalRouteArtifact.itinerary.city ||
+      city.trim() ||
+      'San Jose'
+    const lockedTitle =
+      canonicalRouteArtifact.itinerary.title ||
+      canonicalRouteArtifact.finalRoute.routeHeadline ||
+      "Tonight's route"
+    const lockedItinerary: Itinerary = {
+      ...canonicalRouteArtifact.itinerary,
+      city: lockedCity,
+      title: lockedTitle,
+      stops: lockSafeItineraryStops,
+    }
+    if (shouldLogLiveArtifactDebug) {
+      console.debug('[live-artifact] lock save attempted', {
+        sessionId,
+        lockedAt: canonicalRouteArtifact.lockedAt ?? null,
+      })
+    }
+    const savedSessionId = saveLiveArtifactSession({
+      sessionId,
+      city: lockedCity,
+      itinerary: lockedItinerary,
+      selectedClusterConfirmation: canonicalRouteArtifact.selectedClusterConfirmation,
       initialActiveRole: activeRole,
       lockedAt: Date.now(),
       finalRoute: {
-        ...finalRoute,
+        ...canonicalRouteArtifact.finalRoute,
         activeStopIndex: Math.max(
           0,
-          finalRoute.stops.findIndex((stop) => stop.role === activeRole),
+          canonicalRouteArtifact.finalRoute.stops.findIndex((stop) => stop.role === activeRole),
         ),
       },
     })
+    const storageDebug = getLiveArtifactStorageDebugSnapshot(savedSessionId ?? sessionId)
+    if (shouldLogLiveArtifactDebug) {
+      console.debug('[live-artifact] lock save result', {
+        requestedSessionId: sessionId,
+        savedSessionId,
+        activeSessionId: storageDebug.activeSessionId,
+        activeSessionIdPresent: storageDebug.activeSessionIdPresent,
+        sessionKey: storageDebug.sessionKey,
+        sessionPayloadPresent: storageDebug.sessionPayloadPresent,
+        saveError: getLastLiveArtifactSaveError(),
+      })
+    }
+    if (!savedSessionId) {
+      const saveError = getLastLiveArtifactSaveError()
+      const failureReason = saveError
+        ? `${saveError.code}: ${saveError.detail}`
+        : 'Live artifact session save returned null.'
+      setError(`Could not lock live session. ${failureReason}`)
+      setIsLocking(false)
+      return
+    }
     const isDevSandbox =
       typeof window !== 'undefined' &&
       (window.location.pathname.toLowerCase().startsWith('/dev') ||
@@ -10519,12 +15764,16 @@ export function SandboxConciergePage() {
   }
 
   const planningDisplayStops = useMemo(() => {
-    if (!plan || !finalRoute) {
+    if (!canonicalRouteArtifact) {
       return []
     }
-    const stopBySourceId = new Map(plan.itinerary.stops.map((stop) => [stop.id, stop] as const))
-    const stopByIndex = new Map(plan.itinerary.stops.map((stop, index) => [index, stop] as const))
-    const orderedRouteStops = [...finalRoute.stops]
+    const stopBySourceId = new Map(
+      canonicalRouteArtifact.itinerary.stops.map((stop) => [stop.id, stop] as const),
+    )
+    const stopByIndex = new Map(
+      canonicalRouteArtifact.itinerary.stops.map((stop, index) => [index, stop] as const),
+    )
+    const orderedRouteStops = [...canonicalRouteArtifact.finalRoute.stops]
       .filter((stop) => stop.role !== 'surprise')
       .sort((left, right) => left.stopIndex - right.stopIndex)
     return orderedRouteStops
@@ -10532,10 +15781,10 @@ export function SandboxConciergePage() {
         const sourceStop =
           stopBySourceId.get(finalStop.sourceStopId) ??
           stopByIndex.get(finalStop.stopIndex) ??
-          plan.itinerary.stops.find(
+          canonicalRouteArtifact.itinerary.stops.find(
             (stop) => stop.role === finalStop.role && stop.venueId === finalStop.venueId,
           ) ??
-          plan.itinerary.stops.find((stop) => stop.role === finalStop.role)
+          canonicalRouteArtifact.itinerary.stops.find((stop) => stop.role === finalStop.role)
         if (!sourceStop) {
           return null
         }
@@ -10547,14 +15796,81 @@ export function SandboxConciergePage() {
           subtitle: finalStop.subtitle,
           venueId: finalStop.venueId,
           venueName: finalStop.displayName,
-          city: finalRoute.location || sourceStop.city,
+          city: canonicalRouteArtifact.finalRoute.location || sourceStop.city,
           neighborhood: finalStop.neighborhood || sourceStop.neighborhood,
           driveMinutes: finalStop.driveMinutes,
           imageUrl: finalStop.imageUrl,
         }
       })
       .filter((stop): stop is ItineraryStop => Boolean(stop))
-  }, [finalRoute, plan])
+  }, [canonicalRouteArtifact])
+  const lockSafeItineraryStops = useMemo(() => {
+    if (!canonicalRouteArtifact) {
+      return [] as ItineraryStop[]
+    }
+    const getNonEmptyImageUrl = (value: string | null | undefined): string | null => {
+      const trimmed = value?.trim()
+      return trimmed ? trimmed : null
+    }
+    const stopBySourceId = new Map(
+      canonicalRouteArtifact.itinerary.stops.map((stop) => [stop.id, stop] as const),
+    )
+    const stopByIndex = new Map(
+      canonicalRouteArtifact.itinerary.stops.map((stop, index) => [index, stop] as const),
+    )
+    const finalRouteStopByRole = new Map(
+      canonicalRouteArtifact.finalRoute.stops.map((stop) => [stop.role, stop] as const),
+    )
+    const itineraryStopByRole = new Map(
+      canonicalRouteArtifact.itinerary.stops.map((stop) => [stop.role, stop] as const),
+    )
+    const sharedFallbackImageUrl =
+      getNonEmptyImageUrl(finalRouteStopByRole.get('highlight')?.imageUrl) ??
+      getNonEmptyImageUrl(itineraryStopByRole.get('highlight')?.imageUrl) ??
+      getNonEmptyImageUrl(finalRouteStopByRole.get('start')?.imageUrl) ??
+      getNonEmptyImageUrl(itineraryStopByRole.get('start')?.imageUrl) ??
+      getNonEmptyImageUrl(finalRouteStopByRole.get('windDown')?.imageUrl) ??
+      getNonEmptyImageUrl(itineraryStopByRole.get('windDown')?.imageUrl) ??
+      getNonEmptyImageUrl(
+        canonicalRouteArtifact.finalRoute.stops.find((stop) => getNonEmptyImageUrl(stop.imageUrl))?.imageUrl,
+      ) ??
+      getNonEmptyImageUrl(
+        canonicalRouteArtifact.itinerary.stops.find((stop) => getNonEmptyImageUrl(stop.imageUrl))?.imageUrl,
+      ) ??
+      ''
+    return [...canonicalRouteArtifact.finalRoute.stops]
+      .sort((left, right) => left.stopIndex - right.stopIndex)
+      .map((finalStop) => {
+        const sourceStop =
+          stopBySourceId.get(finalStop.sourceStopId) ??
+          stopByIndex.get(finalStop.stopIndex) ??
+          canonicalRouteArtifact.itinerary.stops.find(
+            (stop) => stop.role === finalStop.role && stop.venueId === finalStop.venueId,
+          ) ??
+          canonicalRouteArtifact.itinerary.stops.find((stop) => stop.role === finalStop.role)
+        if (!sourceStop) {
+          return null
+        }
+        const resolvedImageUrl =
+          getNonEmptyImageUrl(sourceStop.imageUrl) ??
+          getNonEmptyImageUrl(finalStop.imageUrl) ??
+          sharedFallbackImageUrl
+        return {
+          ...sourceStop,
+          id: finalStop.sourceStopId,
+          role: finalStop.role,
+          venueId: finalStop.venueId,
+          venueName: finalStop.displayName || sourceStop.venueName,
+          neighborhood: finalStop.neighborhood || sourceStop.neighborhood,
+          driveMinutes:
+            Number.isFinite(finalStop.driveMinutes) && finalStop.driveMinutes >= 0
+              ? finalStop.driveMinutes
+              : sourceStop.driveMinutes,
+          imageUrl: resolvedImageUrl,
+        }
+      })
+      .filter((stop): stop is ItineraryStop => Boolean(stop))
+  }, [canonicalRouteArtifact])
   const postSwapCanonicalStopIdBySlot = useMemo(
     () =>
       finalRoute
@@ -10719,16 +16035,177 @@ export function SandboxConciergePage() {
     selectedDirection?.debugMeta?.directionNarrativeMode ?? 'n/a'
   const selectedDirectionNarrativeSummary =
     selectedDirection?.debugMeta?.directionNarrativeSummary ?? 'n/a'
+  const validatorMode = generationContractDebug?.validatorMode ?? null
+  const validatorValid = generationContractDebug?.validatorValid
   const generationDriftReason = generationContractDebug?.generationDriftReason ?? null
+  const directionAlignmentScore = generationContractDebug?.directionAlignmentScore ?? null
+  const surpriseSoftAlignmentFloor = generationContractDebug?.surpriseSoftAlignmentFloor ?? null
+  const surpriseHardAlignmentFloor = generationContractDebug?.surpriseHardAlignmentFloor ?? null
+  const surpriseMaterialAlignmentFloor =
+    generationContractDebug?.surpriseMaterialAlignmentFloor ?? null
+  const lowAlignment = generationContractDebug?.lowAlignment
+  const hardAlignmentFailure = generationContractDebug?.hardAlignmentFailure
+  const materialAlignmentFailure = generationContractDebug?.materialAlignmentFailure
+  const severeGreatStopRisk = generationContractDebug?.severeGreatStopRisk
   const contractBuildabilityStatus = generationContractDebug?.contractBuildabilityStatus ?? null
   const missingRoleForContract = generationContractDebug?.missingRoleForContract ?? null
   const candidatePoolSufficiencyByRole = generationContractDebug?.candidatePoolSufficiencyByRole
   const expectedDirectionIdentity = generationContractDebug?.expectedDirectionIdentity ?? null
   const observedDirectionIdentity = generationContractDebug?.observedDirectionIdentity ?? null
   const generationIdentityFallbackApplied = generationContractDebug?.fallbackApplied ?? false
+  const generationErrorMessageRaw = generationContractDebug?.errorMessageRaw ?? null
+  const curateHardCommitDebug = generationContractDebug?.curateHardCommit
+  const curateHardCommitSampleSummary =
+    formatCurateHardCommitSampleCandidatesSummary(curateHardCommitDebug)
+  const curateHardCommitFinalWinnerSummary = curateHardCommitDebug
+    ? `${curateHardCommitDebug.finalWinner.candidateId} | start:${curateHardCommitDebug.finalWinner.start.venueName ?? curateHardCommitDebug.finalWinner.start.venueId ?? 'n/a'} | highlight:${curateHardCommitDebug.finalWinner.highlight.venueName ?? curateHardCommitDebug.finalWinner.highlight.venueId ?? 'n/a'} | windDown:${curateHardCommitDebug.finalWinner.windDown.venueName ?? curateHardCommitDebug.finalWinner.windDown.venueId ?? 'n/a'} | matchType:${curateHardCommitDebug.finalWinnerMatchType}`
+    : 'n/a'
+  const preflightParitySummary = useMemo<CurateParityRunSummary | null>(() => {
+    if (!selectedCuratePreviewCommitability || !selectedCandidateRouteArtifact) {
+      return null
+    }
+    return {
+      runType: 'preflight',
+      curateCommitSemantics: selectedCuratePreviewCommitability.curateCommitSemantics ?? 'n/a',
+      hardCommitRequired: selectedCuratePreviewCommitability.hardCommitRequired ?? null,
+      artifactId: selectedCuratePreviewCommitability.artifactId,
+      selectedDirectionId: selectedCuratePreviewCommitability.selectedDirectionId ?? null,
+      activeDistrictPocketId:
+        selectedCuratePreviewCommitability.activeDistrictPocketId ?? ALL_DISTRICTS_CONTEXT_ID,
+      selectedArtifactLineageSummary:
+        selectedCuratePreviewCommitability.selectedArtifactLineageSummary ?? 'n/a',
+      plannerInputSummary: selectedCuratePreviewCommitability.plannerInputSummary ?? 'n/a',
+      selectedTargetSummary: selectedCuratePreviewCommitability.selectedTargetSummary ?? 'n/a',
+      rankedCandidateCount: selectedCuratePreviewCommitability.rankedCandidateCount,
+      hardCommitCandidateCount: selectedCuratePreviewCommitability.hardCommitCandidateCount,
+      hardCommitPreservationSucceeded:
+        selectedCuratePreviewCommitability.status === 'checking'
+          ? null
+          : selectedCuratePreviewCommitability.hardCommitRequired === false
+            ? null
+            : selectedCuratePreviewCommitability.status === 'committable',
+      explicitFallbackTriggered:
+        selectedCuratePreviewCommitability.status === 'checking'
+          ? null
+          : selectedCuratePreviewCommitability.hardCommitRequired === false
+            ? null
+            : selectedCuratePreviewCommitability.status === 'infeasible',
+      explicitFallbackReason: selectedCuratePreviewCommitability.explicitFallbackReason ?? null,
+      failureKind: selectedCuratePreviewCommitability.failureKind ?? null,
+      failedCheck: selectedCuratePreviewCommitability.failedCheck ?? null,
+      errorName: selectedCuratePreviewCommitability.errorName ?? null,
+      errorMessageRaw: selectedCuratePreviewCommitability.errorMessageRaw ?? null,
+      failedRolesSummary: selectedCuratePreviewCommitability.failedRoles.join(', ') || 'none',
+      exactPreservingCandidateIdsSummary:
+        selectedCuratePreviewCommitability.exactPreservingCandidateIds?.join(', ') || 'none',
+      finalWinnerSummary: selectedCuratePreviewCommitability.finalWinnerSummary ?? 'n/a',
+      contractBuildabilityStatus:
+        selectedCuratePreviewCommitability.contractBuildabilityStatus ?? null,
+      missingRoleForContract: selectedCuratePreviewCommitability.missingRoleForContract,
+      candidatePoolSufficiencySummary: selectedCuratePreviewCommitability
+        .candidatePoolSufficiencyByRole
+        ? `start:${selectedCuratePreviewCommitability.candidatePoolSufficiencyByRole.start} | highlight:${selectedCuratePreviewCommitability.candidatePoolSufficiencyByRole.highlight} | windDown:${selectedCuratePreviewCommitability.candidatePoolSufficiencyByRole.windDown}`
+        : 'n/a',
+      postPlannerStagesSummary:
+        'runPlanBuild -> enforceSelectedDirectionLineage -> applyStrongCurationTastePass -> enforceFullStopRealityContract -> validateDirectionRouteContract -> buildFinalRoute',
+    }
+  }, [selectedCandidateRouteArtifact, selectedCuratePreviewCommitability])
   const candidatePoolSufficiencySummary = candidatePoolSufficiencyByRole
     ? `start:${candidatePoolSufficiencyByRole.start} | highlight:${candidatePoolSufficiencyByRole.highlight} | windDown:${candidatePoolSufficiencyByRole.windDown}`
     : null
+  const continueParitySummary = useMemo<CurateParityRunSummary | null>(() => {
+    if (!generationContractDebug) {
+      return null
+    }
+    return {
+      runType: 'continue',
+      curateCommitSemantics: generationContractDebug.curateCommitSemantics ?? 'n/a',
+      hardCommitRequired: generationContractDebug.hardCommitRequired ?? null,
+      artifactId: curateHardCommitDebug?.selectedArtifactId ?? selectedCandidateRouteArtifact?.id ?? null,
+      selectedDirectionId: generationContractDebug.selectedDirectionIdSnapshot ?? null,
+      activeDistrictPocketId:
+        generationContractDebug.activeDistrictPocketIdSnapshot ?? ALL_DISTRICTS_CONTEXT_ID,
+      selectedArtifactLineageSummary:
+        generationContractDebug.selectedArtifactLineageSummary ?? 'n/a',
+      plannerInputSummary: generationContractDebug.plannerInputSummary ?? 'n/a',
+      selectedTargetSummary: formatCurateSelectedTargetSummary(curateHardCommitDebug),
+      rankedCandidateCount: curateHardCommitDebug?.rankedCandidateCount ?? null,
+      hardCommitCandidateCount: curateHardCommitDebug?.hardCommitCandidateCount ?? null,
+      hardCommitPreservationSucceeded:
+        curateHardCommitDebug?.hardCommitPreservationSucceeded ?? null,
+      explicitFallbackTriggered: curateHardCommitDebug?.explicitFallbackTriggered ?? null,
+      explicitFallbackReason: curateHardCommitDebug?.explicitFallbackReason ?? null,
+      failureKind: null,
+      failedCheck: null,
+      errorName: null,
+      errorMessageRaw: null,
+      failedRolesSummary: curateHardCommitDebug?.failedRoles.join(', ') || 'none',
+      exactPreservingCandidateIdsSummary:
+        curateHardCommitDebug?.exactPreservingCandidateIds.join(', ') || 'none',
+      finalWinnerSummary: formatCurateFinalWinnerSummary(curateHardCommitDebug),
+      contractBuildabilityStatus: contractBuildabilityStatus,
+      missingRoleForContract,
+      candidatePoolSufficiencySummary: candidatePoolSufficiencySummary ?? 'n/a',
+      postPlannerStagesSummary:
+        generationContractDebug.postPlannerStagesSummary ?? 'n/a',
+    }
+  }, [
+    candidatePoolSufficiencySummary,
+    contractBuildabilityStatus,
+    curateHardCommitDebug,
+    generationContractDebug,
+    missingRoleForContract,
+    selectedCandidateRouteArtifact?.id,
+  ])
+  const curateParityDifferenceSummary = useMemo(() => {
+    if (!preflightParitySummary || !continueParitySummary) {
+      return 'n/a'
+    }
+    const differences: string[] = []
+    if (preflightParitySummary.selectedDirectionId !== continueParitySummary.selectedDirectionId) {
+      differences.push(
+        `selectedDirectionId ${preflightParitySummary.selectedDirectionId ?? 'n/a'} -> ${continueParitySummary.selectedDirectionId ?? 'n/a'}`,
+      )
+    }
+    if (preflightParitySummary.curateCommitSemantics !== continueParitySummary.curateCommitSemantics) {
+      differences.push(
+        `curateCommitSemantics ${preflightParitySummary.curateCommitSemantics} -> ${continueParitySummary.curateCommitSemantics}`,
+      )
+    }
+    if (preflightParitySummary.hardCommitRequired !== continueParitySummary.hardCommitRequired) {
+      differences.push(
+        `hardCommitRequired ${preflightParitySummary.hardCommitRequired == null ? 'n/a' : String(preflightParitySummary.hardCommitRequired)} -> ${continueParitySummary.hardCommitRequired == null ? 'n/a' : String(continueParitySummary.hardCommitRequired)}`,
+      )
+    }
+    if (preflightParitySummary.activeDistrictPocketId !== continueParitySummary.activeDistrictPocketId) {
+      differences.push(
+        `activeDistrictPocketId ${preflightParitySummary.activeDistrictPocketId} -> ${continueParitySummary.activeDistrictPocketId}`,
+      )
+    }
+    if (preflightParitySummary.selectedArtifactLineageSummary !== continueParitySummary.selectedArtifactLineageSummary) {
+      differences.push('selectedArtifactLineageSummary changed')
+    }
+    if (preflightParitySummary.plannerInputSummary !== continueParitySummary.plannerInputSummary) {
+      differences.push('plannerInputSummary changed')
+    }
+    if (preflightParitySummary.hardCommitCandidateCount !== continueParitySummary.hardCommitCandidateCount) {
+      differences.push(
+        `hardCommitCandidateCount ${preflightParitySummary.hardCommitCandidateCount ?? 'n/a'} -> ${continueParitySummary.hardCommitCandidateCount ?? 'n/a'}`,
+      )
+    }
+    if (preflightParitySummary.rankedCandidateCount !== continueParitySummary.rankedCandidateCount) {
+      differences.push(
+        `rankedCandidateCount ${preflightParitySummary.rankedCandidateCount ?? 'n/a'} -> ${continueParitySummary.rankedCandidateCount ?? 'n/a'}`,
+      )
+    }
+    if (preflightParitySummary.exactPreservingCandidateIdsSummary !== continueParitySummary.exactPreservingCandidateIdsSummary) {
+      differences.push('exactPreservingCandidateIds changed')
+    }
+    if (preflightParitySummary.postPlannerStagesSummary !== continueParitySummary.postPlannerStagesSummary) {
+      differences.push('postPlannerStages differ')
+    }
+    return differences.join(' | ') || 'no_diff_detected'
+  }, [continueParitySummary, preflightParitySummary])
   const thinPoolDirectionRelaxationSummary = generationContractDebug?.thinPoolRelaxationTrace
     ? `triggered:${String(generationContractDebug.thinPoolRelaxationTrace.triggered)} | reason:${generationContractDebug.thinPoolRelaxationTrace.relaxationReason ?? 'n/a'} | rule:${generationContractDebug.thinPoolRelaxationTrace.relaxedRule ?? 'n/a'} | outcome:${generationContractDebug.thinPoolRelaxationTrace.validationOutcome}`
     : 'n/a'
@@ -10914,6 +16391,16 @@ export function SandboxConciergePage() {
     (key: string) => Boolean(debugExpandedByKey[key]),
     [debugExpandedByKey],
   )
+  useEffect(() => {
+    if (
+      !isCurateWrapperActive ||
+      curateCardAuditRows.length === 0 ||
+      Object.prototype.hasOwnProperty.call(debugExpandedByKey, 'curateCardAudit')
+    ) {
+      return
+    }
+    setDebugExpanded('curateCardAudit', true)
+  }, [curateCardAuditRows.length, debugExpandedByKey, isCurateWrapperActive, setDebugExpanded])
   const selectedStartTasteSignals = useMemo(
     () => getFoundationTasteSignalsForRole(plan, 'start'),
     [plan],
@@ -10986,26 +16473,256 @@ export function SandboxConciergePage() {
   const routeShapeWindDownInvariantSummary = activeRouteShapeContract
     ? formatRoleInvariantSummary(activeRouteShapeContract.roleInvariants.windDown)
     : 'n/a'
-  useEffect(() => {
-    setSelectionPreview(
-      selectedDirection ? buildPreviewFromDirection(selectedDirection, persona) : null,
-    )
-  }, [selectedDirection, persona])
-  const preview = useMemo(
-    () => {
-      if (
-        finalRoute &&
-        selectedDirectionContractId &&
-        finalRoute.selectedDirectionId === selectedDirectionContractId
-      ) {
-        return buildPreviewFromFinalRoute(finalRoute)
+  const selectedRouteArtifact = useMemo<SelectedRouteArtifact<CanonicalRouteArtifact> | null>(() => {
+    const selectedRouteDirectionId =
+      selectedCandidateRouteArtifact?.selection.directionId ??
+      selectedDirectionContractId ??
+      selectedDirectionId ??
+      null
+    const approvedCuratePreviewPayload =
+      isCurateWrapperActive &&
+      selectedCuratePreviewCommitability?.status === 'committable' &&
+      selectedCuratePreviewCommitability.approvedRefinementEntryPayload &&
+      selectedCandidateRouteArtifact &&
+      selectedCuratePreviewCommitability.artifactId === selectedCandidateRouteArtifact.id
+        ? selectedCuratePreviewCommitability.approvedRefinementEntryPayload
+        : null
+    if (
+      approvedCuratePreviewPayload &&
+      selectedRouteDirectionId &&
+      approvedCuratePreviewPayload.selectedDirectionId === selectedRouteDirectionId
+    ) {
+      const approvedFinalRoute = approvedCuratePreviewPayload.finalRoute
+      const approvedPlanSnapshot = approvedCuratePreviewPayload.planSnapshot
+      const approvedHighlightStop =
+        approvedFinalRoute.stops.find((stop) => stop.role === 'highlight') ?? null
+      const approvedCanonicalRouteArtifact: CanonicalRouteArtifact = {
+        selectedDirectionId: approvedCuratePreviewPayload.selectedDirectionId,
+        selectedClusterConfirmation: approvedPlanSnapshot.selectedClusterConfirmation,
+        itinerary: approvedPlanSnapshot.itinerary,
+        finalRoute: approvedFinalRoute,
+        canonicalStopByRole: approvedCuratePreviewPayload.canonicalStopByRole,
+        planSnapshot: approvedPlanSnapshot,
       }
-      return selectionPreview
-    },
-    [finalRoute, selectedDirectionContractId, selectionPreview],
+      return {
+        source: 'committed',
+        directionId: selectedRouteDirectionId,
+        canonicalRouteArtifact: approvedCanonicalRouteArtifact,
+        activeHighlight: {
+          provenance: 'committed_runtime_route',
+          activeName: approvedHighlightStop?.displayName ?? 'Selected highlight',
+          activeVenueId: approvedHighlightStop?.venueId,
+          activeStopId: approvedHighlightStop?.id,
+        },
+        preview: buildPreviewFromFinalRoute(approvedFinalRoute),
+        routeTitle: approvedFinalRoute.routeHeadline,
+        routeSummary: approvedFinalRoute.routeSummary,
+        districtLine: `Mostly in ${approvedFinalRoute.location || city.trim()}`,
+        districtAnchorLine: `District anchor: ${approvedFinalRoute.location || city.trim()}`,
+        authorityLine: approvedPlanSnapshot.selectedClusterConfirmation,
+        happeningsLine: undefined as string | undefined,
+        whyChooseLine: approvedPlanSnapshot.selectedClusterConfirmation,
+        whyTonightProofLine: undefined as string | undefined,
+      }
+    }
+    const committedArtifactMatchesSelection =
+      !selectedCandidateRouteArtifact ||
+      canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ===
+        selectedCandidateRouteArtifact.id
+    if (
+      canonicalRouteArtifact &&
+      selectedRouteDirectionId &&
+      canonicalRouteArtifact.selectedDirectionId === selectedRouteDirectionId &&
+      committedArtifactMatchesSelection
+    ) {
+      const committedHighlightStop =
+        canonicalRouteArtifact.finalRoute.stops.find((stop) => stop.role === 'highlight') ?? null
+      const committedAnchorVenueId = canonicalRouteArtifact.planSnapshot.intentProfile.anchor?.venueId
+      const committedAnchorName =
+        selectedBuildAnchor?.name ??
+        canonicalRouteArtifact.planSnapshot.itinerary.stops.find(
+          (stop) => stop.venueId === committedAnchorVenueId,
+        )?.venueName
+      const committedAnchorPreserved = Boolean(
+        isBuildWrapperActive &&
+          committedAnchorVenueId &&
+          canonicalRouteArtifact.planSnapshot.itinerary.stops.some(
+            (stop) => stop.venueId === committedAnchorVenueId,
+          ),
+      )
+      return {
+        source: 'committed',
+        directionId: selectedRouteDirectionId,
+        canonicalRouteArtifact,
+        activeHighlight: {
+          provenance: 'committed_runtime_route',
+          activeName: committedHighlightStop?.displayName ?? 'Selected highlight',
+          activeVenueId: committedHighlightStop?.venueId,
+          activeStopId: committedHighlightStop?.id,
+        },
+        preview: buildPreviewFromFinalRoute(canonicalRouteArtifact.finalRoute),
+        routeTitle: canonicalRouteArtifact.finalRoute.routeHeadline,
+        routeSummary: canonicalRouteArtifact.finalRoute.routeSummary,
+        districtLine: `Mostly in ${canonicalRouteArtifact.finalRoute.location || city.trim()}`,
+        districtAnchorLine:
+          committedAnchorPreserved && committedAnchorName
+            ? `Required anchor: ${committedAnchorName}`
+            : `District anchor: ${canonicalRouteArtifact.finalRoute.location || city.trim()}`,
+        authorityLine: canonicalRouteArtifact.selectedClusterConfirmation,
+        happeningsLine: undefined as string | undefined,
+        whyChooseLine:
+          committedAnchorPreserved && committedAnchorName
+            ? `Includes required anchor: ${committedAnchorName}.`
+            : canonicalRouteArtifact.selectedClusterConfirmation,
+        whyTonightProofLine: undefined as string | undefined,
+      }
+    }
+    if (selectedCandidateRouteArtifact) {
+      const candidateDirectionId =
+        selectedCandidateRouteArtifact.selection.directionId ??
+        selectedDirectionContractId ??
+        selectedDirectionId ??
+        selectedCandidateRouteArtifact.id
+      const buildAnchorClaimAllowed = Boolean(
+        isBuildWrapperActive &&
+          selectedBuildAnchor &&
+          selectedCandidateRouteArtifact.anchorVenueId === selectedBuildAnchor.venueId,
+      )
+      const buildAnchorLine =
+        buildAnchorClaimAllowed
+          ? `Required anchor: ${selectedBuildAnchor.name}`
+          : selectedCandidateRouteArtifact.districtAnchorLine
+      const buildWhyChooseLine =
+        buildAnchorClaimAllowed
+          ? `Includes required anchor: ${selectedBuildAnchor.name}.`
+          : selectedCandidateRouteArtifact.whyChooseLine
+      return {
+        source: 'candidate',
+        directionId: candidateDirectionId,
+        candidateArtifactId: selectedCandidateRouteArtifact.id,
+        candidateRouteArtifact: selectedCandidateRouteArtifact,
+        activeHighlight: {
+          provenance: 'candidate_story_spine',
+          activeName: selectedCandidateRouteArtifact.storySpine.highlight,
+          activeVenueId:
+            selectedCandidateRouteArtifact.anchorRole === 'highlight'
+              ? selectedCandidateRouteArtifact.anchorVenueId
+              : undefined,
+        },
+        preview: {
+          directionId: candidateDirectionId,
+          headline: selectedCandidateRouteArtifact.routeTitle,
+          tone: selectedCandidateRouteArtifact.routeSummary,
+          continuityLine: selectedCandidateRouteArtifact.routeSummary,
+          stops: [
+            { role: 'start' as const, name: selectedCandidateRouteArtifact.storySpine.start },
+            { role: 'highlight' as const, name: selectedCandidateRouteArtifact.storySpine.highlight },
+            { role: 'windDown' as const, name: selectedCandidateRouteArtifact.storySpine.windDown },
+          ],
+        },
+        routeTitle: selectedCandidateRouteArtifact.routeTitle,
+        flavorLine: selectedCandidateRouteArtifact.flavorLine,
+        routeSummary: selectedCandidateRouteArtifact.routeSummary,
+        traits: selectedCandidateRouteArtifact.traits,
+        districtLine: selectedCandidateRouteArtifact.districtLine,
+        districtAnchorLine: buildAnchorLine,
+        authorityLine: selectedCandidateRouteArtifact.authorityLine,
+        happeningsLine: selectedCandidateRouteArtifact.happeningsLine,
+        whyChooseLine: buildWhyChooseLine,
+        whyTonightProofLine: selectedCandidateRouteArtifact.whyTonightProofLine,
+        scenarioEvaluationNotes: selectedCandidateRouteArtifact.scenarioEvaluation?.notes,
+      }
+    }
+    return null
+  }, [
+    canonicalRouteArtifact,
+    city,
+    isBuildWrapperActive,
+    isCurateWrapperActive,
+    selectedDirectionId,
+    selectedBuildAnchor,
+    selectedCandidateRouteArtifact,
+    selectedCuratePreviewCommitability,
+    selectedDirectionContractId,
+  ])
+  const selectedRouteSummaryArtifact = useMemo<SelectedRouteSummaryArtifact | null>(() => {
+    if (!selectedRouteArtifact) {
+      return null
+    }
+    return {
+      source: selectedRouteArtifact.source,
+      activeHighlight: selectedRouteArtifact.activeHighlight,
+      preview: selectedRouteArtifact.preview,
+      routeTitle: selectedRouteArtifact.routeTitle,
+      flavorLine: selectedRouteArtifact.flavorLine,
+      routeSummary: selectedRouteArtifact.routeSummary,
+      traits: selectedRouteArtifact.traits,
+      districtLine: selectedRouteArtifact.districtLine,
+      districtAnchorLine: selectedRouteArtifact.districtAnchorLine,
+      authorityLine: selectedRouteArtifact.authorityLine,
+      happeningsLine: selectedRouteArtifact.happeningsLine,
+      whyChooseLine: selectedRouteArtifact.whyChooseLine,
+      whyTonightProofLine: selectedRouteArtifact.whyTonightProofLine,
+      scenarioEvaluationNotes: selectedRouteArtifact.scenarioEvaluationNotes,
+    }
+  }, [selectedRouteArtifact])
+  const directionVisibleFingerprintById = useMemo(
+    () =>
+      new Map(
+        directionCards.map((entry) => {
+          const artifact = candidateRouteArtifactByDirectionIdForDisplay.get(entry.id)
+          const routeTitle = artifact?.routeTitle ?? entry.card.title
+          const routeSummary =
+            artifact?.routeSummary ??
+            entry.debugMeta?.directionNarrativeSummary ??
+            entry.card.whyNow
+          const traits = artifact?.traits
+          const proofLines = artifact
+            ? [
+                artifact.whyChooseLine,
+                artifact.whyTonightProofLine,
+                artifact.scenarioEvaluation?.notes?.[0],
+                artifact.authorityLine,
+                artifact.happeningsLine,
+              ].filter((value): value is string => Boolean(value && value.trim()))
+            : [entry.card.whyYou, entry.debugMeta?.directionStrategySummary].filter(
+                (value): value is string => Boolean(value && value.trim()),
+              )
+          const districtAnchorLine =
+            artifact?.districtAnchorLine ??
+            artifact?.districtLine ??
+            entry.debugMeta?.pocketLabel ??
+            entry.id
+          const stops = artifact
+            ? [artifact.storySpine.start, artifact.storySpine.highlight, artifact.storySpine.windDown]
+            : [entry.card.storySpinePreview?.start, entry.card.storySpinePreview?.highlight, entry.card.storySpinePreview?.windDown].filter(
+                (value): value is string => Boolean(value),
+              )
+          return [
+            entry.id,
+            buildVisibleNightFingerprint({
+              routeTitle,
+              routeSummary,
+              flavorLine: artifact?.flavorLine,
+              traits,
+              proofLines,
+              districtAnchorLine,
+              stops,
+              stopVenueIds: artifact?.anchorVenueId ? [artifact.anchorVenueId] : undefined,
+            }),
+          ] as const
+        }),
+      ),
+    [candidateRouteArtifactByDirectionIdForDisplay, directionCards],
   )
+  const selectedCandidatePreviewValidationFailed = Boolean(
+    selectedRouteArtifact?.source === 'candidate' &&
+      selectedDirectionContractId &&
+      surpriseContractValidationFailedDirectionId === selectedDirectionContractId,
+  )
+  const preview = selectedRouteSummaryArtifact?.preview ?? null
   const previewDirectionId = preview?.directionId ?? null
-  const finalRouteDirectionId = finalRoute?.selectedDirectionId ?? null
+  const finalRouteDirectionId = canonicalRouteArtifact?.selectedDirectionId ?? null
   const selectedDirectionContextId = resolvedSelectedDirectionContext?.selectedDirectionId ?? null
   const directionSyncMismatch = Boolean(
     selectedDirectionContractId &&
@@ -11017,31 +16734,479 @@ export function SandboxConciergePage() {
     ? 'no_selection'
     : loading
       ? 'building'
-      : !finalRoute
+      : !canonicalRouteArtifact
         ? 'awaiting_generation'
         : directionSyncMismatch
           ? 'mismatch'
           : 'synced'
   const previewSynced =
-    Boolean(finalRoute) &&
+    Boolean(canonicalRouteArtifact) &&
     Boolean(selectedDirectionContractId) &&
     previewDirectionId === selectedDirectionContractId &&
-    finalRouteDirectionId === selectedDirectionContractId
+    finalRouteDirectionId === selectedDirectionContractId &&
+    (!selectedCandidateRouteArtifact ||
+      canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ===
+        selectedCandidateRouteArtifact.id)
+  const previewGenerateDirectionId =
+    selectedRouteArtifact?.directionId ?? selectedDirectionId ?? previewDirectionId ?? null
+  const committedPlanMatchesGenerateDirection = Boolean(
+    plan &&
+      finalRoute &&
+      previewGenerateDirectionId &&
+      finalRoute.selectedDirectionId === previewGenerateDirectionId &&
+      (!selectedCandidateRouteArtifact ||
+        plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id),
+  )
+  const committedPreviewStopByRole = useMemo(
+    () =>
+      selectedRouteArtifact?.source === 'committed'
+        ? new Map(planningDisplayStops.map((stop) => [stop.role, stop] as const))
+        : new Map<UserStopRole, ItineraryStop>(),
+    [planningDisplayStops, selectedRouteArtifact?.source],
+  )
   const previewStartLabel =
-    preview?.stops.find((stop) => stop.role === 'start')?.name ?? 'TBD'
+    committedPreviewStopByRole.get('start')?.venueName ??
+    preview?.stops.find((stop) => stop.role === 'start')?.name ??
+    'Selected start'
   const previewHighlightLabel =
-    preview?.stops.find((stop) => stop.role === 'highlight')?.name ?? 'TBD'
+    committedPreviewStopByRole.get('highlight')?.venueName ??
+    preview?.stops.find((stop) => stop.role === 'highlight')?.name ??
+    'Selected highlight'
+  const previewSurpriseLabel =
+    committedPreviewStopByRole.get('surprise')?.venueName ??
+    preview?.stops.find((stop) => stop.role === 'surprise')?.name ??
+    null
   const previewWindDownLabel =
-    preview?.stops.find((stop) => stop.role === 'windDown')?.name ?? 'Soft close nearby'
+    committedPreviewStopByRole.get('windDown')?.venueName ??
+    preview?.stops.find((stop) => stop.role === 'windDown')?.name ??
+    'Selected wind-down'
+  const activeHighlightProjection = selectedRouteSummaryArtifact?.activeHighlight ?? null
+  const previewHighlightProvenanceLine = activeHighlightProjection
+    ? activeHighlightProjection.provenance === 'candidate_story_spine'
+      ? `Highlight source: candidate route story spine. Showing "${activeHighlightProjection.activeName}".`
+      : `Highlight source: committed runtime route stop. Showing "${activeHighlightProjection.activeName}".`
+    : undefined
+  const previewVisibleStops = dedupeStringIds(
+    [previewStartLabel, previewHighlightLabel, previewSurpriseLabel, previewWindDownLabel].filter(
+      (value): value is string => Boolean(value && value.trim()),
+    ),
+  )
   const previewNarrativeSummary =
-    preview?.tone ??
+    selectedRouteSummaryArtifact?.routeSummary ??
     selectedDirection?.debugMeta?.directionNarrativeSummary ??
     selectedDirection?.card.whyNow ??
     "Choose a direction to see tonight's route preview."
+  const currentVisibleProofLines = useMemo(
+    () =>
+      [
+        selectedRouteSummaryArtifact?.whyChooseLine,
+        selectedRouteSummaryArtifact?.whyTonightProofLine,
+        ...(selectedRouteSummaryArtifact?.scenarioEvaluationNotes ?? []).slice(0, 1),
+        selectedRouteSummaryArtifact?.authorityLine,
+        selectedRouteSummaryArtifact?.happeningsLine,
+      ].filter((value): value is string => Boolean(value && value.trim())),
+    [
+      selectedRouteSummaryArtifact?.authorityLine,
+      selectedRouteSummaryArtifact?.happeningsLine,
+      selectedRouteSummaryArtifact?.scenarioEvaluationNotes,
+      selectedRouteSummaryArtifact?.whyChooseLine,
+      selectedRouteSummaryArtifact?.whyTonightProofLine,
+    ],
+  )
+  useEffect(() => {
+    setStep2RerollTrace((current) => {
+      if (!current) {
+        return current
+      }
+      const committedArtifactPreferred = selectedRouteArtifact?.source === 'committed'
+      const staleCommittedMatchUsed = Boolean(
+        committedArtifactPreferred &&
+          selectedCandidateRouteArtifact &&
+          canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId !==
+            selectedCandidateRouteArtifact.id,
+      )
+      const previewRenderSource =
+        selectedRouteArtifact?.source === 'candidate'
+          ? 'selectedRouteArtifact.candidateRouteArtifact'
+          : selectedRouteArtifact?.source === 'committed'
+            ? 'selectedRouteArtifact.canonicalRouteArtifact'
+            : selectedRouteSummaryArtifact
+              ? 'selectedRouteSummaryArtifact'
+              : null
+      const previewRenderedArtifactId =
+        selectedRouteArtifact?.source === 'candidate'
+          ? selectedRouteArtifact.candidateArtifactId ?? null
+          : selectedRouteArtifact?.source === 'committed'
+            ? canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ?? null
+            : null
+      const next: Step2RerollOwnershipTrace = {
+        ...current,
+        selectedDirectionId_afterSelect: selectedDirectionId ?? null,
+        selectedStep2CandidateArtifactId_afterSelect: selectedStep2CandidateArtifactId ?? null,
+        selectedCandidateRouteArtifact_id_after: selectedCandidateRouteArtifact?.id ?? null,
+        selectedRouteArtifact_source_after: selectedRouteArtifact?.source ?? null,
+        selectedRouteArtifact_directionId_after: selectedRouteArtifact?.directionId ?? null,
+        selectedRouteArtifact_candidateArtifactId_after:
+          selectedRouteArtifact?.source === 'candidate'
+            ? selectedRouteArtifact.candidateArtifactId ?? null
+            : null,
+        selectedRouteSummaryArtifact_routeTitle_after:
+          selectedRouteSummaryArtifact?.routeTitle ?? null,
+        selectedRouteSummaryArtifact_flavorLine_after:
+          selectedRouteSummaryArtifact?.flavorLine ?? null,
+        previewRenderSource,
+        previewRenderedDirectionId: previewDirectionId,
+        previewRenderedArtifactId,
+        whyThisWorksSourceSummary: currentVisibleProofLines.join(' | ') || null,
+        committedArtifactPreferred,
+        staleCommittedMatchUsed,
+        anyOverrideReason: staleCommittedMatchUsed
+          ? 'committed RuntimeRouteArtifact retook ownership over selected display artifact'
+          : current.anyOverrideReason,
+      }
+      const changed = Object.keys(next).some((key) => {
+        const traceKey = key as keyof Step2RerollOwnershipTrace
+        return next[traceKey] !== current[traceKey]
+      })
+      return changed ? next : current
+    })
+  }, [
+    canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId,
+    committedPreviewStopByRole,
+    currentVisibleProofLines,
+    previewDirectionId,
+    selectedCandidateRouteArtifact,
+    selectedDirectionId,
+    selectedRouteArtifact,
+    selectedRouteSummaryArtifact,
+    selectedStep2CandidateArtifactId,
+  ])
+  const currentVisibleNightFingerprint = useMemo(
+    () =>
+      buildVisibleNightFingerprint({
+        routeTitle: selectedRouteSummaryArtifact?.routeTitle,
+        routeSummary: previewNarrativeSummary,
+        flavorLine: selectedRouteSummaryArtifact?.flavorLine,
+        traits: selectedRouteSummaryArtifact?.traits,
+        proofLines: currentVisibleProofLines,
+        districtAnchorLine: selectedRouteSummaryArtifact?.districtAnchorLine,
+        stops: previewVisibleStops,
+        stopVenueIds: canonicalRouteArtifact?.finalRoute.stops.map((stop) => stop.venueId),
+      }),
+    [
+      canonicalRouteArtifact?.finalRoute.stops,
+      previewHighlightLabel,
+      previewNarrativeSummary,
+      previewStartLabel,
+      previewSurpriseLabel,
+      previewVisibleStops,
+      previewWindDownLabel,
+      currentVisibleProofLines,
+      selectedRouteSummaryArtifact?.districtAnchorLine,
+      selectedRouteSummaryArtifact?.flavorLine,
+      selectedRouteSummaryArtifact?.routeTitle,
+      selectedRouteSummaryArtifact?.traits,
+    ],
+  )
+  const step2TryAnotherAlternates = useMemo(() => {
+    const currentDirectionId = selectedDirectionId ?? directionCards[0]?.id ?? null
+    if (!currentDirectionId) {
+      return [] as Array<{
+        direction: (typeof directionCards)[number]
+        score: number
+        fingerprint: string
+      }>
+    }
+    const currentStructure = {
+      routeTitle: selectedRouteSummaryArtifact?.routeTitle,
+      routeSummary: previewNarrativeSummary,
+      flavorLine: selectedRouteSummaryArtifact?.flavorLine,
+      traits: selectedRouteSummaryArtifact?.traits,
+      proofLines: currentVisibleProofLines,
+      districtAnchorLine: selectedRouteSummaryArtifact?.districtAnchorLine,
+      stops: previewVisibleStops,
+      stopVenueIds: canonicalRouteArtifact?.finalRoute.stops.map((stop) => stop.venueId),
+    }
+    const currentArtifactId = selectedCandidateRouteArtifact?.id ?? selectedStep2CandidateArtifactId ?? null
+    const candidates = candidateRouteArtifactsForDisplay
+      .map((candidateArtifact) => {
+        if (candidateArtifact.id === currentArtifactId) {
+          return null
+        }
+        const candidateDirection = resolveDirectionForCandidateArtifact(candidateArtifact)
+        if (!candidateDirection) {
+          return null
+        }
+        const candidateStops = [
+          candidateArtifact.storySpine.start,
+          candidateArtifact.storySpine.highlight,
+          candidateArtifact.storySpine.windDown,
+        ]
+        const candidateProofLines = [
+          candidateArtifact.whyChooseLine,
+          candidateArtifact.whyTonightProofLine,
+          candidateArtifact.scenarioEvaluation?.notes?.[0],
+          candidateArtifact.authorityLine,
+          candidateArtifact.happeningsLine,
+        ].filter((value): value is string => Boolean(value && value.trim()))
+        const visibleDifferenceScore = computeVisibleNightDifferenceScore(currentStructure, {
+          routeTitle: candidateArtifact.routeTitle,
+          routeSummary: candidateArtifact.routeSummary,
+          flavorLine: candidateArtifact.flavorLine,
+          traits: candidateArtifact.traits,
+          proofLines: candidateProofLines,
+          districtAnchorLine: candidateArtifact.districtAnchorLine ?? candidateArtifact.districtLine,
+          stops: candidateStops,
+          stopVenueIds: candidateArtifact.anchorVenueId ? [candidateArtifact.anchorVenueId] : undefined,
+        })
+        const fingerprint = buildVisibleNightFingerprint({
+          routeTitle: candidateArtifact.routeTitle,
+          routeSummary: candidateArtifact.routeSummary,
+          flavorLine: candidateArtifact.flavorLine,
+          traits: candidateArtifact.traits,
+          proofLines: candidateProofLines,
+          districtAnchorLine: candidateArtifact.districtAnchorLine ?? candidateArtifact.districtLine,
+          stops: candidateStops,
+          stopVenueIds: candidateArtifact.anchorVenueId ? [candidateArtifact.anchorVenueId] : undefined,
+        })
+        const variation = surpriseVariationByDirectionId.get(candidateDirection.id)
+        const variationBoost =
+          variation &&
+          (variation.anchorVenueId || variation.pocketId || variation.scenarioFamily)
+            ? 1
+            : 0
+        const structurallyDifferent =
+          (fingerprint.length > 0 &&
+            fingerprint !== currentVisibleNightFingerprint &&
+            visibleDifferenceScore > 0) ||
+          variationBoost > 0
+        if (!structurallyDifferent) {
+          return null
+        }
+        return {
+          artifact: candidateArtifact,
+          direction: candidateDirection,
+          score: visibleDifferenceScore + variationBoost,
+          fingerprint,
+        }
+      })
+      .filter(
+        (
+          entry,
+        ): entry is {
+          artifact: CanonicalCandidateRouteArtifact
+          direction: (typeof directionCards)[number]
+          score: number
+          fingerprint: string
+        } => Boolean(entry),
+      )
+      .sort((left, right) => right.score - left.score || left.direction.id.localeCompare(right.direction.id))
+
+    const uniqueByFingerprint: Array<{
+      artifact: CanonicalCandidateRouteArtifact
+      direction: (typeof directionCards)[number]
+      score: number
+      fingerprint: string
+    }> = []
+    const seenFingerprints = new Set<string>()
+    for (const candidate of candidates) {
+      if (seenFingerprints.has(candidate.fingerprint)) {
+        continue
+      }
+      seenFingerprints.add(candidate.fingerprint)
+      uniqueByFingerprint.push(candidate)
+    }
+    return uniqueByFingerprint
+  }, [
+    candidateRouteArtifactsForDisplay,
+    canonicalRouteArtifact?.finalRoute.stops,
+    currentVisibleNightFingerprint,
+    currentVisibleProofLines,
+    directionCards,
+    previewHighlightLabel,
+    previewNarrativeSummary,
+    previewStartLabel,
+    previewSurpriseLabel,
+    previewVisibleStops,
+    previewWindDownLabel,
+    selectedDirectionId,
+    selectedCandidateRouteArtifact?.id,
+    selectedStep2CandidateArtifactId,
+    selectedRouteSummaryArtifact?.districtAnchorLine,
+    selectedRouteSummaryArtifact?.flavorLine,
+    selectedRouteSummaryArtifact?.routeTitle,
+    selectedRouteSummaryArtifact?.traits,
+    resolveDirectionForCandidateArtifact,
+    surpriseVariationByDirectionId,
+  ])
+  const handleTryAnotherDirection = useCallback(() => {
+    if (loading) {
+      return
+    }
+    const currentDirectionId = selectedDirectionId ?? directionCards[0]?.id ?? null
+    const currentArtifactId = selectedCandidateRouteArtifact?.id ?? selectedStep2CandidateArtifactId ?? null
+    const clickId = `try-another-${Date.now().toString(36)}`
+    setStep2RerollTrace({
+      clickId,
+      clickedAt: new Date().toISOString(),
+      currentSelectedDirectionId_before: currentDirectionId,
+      currentSelectedArtifactId_before: currentArtifactId,
+      nextDirectionId_selected: null,
+      nextArtifactId_selected: null,
+      handleTryAnotherDirection_entered: true,
+      handleSelectDirection_called: false,
+      handleSelectDirection_args: null,
+      selectedDirectionId_afterSelect: null,
+      selectedStep2CandidateArtifactId_afterSelect: null,
+      generatePlan_called: false,
+      generatePlan_directionId: null,
+      generatePlan_artifactIdOverride: null,
+      generatePlan_success: null,
+      generatePlan_errorRaw: null,
+      selectedCandidateRouteArtifact_id_after: null,
+      selectedRouteArtifact_source_after: null,
+      selectedRouteArtifact_directionId_after: null,
+      selectedRouteArtifact_candidateArtifactId_after: null,
+      selectedRouteSummaryArtifact_routeTitle_after: null,
+      selectedRouteSummaryArtifact_flavorLine_after: null,
+      previewRenderSource: null,
+      previewRenderedDirectionId: null,
+      previewRenderedArtifactId: null,
+      whyThisWorksSourceSummary: null,
+      reconciliationEffectRan: false,
+      committedArtifactPreferred: false,
+      directionFallbackUsed: false,
+      staleCommittedMatchUsed: false,
+      anyOverrideReason: null,
+    })
+    const fallbackAlternates =
+      candidateRouteArtifactsForDisplay
+        .filter((artifact) => artifact.id !== currentArtifactId)
+        .map((artifact) => {
+          const direction = resolveDirectionForCandidateArtifact(artifact)
+          if (!direction) {
+            return null
+          }
+          return {
+            artifact,
+              direction,
+              score: 0,
+              fingerprint: buildVisibleNightFingerprint({
+                routeTitle: artifact.routeTitle,
+                routeSummary: artifact.routeSummary,
+                flavorLine: artifact.flavorLine,
+                traits: artifact.traits,
+                proofLines: [
+                  artifact.whyChooseLine,
+                  artifact.whyTonightProofLine,
+                  artifact.scenarioEvaluation?.notes?.[0],
+                  artifact.authorityLine,
+                  artifact.happeningsLine,
+                ].filter((value): value is string => Boolean(value && value.trim())),
+                districtAnchorLine: artifact.districtAnchorLine ?? artifact.districtLine,
+                stops: [artifact.storySpine.start, artifact.storySpine.highlight, artifact.storySpine.windDown],
+                stopVenueIds: artifact.anchorVenueId ? [artifact.anchorVenueId] : undefined,
+              }),
+          }
+        })
+        .filter(
+          (
+            entry,
+          ): entry is {
+            artifact: CanonicalCandidateRouteArtifact
+            direction: (typeof directionCards)[number]
+            score: number
+            fingerprint: string
+          } => Boolean(entry),
+        )
+    const candidatesToTry =
+      step2TryAnotherAlternates.length > 0 ? step2TryAnotherAlternates : fallbackAlternates
+    if (candidatesToTry.length === 0) {
+      setStep2RerollTrace((current) =>
+        current?.clickId === clickId
+          ? {
+              ...current,
+              anyOverrideReason: 'no alternate candidate artifact available',
+            }
+          : current,
+      )
+      setError('No alternate surprise route is available right now.')
+      return
+    }
+    const nextCandidate =
+      candidatesToTry.find((candidate) => candidate.artifact.id !== currentArtifactId) ??
+      candidatesToTry[0]
+    if (!nextCandidate) {
+      setStep2RerollTrace((current) =>
+        current?.clickId === clickId
+          ? {
+              ...current,
+              anyOverrideReason: 'alternate candidate list did not yield a selectable artifact',
+            }
+          : current,
+      )
+      setError('No alternate surprise preview is available right now.')
+      return
+    }
+    surpriseAutoGenerateAttemptRef.current = nextCandidate.direction.id
+    const forceReset = nextCandidate.artifact.id !== currentArtifactId
+    handleSelectDirection(nextCandidate.direction.id, forceReset)
+    setSelectedStep2CandidateArtifactId(nextCandidate.artifact.id)
+    setStep2RerollTrace((current) =>
+      current?.clickId === clickId
+        ? {
+            ...current,
+            nextDirectionId_selected: nextCandidate.direction.id,
+            nextArtifactId_selected: nextCandidate.artifact.id,
+            handleSelectDirection_called: true,
+            handleSelectDirection_args: {
+              directionId: nextCandidate.direction.id,
+              forceReset,
+            },
+            selectedDirectionId_afterSelect: nextCandidate.direction.id,
+            selectedStep2CandidateArtifactId_afterSelect: nextCandidate.artifact.id,
+          }
+        : current,
+    )
+    setSurpriseContractValidationFailedDirectionId((current) =>
+      current === nextCandidate.direction.id ? null : current,
+    )
+  }, [
+    candidateRouteArtifactsForDisplay,
+    directionCards,
+    step2TryAnotherAlternates,
+    handleSelectDirection,
+    loading,
+    resolveDirectionForCandidateArtifact,
+    selectedCandidateRouteArtifact?.id,
+    selectedDirectionId,
+    selectedStep2CandidateArtifactId,
+  ])
   const selectedDirectionTitle = selectedDirection?.card.title?.trim() ?? null
-  const previewHeaderTitle = selectedDirectionTitle
-    ? `${selectedDirectionTitle} - structured for flow`
-    : "Tonight's route - structured for flow"
+  const previewHeaderTitle = selectedRouteSummaryArtifact?.routeTitle
+    ? selectedRouteSummaryArtifact.routeTitle
+    : selectedDirectionTitle
+      ? selectedDirectionTitle
+      : "Tonight's route"
+  const previewCandidateLeadLine =
+    selectedRouteSummaryArtifact?.flavorLine?.trim() || 'A complete, ready-to-run night.'
+  const previewTraitLine =
+    selectedRouteSummaryArtifact?.traits && selectedRouteSummaryArtifact.traits.length > 0
+      ? `Route character: ${selectedRouteSummaryArtifact.traits.join(', ')}.`
+      : undefined
+  const previewPrimaryProofLine = currentVisibleProofLines.find((line) => {
+    const normalizedLine = line.trim().toLowerCase()
+    return (
+      normalizedLine.length > 0 &&
+      normalizedLine !== previewCandidateLeadLine.trim().toLowerCase() &&
+      normalizedLine !== previewNarrativeSummary.trim().toLowerCase()
+    )
+  })
+  const previewHeaderDistinctionLines = dedupeStringIds(
+    [previewTraitLine, previewPrimaryProofLine].filter(
+      (value): value is string => Boolean(value && value.trim()),
+    ),
+  ).slice(0, 2)
   const previewStructureReason =
     resolvedContractConstraints.peakCountModel === 'distributed'
       ? 'Start, highlight, and wind-down stay coordinated even with a distributed peak model.'
@@ -11054,6 +17219,12 @@ export function SandboxConciergePage() {
         : 'Manageable moves preserve momentum without rush.'
   const previewWhyCandidates = dedupeStringIds(
     [
+      selectedRouteSummaryArtifact?.whyChooseLine,
+      selectedRouteSummaryArtifact?.whyTonightProofLine,
+      ...(selectedRouteSummaryArtifact?.scenarioEvaluationNotes ?? []).slice(0, 1),
+      previewTraitLine,
+      selectedRouteSummaryArtifact?.authorityLine,
+      selectedRouteSummaryArtifact?.happeningsLine,
       previewStructureReason,
       previewMovementReason,
       selectedDirection?.debugMeta?.directionDistrictSupportSummary,
@@ -11116,6 +17287,9 @@ export function SandboxConciergePage() {
     return districtDiscoveryCards.find((district) => district.id === activeDistrictPocketId) ?? null
   }, [activeDistrictPocketId, districtDiscoveryCards])
   const previewDistrictAnchorLine = useMemo(() => {
+    if (selectedRouteSummaryArtifact?.districtAnchorLine) {
+      return selectedRouteSummaryArtifact.districtAnchorLine
+    }
     const districtName =
       activeDistrictDiscoveryCard?.name ??
       activeDistrictLabel ??
@@ -11125,6 +17299,7 @@ export function SandboxConciergePage() {
   }, [
     activeDistrictDiscoveryCard?.name,
     activeDistrictLabel,
+    selectedRouteSummaryArtifact?.districtAnchorLine,
     selectedDirection?.debugMeta?.pocketLabel,
   ])
   const previewSpatialCoherenceLine = useMemo(() => {
@@ -11169,22 +17344,151 @@ export function SandboxConciergePage() {
     [previewHighlightLabel, previewStartLabel, previewWindDownLabel],
   )
   const previewBridgeLine = 'Generated route summary'
-  const previewBridgeSubline = 'Start, Highlight, and Wind-down are ready. Review the full route.'
-  const revealedStepHeader = 'Confirm your night'
-  const revealedStepSubline = 'Take one last look.'
-  const handleBuildFullPlan = useCallback(async () => {
-    if (!selectedDirectionId || loading) {
+  const previewBridgeSubline =
+    previewHighlightProvenanceLine ??
+    'Start, Highlight, and Wind-down are ready. Review the full route.'
+  const curatePreviewCommitabilityReady = Boolean(
+    selectedCuratePreviewCommitability?.status === 'committable',
+  )
+  const activeFlowMode: ArcFlowMode | null = isSurpriseWrapperActive
+    ? 'surprise'
+    : isCurateWrapperActive
+      ? 'curate'
+      : isBuildWrapperActive
+        ? 'build'
+        : null
+  const hasCommittedRoutePhase = Boolean(
+    hasRevealed &&
+      selectedRouteArtifact?.source === 'committed' &&
+      canonicalRouteArtifact &&
+      (previewSynced || committedPlanMatchesGenerateDirection),
+  )
+  const sharedFlowPhase = resolveArcFlowPhase({
+    mode: activeFlowMode,
+    hasEntryReady: isCurateWrapperActive
+      ? curateStarterReady
+      : isBuildWrapperActive
+        ? buildAnchorReady
+        : true,
+    hasContractSelection: isCurateWrapperActive
+      ? Boolean(selectedStep2CandidateArtifactId && selectedCandidateRouteArtifact)
+      : isBuildWrapperActive
+        ? Boolean(selectedCandidateRouteArtifact)
+        : false,
+    canEnterContractPreview: Boolean(
+      preview &&
+        (!isCurateWrapperActive ||
+          (selectedStep2CandidateArtifactId &&
+            selectedCandidateRouteArtifact &&
+            curatePreviewCommitabilityReady)),
+    ),
+    hasCommittedRoute: hasCommittedRoutePhase,
+    isLockingLivePlan: Boolean(isLocking && hasCommittedRoutePhase),
+  })
+  const curateCommittedRevealActive = Boolean(
+    isCurateWrapperActive &&
+      (sharedFlowPhase === 'route_refinement' || sharedFlowPhase === 'live_plan'),
+  )
+  const curatePreviewPhaseActive = Boolean(
+    isCurateWrapperActive && sharedFlowPhase === 'contract_preview',
+  )
+  const showCurateDiscoveryPhase = Boolean(
+    !isCurateWrapperActive || sharedFlowPhase === 'contract_selection',
+  )
+  const renderCurateRouteCardSection = Boolean(
+    !isSurpriseWrapperActive && showCurateDiscoveryPhase,
+  )
+  const renderCurateAreaContextSection = Boolean(
+    !isSurpriseWrapperActive &&
+      !isCurateWrapperActive &&
+      showCurateDiscoveryPhase &&
+      showStep2SecondarySurfaces,
+  )
+  const renderCurateDirectionDetailSection = Boolean(
+    !isCurateWrapperActive && showStep2SecondarySurfaces && showCurateDiscoveryPhase,
+  )
+  const renderSharedPlanPreview = Boolean(
+    !hasRevealed && preview && (!isModeWrapperActive || sharedFlowPhase === 'contract_preview'),
+  )
+  const renderCommittedReveal = Boolean(
+    sharedFlowPhase === 'route_refinement' || sharedFlowPhase === 'live_plan',
+  )
+  const revealedStepHeader =
+    selectedRouteSummaryArtifact?.routeTitle ?? "Tonight's route is ready"
+  const revealedStepSubline =
+    selectedRouteSummaryArtifact?.routeSummary ?? previewSpatialCoherenceLine
+  const showPrimaryContinueAction = !selectedCandidatePreviewValidationFailed
+  const showTryAnotherAction = isSurpriseWrapperActive
+  const showReturnToCurateDiscoveryAction = curatePreviewPhaseActive
+  const selectedRouteArtifactIdForGeneration =
+    selectedRouteArtifact?.source === 'candidate'
+      ? selectedRouteArtifact.candidateArtifactId ?? null
+      : null
+  const handleReturnToCurateDiscovery = useCallback(() => {
+    if (!isCurateWrapperActive) {
       return
     }
-    if (plan && previewSynced) {
+    setSelectedStep2CandidateArtifactId(null)
+    setExpandedRole(null)
+    setPreviewFeedback(undefined)
+    setPreviewSwap(undefined)
+    setAppliedSwapRole(null)
+    setError(undefined)
+  }, [isCurateWrapperActive])
+  const handleBuildFullPlan = useCallback(async () => {
+    if (!previewGenerateDirectionId || loading) {
+      return
+    }
+    if (isBuildWrapperActive && selectedBuildAnchor && !selectedCandidateRouteArtifact) {
+      setError(
+        `No anchor-valid route is selected for "${selectedBuildAnchor.name}". Choose an anchor-valid direction first.`,
+      )
+      return
+    }
+    if (committedPlanMatchesGenerateDirection || (plan && previewSynced)) {
+      setError(undefined)
       setHasRevealed(true)
       return
     }
-    const generated = await generatePlan(selectedDirectionId)
+    if (
+      isCurateWrapperActive &&
+      selectedCuratePreviewCommitability?.status === 'committable' &&
+      selectedCuratePreviewCommitability.approvedRefinementEntryPayload &&
+      selectedCandidateRouteArtifact &&
+      selectedCuratePreviewCommitability.artifactId === selectedCandidateRouteArtifact.id
+    ) {
+      applyCurateRefinementEntryPayload(
+        selectedCuratePreviewCommitability.approvedRefinementEntryPayload,
+      )
+      setActiveRole('start')
+      setNearbySummaryByRole({})
+      autoDirectionSyncAttemptRef.current = null
+      setSurpriseContractValidationFailedDirectionId(null)
+      setError(undefined)
+      setHasRevealed(true)
+      return
+    }
+    const generated = await generatePlan(
+      previewGenerateDirectionId,
+      selectedRouteArtifactIdForGeneration,
+    )
     if (generated) {
       setHasRevealed(true)
     }
-  }, [generatePlan, loading, plan, previewSynced, selectedDirectionId])
+  }, [
+    generatePlan,
+    isBuildWrapperActive,
+    loading,
+    applyCurateRefinementEntryPayload,
+    committedPlanMatchesGenerateDirection,
+    plan,
+    previewSynced,
+    previewGenerateDirectionId,
+    selectedCuratePreviewCommitability,
+    selectedRouteArtifactIdForGeneration,
+    selectedBuildAnchor,
+    selectedCandidateRouteArtifact,
+  ])
   const debugViewModel = useMemo(() => {
     const rolePoolCountsSummary = rolePoolVenueIdsByRole
       ? `start:${rolePoolVenueIdsByRole.start.length}/highlight:${rolePoolVenueIdsByRole.highlight.length}/windDown:${rolePoolVenueIdsByRole.windDown.length}`
@@ -11356,60 +17660,6 @@ export function SandboxConciergePage() {
     })
   }, [stageOverlapFingerprint])
   useEffect(() => {
-    if (!import.meta.env.DEV || !finalRoute) {
-      return
-    }
-    console.log('ROUTE TRUTH CHECK', {
-      routeVersion,
-      routeId: finalRoute.routeId,
-      selectedDirectionId: finalRoute.selectedDirectionId,
-      stopNames: finalRoute.stops.map((stop) => stop.displayName),
-      stopRoles: finalRoute.stops.map((stop) => stop.role),
-      stopIds: finalRoute.stops.map((stop) => stop.id || stop.providerRecordId),
-    })
-  }, [finalRoute, routeVersion])
-  useEffect(() => {
-    if (!import.meta.env.DEV) {
-      return
-    }
-    console.log('DIRECTION REBUILD CHECK', {
-      persona,
-      vibe: primaryVibe,
-      directionIds: directionCards.map((direction) => direction.id),
-      selectedDirectionId,
-    })
-  }, [directionCards, persona, primaryVibe, selectedDirectionId])
-  useEffect(() => {
-    if (!import.meta.env.DEV) {
-      return
-    }
-    console.log('SYNC CHECK', {
-      selectedDirectionId: selectedDirectionContractId,
-      selectedDirectionPocketId,
-      previewDirectionId,
-      finalRouteDirectionId,
-      previewStops: preview?.stops?.map((stop) => stop.name),
-    })
-  }, [finalRouteDirectionId, preview, previewDirectionId, selectedDirectionContractId, selectedDirectionPocketId])
-  useEffect(() => {
-    if (!import.meta.env.DEV || !swapDebugBreadcrumb) {
-      return
-    }
-    console.log('SWAP BREADCRUMB', swapDebugBreadcrumb)
-  }, [swapDebugBreadcrumb])
-  useEffect(() => {
-    if (!import.meta.env.DEV || !swapInteractionBreadcrumb) {
-      return
-    }
-    console.log('SWAP INTERACTION', swapInteractionBreadcrumb)
-  }, [swapInteractionBreadcrumb])
-  useEffect(() => {
-    if (!import.meta.env.DEV || !swapCompatibilityDebug) {
-      return
-    }
-    console.log('SWAP COMPATIBILITY', swapCompatibilityDebug)
-  }, [swapCompatibilityDebug])
-  useEffect(() => {
     if (!swapDebugBreadcrumb) {
       return
     }
@@ -11498,25 +17748,6 @@ export function SandboxConciergePage() {
     const index = guidedRouteStops.findIndex((stop) => stop.id === guidedActiveStop.id)
     return index >= 0 ? index : undefined
   }, [guidedActiveStop, guidedRouteStops])
-  useEffect(() => {
-    if (!import.meta.env.DEV || !finalRoute) {
-      return
-    }
-    console.log('MAP REFRESH CHECK', {
-      routeId: finalRoute.routeId,
-      activeStopId: guidedActiveStop?.id ?? null,
-      activeStopIndex: guidedActiveStopIndex ?? null,
-      mapStopNames: guidedRouteStops.map((stop) => stop.displayName || stop.name),
-    })
-  }, [finalRoute, guidedActiveStop?.id, guidedActiveStopIndex, guidedRouteStops])
-  useEffect(() => {
-    if (!import.meta.env.DEV || !verticalDebugEnabled || !finalRoute) {
-      return
-    }
-    console.log('ROUTE SURFACE CHECK: preview', { routeId: finalRoute.routeId })
-    console.log('ROUTE SURFACE CHECK: map', { routeId: finalRoute.routeId })
-    console.log('ROUTE SURFACE CHECK: spine', { routeId: finalRoute.routeId })
-  }, [finalRoute, verticalDebugEnabled])
   const {
     inlineDetailsByRole,
     swapCandidatePrefilterDebugByRole,
@@ -11549,6 +17780,17 @@ export function SandboxConciergePage() {
             contractConstraints: plan.contractConstraints,
           },
         )
+      if (stop.selectedBecause?.trim()) {
+        inlineDetail.whyItFits = stop.selectedBecause.trim()
+      }
+      if (stop.reasonLabels && stop.reasonLabels.length > 0) {
+        inlineDetail.tonightSignals = stop.reasonLabels.slice(0, 3)
+      }
+      const canonicalAroundHere = [stop.neighborhood, stop.city]
+        .filter((value): value is string => Boolean(value && value.trim()))
+      if (canonicalAroundHere.length > 0) {
+        inlineDetail.aroundHereSignals = canonicalAroundHere.slice(0, 2)
+      }
       const canonical = canonicalStopByRole[stop.role]
       inlineDetail.venueLinkUrl =
         canonical
@@ -11620,6 +17862,159 @@ export function SandboxConciergePage() {
       }),
     [inlineDetailsByRole, previewHighlightLabel, previewStartLabel, previewWindDownLabel],
   )
+  const previewStopByRole = useMemo(
+    () =>
+      new Map(
+        planningDisplayStops.map((stop) => [stop.role, stop] as const),
+      ),
+    [planningDisplayStops],
+  )
+  const curatedVenueById = useMemo(
+    () => new Map(curatedVenues.map((venue) => [venue.id, venue] as const)),
+    [],
+  )
+  const curateTargetArtifactDebugLine = useMemo(() => {
+    if (!isCurateWrapperActive) {
+      return null
+    }
+    const artifact = step2CandidateRouteArtifacts.find(
+      (candidateArtifact) => candidateArtifact.id === DEMO_CLOSEOUT_TARGET_ARTIFACT_ID,
+    )
+    if (!artifact) {
+      return null
+    }
+    const opportunity = verifiedCityOpportunityById.get(artifact.sourceOpportunityId)
+    const preflight = curatePreviewCommitabilityByArtifactId[artifact.id]
+    const discoveryPreferences = buildSelectedArtifactDiscoveryPreferences({
+      artifact,
+      opportunity,
+    })
+    const selectedStartId =
+      discoveryPreferences?.find((entry) => entry.role === 'start')?.venueId ?? 'n/a'
+    const selectedHighlightId =
+      discoveryPreferences?.find((entry) => entry.role === 'highlight')?.venueId ?? 'n/a'
+    const selectedWindDownId =
+      discoveryPreferences?.find((entry) => entry.role === 'windDown')?.venueId ?? 'n/a'
+    const scenarioNight = opportunity?.scenarioNight
+    const scenarioStart =
+      scenarioNight?.stops.find((stop) => stop.position === 'start') ?? scenarioNight?.stops[0]
+    const scenarioHighlight =
+      scenarioNight?.stops.find((stop) => stop.position === 'highlight') ??
+      scenarioNight?.stops.find((stop) => stop.stopType === 'anchor') ??
+      scenarioNight?.stops[0]
+    const scenarioWindDown =
+      scenarioNight?.stops.find((stop) => stop.position === 'closer') ??
+      scenarioNight?.stops[scenarioNight.stops.length - 1]
+    const startOption = findOpportunityStopOptionByName(opportunity, 'start', artifact.storySpine.start)
+    const highlightOption = findOpportunityStopOptionByName(
+      opportunity,
+      'highlight',
+      artifact.storySpine.highlight,
+    )
+    const windDownOption = findOpportunityStopOptionByName(
+      opportunity,
+      'windDown',
+      artifact.storySpine.windDown,
+    )
+    const selectedVenueNameById = new Map<string, string>()
+    const addVenueName = (
+      venueId: string | null | undefined,
+      venueName: string | null | undefined,
+    ) => {
+      const normalizedVenueId = venueId?.trim()
+      const normalizedVenueName = venueName?.trim()
+      if (!normalizedVenueId || !normalizedVenueName) {
+        return
+      }
+      selectedVenueNameById.set(normalizedVenueId, normalizedVenueName)
+    }
+    opportunity?.starts.forEach((entry) => addVenueName(entry.venueId, entry.name))
+    opportunity?.highlightAlternates?.forEach((entry) => addVenueName(entry.venueId, entry.name))
+    opportunity?.closes.forEach((entry) => addVenueName(entry.venueId, entry.name))
+    addVenueName(opportunity?.anchor.venueId, opportunity?.anchor.name)
+    scenarioNight?.stops.forEach((stop) => addVenueName(stop.venueId, stop.name))
+    addVenueName(startOption?.venueId, startOption?.name)
+    addVenueName(highlightOption?.venueId, highlightOption?.name)
+    addVenueName(windDownOption?.venueId, windDownOption?.name)
+    addVenueName(scenarioStart?.venueId, scenarioStart?.name)
+    addVenueName(scenarioHighlight?.venueId, scenarioHighlight?.name)
+    addVenueName(scenarioWindDown?.venueId, scenarioWindDown?.name)
+    const formatSelectedVenue = (venueId: string): string =>
+      `${venueId}/${selectedVenueNameById.get(venueId) ?? curatedVenueById.get(venueId)?.name ?? 'n/a'}`
+    const rolePoolVenueIdsByRole = preflight?.rolePoolVenueIdsByRole
+    const roleMembership = rolePoolVenueIdsByRole
+      ? `start:${String(rolePoolVenueIdsByRole.start.includes(selectedStartId))} highlight:${String(
+          rolePoolVenueIdsByRole.highlight.includes(selectedHighlightId),
+        )} windDown:${String(rolePoolVenueIdsByRole.windDown.includes(selectedWindDownId))}`
+      : 'n/a'
+    const candidatePoolSufficiencyByRole = preflight?.candidatePoolSufficiencyByRole
+      ? `start:${preflight.candidatePoolSufficiencyByRole.start} highlight:${preflight.candidatePoolSufficiencyByRole.highlight} windDown:${preflight.candidatePoolSufficiencyByRole.windDown}`
+      : 'n/a'
+    const windDownPoolIdsAndNames = rolePoolVenueIdsByRole
+      ? rolePoolVenueIdsByRole.windDown.map((venueId) => formatSelectedVenue(venueId)).join(', ') ||
+        'none'
+      : 'n/a'
+    const exactFailedRoles = preflight?.failedRoles.join(', ') || 'none'
+    return [
+      `artifactId:${artifact.id}`,
+      `selectedStartId/name:${formatSelectedVenue(selectedStartId)}`,
+      `selectedHighlightId/name:${formatSelectedVenue(selectedHighlightId)}`,
+      `selectedWindDownId/name:${formatSelectedVenue(selectedWindDownId)}`,
+      `roleMembership:${roleMembership}`,
+      `candidatePoolSufficiencyByRole:${candidatePoolSufficiencyByRole}`,
+      `missingRoleForContract:${preflight?.missingRoleForContract ?? 'none'}`,
+      `hardCommitCandidateCount:${preflight?.hardCommitCandidateCount == null ? 'n/a' : String(preflight.hardCommitCandidateCount)}`,
+      `windDownPoolIds/names:${windDownPoolIdsAndNames}`,
+      `sampledCandidates:${preflight?.sampledCandidatesSummary ?? 'n/a'}`,
+      `exactFailedRole(s):${exactFailedRoles}`,
+    ].join(' | ')
+  }, [
+    curatePreviewCommitabilityByArtifactId,
+    curatedVenueById,
+    isCurateWrapperActive,
+    step2CandidateRouteArtifacts,
+    verifiedCityOpportunityById,
+  ])
+  const fallbackPreviewSeedByRole = useMemo(
+    () =>
+      buildFallbackPreviewSeedByRole({
+        selectedCandidateRouteArtifact,
+        verifiedCityOpportunityById,
+        scenarioPreviewModelByOpportunityId,
+      }),
+    [
+      scenarioPreviewModelByOpportunityId,
+      selectedCandidateRouteArtifact,
+      verifiedCityOpportunityById,
+    ],
+  )
+  const selectedPreviewSeedByRole = useMemo(
+    () => buildPreviewSeedByRoleFromSelectedRouteSummaryArtifact(selectedRouteSummaryArtifact),
+    [selectedRouteSummaryArtifact],
+  )
+  const surprisePreviewVenueCards = useMemo(
+    () =>
+      PREVIEW_ADJUSTABLE_ROLES.map((role) =>
+        buildSurprisePreviewStopRepresentation({
+          role,
+          detail: inlineDetailsByRole[role],
+          planningStop:
+            selectedRouteSummaryArtifact?.source === 'committed'
+              ? previewStopByRole.get(role)
+              : undefined,
+          fallbackSeed: selectedPreviewSeedByRole[role] ?? fallbackPreviewSeedByRole[role],
+          curatedVenueById,
+        }),
+      ).filter((card): card is SurprisePreviewStopRepresentation => Boolean(card)),
+    [
+      curatedVenueById,
+      fallbackPreviewSeedByRole,
+      inlineDetailsByRole,
+      previewStopByRole,
+      selectedPreviewSeedByRole,
+      selectedRouteSummaryArtifact?.source,
+    ],
+  )
   const activeSwapCandidatePrefilterDebug = swapCandidatePrefilterDebugByRole[activeRole]
   const appliedSwapNoteByRole = useMemo(() => {
     if (!appliedSwapRole) {
@@ -11642,28 +18037,223 @@ export function SandboxConciergePage() {
       [hintRole]: hintText,
     } as Partial<Record<UserStopRole, string>>
   }, [appliedSwapRole, plan])
+  const modeEntryPath = useMemo(() => {
+    if (isBuildWrapperActive) {
+      return '/dev/start/build'
+    }
+    if (isCurateWrapperActive) {
+      return '/dev/start/curate'
+    }
+    return '/dev/start/surprise'
+  }, [isBuildWrapperActive, isCurateWrapperActive])
+  const showChooseBackToEntry = isModeWrapperActive && isChooseRoute && !hasRevealed
+  const showConfirmBackToReview = isModeWrapperActive && hasRevealed
+  const handleBackToModeEntry = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    window.location.assign(modeEntryPath)
+  }, [modeEntryPath])
+  const handleBackToPreview = useCallback(() => {
+    setHasRevealed(false)
+    setPreviewSwap(undefined)
+    setIsLocking(false)
+  }, [])
+  const handleBackToChoose = useCallback(() => {
+    setHasRevealed(false)
+    setPreviewSwap(undefined)
+    setExpandedRole(null)
+    setAppliedSwapRole(null)
+    setIsLocking(false)
+    if (typeof window === 'undefined') {
+      return
+    }
+    if (window.location.pathname.toLowerCase() !== '/dev/choose') {
+      window.location.assign('/dev/choose')
+    }
+  }, [])
+  const navBackLabel = showChooseBackToEntry
+    ? 'Back to Mode Entry'
+    : showConfirmBackToReview
+      ? isSurpriseWrapperActive
+        ? 'Back to Preview'
+        : 'Back to Choose'
+      : undefined
+  const navBackOnClick = showChooseBackToEntry
+    ? handleBackToModeEntry
+    : showConfirmBackToReview
+      ? isSurpriseWrapperActive
+        ? handleBackToPreview
+        : handleBackToChoose
+      : undefined
 
   return (
     <PageShell
       className="sandbox-concierge-shell"
       topSlot={
-        <ID8Butler message="Pick a direction, review your route, and lock tonight when it feels right." />
+        <ID8Butler
+          message={
+            isSurpriseWrapperActive
+              ? 'Generating a surprise route for tonight.'
+              : 'Pick a direction, review your route, and lock tonight when it feels right.'
+          }
+        />
       }
       title="ID.8 Concierge"
       subtitle={undefined}
     >
       <div className="demo-flow-frame concierge-flow">
-      <div className="action-row draft-actions">
-        <button
-          type="button"
-          className="ghost-button"
-          onClick={() => setShowDebug((current) => !current)}
-        >
-          {showDebug ? 'Hide system details' : 'Show system details'}
-        </button>
-      </div>
+      {isModeWrapperActive && (
+        <DevTopNav
+          homeHref="/dev/home"
+          backOnClick={navBackOnClick}
+          backLabel={navBackLabel}
+        />
+      )}
+      {showCurateStarterGate ? (
+        <section className="preview-adjustments draft-tune-panel">
+          <p className="kicker reality-curated-label">Curate Experience</p>
+          <p className="instruction concierge-context-line">
+            Pick a starter pack to shape tonight&apos;s route.
+          </p>
+          <div className="card-stack">
+            {starterPacks.map((pack) => (
+              <StarterPackCard
+                key={pack.id}
+                pack={pack}
+                selected={selectedStarterPackId === pack.id}
+                onSelect={handleCurateStarterSelect}
+              />
+            ))}
+          </div>
+          <div className="action-row draft-actions">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={handleCurateStarterContinue}
+              disabled={!selectedStarterPack}
+            >
+              Continue
+            </button>
+          </div>
+        </section>
+      ) : showBuildAnchorGate ? (
+        <section className="preview-adjustments draft-tune-panel">
+          <p className="kicker reality-curated-label">Build My Plan</p>
+          <p className="instruction concierge-context-line">
+            Pick a required anchor first, then keep shaping light.
+          </p>
+          <div className="controls preview-adjustments-grid compact">
+            <label className="input-group inline-field">
+              <span className="input-label">Location</span>
+              <input
+                value={city}
+                onChange={(event) => setCity(event.target.value)}
+                placeholder="City, ST"
+              />
+            </label>
+            <label className="input-group inline-field">
+              <span className="input-label">Anchor query</span>
+              <input
+                value={buildAnchorQuery}
+                onChange={(event) => handleBuildAnchorQueryChange(event.target.value)}
+                placeholder="Known place or thing"
+              />
+            </label>
+            <label className="input-group inline-field">
+              <span className="input-label">Persona</span>
+              <select
+                value={persona}
+                onChange={(event) => setPersona(event.target.value as PersonaMode)}
+              >
+                {personaOptions.map((option) => (
+                  <option key={`build_persona_${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="action-row draft-actions">
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => {
+                void handleBuildAnchorSearch()
+              }}
+              disabled={buildAnchorLoading}
+            >
+              {buildAnchorLoading ? 'Searching...' : 'Find anchors'}
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={handleBuildContinue}
+              disabled={
+                !selectedBuildAnchor ||
+                buildAnchorLoading ||
+                Boolean(buildAnchorError) ||
+                buildAnchorQuery.trim().length < 2 ||
+                !buildAnchorResults.some((result) => result.venue.id === selectedBuildAnchor.venueId)
+              }
+            >
+              Continue
+            </button>
+          </div>
+          {buildAnchorError && <p className="preview-notice-copy">{buildAnchorError}</p>}
+          {buildAnchorResults.length > 0 && (
+            <div className="card-stack">
+              {buildAnchorResults.map((result) => {
+                const selected = selectedBuildAnchor?.venueId === result.venue.id
+                return (
+                  <button
+                    key={`build_anchor_${result.venue.id}`}
+                    type="button"
+                    className={`starter-pack-card${selected ? ' selected' : ''}`}
+                    onClick={() => handleBuildAnchorSelect(result)}
+                  >
+                    {selected && <span className="starter-pack-selected">Selected</span>}
+                    <span className="starter-pack-title">{result.venue.name}</span>
+                    <span className="starter-pack-meta">
+                      {result.venue.category.replace('_', ' ')} | {result.venue.neighborhood}
+                    </span>
+                    <span className="starter-pack-description">{result.subtitle}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {selectedBuildAnchor && (
+            <div className="controls preview-adjustments-grid compact" style={{ marginTop: '0.75rem' }}>
+              <label className="input-group inline-field">
+                <span className="input-label">Optional refinement (vibe)</span>
+                <select
+                  value={buildRefinementVibe}
+                  onChange={(event) => {
+                    const nextValue = event.target.value as VibeAnchor | 'auto'
+                    setBuildRefinementVibe(nextValue)
+                    if (nextValue === 'auto') {
+                      setPrimaryVibe(getBuildDefaultVibe(selectedBuildAnchor.category))
+                    } else {
+                      setPrimaryVibe(nextValue)
+                    }
+                  }}
+                >
+                  <option value="auto">Auto from anchor</option>
+                  {vibeOptions.map((option) => (
+                    <option key={`build_optional_vibe_${option.value}`} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
+        </section>
+      ) : (
+      <>
       {showDebug && (
-      <div
+      <details
         style={{
           border: '1px solid #d7dde2',
           background: '#f8fafb',
@@ -11674,8 +18264,60 @@ export function SandboxConciergePage() {
           lineHeight: 1.45,
         }}
       >
+        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Debug overview</summary>
         <div>VITE_VERTICAL_DEBUG: {String(verticalDebugEnvValue)}</div>
         <div>verticalDebugEnabled: {String(verticalDebugEnabled)}</div>
+        <div>devGreatStopFixturesEnvRaw: {debugDevGreatStopFixturesEnvRaw || '(empty)'}</div>
+        <div>devGreatStopFixturesEnabled: {String(debugDevGreatStopFixturesEnabled)}</div>
+        <div>
+          devGreatStopFixtureCount: {debugDevGreatStopFixtureCount}
+        </div>
+        <div>
+          devGreatStopFixtureVenueIds:{' '}
+          {debugDevGreatStopFixtureVenueIds.length > 0
+            ? debugDevGreatStopFixtureVenueIds.join(', ')
+            : 'none'}
+        </div>
+        <div>
+          scenarioCandidateBoardFixtureCandidates:{' '}
+          {scenarioCandidateBoardFixtureCandidates.length > 0
+            ? scenarioCandidateBoardFixtureCandidates.join(', ')
+            : 'none'}
+        </div>
+        <div>
+          fixtureStopTypeMembership:{' '}
+          {fixtureStopTypeMembership.length > 0
+            ? fixtureStopTypeMembership
+                .map(
+                  (entry) =>
+                    `${entry.stopType}:${entry.venueId}@${entry.fixtureScenarioBoardRank}`,
+                )
+                .join(' | ')
+            : 'none'}
+        </div>
+        <div>
+          scenarioCandidateBoardFixtureDrops:{' '}
+          {scenarioCandidateBoardFixtureDrops.length > 0
+            ? scenarioCandidateBoardFixtureDrops
+                .map(
+                  (entry) =>
+                    `${entry.stopType}:${entry.venueId}:${entry.fixtureBoardDropReason}`,
+                )
+                .join(' | ')
+            : 'none'}
+        </div>
+        <div>
+          builtScenarioNightFixtureStopIds:{' '}
+          {builtScenarioNightFixtureStopIds.length > 0
+            ? builtScenarioNightFixtureStopIds.join(', ')
+            : 'none'}
+        </div>
+        <div>
+          scenarioBackedOpportunityFixtureStopIds:{' '}
+          {scenarioBackedOpportunityFixtureStopIds.length > 0
+            ? scenarioBackedOpportunityFixtureStopIds.join(', ')
+            : 'none'}
+        </div>
         {verticalDebugEnabled && (
           <>
             <div style={{ marginTop: '0.55rem', borderTop: '1px solid #d7dde2', paddingTop: '0.5rem' }}>
@@ -11914,6 +18556,399 @@ export function SandboxConciergePage() {
               )}
             </div>
 
+            {isCurateWrapperActive && (
+              <details
+                style={{ marginTop: '0.6rem' }}
+                open={isDebugExpanded('fixtureQualificationTrace')}
+                onToggle={(event) =>
+                  setDebugExpanded(
+                    'fixtureQualificationTrace',
+                    (event.target as HTMLDetailsElement).open,
+                  )
+                }
+              >
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+                  Fixture qualification trace ({fixtureQualificationTraceRows.length})
+                </summary>
+                <div style={{ marginTop: '0.4rem', overflowX: 'auto' }}>
+                  {curateTargetArtifactDebugLine && (
+                    <div style={{ marginBottom: '0.45rem' }}>{curateTargetArtifactDebugLine}</div>
+                  )}
+                  <table style={{ borderCollapse: 'collapse', minWidth: '2020px' }}>
+                    <thead>
+                      <tr>
+                        {[
+                          'scenario night',
+                          'verified opportunity',
+                          'contract artifact',
+                          'discovery prefs',
+                          'qualification',
+                        ].map((heading) => (
+                          <th
+                            key={`fixture_trace_heading_${heading}`}
+                            style={{
+                              borderBottom: '1px solid rgba(255,255,255,0.22)',
+                              padding: '0.25rem 0.35rem',
+                              textAlign: 'left',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {heading}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fixtureQualificationTraceRows.map((row) => (
+                        <tr key={`fixture_trace_${row.scenarioNightId}_${row.artifactId}`}>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>night:{row.scenarioNightId}</div>
+                            <div>fixtureIds:{row.fixtureStopIdsPresent}</div>
+                            <div>start:{row.scenarioStart}</div>
+                            <div>highlight:{row.scenarioHighlight}</div>
+                            <div>windDown:{row.scenarioWindDown}</div>
+                            <div>windDownOriginal:{row.scenarioWindDownOriginal}</div>
+                            <div>
+                              windDownOriginalRoleEligible:
+                              {row.scenarioWindDownOriginalRoleEligible}
+                            </div>
+                            <div>windDownRepairApplied:{row.scenarioWindDownRepairApplied}</div>
+                            <div>
+                              windDownRepairReplacement:{row.scenarioWindDownRepairReplacement}
+                            </div>
+                            <div>windDownRepairSource:{row.scenarioWindDownRepairSource}</div>
+                            <div>windDownRepairReason:{row.scenarioWindDownRepairReason}</div>
+                            <div>windDownFinal:{row.scenarioWindDownFinal}</div>
+                            <div>
+                              windDownFinalRoleEligible:{row.scenarioWindDownFinalRoleEligible}
+                            </div>
+                          </td>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>opportunity:{row.opportunityId}</div>
+                            <div>source:{row.sourceOpportunityId}</div>
+                            <div>start:{row.opportunityStart}</div>
+                            <div>highlight:{row.opportunityHighlight}</div>
+                            <div>windDown:{row.opportunityWindDown}</div>
+                          </td>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>artifact:{row.artifactId}</div>
+                            <div>direction:{row.artifactDirectionId}</div>
+                            <div>anchorVenueId:{row.artifactAnchorVenueId}</div>
+                            <div>storyStart:{row.artifactStoryStart}</div>
+                            <div>storyHighlight:{row.artifactStoryHighlight}</div>
+                            <div>storyWindDown:{row.artifactStoryWindDown}</div>
+                            <div>lineage:{row.lineageSummary}</div>
+                          </td>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>start:{row.discoveryStart}</div>
+                            <div>highlight:{row.discoveryHighlight}</div>
+                            <div>windDown:{row.discoveryWindDown}</div>
+                            <div>fixtureBacked:{row.discoveryFixtureFlags}</div>
+                          </td>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>cacheHit:{row.qualificationCacheHit}</div>
+                            <div>roleMembership:{row.rolePoolMembership}</div>
+                            <div>rolePoolIds:{row.rolePoolVenueIdsSummary}</div>
+                            <div>pool:{row.candidatePoolSufficiencySummary}</div>
+                            <div>missingRole:{row.missingRoleForContract}</div>
+                            <div>hardCommitCandidates:{row.hardCommitCandidateCount}</div>
+                            <div>failedCheck:{row.failedCheck}</div>
+                            <div>fallbackReason:{row.explicitFallbackReason}</div>
+                            <div>sampledCandidates:{row.sampledCandidatesSummary}</div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+
+            {isCurateWrapperActive && (
+              <details
+                style={{ marginTop: '0.6rem' }}
+                open={isDebugExpanded('curateCardAudit')}
+                onToggle={(event) =>
+                  setDebugExpanded('curateCardAudit', (event.target as HTMLDetailsElement).open)
+                }
+              >
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+                  Curate card audit ({curateCardAuditRows.length})
+                </summary>
+                <div style={{ marginTop: '0.4rem', overflowX: 'auto' }}>
+                  <div style={{ marginBottom: '0.45rem' }}>
+                    <div style={{ marginBottom: '0.45rem' }}>
+                      <div style={{ fontWeight: 600 }}>Demo Closeout Curate debug</div>
+                      <div>
+                        finalVisibleArtifactIds:{' '}
+                        {curateDemoCloseoutDebug.finalVisibleArtifactIds.join(', ') || 'none'}
+                      </div>
+                      <div>
+                        qualificationPoolArtifactIds:{' '}
+                        {curateDemoCloseoutDebug.qualificationPoolArtifactIds.join(', ') || 'none'}
+                      </div>
+                      <div>
+                        checkedCandidateCount: {curateDemoCloseoutDebug.checkedCandidateCount}
+                      </div>
+                      <div>
+                        qualifiedCandidateCount: {curateDemoCloseoutDebug.qualifiedCandidateCount}
+                      </div>
+                      <div>
+                        rejectedCandidateCount: {curateDemoCloseoutDebug.rejectedCandidateCount}
+                      </div>
+                      <div>scenarioSeedsCount: {curateDemoCloseoutDebug.scenarioSeedsCount}</div>
+                      <div>
+                        qualifiedRouteCardCount: {curateDemoCloseoutDebug.qualifiedRouteCardCount}
+                      </div>
+                      <div>
+                        unqualifiedDraftsHiddenCount:{' '}
+                        {curateDemoCloseoutDebug.unqualifiedDraftsHiddenCount}
+                      </div>
+                      <div>primaryCardSource: {curateDemoCloseoutDebug.primaryCardSource}</div>
+                      <div>
+                        primaryCardDisplayMode: {curateDemoCloseoutDebug.primaryCardDisplayMode}
+                      </div>
+                      <div>
+                        primaryVisibleQualifiedCount:{' '}
+                        {curateDemoCloseoutDebug.primaryVisibleQualifiedCount}
+                      </div>
+                      <div>
+                        selectedStep2CandidateArtifactId:{' '}
+                        {curateDemoCloseoutDebug.selectedStep2CandidateArtifactId}
+                      </div>
+                      {curateDemoCloseoutDebug.visibleCards.map((row) => (
+                        <div key={`curate_closeout_${row.artifactId}`}>
+                          {`visibleCard artifactId:${row.artifactId} qualificationStatus:${row.qualificationStatus} failedCheck:${row.failedCheck} missingRole:${row.missingRole} hardCommitCandidateCount:${row.hardCommitCandidateCount} cardDisplaySource:${row.cardDisplaySource}`}
+                        </div>
+                      ))}
+                    </div>
+                    <div>
+                      visibleCardCountBeforeDedupe:{' '}
+                      {curateDisplayDedupeDebug.visibleCardCountBeforeDedupe}
+                    </div>
+                    <div>
+                      visibleCardCountAfterDedupe:{' '}
+                      {curateDisplayDedupeDebug.visibleCardCountAfterDedupe}
+                    </div>
+                    <div>
+                      droppedDuplicateArtifactIds:{' '}
+                      {curateDisplayDedupeDebug.droppedDuplicateArtifactIds.join(', ') || 'none'}
+                    </div>
+                    <div>
+                      droppedDuplicateStoryFingerprints:{' '}
+                      {curateDisplayDedupeDebug.droppedDuplicateStoryFingerprints.join(' || ') ||
+                        'none'}
+                    </div>
+                    <div>dedupeFillCount: {curateDisplayDedupeDebug.dedupeFillCount}</div>
+                    <div>
+                      finalVisibleArtifactIds:{' '}
+                      {curateDisplayDedupeDebug.finalVisibleArtifactIds.join(', ') || 'none'}
+                    </div>
+                    <div>qualificationPoolSize: {curateQualificationSummary.qualificationPoolSize}</div>
+                    <div>qualifiedCandidateCount: {curateQualificationSummary.qualifiedCandidateCount}</div>
+                    <div>checkedCandidateCount: {curateQualificationSummary.checkedCandidateCount}</div>
+                    <div>rejectedCandidateCount: {curateQualificationSummary.rejectedCandidateCount}</div>
+                    <div>
+                      primaryVisibleQualifiedCount:{' '}
+                      {curatePrimaryCardDisplay.primaryVisibleQualifiedCount}
+                    </div>
+                    <div>scenarioSeedsCount: {curatePrimaryCardDisplay.scenarioSeedsCount}</div>
+                    <div>
+                      qualifiedRouteCardCount: {curatePrimaryCardDisplay.qualifiedRouteCardCount}
+                    </div>
+                    <div>
+                      unqualifiedDraftsHiddenCount:{' '}
+                      {curatePrimaryCardDisplay.unqualifiedDraftsHiddenCount}
+                    </div>
+                    <div>
+                      hiddenRejectedFromPrimaryCount:{' '}
+                      {curatePrimaryCardDisplay.hiddenRejectedFromPrimaryCount}
+                    </div>
+                    <div>primaryCardSource: {curatePrimaryCardDisplay.primaryCardSource}</div>
+                    <div>
+                      primaryCardDisplayMode: {curatePrimaryCardDisplay.primaryCardDisplayMode}
+                    </div>
+                    <div>selectedStep2CandidateArtifactId: {selectedStep2CandidateArtifactId ?? 'n/a'}</div>
+                    <div>selectedCandidateRouteArtifactId: {selectedCandidateRouteArtifact?.id ?? 'n/a'}</div>
+                    <div>
+                      selectedCuratePreviewCommitability.artifactId:{' '}
+                      {selectedCuratePreviewCommitability?.artifactId ?? 'n/a'}
+                    </div>
+                    <div>sharedFlowPhase: {sharedFlowPhase ?? 'n/a'}</div>
+                    <div>renderSharedPlanPreview: {String(renderSharedPlanPreview)}</div>
+                    <div>showCurateDiscoveryPhase: {String(showCurateDiscoveryPhase)}</div>
+                  </div>
+                  <table style={{ borderCollapse: 'collapse', minWidth: '1820px' }}>
+                    <thead>
+                      <tr>
+                        {[
+                          'display',
+                          'identity',
+                          'story',
+                          'starter',
+                          'duplicates',
+                          'selection',
+                          'preflight',
+                          'prefs/lineage',
+                          'phase',
+                        ].map((heading) => (
+                          <th
+                            key={`curate_card_audit_heading_${heading}`}
+                            style={{
+                              borderBottom: '1px solid rgba(255,255,255,0.22)',
+                              padding: '0.25rem 0.35rem',
+                              textAlign: 'left',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {heading}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {curateCardAuditRows.map((row) => (
+                        <tr key={`curate_card_audit_${row.artifactId}`}>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>index:{row.displayIndex}</div>
+                            <div>artifact:{row.artifactId}</div>
+                          </td>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>title:{row.routeTitle}</div>
+                            <div>direction:{row.directionId}</div>
+                            <div>anchor:{row.anchorName}</div>
+                            <div>anchorVenueId:{row.anchorVenueId}</div>
+                            <div>sourceOpportunityId:{row.sourceOpportunityId}</div>
+                          </td>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>fingerprint:{row.storySpineFingerprint}</div>
+                            <div>start:{row.storySpineStart}</div>
+                            <div>highlight:{row.storySpineHighlight}</div>
+                            <div>windDown:{row.storySpineWindDown}</div>
+                          </td>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>pack:{row.starterPackId}</div>
+                            <div>score:{row.starterMatchScore}</div>
+                            <div>source:{row.starterAwareCandidateSource}</div>
+                            <div>qualificationStatus:{row.qualificationStatus}</div>
+                            <div>cardDisplaySource:{row.cardDisplaySource}</div>
+                            <div>qualifiedStart:{row.qualifiedRouteStart}</div>
+                            <div>qualifiedHighlight:{row.qualifiedRouteHighlight}</div>
+                            <div>qualifiedWindDown:{row.qualifiedRouteWindDown}</div>
+                            <div>finalRouteStarterFitScore:{row.finalRouteStarterFitScore}</div>
+                            <div>finalRouteStarterFitTier:{row.finalRouteStarterFitTier}</div>
+                            <div>
+                              finalRouteMatchedCategories:
+                              {row.finalRouteMatchedPreferredCategories}
+                            </div>
+                            <div>finalRouteMatchedTags:{row.finalRouteMatchedPreferredTags}</div>
+                            <div>
+                              finalRouteMatchedShapes:
+                              {row.finalRouteMatchedPreferredStopShapes}
+                            </div>
+                            <div>finalRouteMismatch:{row.finalRouteMismatchReasons}</div>
+                            <div>finalRouteDisplayReason:{row.finalRouteDisplayReason}</div>
+                            <div>qualifiedDisplayRank:{row.qualifiedDisplayRankReason}</div>
+                            <div>qualificationReason:{row.qualificationReason}</div>
+                            <div>qualificationCacheHit:{row.qualificationCacheHit}</div>
+                            <div>windDownRepairAttempted:{row.windDownRepairAttempted}</div>
+                            <div>windDownRepairSucceeded:{row.windDownRepairSucceeded}</div>
+                            <div>windDownRepairOriginal:{row.windDownRepairOriginal}</div>
+                            <div>windDownRepairReplacement:{row.windDownRepairReplacement}</div>
+                            <div>windDownRepairReplacementId:{row.windDownRepairReplacementId}</div>
+                            <div>windDownRepairReason:{row.windDownRepairReason}</div>
+                            <div>windDownRepairSource:{row.windDownRepairSource}</div>
+                            <div>
+                              windDownRepairPreferenceApplied:
+                              {row.windDownRepairPreferenceApplied}
+                            </div>
+                            <div>
+                              windDownRepairPreferenceTarget:
+                              {row.windDownRepairPreferenceTarget}
+                            </div>
+                            <div>
+                              repairedDiscoveryPrefsWindDown:
+                              {row.repairedDiscoveryPrefsWindDown}
+                            </div>
+                            <div>repairedLineageWindDown:{row.repairedLineageWindDown}</div>
+                            <div>
+                              repairedPool:{row.repairedCandidatePoolSufficiencySummary}
+                            </div>
+                            <div>
+                              repairedHardCommitCandidates:
+                              {row.repairedHardCommitCandidateCount}
+                            </div>
+                            <div>repairedFailureReason:{row.repairedFailureReason}</div>
+                            <div>repairedQualificationStatus:{row.repairedQualificationStatus}</div>
+                            <div>categories:{row.matchedPreferredCategories}</div>
+                            <div>tags:{row.matchedPreferredTags}</div>
+                            <div>shapes:{row.matchedPreferredStopShapes}</div>
+                            <div>secondary:{row.secondaryAnchorMatch}</div>
+                            <div>distance:{row.distanceModeMatch}</div>
+                            <div>mismatch:{row.starterMismatchReasons}</div>
+                          </td>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>summary:{row.duplicateSummary}</div>
+                            <div>directionCount:{row.duplicateDirectionCount}</div>
+                            <div>anchorCount:{row.duplicateAnchorCount}</div>
+                            <div>storyCount:{row.duplicateStoryFingerprintCount}</div>
+                            <div>sourceCount:{row.duplicateSourceOpportunityCount}</div>
+                            <div>titleCount:{row.duplicateDisplayTitleCount}</div>
+                          </td>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>isCurrentlySelected:{row.isCurrentlySelected}</div>
+                            <div>
+                              selectedStep2CandidateArtifactId:{row.selectedStep2CandidateArtifactId}
+                            </div>
+                            <div>preDisplayTier:{row.preDisplayBuildabilityTier}</div>
+                            <div>preDisplayScore:{row.preDisplayBuildabilityScore}</div>
+                            <div>preDisplayPool:{row.preDisplayRoleSupportSummary}</div>
+                            <div>preDisplayMissing:{row.preDisplayMissingRoles}</div>
+                            <div>preDisplayFallback:{row.preDisplayFallbackReason}</div>
+                            <div>
+                              preDisplayDeprioritized:{row.wasDeprioritizedForRoleSupport}
+                            </div>
+                          </td>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>status:{row.preflightStatus}</div>
+                            <div>kind:{row.failureKind}</div>
+                            <div>check:{row.failedCheck}</div>
+                            <div>failedRoles:{row.failedRolesSummary}</div>
+                            <div>missingRole:{row.missingRoleForContract}</div>
+                            <div>pool:{row.candidatePoolSufficiencySummary}</div>
+                            <div>hardCommitCandidates:{row.hardCommitCandidateCount}</div>
+                            <div>hardCommitPreserved:{row.hardCommitPreservationSucceeded}</div>
+                            <div>fallback:{row.explicitFallbackTriggered}</div>
+                            <div>fallbackReason:{row.explicitFallbackReason}</div>
+                            <div>error:{row.errorName}</div>
+                            <div>errorRaw:{row.errorMessageRaw}</div>
+                            <div>approved:{row.approvedRouteSummary}</div>
+                            <div>promiseMatch:{row.cardPromiseMatch}</div>
+                          </td>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>prefs:{row.discoveryPreferencesSummary}</div>
+                            <div>selectedStart:{row.selectedStartPreferenceVenueId}</div>
+                            <div>selectedHighlight:{row.selectedHighlightPreferenceVenueId}</div>
+                            <div>selectedWindDown:{row.selectedWindDownPreferenceVenueId}</div>
+                            <div>lineage:{row.selectedArtifactLineageSummary}</div>
+                          </td>
+                          <td style={{ padding: '0.25rem 0.35rem', verticalAlign: 'top' }}>
+                            <div>
+                              curatePreviewCommitabilityReady:
+                              {String(curatePreviewCommitabilityReady)}
+                            </div>
+                            <div>sharedFlowPhase:{sharedFlowPhase}</div>
+                            <div>renderSharedPlanPreview:{String(renderSharedPlanPreview)}</div>
+                            <div>showCurateDiscoveryPhase:{String(showCurateDiscoveryPhase)}</div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+
             <details
               style={{ marginTop: '0.6rem' }}
               open={isDebugExpanded('legacyDebugDetails')}
@@ -12131,7 +19166,38 @@ export function SandboxConciergePage() {
             <div>
               routeShapeContract.roleInvariants.windDown: {routeShapeWindDownInvariantSummary}
             </div>
+            <div>validator.mode: {validatorMode ?? 'n/a'}</div>
+            <div>validator.valid: {validatorValid == null ? 'n/a' : String(validatorValid)}</div>
             <div>generationDriftReason: {generationDriftReason ?? 'none'}</div>
+            <div>
+              validator.directionAlignmentScore:{' '}
+              {directionAlignmentScore == null ? 'n/a' : directionAlignmentScore.toFixed(4)}
+            </div>
+            <div>
+              validator.surpriseSoftAlignmentFloor:{' '}
+              {surpriseSoftAlignmentFloor == null ? 'n/a' : surpriseSoftAlignmentFloor}
+            </div>
+            <div>
+              validator.surpriseHardAlignmentFloor:{' '}
+              {surpriseHardAlignmentFloor == null ? 'n/a' : surpriseHardAlignmentFloor}
+            </div>
+            <div>
+              validator.surpriseMaterialAlignmentFloor:{' '}
+              {surpriseMaterialAlignmentFloor == null ? 'n/a' : surpriseMaterialAlignmentFloor}
+            </div>
+            <div>validator.lowAlignment: {lowAlignment == null ? 'n/a' : String(lowAlignment)}</div>
+            <div>
+              validator.hardAlignmentFailure:{' '}
+              {hardAlignmentFailure == null ? 'n/a' : String(hardAlignmentFailure)}
+            </div>
+            <div>
+              validator.materialAlignmentFailure:{' '}
+              {materialAlignmentFailure == null ? 'n/a' : String(materialAlignmentFailure)}
+            </div>
+            <div>
+              validator.severeGreatStopRisk:{' '}
+              {severeGreatStopRisk == null ? 'n/a' : String(severeGreatStopRisk)}
+            </div>
             <div>contractBuildabilityStatus: {contractBuildabilityStatus ?? 'n/a'}</div>
             <div>missingRoleForContract: {missingRoleForContract ?? 'n/a'}</div>
             <div>expectedDirectionIdentity: {expectedDirectionIdentity ?? 'n/a'}</div>
@@ -12139,6 +19205,410 @@ export function SandboxConciergePage() {
             <div>generationIdentityFallbackApplied: {String(generationIdentityFallbackApplied)}</div>
             <div>candidatePoolSufficiencyByRole: {candidatePoolSufficiencySummary ?? 'n/a'}</div>
             <div>thinPoolDirectionRelaxation: {thinPoolDirectionRelaxationSummary}</div>
+            <div>curateHardCommit.selectedArtifactId: {curateHardCommitDebug?.selectedArtifactId ?? 'n/a'}</div>
+            <div>
+              curateHardCommit.selectedTarget.start:{' '}
+              {curateHardCommitDebug?.selectedTarget.start?.venueName ??
+                curateHardCommitDebug?.selectedTarget.start?.venueId ??
+                'n/a'}
+            </div>
+            <div>
+              curateHardCommit.selectedTarget.highlight:{' '}
+              {curateHardCommitDebug?.selectedTarget.highlight?.venueName ??
+                curateHardCommitDebug?.selectedTarget.highlight?.venueId ??
+                'n/a'}
+            </div>
+            <div>
+              curateHardCommit.selectedTarget.windDown:{' '}
+              {curateHardCommitDebug?.selectedTarget.windDown?.venueName ??
+                curateHardCommitDebug?.selectedTarget.windDown?.venueId ??
+                'n/a'}
+            </div>
+            <div>
+              curateHardCommit.curateCommitSemantics:{' '}
+              {curateHardCommitDebug?.curateCommitSemantics ?? 'n/a'}
+            </div>
+            <div>
+              curateHardCommit.hardCommitRequired:{' '}
+              {curateHardCommitDebug == null ? 'n/a' : String(curateHardCommitDebug.hardCommitRequired)}
+            </div>
+            <div>
+              curateHardCommit.rankedCandidateCount:{' '}
+              {curateHardCommitDebug?.rankedCandidateCount ?? 'n/a'}
+            </div>
+            <div>
+              curateHardCommit.hardCommitCandidateCount:{' '}
+              {curateHardCommitDebug?.hardCommitCandidateCount ?? 'n/a'}
+            </div>
+            <div>
+              curateHardCommit.hardCommitPreservationSucceeded:{' '}
+              {curateHardCommitDebug == null
+                ? 'n/a'
+                : String(curateHardCommitDebug.hardCommitPreservationSucceeded)}
+            </div>
+            <div>
+              curateHardCommit.explicitFallbackTriggered:{' '}
+              {curateHardCommitDebug == null
+                ? 'n/a'
+                : String(curateHardCommitDebug.explicitFallbackTriggered)}
+            </div>
+            <div>
+              curateHardCommit.explicitFallbackReason:{' '}
+              {curateHardCommitDebug?.explicitFallbackReason ?? 'none'}
+            </div>
+            <div>
+              curateHardCommit.failedRoles:{' '}
+              {curateHardCommitDebug?.failedRoles.join(', ') || 'none'}
+            </div>
+            <div>curateHardCommit.sampledCandidates: {curateHardCommitSampleSummary}</div>
+            <div>curateHardCommit.finalWinner: {curateHardCommitFinalWinnerSummary}</div>
+            <div>parity.preflight.artifactId: {preflightParitySummary?.artifactId ?? 'n/a'}</div>
+            <div>
+              parity.preflight.curateCommitSemantics:{' '}
+              {preflightParitySummary?.curateCommitSemantics ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.hardCommitRequired:{' '}
+              {preflightParitySummary?.hardCommitRequired == null
+                ? 'n/a'
+                : String(preflightParitySummary.hardCommitRequired)}
+            </div>
+            <div>
+              parity.preflight.selectedDirectionId:{' '}
+              {preflightParitySummary?.selectedDirectionId ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.activeDistrictPocketId:{' '}
+              {preflightParitySummary?.activeDistrictPocketId ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.selectedArtifactLineage:{' '}
+              {preflightParitySummary?.selectedArtifactLineageSummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.plannerInputSummary:{' '}
+              {preflightParitySummary?.plannerInputSummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.selectedTarget:{' '}
+              {preflightParitySummary?.selectedTargetSummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.rankedCandidateCount:{' '}
+              {preflightParitySummary?.rankedCandidateCount ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.hardCommitCandidateCount:{' '}
+              {preflightParitySummary?.hardCommitCandidateCount ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.hardCommitPreservationSucceeded:{' '}
+              {preflightParitySummary?.hardCommitPreservationSucceeded == null
+                ? 'n/a'
+                : String(preflightParitySummary.hardCommitPreservationSucceeded)}
+            </div>
+            <div>
+              parity.preflight.explicitFallbackTriggered:{' '}
+              {preflightParitySummary?.explicitFallbackTriggered == null
+                ? 'n/a'
+                : String(preflightParitySummary.explicitFallbackTriggered)}
+            </div>
+            <div>
+              parity.preflight.explicitFallbackReason:{' '}
+              {preflightParitySummary?.explicitFallbackReason ?? 'none'}
+            </div>
+            <div>
+              parity.preflight.failureKind: {preflightParitySummary?.failureKind ?? 'none'}
+            </div>
+            <div>
+              parity.preflight.failedCheck: {preflightParitySummary?.failedCheck ?? 'none'}
+            </div>
+            <div>
+              parity.preflight.errorName: {preflightParitySummary?.errorName ?? 'none'}
+            </div>
+            <div>
+              parity.preflight.errorMessageRaw:{' '}
+              {preflightParitySummary?.errorMessageRaw ?? 'none'}
+            </div>
+            <div>
+              parity.preflight.failedRoles: {preflightParitySummary?.failedRolesSummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.exactPreservingCandidateIds:{' '}
+              {preflightParitySummary?.exactPreservingCandidateIdsSummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.finalWinner: {preflightParitySummary?.finalWinnerSummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.contractBuildabilityStatus:{' '}
+              {preflightParitySummary?.contractBuildabilityStatus ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.missingRoleForContract:{' '}
+              {preflightParitySummary?.missingRoleForContract ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.candidatePoolSufficiency:{' '}
+              {preflightParitySummary?.candidatePoolSufficiencySummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.preflight.postPlannerStages:{' '}
+              {preflightParitySummary?.postPlannerStagesSummary ?? 'n/a'}
+            </div>
+            <div>parity.continue.artifactId: {continueParitySummary?.artifactId ?? 'n/a'}</div>
+            <div>
+              parity.continue.curateCommitSemantics:{' '}
+              {continueParitySummary?.curateCommitSemantics ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.hardCommitRequired:{' '}
+              {continueParitySummary?.hardCommitRequired == null
+                ? 'n/a'
+                : String(continueParitySummary.hardCommitRequired)}
+            </div>
+            <div>
+              parity.continue.selectedDirectionId:{' '}
+              {continueParitySummary?.selectedDirectionId ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.activeDistrictPocketId:{' '}
+              {continueParitySummary?.activeDistrictPocketId ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.selectedArtifactLineage:{' '}
+              {continueParitySummary?.selectedArtifactLineageSummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.plannerInputSummary:{' '}
+              {continueParitySummary?.plannerInputSummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.selectedTarget:{' '}
+              {continueParitySummary?.selectedTargetSummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.rankedCandidateCount:{' '}
+              {continueParitySummary?.rankedCandidateCount ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.hardCommitCandidateCount:{' '}
+              {continueParitySummary?.hardCommitCandidateCount ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.hardCommitPreservationSucceeded:{' '}
+              {continueParitySummary?.hardCommitPreservationSucceeded == null
+                ? 'n/a'
+                : String(continueParitySummary.hardCommitPreservationSucceeded)}
+            </div>
+            <div>
+              parity.continue.explicitFallbackTriggered:{' '}
+              {continueParitySummary?.explicitFallbackTriggered == null
+                ? 'n/a'
+                : String(continueParitySummary.explicitFallbackTriggered)}
+            </div>
+            <div>
+              parity.continue.explicitFallbackReason:{' '}
+              {continueParitySummary?.explicitFallbackReason ?? 'none'}
+            </div>
+            <div>
+              parity.continue.failedRoles: {continueParitySummary?.failedRolesSummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.exactPreservingCandidateIds:{' '}
+              {continueParitySummary?.exactPreservingCandidateIdsSummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.finalWinner: {continueParitySummary?.finalWinnerSummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.contractBuildabilityStatus:{' '}
+              {continueParitySummary?.contractBuildabilityStatus ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.missingRoleForContract:{' '}
+              {continueParitySummary?.missingRoleForContract ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.candidatePoolSufficiency:{' '}
+              {continueParitySummary?.candidatePoolSufficiencySummary ?? 'n/a'}
+            </div>
+            <div>
+              parity.continue.postPlannerStages:{' '}
+              {continueParitySummary?.postPlannerStagesSummary ?? 'n/a'}
+            </div>
+            <div>parity.diffSummary: {curateParityDifferenceSummary}</div>
+            <div>
+              validator.thinPoolRelaxationTrace.validationOutcome:{' '}
+              {generationContractDebug?.thinPoolRelaxationTrace?.validationOutcome ?? 'n/a'}
+            </div>
+            <div>generatePlan.errorMessageRaw: {generationErrorMessageRaw ?? 'none'}</div>
+            <div>
+              failedState.surpriseContractValidationFailedDirectionId:{' '}
+              {surpriseContractValidationFailedDirectionId ?? 'n/a'}
+            </div>
+            <div>failedState.selectedDirectionContractId: {selectedDirectionContractId ?? 'n/a'}</div>
+            <div>
+              failedState.selectedCandidatePreviewValidationFailed:{' '}
+              {String(selectedCandidatePreviewValidationFailed)}
+            </div>
+            <div>step2RerollTrace.clickId: {step2RerollTrace?.clickId ?? 'n/a'}</div>
+            <div>step2RerollTrace.clickedAt: {step2RerollTrace?.clickedAt ?? 'n/a'}</div>
+            <div>
+              step2RerollTrace.currentSelectedDirectionId_before:{' '}
+              {step2RerollTrace?.currentSelectedDirectionId_before ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.currentSelectedArtifactId_before:{' '}
+              {step2RerollTrace?.currentSelectedArtifactId_before ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.nextDirectionId_selected:{' '}
+              {step2RerollTrace?.nextDirectionId_selected ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.nextArtifactId_selected:{' '}
+              {step2RerollTrace?.nextArtifactId_selected ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.handleTryAnotherDirection_entered:{' '}
+              {String(step2RerollTrace?.handleTryAnotherDirection_entered ?? false)}
+            </div>
+            <div>
+              step2RerollTrace.handleSelectDirection_called:{' '}
+              {String(step2RerollTrace?.handleSelectDirection_called ?? false)}
+            </div>
+            <div>
+              step2RerollTrace.handleSelectDirection_args:{' '}
+              {step2RerollTrace?.handleSelectDirection_args
+                ? `${step2RerollTrace.handleSelectDirection_args.directionId} | forceReset:${String(
+                    step2RerollTrace.handleSelectDirection_args.forceReset,
+                  )}`
+                : 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.selectedDirectionId_afterSelect:{' '}
+              {step2RerollTrace?.selectedDirectionId_afterSelect ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.selectedStep2CandidateArtifactId_afterSelect:{' '}
+              {step2RerollTrace?.selectedStep2CandidateArtifactId_afterSelect ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.generatePlan_called:{' '}
+              {String(step2RerollTrace?.generatePlan_called ?? false)}
+            </div>
+            <div>
+              step2RerollTrace.generatePlan_directionId:{' '}
+              {step2RerollTrace?.generatePlan_directionId ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.generatePlan_artifactIdOverride:{' '}
+              {step2RerollTrace?.generatePlan_artifactIdOverride ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.generatePlan_success:{' '}
+              {step2RerollTrace?.generatePlan_success == null
+                ? 'n/a'
+                : String(step2RerollTrace.generatePlan_success)}
+            </div>
+            <div>
+              step2RerollTrace.generatePlan_errorRaw:{' '}
+              {step2RerollTrace?.generatePlan_errorRaw ?? 'none'}
+            </div>
+            <div>
+              step2RerollTrace.selectedCandidateRouteArtifact_id_after:{' '}
+              {step2RerollTrace?.selectedCandidateRouteArtifact_id_after ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.selectedRouteArtifact_source_after:{' '}
+              {step2RerollTrace?.selectedRouteArtifact_source_after ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.selectedRouteArtifact_directionId_after:{' '}
+              {step2RerollTrace?.selectedRouteArtifact_directionId_after ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.selectedRouteArtifact_candidateArtifactId_after:{' '}
+              {step2RerollTrace?.selectedRouteArtifact_candidateArtifactId_after ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.selectedRouteSummaryArtifact_routeTitle_after:{' '}
+              {step2RerollTrace?.selectedRouteSummaryArtifact_routeTitle_after ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.selectedRouteSummaryArtifact_flavorLine_after:{' '}
+              {step2RerollTrace?.selectedRouteSummaryArtifact_flavorLine_after ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.previewRenderSource:{' '}
+              {step2RerollTrace?.previewRenderSource ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.previewRenderedDirectionId:{' '}
+              {step2RerollTrace?.previewRenderedDirectionId ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.previewRenderedArtifactId:{' '}
+              {step2RerollTrace?.previewRenderedArtifactId ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.whyThisWorksSourceSummary:{' '}
+              {step2RerollTrace?.whyThisWorksSourceSummary ?? 'n/a'}
+            </div>
+            <div>
+              step2RerollTrace.reconciliationEffectRan:{' '}
+              {String(step2RerollTrace?.reconciliationEffectRan ?? false)}
+            </div>
+            <div>
+              step2RerollTrace.committedArtifactPreferred:{' '}
+              {String(step2RerollTrace?.committedArtifactPreferred ?? false)}
+            </div>
+            <div>
+              step2RerollTrace.directionFallbackUsed:{' '}
+              {String(step2RerollTrace?.directionFallbackUsed ?? false)}
+            </div>
+            <div>
+              step2RerollTrace.staleCommittedMatchUsed:{' '}
+              {String(step2RerollTrace?.staleCommittedMatchUsed ?? false)}
+            </div>
+            <div>
+              step2RerollTrace.anyOverrideReason:{' '}
+              {step2RerollTrace?.anyOverrideReason ?? 'none'}
+            </div>
+            <div>cta.showPrimaryContinueAction: {String(showPrimaryContinueAction)}</div>
+            <div>cta.previewGenerateDirectionId: {previewGenerateDirectionId ?? 'n/a'}</div>
+            <div>phase.selectedStep2CandidateArtifactId: {selectedStep2CandidateArtifactId ?? 'n/a'}</div>
+            <div>phase.sharedFlowMode: {activeFlowMode ?? 'n/a'}</div>
+            <div>phase.sharedFlowPhase: {sharedFlowPhase ?? 'n/a'}</div>
+            <div>phase.curatePreviewPhaseActive: {String(curatePreviewPhaseActive)}</div>
+            <div>phase.showCurateDiscoveryPhase: {String(showCurateDiscoveryPhase)}</div>
+            <div>render.routeCardSection: {String(renderCurateRouteCardSection)}</div>
+            <div>render.areaContextSection: {String(renderCurateAreaContextSection)}</div>
+            <div>render.directionDetailSection: {String(renderCurateDirectionDetailSection)}</div>
+            <div>render.sharedPlanPreview: {String(renderSharedPlanPreview)}</div>
+            <div>render.committedReveal: {String(renderCommittedReveal)}</div>
+            <div>
+              render.compareRoutesAction: {String(showReturnToCurateDiscoveryAction)}
+            </div>
+            <div>
+              path.discoveryConditional:{' '}
+              {!isSurpriseWrapperActive && showCurateDiscoveryPhase
+                ? '!isSurpriseWrapperActive && showCurateDiscoveryPhase'
+                : 'inactive'}
+            </div>
+            <div>
+              path.previewConditional:{' '}
+              !hasRevealed && preview && (!isCurateWrapperActive || curatePreviewPhaseActive)
+                ? '!hasRevealed && preview && (!isCurateWrapperActive || curatePreviewPhaseActive)'
+                : 'inactive'
+            </div>
+            <div>
+              path.committedRevealConditional:{' '}
+              {renderCommittedReveal
+                ? "hasRevealed && selectedRouteArtifact?.source === 'committed' && canonicalRouteArtifact && (previewSynced || committedPlanMatchesGenerateDirection)"
+                : 'inactive'}
+            </div>
             <div>highlightQualificationScore: {highlightQualificationScore}</div>
             <div>highlightQualificationPassed: {highlightQualificationPassed}</div>
             <div>highlightPoolCountBefore: {highlightPoolCountBefore}</div>
@@ -12354,9 +19824,10 @@ export function SandboxConciergePage() {
             </details>
           </>
         )}
-      </div>
+      </details>
       )}
 
+      {!isModeWrapperActive && (
       <section className="preview-adjustments draft-tune-panel">
         <p className="kicker reality-curated-label">Set your night</p>
         <p className="instruction concierge-context-line">
@@ -12409,13 +19880,15 @@ export function SandboxConciergePage() {
           Using nearby district signals to shape your options.
         </p>
       </section>
+      )}
 
+      {renderCurateRouteCardSection && (
       <section className="district-discovery">
         <h4>Explore what&apos;s possible</h4>
         <p className="district-subtext">
           See what&apos;s happening nearby and how your night could unfold.
         </p>
-        {showStep2SecondarySurfaces && (
+        {showStep2SecondarySurfaces && !isCurateWrapperActive && (
           <div className="step2-ecs-controls" aria-label="Exploration controls">
             <div className="step2-ecs-group">
               <p className="step2-ecs-label">Exploration</p>
@@ -12484,28 +19957,54 @@ export function SandboxConciergePage() {
         )}
         <div className="step2-night-options">
           <p className="step2-night-options-label">Choose tonight's direction</p>
+          {isBuildWrapperActive && selectedBuildAnchor && candidateRouteArtifactsForDisplay.length === 0 && (
+            <p className="preview-notice-copy">
+              No anchor-valid routes are available for "{selectedBuildAnchor.name}" in this context.
+            </p>
+          )}
+          {isCurateWrapperActive &&
+            curatePrimaryCardDisplay.primaryCardDisplayMode === 'qualified_only' &&
+            curatePrimaryCardDisplay.primaryVisibleQualifiedCount === 1 && (
+              <p className="preview-notice-copy">
+                1 route is ready for this starter. More options need regeneration.
+              </p>
+            )}
+          {isCurateWrapperActive &&
+            curatePrimaryCardDisplay.primaryCardDisplayMode === 'no_qualified_fallback' && (
+              <p className="preview-notice-copy">
+                No approved routes are ready for this starter yet. More options need regeneration.
+              </p>
+            )}
           <div className="step2-night-options-grid">
-            {step2BuiltNightCards.map((option) => {
-              const sourceOption = verifiedCityOpportunityById.get(option.id)
-              if (!sourceOption) {
+            {curatePrimaryCardDisplay.models.map((cardModel) => {
+              const option = cardModel.artifact
+              if (!verifiedCityOpportunityById.has(option.sourceOpportunityId)) {
                 return null
               }
-              const isSelected =
-                (option.selection.directionId &&
-                  selectedDirectionId === option.selection.directionId) ||
-                (!option.selection.directionId &&
-                  option.selection.pocketId &&
-                  activeDistrictPocketId === option.selection.pocketId)
+              const uniqueArtifactForDirection = option.selection.directionId
+                ? resolveUniqueCandidateRouteArtifactForDirection(option.selection.directionId)
+                : null
+              const isSelected = selectedStep2CandidateArtifactId
+                ? selectedStep2CandidateArtifactId === option.id
+                : (option.selection.directionId &&
+                    selectedDirectionId === option.selection.directionId &&
+                    uniqueArtifactForDirection?.id === option.id) ||
+                  (!option.selection.directionId &&
+                    option.selection.pocketId &&
+                    activeDistrictPocketId === option.selection.pocketId)
               return (
                 <button
                   key={option.id}
                   type="button"
                   className={`district-card step2-night-option${isSelected ? ' selected' : ''}`}
-                  onClick={() => handleSelectStep2NightOption(sourceOption)}
+                  onClick={() => handleSelectStep2NightOption(option)}
                   aria-pressed={isSelected}
+                  disabled={!cardModel.isSelectable}
                 >
-                  <h5 className="step2-night-option-anchor-title">{option.anchorName}</h5>
-                  <p className="step2-night-option-flavor-line">{option.flavorLine}</p>
+                  <h5 className="step2-night-option-anchor-title">{cardModel.title}</h5>
+                  <p className="step2-night-option-flavor-line">
+                    {cardModel.summary ?? option.flavorLine}
+                  </p>
                   <div className="step2-night-option-traits">
                     {option.traits.slice(0, 3).map((trait) => (
                       <span key={`${option.id}_${trait}`} className="step2-night-option-trait">
@@ -12516,19 +20015,40 @@ export function SandboxConciergePage() {
                   <div className="step2-night-option-story-spine">
                     <div className="step2-night-option-story-row">
                       <span className="step2-night-option-story-role">Start</span>
-                      <span className="step2-night-option-story-stop">{option.storySpine.start}</span>
+                      <span className="step2-night-option-story-stop">{cardModel.start}</span>
                     </div>
                     <div className="step2-night-option-story-row highlight">
                       <span className="step2-night-option-story-role">Highlight</span>
-                      <span className="step2-night-option-story-stop">{option.storySpine.highlight}</span>
+                      <span className="step2-night-option-story-stop">{cardModel.highlight}</span>
                     </div>
                     <div className="step2-night-option-story-row">
                       <span className="step2-night-option-story-role">Wind-down</span>
-                      <span className="step2-night-option-story-stop">{option.storySpine.windDown}</span>
+                      <span className="step2-night-option-story-stop">{cardModel.windDown}</span>
                     </div>
                   </div>
                   <p className="step2-night-option-context">{option.districtLine}</p>
+                  <p className="step2-night-option-match">
+                    Qualification: {cardModel.qualificationStatus} via {cardModel.cardDisplaySource}
+                  </p>
+                  {cardModel.qualificationStatus === 'qualified' &&
+                  cardModel.finalRouteStarterFitTier !== 'strong_starter_fit' &&
+                  cardModel.finalRouteStarterFitTier !== 'starter_aligned' ? (
+                    <p className="step2-night-option-match">
+                      {cardModel.finalRouteStarterFitTier === 'nearby_alternative'
+                        ? 'Ready route - nearby alternative'
+                        : 'Ready route - broader fit'}
+                    </p>
+                  ) : null}
+                  {cardModel.qualificationReason ? (
+                    <p className="step2-night-option-match">
+                      Qualification reason: {cardModel.qualificationReason}
+                    </p>
+                  ) : null}
                   <p className="step2-night-option-match">{option.whyChooseLine}</p>
+                  <p className="step2-night-option-match">{option.authorityLine}</p>
+                  {option.happeningsLine ? (
+                    <p className="step2-night-option-match">{option.happeningsLine}</p>
+                  ) : null}
                   {option.whyTonightProofLine ? (
                     <p className="step2-night-option-match">{option.whyTonightProofLine}</p>
                   ) : null}
@@ -12536,8 +20056,52 @@ export function SandboxConciergePage() {
               )
             })}
           </div>
+          {isCurateWrapperActive && selectedCandidateRouteArtifact && selectedCuratePreviewCommitability && (
+            <div className="preview-notice draft-feedback">
+              {selectedCuratePreviewCommitability.status === 'checking' ? (
+                <>
+                  <p className="preview-notice-title">Checking route commitability</p>
+                  <p className="preview-notice-copy">
+                    Verifying that this selected route can be committed exactly before entering
+                    Shared Plan Preview.
+                  </p>
+                </>
+              ) : selectedCuratePreviewCommitability.status === 'infeasible' ? (
+                <>
+                  <p className="preview-notice-title">
+                    {selectedCuratePreviewCommitability.failureKind === 'runtime_error'
+                      ? 'Selected route preflight hit a runtime error'
+                      : 'Selected route needs regeneration'}
+                  </p>
+                  <p className="preview-notice-copy">
+                    {selectedCuratePreviewCommitability.failureKind === 'runtime_error'
+                      ? 'This route could not complete preflight because of a runtime error.'
+                      : 'This route is not structurally committable as selected.'}
+                    {selectedCuratePreviewCommitability.missingRoleForContract
+                      ? ` Missing role support: ${selectedCuratePreviewCommitability.missingRoleForContract}.`
+                      : ''}
+                    {selectedCuratePreviewCommitability.failedCheck
+                      ? ` Failed check: ${selectedCuratePreviewCommitability.failedCheck}.`
+                      : ''}
+                    {selectedCuratePreviewCommitability.explicitFallbackReason
+                      ? ` Fallback reason: ${selectedCuratePreviewCommitability.explicitFallbackReason}.`
+                      : ''}
+                    Choose another route or adjust the setup before continuing.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="preview-notice-title">Selected route is ready</p>
+                  <p className="preview-notice-copy">
+                    This route preserved its Curate hard-commit target and can enter Shared Plan
+                    Preview.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
         </div>
-        {showStep2SecondarySurfaces && (
+        {renderCurateAreaContextSection && (
           <>
             <p className="step2-district-context-label supporting">Area context</p>
             <div className="district-discovery-grid step2-area-context-supporting">
@@ -12546,7 +20110,7 @@ export function SandboxConciergePage() {
                 className={`district-card district-context-card${
                   activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID ? ' selected' : ''
                 } supporting`}
-                onClick={() => setActiveDistrictPocketId(ALL_DISTRICTS_CONTEXT_ID)}
+                onClick={() => handleSelectAreaContext(ALL_DISTRICTS_CONTEXT_ID)}
                 aria-pressed={activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID}
               >
                 <div className="district-title">Flexible (multiple areas)</div>
@@ -12569,7 +20133,7 @@ export function SandboxConciergePage() {
                   className={`district-card district-context-card${
                     activeDistrictPocketId === pocket.id ? ' selected' : ''
                   } supporting`}
-                  onClick={() => setActiveDistrictPocketId(pocket.id)}
+                  onClick={() => handleSelectAreaContext(pocket.id)}
                   aria-pressed={activeDistrictPocketId === pocket.id}
                 >
                   <div className="district-title">{pocket.name}</div>
@@ -12589,8 +20153,9 @@ export function SandboxConciergePage() {
           </>
         )}
       </section>
+      )}
 
-      {showStep2SecondarySurfaces && (
+      {renderCurateDirectionDetailSection && (
         <>
           <p className="direction-count-line">{directionCountLine}</p>
           <p className="district-context-line">{directionContextLine}</p>
@@ -12610,18 +20175,26 @@ export function SandboxConciergePage() {
             allowFallbackCards={false}
             showGenerateAction={false}
             showIntroCopy={false}
+            selectionEnabled={!isCurateWrapperActive}
           />
         </>
       )}
 
-      {!hasRevealed && preview && (
+      {renderSharedPlanPreview && (
         <section className={`plan-preview${directionCards.length === 1 ? ' is-single-direction' : ''}`}>
           <p className="preview-bridge-line">{previewBridgeLine}</p>
           <p className="preview-bridge-subline">{previewBridgeSubline}</p>
           <article className="night-preview-card">
             <div className="night-preview-content compact-top">
               <h3>{previewHeaderTitle}</h3>
-              <p className="night-preview-commit">A complete, ready-to-run night.</p>
+              <p className="night-preview-commit">
+                {previewCandidateLeadLine}
+              </p>
+              {previewHeaderDistinctionLines.map((line) => (
+                <p key={`preview_header_distinction_${line}`} className="preview-header-subline">
+                  {line}
+                </p>
+              ))}
               <p className="night-preview-mainline">{previewNarrativeSummary}</p>
               <div className="plan-update-lists">
                 <div>
@@ -12632,6 +20205,9 @@ export function SandboxConciergePage() {
                 </div>
                 <div>
                   <p className="plan-update-list-title">Highlight</p>
+                  {previewHighlightProvenanceLine && (
+                    <p className="preview-header-subline">{previewHighlightProvenanceLine}</p>
+                  )}
                   <ul className="plan-update-list">
                     <li>{previewHighlightLabel}</li>
                   </ul>
@@ -12643,6 +20219,29 @@ export function SandboxConciergePage() {
                   </ul>
                 </div>
               </div>
+              {surprisePreviewVenueCards.length > 0 && (
+                <section className="surprise-stop-showcase" aria-label="Stops in tonight's route">
+                  <p className="surprise-stop-showcase-title">Tonight&apos;s stops</p>
+                  <div className="surprise-stop-showcase-grid">
+                    {surprisePreviewVenueCards.map((card) => (
+                      <PreviewVenueCard
+                        key={`surprise_stop_${card.role}`}
+                        role={card.role}
+                        roleLabel={card.roleLabel}
+                        venueName={card.venueName}
+                        mediaUrl={card.mediaUrl}
+                        mediaAlt={card.mediaAlt}
+                        venueType={card.venueType}
+                        areaName={card.areaName}
+                        fitSummary={card.fitSummary}
+                        knownFor={card.knownFor}
+                        areaFitSummary={card.areaFitSummary}
+                        className="surprise-stop-showcase-card"
+                      />
+                  ))}
+                </div>
+              </section>
+              )}
               <section
                 className={`preview-district-anchor preview-spatial-overview${
                   activeDistrictPocketId !== ALL_DISTRICTS_CONTEXT_ID ? ' is-active' : ''
@@ -12732,7 +20331,7 @@ export function SandboxConciergePage() {
                           </p>
                         )}
                         {stop.role === 'windDown' && (
-                          <p className="preview-stop-adjust-landing-note">Soft close nearby</p>
+                          <p className="preview-stop-adjust-landing-note">Route closes nearby</p>
                         )}
                         {isOpen && (
                           <p className="preview-stop-active-label">Editing this moment</p>
@@ -12804,15 +20403,48 @@ export function SandboxConciergePage() {
                   ))}
                 </ul>
               </div>
+              {selectedCandidatePreviewValidationFailed && (
+                <div className="preview-notice draft-feedback">
+                  <p className="preview-notice-title">Selected direction needs regeneration</p>
+                  <p className="preview-notice-copy">
+                    The last generation drifted from the selected direction contract. This preview remains
+                    visible for recovery; regenerate this direction or try another route.
+                  </p>
+                </div>
+              )}
               <div className="action-row draft-actions">
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={handleBuildFullPlan}
-                  disabled={!selectedDirectionId || loading}
-                >
-                  {loading ? 'Building full plan...' : 'Continue with this plan \u2192'}
-                </button>
+                {showPrimaryContinueAction && (
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={handleBuildFullPlan}
+                    disabled={!previewGenerateDirectionId || loading}
+                  >
+                    {loading ? 'Building full plan...' : 'Continue with this plan'}
+                  </button>
+                )}
+                {showTryAnotherAction && (
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => {
+                      void handleTryAnotherDirection()
+                    }}
+                    disabled={loading}
+                  >
+                    Try another
+                  </button>
+                )}
+                {showReturnToCurateDiscoveryAction && (
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={handleReturnToCurateDiscovery}
+                    disabled={loading}
+                  >
+                    Compare routes
+                  </button>
+                )}
               </div>
             </div>
           </article>
@@ -12826,26 +20458,30 @@ export function SandboxConciergePage() {
         </div>
       )}
 
-      {hasRevealed && plan && finalRoute && previewSynced && (
+      {hasRevealed &&
+        selectedRouteArtifact?.source === 'committed' &&
+        canonicalRouteArtifact &&
+        (previewSynced || committedPlanMatchesGenerateDirection) && (
         <section className={`plan-reveal sandbox-plan-reveal${isLocking ? ' is-locking' : ''}`}>
           <div className="confirm-night-header">
             <h2>{revealedStepHeader}</h2>
             <p>{revealedStepSubline}</p>
+            {previewHighlightProvenanceLine && (
+              <p className="preview-header-subline">{previewHighlightProvenanceLine}</p>
+            )}
           </div>
-
-          <p className="preview-notice-copy">{plan.selectedClusterConfirmation}</p>
 
           <div className="sandbox-guided-review">
             <div className="sandbox-guided-map-rail">
               <div className="sandbox-guided-map-rail-inner">
                 <JourneyMapReal
-                  key={`sandbox-route-${finalRoute.routeId}`}
+                  key={`sandbox-route-${canonicalRouteArtifact.finalRoute.routeId}`}
                   activeRole={activeRole}
                   routeStops={guidedRouteStops}
                   waypointOverrides={guidedWaypointOverrides}
                   activeStopId={guidedActiveStop?.id}
                   activeStopIndex={guidedActiveStopIndex}
-                  cityLabel={finalRoute.location || city.trim()}
+                  cityLabel={canonicalRouteArtifact.finalRoute.location || city.trim()}
                   onNearbySummaryChange={handleNearbySummaryChange}
                 />
               </div>
@@ -12855,13 +20491,15 @@ export function SandboxConciergePage() {
               <RouteSpine
                 className="draft-story-spine"
                 stops={planningDisplayStops}
-                storySpine={plan.itinerary.storySpine}
-                routeHeadline={finalRoute.routeHeadline}
-                routeWhyLine={finalRoute.routeSummary}
+                storySpine={canonicalRouteArtifact.itinerary.storySpine}
+                routeHeadline={canonicalRouteArtifact.finalRoute.routeHeadline}
+                routeWhyLine={canonicalRouteArtifact.finalRoute.routeSummary}
+                hideArcSummary
                 experienceFamily={activePreviewDirectionContext?.experienceFamily}
                 familyConfidence={activePreviewDirectionContext?.familyConfidence}
                 usedRecoveredCentralMomentHighlight={Boolean(
-                  plan.selectedArc.scoreBreakdown.recoveredCentralMomentHighlight,
+                  canonicalRouteArtifact.planSnapshot.selectedArc.scoreBreakdown
+                    .recoveredCentralMomentHighlight,
                 )}
                 routeDebugSummary={undefined}
                 allowStopAdjustments={false}
@@ -12900,17 +20538,17 @@ export function SandboxConciergePage() {
                   >
                     {isLocking ? 'Locking it in...' : 'Lock this night'}
                   </button>
-                  <button type="button" className="ghost-button">
-                    Send to friends
-                  </button>
                 </div>
               </div>
             </div>
           </div>
         </section>
       )}
+      </>
+      )}
       </div>
 
+      {showDebug && (
       <section className="preview-adjustments draft-tune-panel">
         <div className="action-row draft-actions">
           <p className="reality-curated-label" style={{ margin: 0 }}>
@@ -12921,7 +20559,7 @@ export function SandboxConciergePage() {
             className="ghost-button"
             onClick={() => setShowDistrictPanel((current) => !current)}
           >
-            {showDistrictPanel ? 'Hide' : 'Show'}
+            {showDistrictPanel ? 'Hide area diagnostics' : 'Show area diagnostics'}
           </button>
         </div>
         {showDistrictPanel && (
@@ -12933,6 +20571,7 @@ export function SandboxConciergePage() {
           />
         )}
       </section>
+      )}
 
       {previewSwap && (
         <div
