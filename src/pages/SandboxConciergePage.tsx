@@ -10,12 +10,8 @@ import {
   type RealityCluster,
 } from '../components/demo/RealityCommitStep'
 import {
-  buildDirectionCandidates,
   type DirectionCandidate,
 } from '../domain/direction/buildDirectionCandidates'
-import { applyPersonaShaping } from '../domain/direction/applyPersonaShaping'
-import { applyVibeShaping } from '../domain/direction/applyVibeShaping'
-import { selectBestDistinctDirections } from '../domain/direction/selectBestDistinctDirections'
 import { JourneyMapReal } from '../components/journey/JourneyMapReal'
 import type { JourneyWaypointOverride } from '../components/journey/JourneyMapReal'
 import { RouteSpine } from '../components/journey/RouteSpine'
@@ -59,12 +55,13 @@ import {
   buildHyperlocalDirectionExpression,
   type PocketType,
 } from '../domain/directions/buildHyperlocalDirectionExpression'
+import { saveLockedLiveArtifactSession } from '../app/services/live/liveSessionHandoff'
+import { assembleSandboxDirectionWorld } from '../app/services/sandbox/sandboxDirectionOrchestrator'
+import { runCuratePreviewQualificationAttempt } from '../app/services/sandbox/curatePreviewQualificationService'
 import {
-  createLiveArtifactPlanId,
-  getLastLiveArtifactSaveError,
-  getLiveArtifactStorageDebugSnapshot,
-  saveLiveArtifactSession,
-} from '../domain/live/liveArtifactSession'
+  SwapCommitCoreError,
+  applyPreviewSwapCommit,
+} from '../app/services/sandbox/sandboxSwapService'
 import { getCrewPolicy } from '../domain/intent/getCrewPolicy'
 import { projectItinerary } from '../domain/itinerary/projectItinerary'
 import { buildTonightSignals } from '../domain/journey/buildTonightSignals'
@@ -80,6 +77,11 @@ import type {
   RuntimeRouteArtifact,
   RuntimeRouteStop,
 } from '../domain/artifacts/runtimeRouteArtifact'
+import {
+  buildFinalRoute,
+  patchFinalRouteStop,
+} from '../domain/artifacts/runtimeRouteProjection'
+import { buildPreviewFromFinalRoute } from '../domain/artifacts/selectedRouteProjection'
 import type {
   DirectionPreviewModel,
   DirectionPreviewStop,
@@ -96,8 +98,6 @@ import {
   truncateText,
 } from '../domain/utils/debugListHelpers'
 import {
-  buildCanonicalInterpretationBundle,
-  formatExperienceContractActShape,
   normalizeExperienceContractVibe,
 } from '../domain/interpretation/buildCanonicalInterpretationBundle'
 import {
@@ -112,8 +112,6 @@ import {
 } from '../domain/interpretation/construction/scenarioBuilder'
 import type { ExperienceContract as InterpretationExperienceContract } from '../domain/interpretation/contracts/experienceContract'
 import {
-  buildContractGateWorld,
-  type ContractAwareDistrictRankingResult,
   type ContractGateWorld,
 } from '../domain/bearings/buildContractGateWorld'
 import { buildGreatStopAdmissibilitySignal } from '../domain/bearings/buildGreatStopAdmissibilitySignal'
@@ -124,7 +122,6 @@ import {
   readDevGreatStopFixturesEnabled,
 } from '../domain/sources/devGreatStopFixtures'
 import {
-  buildStrategyAdmissibleWorlds,
   type StrategyAdmissibleWorld,
 } from '../domain/bearings/buildStrategyAdmissibleWorlds'
 import { mapVenueToTasteInput } from '../domain/interpretation/taste/mapVenueToTasteInput'
@@ -152,6 +149,14 @@ import {
   type AnchorSearchResult,
   type GenerationTrace,
 } from '../app/services/arcApplicationService'
+import {
+  getCuratePreflightRuntimeReason,
+  getErrorMessageRaw,
+  getErrorName,
+  runPostPlannerCommitParityStages,
+  type FullStopRealityContractOutcome,
+  type StrongCurationTastePassResult,
+} from '../app/services/sandbox/sandboxPlannerParityService'
 import { deriveStep2AuthoritySignals } from '../domain/interpretation/taste/step2AuthorityConviction'
 import {
   getHospitalityScenarioContract,
@@ -904,38 +909,6 @@ interface StrongCurationTasteBias {
   startFloor: number
   windDownFloor: number
   summary: string
-}
-
-interface StrongCurationTastePassResult {
-  selectedArc: ArcCandidate
-  itinerary: Itinerary
-  scoredVenues: ScoredVenue[]
-  qualificationByCandidateId: Record<string, TasteCandidateQualification>
-  personaVibeTasteBiasSummary: string
-  thinPoolHighlightFallbackApplied: boolean
-  highlightPoolCountBefore: number
-  highlightPoolCountAfter: number
-  rolePoolCountByRoleBefore: Record<CoreTasteRole, number>
-  rolePoolCountByRoleAfter: Record<CoreTasteRole, number>
-  signatureHighlightShortlistCount: number
-  signatureHighlightShortlistIds: string[]
-  highlightShortlistScoreSummary: string
-  selectedHighlightFromShortlist: boolean
-  selectedHighlightShortlistRank: number | null
-  fallbackToQualifiedHighlightPool: boolean
-  upstreamPoolSelectionApplied: boolean
-  postGenerationRepairCount: number
-  rolePoolVenueIdsByRole: Record<CoreTasteRole, string[]>
-  rolePoolVenueIdsCombined: string[]
-  thinPoolRelaxationTrace: {
-    triggered: boolean
-    baseQualifiedHighlightCount: number
-    baseHighlightFloor: number
-    relaxedHighlightFloor: number
-    triggerReason: string
-    relaxedRule: string
-    effectSummary: string
-  }
 }
 
 interface TasteCurationDebug {
@@ -5816,13 +5789,6 @@ function findScoredVenueForStop(
   return selectedArc.stops.find((arcStop) => arcStop.role === targetRole)?.scoredVenue
 }
 
-interface FullStopRealityContractOutcome {
-  selectedArc: ArcCandidate
-  itinerary: Itinerary
-  canonicalStopByRole: Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
-  rejectedStopRoles: UserStopRole[]
-}
-
 async function enforceFullStopRealityContract(params: {
   itinerary: Itinerary
   selectedArc: ArcCandidate
@@ -5986,348 +5952,6 @@ function hydrateRuntimeRouteStopDisplayFields(params: {
       getNonEmptyRuntimeRouteString(existingRouteStop?.imageUrl) ??
       getNonEmptyRuntimeRouteString(stop.imageUrl) ??
       fallbackImageUrl,
-  }
-}
-
-function toFinalRouteStop(
-  stop: ItineraryStop,
-  stopIndex: number,
-  canonicalStopByRole: Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>,
-  fallbackImageUrl: string,
-): RuntimeRouteStop | null {
-  const canonical = canonicalStopByRole[stop.role]
-  if (
-    !canonical ||
-    !canonical.providerRecordId ||
-    !canonical.displayName ||
-    typeof canonical.latitude !== 'number' ||
-    typeof canonical.longitude !== 'number' ||
-    !canonical.addressLine
-  ) {
-    return null
-  }
-  const displayFields = hydrateRuntimeRouteStopDisplayFields({
-    stop,
-    fallbackImageUrl,
-  })
-  return {
-    id: stop.id,
-    sourceStopId: stop.id,
-    displayName: canonical.displayName,
-    providerRecordId: canonical.providerRecordId,
-    latitude: canonical.latitude,
-    longitude: canonical.longitude,
-    address: canonical.addressLine,
-    role: stop.role,
-    stopIndex,
-    venueId: stop.venueId,
-    title: displayFields.title,
-    subtitle: displayFields.subtitle,
-    neighborhood: canonical.neighborhood || stop.neighborhood,
-    driveMinutes: displayFields.driveMinutes,
-    imageUrl: displayFields.imageUrl,
-  }
-}
-
-function buildFinalRoute(params: {
-  itinerary: Itinerary
-  canonicalStopByRole: Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
-  selectedDirectionId: string
-  city: string
-  persona: PersonaMode
-  vibe: VibeAnchor
-  activeRole: UserStopRole
-  mode: 'surprise' | 'curate' | 'build'
-  selectedCluster: RealityCluster
-  selectedDirectionPreviewContext?: SelectedDirectionPreviewContext
-}): RuntimeRouteArtifact | null {
-  const visibleStops = params.itinerary.stops.filter((stop) => {
-    if (stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown') {
-      return true
-    }
-    return (
-      params.mode === 'surprise' &&
-      stop.role === 'surprise' &&
-      Boolean(params.canonicalStopByRole.surprise)
-    )
-  })
-  const hasStart = visibleStops.some((stop) => stop.role === 'start')
-  const hasHighlight = visibleStops.some((stop) => stop.role === 'highlight')
-  const hasWindDown = visibleStops.some((stop) => stop.role === 'windDown')
-  if (!hasStart || !hasHighlight || !hasWindDown) {
-    return null
-  }
-  const fallbackImageUrl = getSharedItineraryStopFallbackImageUrl(visibleStops)
-  const stops = visibleStops
-    .map((stop, stopIndex) =>
-      toFinalRouteStop(stop, stopIndex, params.canonicalStopByRole, fallbackImageUrl),
-    )
-  if (stops.some((stop) => !stop)) {
-    return null
-  }
-  const committedStops = stops.filter((stop): stop is RuntimeRouteStop => Boolean(stop))
-  const routeHeadline = getPreviewOneLiner(
-    params.selectedCluster,
-    params.itinerary,
-    params.selectedDirectionPreviewContext,
-  )
-  const routeSummary = getPreviewContinuityLine(
-    params.selectedCluster,
-    params.itinerary,
-    params.selectedDirectionPreviewContext,
-  )
-  const activeStopIndex = Math.max(
-    0,
-    committedStops.findIndex((stop) => stop.role === params.activeRole),
-  )
-  return {
-    routeId: `${params.itinerary.id}-${Date.now()}`,
-    selectedDirectionId: params.selectedDirectionId,
-    location: params.city,
-    persona: params.persona,
-    vibe: params.vibe,
-    stops: committedStops,
-    activeStopIndex,
-    routeHeadline,
-    routeSummary,
-    mapMarkers: committedStops.map((stop) => ({
-      id: stop.id,
-      displayName: stop.displayName,
-      role: stop.role,
-      stopIndex: stop.stopIndex,
-      latitude: stop.latitude,
-      longitude: stop.longitude,
-    })),
-    liveNotices: [],
-    updatedAt: Date.now(),
-  }
-}
-
-interface PostPlannerCommitParityStagesResult {
-  strongCurationPass: StrongCurationTastePassResult
-  anchoredPlan: FullStopRealityContractOutcome
-  canonicalItinerary: Itinerary
-  contractBuildability: DirectionContractBuildability
-  directionValidation: DirectionContractValidationResult
-  nextFinalRoute: RuntimeRouteArtifact
-}
-
-class PostPlannerCommitParityValidationError extends Error {
-  readonly directionValidation: DirectionContractValidationResult
-  readonly contractBuildability: DirectionContractBuildability
-  readonly failedCheck: string
-
-  constructor(params: {
-    message: string
-    directionValidation: DirectionContractValidationResult
-    contractBuildability: DirectionContractBuildability
-    failedCheck: string
-  }) {
-    super(params.message)
-    this.name = 'PostPlannerCommitParityValidationError'
-    Object.setPrototypeOf(this, PostPlannerCommitParityValidationError.prototype)
-    this.directionValidation = params.directionValidation
-    this.contractBuildability = params.contractBuildability
-    this.failedCheck = params.failedCheck
-  }
-}
-
-function getErrorName(error: unknown): string {
-  return error instanceof Error ? error.name : typeof error
-}
-
-function getErrorMessageRaw(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-function getCuratePreflightRuntimeReason(error: unknown): string {
-  const errorName = getErrorName(error)
-  return errorName ? `curate_preflight_runtime_error:${errorName}` : 'curate_preflight_runtime_error'
-}
-
-async function runPostPlannerCommitParityStages(params: {
-  result: Awaited<ReturnType<typeof runPlanBuild>>
-  contractConstraints: ContractConstraints
-  expectedDirectionIdentity: DirectionIdentityMode
-  selectedDirectionContextForValidation: ResolvedDirectionContext
-  selectedDirectionContractForValidation: DirectionPlanningSelection
-  selectedDirectionId: string
-  selectedDirectionPreviewContext?: SelectedDirectionPreviewContext
-  selectedCluster: RealityCluster
-  city: string
-  persona: PersonaMode
-  vibe: VibeAnchor
-}): Promise<PostPlannerCommitParityStagesResult> {
-  const strongCurationPass =
-    params.result.intentProfile.mode === 'surprise'
-      ? buildPassthroughStrongCurationTastePass({
-          itinerary: params.result.itinerary,
-          selectedArc: params.result.selectedArc,
-          scoredVenues: params.result.scoredVenues,
-        })
-      : applyStrongCurationTastePass({
-          itinerary: params.result.itinerary,
-          selectedArc: params.result.selectedArc,
-          scoredVenues: params.result.scoredVenues,
-          intentProfile: params.result.intentProfile,
-          lens: params.result.lens,
-          contractConstraints: params.contractConstraints,
-        })
-  const anchoredPlan = await enforceFullStopRealityContract({
-    itinerary: strongCurationPass.itinerary,
-    selectedArc: strongCurationPass.selectedArc,
-    scoredVenues: strongCurationPass.scoredVenues,
-    intentProfile: params.result.intentProfile,
-    lens: params.result.lens,
-  })
-  const canonicalItinerary = applyCanonicalIdentityToItinerary(
-    anchoredPlan.itinerary,
-    anchoredPlan.canonicalStopByRole,
-  )
-  const contractBuildability = assessDirectionContractBuildability({
-    expectedDirectionIdentity: params.expectedDirectionIdentity,
-    scoredVenues: strongCurationPass.scoredVenues,
-  })
-  const directionValidation = validateDirectionRouteContract({
-    selectedDirectionContext: params.selectedDirectionContextForValidation,
-    selectedDirection: params.selectedDirectionContractForValidation,
-    itinerary: canonicalItinerary,
-    buildability: contractBuildability,
-    mode: params.result.intentProfile.mode,
-  })
-  if (!directionValidation.valid) {
-    throw new PostPlannerCommitParityValidationError({
-      message: 'Route drifted from selected direction contract. Please regenerate.',
-      directionValidation,
-      contractBuildability,
-      failedCheck: directionValidation.generationDriftReason ?? 'directionValidation.valid',
-    })
-  }
-  const nextFinalRoute = buildFinalRoute({
-    itinerary: canonicalItinerary,
-    canonicalStopByRole: anchoredPlan.canonicalStopByRole,
-    selectedDirectionId: params.selectedDirectionId,
-    city: params.city,
-    persona: params.persona,
-    vibe: params.vibe,
-    activeRole: 'start',
-    mode: params.result.intentProfile.mode,
-    selectedCluster: params.selectedCluster,
-    selectedDirectionPreviewContext: params.selectedDirectionPreviewContext,
-  })
-  if (!nextFinalRoute) {
-    throw new PostPlannerCommitParityValidationError({
-      message: 'Route commit failed: one or more stops are missing canonical identity.',
-      directionValidation,
-      contractBuildability,
-      failedCheck: 'buildFinalRoute.canonicalIdentity',
-    })
-  }
-  if (nextFinalRoute.selectedDirectionId !== params.selectedDirectionId) {
-    throw new PostPlannerCommitParityValidationError({
-      message: 'Route drifted from selected direction contract. Please regenerate.',
-      directionValidation,
-      contractBuildability,
-      failedCheck: 'nextFinalRoute.selectedDirectionId',
-    })
-  }
-  return {
-    strongCurationPass,
-    anchoredPlan,
-    canonicalItinerary,
-    contractBuildability,
-    directionValidation,
-    nextFinalRoute,
-  }
-}
-
-function buildFinalRouteMapMarkers(
-  stops: RuntimeRouteStop[],
-): RuntimeRouteArtifact['mapMarkers'] {
-  return stops
-    .slice()
-    .sort((left, right) => left.stopIndex - right.stopIndex)
-    .map((stop) => ({
-      id: stop.id,
-      displayName: stop.displayName,
-      role: stop.role,
-      stopIndex: stop.stopIndex,
-      latitude: stop.latitude,
-      longitude: stop.longitude,
-    }))
-}
-
-function patchFinalRouteStop(params: {
-  route: RuntimeRouteArtifact
-  targetRole: UserStopRole
-  targetStopId?: string
-  targetStopIndex?: number
-  replacementStop: RuntimeRouteStop
-  notice?: string
-  activeRole?: UserStopRole
-}): {
-  route: RuntimeRouteArtifact
-  resolvedStop: RuntimeRouteStop
-  resolution: 'id' | 'index' | 'role'
-} | null {
-  const orderedStops = params.route.stops
-    .slice()
-    .sort((left, right) => left.stopIndex - right.stopIndex)
-  let replaceIndex = -1
-  let resolution: 'id' | 'index' | 'role' | null = null
-  if (params.targetStopId) {
-    replaceIndex = orderedStops.findIndex((stop) => stop.id === params.targetStopId)
-    if (replaceIndex >= 0) {
-      resolution = 'id'
-    }
-  }
-  if (replaceIndex < 0 && typeof params.targetStopIndex === 'number') {
-    replaceIndex = orderedStops.findIndex((stop) => stop.stopIndex === params.targetStopIndex)
-    if (replaceIndex >= 0) {
-      resolution = 'index'
-    }
-  }
-  if (replaceIndex < 0) {
-    replaceIndex = orderedStops.findIndex((stop) => stop.role === params.targetRole)
-    if (replaceIndex >= 0) {
-      resolution = 'role'
-    }
-  }
-  if (replaceIndex < 0 || !resolution) {
-    return null
-  }
-  const currentStop = orderedStops[replaceIndex]
-  if (!currentStop) {
-    return null
-  }
-  const replacementStop: RuntimeRouteStop = {
-    ...currentStop,
-    ...params.replacementStop,
-    title: currentStop.title,
-    role: currentStop.role,
-    stopIndex: currentStop.stopIndex,
-  }
-  const nextStops = orderedStops.map((stop, index) =>
-    index === replaceIndex ? replacementStop : stop,
-  )
-  const nextActiveStopIndex =
-    params.activeRole != null
-      ? Math.max(0, nextStops.findIndex((stop) => stop.role === params.activeRole))
-      : params.route.activeStopIndex
-  return {
-    route: {
-      ...params.route,
-      routeId: `${params.route.routeId}-swap-${Date.now()}`,
-      stops: nextStops,
-      activeStopIndex: nextActiveStopIndex,
-      mapMarkers: buildFinalRouteMapMarkers(nextStops),
-      liveNotices: params.notice
-        ? [...(params.route.liveNotices ?? []), params.notice]
-        : params.route.liveNotices,
-      updatedAt: Date.now(),
-    },
-    resolvedStop: currentStop,
-    resolution,
   }
 }
 
@@ -9634,22 +9258,6 @@ function buildPreviewFromDirection(
   }
 }
 
-function buildPreviewFromFinalRoute(route: RuntimeRouteArtifact): DirectionPreviewModel {
-  return {
-    directionId: route.selectedDirectionId,
-    headline: route.routeHeadline,
-    tone: route.routeSummary,
-    stops: route.stops
-      .slice()
-      .sort((left, right) => left.stopIndex - right.stopIndex)
-      .map((stop) => ({
-        role: stop.role,
-        name: stop.displayName,
-      })),
-    continuityLine: route.routeSummary,
-  }
-}
-
 function buildDirectionIdentity(direction: RealityDirectionCard): string {
   return [
     direction.id,
@@ -10734,358 +10342,48 @@ export function SandboxConciergePage() {
     districtPreviewResult?.location.source === 'unresolved_query'
       ? districtPreviewResult.location.meta.unresolvedReason
       : undefined
-  const canonicalInterpretationBundle = useMemo(
+  const sandboxDirectionWorld = useMemo(
     () =>
-      // Wrapper seam: Interpretation owns canonical meaning artifact construction.
-      buildCanonicalInterpretationBundle({
-        persona,
-        vibe: primaryVibe,
-        city: districtLocationQuery,
-        planningMode: 'engine-led',
-        entryPoint: 'direction_selection',
-        hasAnchor: false,
-      }),
-    [districtLocationQuery, persona, primaryVibe],
-  )
-  const canonicalConciergeIntent = canonicalInterpretationBundle.normalizedIntent
-  const canonicalExperienceContract = canonicalInterpretationBundle.experienceContract
-  const canonicalContractConstraints = canonicalInterpretationBundle.contractConstraints
-  const bearingsGreatStopSignal = useMemo(() => {
-    if (!resolvedScenarioFamily || scenarioBuiltNights.length === 0) {
-      return undefined
-    }
-    const severeNight =
-      scenarioBuiltNights.find((night) => {
-        const evaluation = night.evaluation
-        if (!evaluation || evaluation.passesGreatStopStandard) {
-          return false
-        }
-        return evaluation.stopEvaluations.some((entry) =>
-          entry.evaluation.failedCriteria.some(
-            (criterion) =>
-              criterion === 'real' ||
-              criterion === 'place_right' ||
-              criterion === 'moment_right',
-          ),
-        )
-      }) ?? scenarioBuiltNights[0]
-    return buildGreatStopAdmissibilitySignal(severeNight.evaluation)
-  }, [resolvedScenarioFamily, scenarioBuiltNights])
-  const contractGateWorld = useMemo<ContractGateWorld>(() => {
-    // Wrapper seam: Bearings owns admissibility truth (ContractGateWorld).
-    return buildContractGateWorld({
-      ranked: districtPreviewResult?.ranked ?? [],
-      context: {
-        canonicalStrategyFamily: canonicalInterpretationBundle.strategyFamily,
-        canonicalStrategyFamilyResolution:
-          canonicalInterpretationBundle.strategyFamilyResolution,
-        experienceContract: canonicalExperienceContract,
-        contractConstraints: canonicalContractConstraints,
-        greatStopAdmissibilitySignal: bearingsGreatStopSignal,
-      },
-      source: 'page.sandbox.direction.contractGateWorld',
-    })
-  }, [
-    bearingsGreatStopSignal,
-    canonicalContractConstraints,
-    canonicalExperienceContract,
-    canonicalInterpretationBundle,
-    districtPreviewResult,
-  ])
-  const contractAwareDistrictRanking = useMemo<ContractAwareDistrictRankingResult>(
-    () => contractGateWorld.contractAwareRanking,
-    [contractGateWorld],
-  )
-  const strategyAdmissibleWorlds = useMemo<StrategyAdmissibleWorld[]>(
-    () =>
-      // Wrapper seam: Bearings owns per-strategy admissible worlds.
-      buildStrategyAdmissibleWorlds({
-        contractGateWorld,
-        strategyFamily: canonicalInterpretationBundle.strategyFamily,
-        strategySummary: canonicalInterpretationBundle.strategySemantics.summary,
-      }),
-    [canonicalInterpretationBundle, contractGateWorld],
-  )
-  const allDirectionCards = useMemo<RealityDirectionCard[]>(() => {
-    if (!districtPreviewResult || contractGateWorld.admittedPockets.length === 0) {
-      return []
-    }
-    const experienceContractActShape = formatExperienceContractActShape(
-      canonicalExperienceContract.actStructure.actPattern,
-    )
-
-    const candidatePoolLimit = Math.min(contractGateWorld.admittedPockets.length, 10)
-    const baseCandidates = buildDirectionCandidates({
-      ranked: contractAwareDistrictRanking.ranked,
-      debug: districtPreviewResult.debug,
-      candidatePoolLimit,
-      contractGateWorld,
-      strategyAdmissibleWorlds,
-      context: {
-        persona,
-        vibe: primaryVibe,
-        experienceContract: canonicalExperienceContract,
-        contractConstraints: canonicalContractConstraints,
-      },
-    })
-    const personaShapedCandidates = applyPersonaShaping(baseCandidates, persona)
-    const vibeShapedCandidates = applyVibeShaping(personaShapedCandidates, primaryVibe)
-    const finalSelection = selectBestDistinctDirections({
-      candidates: vibeShapedCandidates,
-      preShapeCandidates: baseCandidates,
-      requestedVibe: primaryVibe,
-      finalLimit: 3,
-    })
-    const correctedWinnerId =
-      finalSelection.debug.correctedWinnerId ?? finalSelection.finalists[0]?.pocketId
-    const finalistsByPocketId = new Map(
-      finalSelection.finalists.map((candidate) => [candidate.pocketId, candidate] as const),
-    )
-    const correctedWinner = correctedWinnerId
-      ? finalistsByPocketId.get(correctedWinnerId)
-      : undefined
-    const candidates = [
-      ...(correctedWinner ? [correctedWinner] : []),
-      ...finalSelection.finalists.filter(
-        (candidate) => candidate.pocketId !== correctedWinner?.pocketId,
+      assembleSandboxDirectionWorld(
+        {
+          persona,
+          primaryVibe,
+          districtLocationQuery,
+          districtPreviewResult,
+          resolvedScenarioFamily,
+          scenarioBuiltNights,
+        },
+        {
+          getDirectionTrajectoryHint,
+          getDirectionToneTag,
+          getDirectionProofLine,
+          getStorySpineStartLine,
+          getStorySpineHighlightLine,
+          getStorySpineWindDownLine,
+          getStorySpineWhyThisWorksLine,
+          getRouteShapeHints,
+        },
       ),
-    ].slice(0, 3)
-    const finalSelectedId = candidates[0]?.pocketId
-    const preShapeRankByPocketId = new Map(
-      baseCandidates.map((candidate, index) => [candidate.pocketId, index + 1] as const),
-    )
-    const shapedRankByPocketId = new Map(
-      vibeShapedCandidates.map((candidate, index) => [candidate.pocketId, index + 1] as const),
-    )
-    const decisionByPocketId = new Map(
-      finalSelection.debug.selectionDecisions.map((decision) => [decision.pocketId, decision] as const),
-    )
-    const elevatedPocketIds = new Set(finalSelection.debug.elevatedPocketIds)
-    // TODO(multi-vibe-shaping): support secondary-vibe and blended weighting in a future pass.
-
-    const usedPrimarySignals = new Set<string>()
-    const usedPocketTypes = new Set<PocketType>()
-
-    return candidates.map((candidate, index) => {
-      const hyperlocalExpression = buildHyperlocalDirectionExpression({
-        districtLabel: candidate.pocketLabel,
-        defaultTitle: candidate.label,
-        defaultSubtitle: candidate.subtitle,
-        defaultSupportLine: candidate.supportLine,
-        preferDefaultTitle: true,
-        preferDefaultSubtitle: true,
-        defaultSectionLabel: 'What defines this area',
-        defaultBullets: candidate.reasons.slice(0, 3),
-        candidate,
-        hyperlocal: candidate.derivedFrom.hyperlocal,
-        usedPrimarySignals,
-        usedPocketTypes,
-      })
-      if (hyperlocalExpression.primarySignalKey) {
-        usedPrimarySignals.add(hyperlocalExpression.primarySignalKey)
-      }
-      if (hyperlocalExpression.pocketType) {
-        usedPocketTypes.add(hyperlocalExpression.pocketType)
-      }
-      const confirmation = `You're starting in ${candidate.pocketLabel} - ${getDirectionTrajectoryHint(candidate, primaryVibe)}`
-      const candidateDirectionSelection = buildDirectionPlanningSelectionEngine({
-        id: candidate.pocketId,
-        label: hyperlocalExpression.title,
-        pocketId: candidate.pocketId,
-        pocketLabel: candidate.pocketLabel,
-        archetype: candidate.archetype,
-        cluster: candidate.cluster,
-        experienceFamily: candidate.experienceFamily,
-        familyConfidence: candidate.familyConfidence,
-        subtitle: hyperlocalExpression.subtitle,
-        laneIdentity: candidate.contrastProfile.laneIdentity,
-        macroLane: candidate.contrastProfile.macroLane,
-      })
-      const candidateDirectionContext = buildResolvedDirectionContext(candidateDirectionSelection)
-      if (!candidateDirectionContext) {
-        return null
-      }
-      const routeShapeHints = getRouteShapeHints(
-        buildRouteShapeContract({
-          selectedDirection: candidateDirectionSelection,
-          selectedDirectionContext: candidateDirectionContext,
-          conciergeIntent: canonicalConciergeIntent,
-          contractConstraints: canonicalContractConstraints,
-        }),
-      )
-      const conciergeHint = `${canonicalConciergeIntent.controlPosture.mode} | ${canonicalConciergeIntent.objective.primary} | swaps ${canonicalConciergeIntent.constraintPosture.swapTolerance}`
-
-      return {
-        id: candidate.pocketId,
-        cluster: candidate.cluster,
-        recommended: index === 0,
-        directionStrategyWorldDebug: candidate.directionStrategyWorldDebug,
-        card: {
-          title: hyperlocalExpression.title,
-          subtitle: hyperlocalExpression.subtitle,
-          toneTag: getDirectionToneTag(candidate.archetype),
-          whyNow: candidate.directionNarrativeSummary,
-          whyYou: candidate.directionNarrativeSupport,
-          anchorLine: hyperlocalExpression.anchorLine,
-          supportLine: hyperlocalExpression.supportLine,
-          proofLine: getDirectionProofLine(candidate, false),
-          selectedProofLine: getDirectionProofLine(candidate, true),
-          storySpinePreview: {
-            start: getStorySpineStartLine(candidate, primaryVibe),
-            highlight: getStorySpineHighlightLine(candidate),
-            windDown: getStorySpineWindDownLine(candidate),
-            whyThisWorks: getStorySpineWhyThisWorksLine(candidate),
-          },
-          liveSignals: {
-            title: hyperlocalExpression.sectionLabel,
-            items: hyperlocalExpression.bullets,
-          },
-          confirmation,
-        },
-        debugMeta: {
-          pocketId: candidate.pocketId,
-          pocketLabel: candidate.pocketLabel,
-          archetype: candidate.archetype,
-          confidence: candidate.confidence,
-          persona: candidate.shapingDebug?.persona,
-          personaBoost: candidate.shapingDebug?.personaBoost,
-          vibe: candidate.shapingDebug?.vibe,
-          vibeBoost: candidate.shapingDebug?.vibeBoost,
-          finalScore: candidate.shapingDebug?.finalScore,
-          familyBias: candidate.shapingDebug?.familyBias,
-          richnessBoostApplied: candidate.richnessDebug?.richnessBoostApplied,
-          similarityPenaltyApplied: candidate.richnessDebug?.similarityPenaltyApplied,
-          composedCandidateAccepted: candidate.richnessDebug?.composedCandidateAccepted,
-          composedCandidateRejected: candidate.richnessDebug?.composedCandidateRejected,
-          richnessContrastReason: candidate.richnessDebug?.richnessContrastReason,
-          shapedScoreBeforeCompression: candidate.shapingDebug?.shapedScoreBeforeCompression,
-          shapedScoreAfterCompression: candidate.shapingDebug?.shapedScoreAfterCompression,
-          compressionApplied: candidate.shapingDebug?.compressionApplied,
-          compressionDelta: candidate.shapingDebug?.compressionDelta,
-          candidatePoolSize: finalSelection.debug.candidatePoolSize,
-          preShapeRank: preShapeRankByPocketId.get(candidate.pocketId),
-          shapedRank: shapedRankByPocketId.get(candidate.pocketId),
-          selectedRank: decisionByPocketId.get(candidate.pocketId)?.selectionRank,
-          selectionMode: decisionByPocketId.get(candidate.pocketId)?.selectionMode,
-          maxSimilarityToSelected: decisionByPocketId.get(candidate.pocketId)?.maxSimilarityToSelected,
-          similarityToWinner: decisionByPocketId.get(candidate.pocketId)?.similarityToWinner,
-          similarityToSlot2: decisionByPocketId.get(candidate.pocketId)?.similarityToSlot2,
-          sameLaneAsWinner: decisionByPocketId.get(candidate.pocketId)?.sameLaneAsWinner,
-          similarityPenalty: decisionByPocketId.get(candidate.pocketId)?.similarityPenalty,
-          contrastScore: decisionByPocketId.get(candidate.pocketId)?.contrastScore,
-          winnerStrengthBonus: decisionByPocketId.get(candidate.pocketId)?.winnerStrengthBonus,
-          diversityLift: decisionByPocketId.get(candidate.pocketId)?.diversityLift,
-          compositionChangedByShaping: finalSelection.debug.compositionChangedByShaping,
-          elevatedFromOutsideTop3: elevatedPocketIds.has(candidate.pocketId),
-          strongestShapedId: finalSelection.debug.strongestShapedId,
-          correctedWinnerId: finalSelection.debug.correctedWinnerId,
-          finalSelectedId,
-          strongestShapedPreserved: finalSelection.debug.strongestShapedPreserved,
-          slot1GuardrailApplied: finalSelection.debug.slot1GuardrailApplied,
-          top1RawSeparation: finalSelection.debug.top1RawSeparation,
-          top1AdjustedSeparation: finalSelection.debug.top1AdjustedSeparation,
-          laneIdentity: candidate.contrastProfile.laneIdentity,
-          macroLane: candidate.contrastProfile.macroLane,
-          directionExperienceIdentity: candidate.directionExperienceIdentity,
-          directionPrimaryIdentitySource: candidate.directionPrimaryIdentitySource,
-          directionPeakModel: candidate.directionPeakModel,
-          directionMovementStyle: candidate.directionMovementStyle,
-          directionDistrictSupportSummary: candidate.directionDistrictSupportSummary,
-          directionStrategyId: candidate.directionStrategyId,
-          directionStrategyLabel: candidate.directionStrategyLabel,
-          directionStrategyFamily: candidate.directionStrategyFamily,
-          directionStrategySummary: candidate.directionStrategySummary,
-          directionStrategySource: candidate.directionStrategySource,
-          directionCollapseGuardApplied: candidate.directionCollapseGuardApplied,
-          directionStrategyOverlapSummary: candidate.directionStrategyOverlapSummary,
-          strategyConstraintStatus: candidate.strategyConstraintStatus,
-          strategyPoolSize: candidate.strategyPoolSize,
-          strategyRejectedCount: candidate.strategyRejectedCount,
-          strategyHardGuardStatus: candidate.strategyHardGuardStatus,
-          strategyHardGuardReason: candidate.strategyHardGuardReason,
-          contractGateApplied: candidate.contractGateApplied,
-          contractGateSummary: candidate.contractGateSummary,
-          contractGateStrengthSummary: candidate.contractGateStrengthSummary,
-          contractGateRejectedCount: candidate.contractGateRejectedCount,
-          contractGateAllowedPreview: candidate.contractGateAllowedPreview,
-          contractGateSuppressedPreview: candidate.contractGateSuppressedPreview,
-          directionContractGateStatus: candidate.directionContractGateStatus,
-          directionContractGateReasonSummary: candidate.directionContractGateReasonSummary,
-          strategyWorldSource: candidate.strategyWorldSource,
-          selectedStrategyWorldId: candidate.selectedStrategyWorldId,
-          strategyWorldSummary: candidate.strategyWorldSummary,
-          strategyWorldAdmittedCount: candidate.strategyWorldAdmittedCount,
-          strategyWorldSuppressedCount: candidate.strategyWorldSuppressedCount,
-          strategyWorldRejectedCount: candidate.strategyWorldRejectedCount,
-          strategyWorldAllowedPreview: candidate.strategyWorldAllowedPreview,
-          strategyWorldSuppressedPreview: candidate.strategyWorldSuppressedPreview,
-          directionStrategyWorldDebug: candidate.directionStrategyWorldDebug,
-          directionStrategyWorldStatus: candidate.directionStrategyWorldStatus,
-          directionStrategyWorldReasonSummary: candidate.directionStrategyWorldReasonSummary,
-          directionNarrativeSource: candidate.directionNarrativeSource,
-          directionNarrativeMode: candidate.directionNarrativeMode,
-          directionNarrativeSummary: candidate.directionNarrativeSummary,
-          districtIdentityStrength: candidate.contrastProfile.districtIdentityStrength,
-          momentumProfile: candidate.contrastProfile.momentumProfile,
-          contrastEligible: candidate.contrastProfile.contrastEligible,
-          contrastReason: candidate.contrastProfile.contrastReason,
-          experienceFamily: candidate.experienceFamily,
-          familyConfidence: candidate.familyConfidence,
-          laneCollapseRisk: finalSelection.debug.laneCollapseRisk,
-          laneSeparatedSlot3: finalSelection.debug.laneSeparatedSlot3,
-          laneSeparationReason: finalSelection.debug.laneSeparationReason,
-          selectedFamilies: finalSelection.debug.selectedFamilies,
-          familyDiversityApplied: finalSelection.debug.familyDiversityApplied,
-          fallbackUsed: finalSelection.debug.fallbackUsed,
-          expressionMode: hyperlocalExpression.expressionMode,
-          localSpecificityScore: hyperlocalExpression.localSpecificityScore,
-          usedPrimaryMicroPocket: hyperlocalExpression.usedPrimaryMicroPocket,
-          usedPrimaryAnchor: hyperlocalExpression.usedPrimaryAnchor,
-          selectedTemplateKeys: hyperlocalExpression.templateKeys,
-          expressionPrimarySignal: hyperlocalExpression.primarySignalKey,
-          expressionPocketType: hyperlocalExpression.pocketType,
-          routeShapeGrammarHint: routeShapeHints.grammarHint,
-          routeShapeMovementHint: routeShapeHints.movementHint,
-          routeShapeSwapHint: routeShapeHints.swapHint,
-          experienceContractId: canonicalExperienceContract.id,
-          experienceContractIdentity: canonicalExperienceContract.contractIdentity,
-          experienceContractSummary: canonicalExperienceContract.summary,
-          experienceContractCoordinationMode: canonicalExperienceContract.coordinationMode,
-          experienceContractHighlightModel: canonicalExperienceContract.highlightModel,
-          experienceContractHighlightType: canonicalExperienceContract.highlightType,
-          experienceContractMovementStyle: canonicalExperienceContract.movementStyle,
-          experienceContractSocialPosture: canonicalExperienceContract.socialPosture,
-          experienceContractPacingStyle: canonicalExperienceContract.pacingStyle,
-          experienceContractActPattern: experienceContractActShape,
-          experienceContractReasonSummary: canonicalExperienceContract.debug.contractReasonSummary,
-          contractConstraintsId: canonicalContractConstraints.id,
-          contractConstraintsPeakCountModel: canonicalContractConstraints.peakCountModel,
-          contractConstraintsMovementTolerance: canonicalContractConstraints.movementTolerance,
-          contractConstraintsHighlightPressure: canonicalContractConstraints.highlightPressure,
-          contractConstraintsRequireContinuity: canonicalContractConstraints.requireContinuity,
-          contractConstraintsRequireRecoveryWindows:
-            canonicalContractConstraints.requireRecoveryWindows,
-          conciergeIntentId: canonicalConciergeIntent.id,
-          conciergeIntentMode: canonicalConciergeIntent.intentMode,
-          conciergeObjectivePrimary: canonicalConciergeIntent.objective.primary,
-          conciergeControlPostureMode: canonicalConciergeIntent.controlPosture.mode,
-          conciergeConstraintSwapTolerance:
-            canonicalConciergeIntent.constraintPosture.swapTolerance,
-          conciergeHint,
-        },
-      }
-    }).filter((entry): entry is RealityDirectionCard => Boolean(entry))
-  }, [
+    [
+      districtLocationQuery,
+      districtPreviewResult,
+      persona,
+      primaryVibe,
+      resolvedScenarioFamily,
+      scenarioBuiltNights,
+    ],
+  )
+  const {
+    canonicalInterpretationBundle,
     canonicalConciergeIntent,
-    canonicalContractConstraints,
     canonicalExperienceContract,
-    contractAwareDistrictRanking,
+    canonicalContractConstraints,
+    bearingsGreatStopSignal,
     contractGateWorld,
+    contractAwareDistrictRanking,
     strategyAdmissibleWorlds,
-    districtPreviewResult,
-    persona,
-    primaryVibe,
-  ])
+    allDirectionCards,
+  } = sandboxDirectionWorld
   const districtDiscoveryCards = useMemo(() => {
     const rankedSource =
       contractAwareDistrictRanking.ranked.length > 0
@@ -13446,19 +12744,39 @@ export function SandboxConciergePage() {
           contractBuildability,
           directionValidation,
           nextFinalRoute,
-        } = await runPostPlannerCommitParityStages({
-          result,
-          contractConstraints: activeContractConstraints,
-          expectedDirectionIdentity,
-          selectedDirectionContextForValidation: activeDirectionContextForValidation,
-          selectedDirectionContractForValidation: activeDirectionContractForValidation,
-          selectedDirectionId: activeDirectionContract.id,
-          selectedDirectionPreviewContext,
-          selectedCluster: activeCluster,
-          city: districtLocationQuery,
-          persona,
-          vibe: primaryVibe,
-        })
+        } = await runPostPlannerCommitParityStages(
+          {
+            result,
+            contractConstraints: activeContractConstraints,
+            expectedDirectionIdentity,
+            selectedDirectionContextForValidation: activeDirectionContextForValidation,
+            selectedDirectionContractForValidation: activeDirectionContractForValidation,
+            selectedDirectionId: activeDirectionContract.id,
+            city: districtLocationQuery,
+            persona,
+            vibe: primaryVibe,
+          },
+          {
+            buildPassthroughStrongCurationTastePass,
+            applyStrongCurationTastePass,
+            enforceFullStopRealityContract,
+            applyCanonicalIdentityToItinerary,
+            assessDirectionContractBuildability,
+            validateDirectionRouteContract,
+            resolveRouteCopy: ({ canonicalItinerary }) => ({
+              routeHeadline: getPreviewOneLiner(
+                activeCluster,
+                canonicalItinerary,
+                selectedDirectionPreviewContext,
+              ),
+              routeSummary: getPreviewContinuityLine(
+                activeCluster,
+                canonicalItinerary,
+                selectedDirectionPreviewContext,
+              ),
+            }),
+          },
+        )
         if (isBuildWrapperActive && selectedBuildAnchor?.venueId) {
           const requiredAnchorVenueId =
             result.intentProfile.anchor?.venueId ?? selectedBuildAnchor.venueId
@@ -14322,406 +13640,187 @@ export function SandboxConciergePage() {
             }
           })
 
-          try {
-            const result = await runPlanBuild(
+          const selectedDirectionPreviewContext =
+            buildSelectedDirectionPreviewContext(activeDirection)
+          const qualificationAttempt = await runCuratePreviewQualificationAttempt(
             {
-              mode: 'curate',
-              planningMode: 'engine-led',
+              artifactId,
+              artifactToQualify,
+              repairState,
+              starterDebug,
+              activeDirection,
+              activeCandidateOpportunity,
+              selectedStarterPack: selectedStarterPack ?? undefined,
+              districtLocationQuery,
               persona,
               primaryVibe,
-              city: districtLocationQuery,
-              district: activeDirectionContract.pocketLabel,
-              distanceMode: 'nearby',
-              refinementModes: clusterRefinementMap[activeDirection.cluster],
-              selectedDirectionContext: activeIntentSelectedDirectionContext,
-              discoveryPreferences: selectedArtifactDiscoveryPreferences,
-            },
-            {
-              sourceMode: 'curated',
-              sourceModeOverrideApplied: true,
-              debugMode: false,
-              curateCommitSemantics: 'seed_guided',
-              starterPack: selectedStarterPack ?? undefined,
-              experienceContract: canonicalExperienceContract,
-              contractConstraints: canonicalContractConstraints,
+              activeDistrictPocketId,
               canonicalInterpretationBundle,
+              canonicalConciergeIntent,
+              canonicalExperienceContract,
+              canonicalContractConstraints,
               rankedDistrictPockets: districtPreviewResult?.ranked,
               contractGateWorld,
+              refinementModes: clusterRefinementMap[activeDirection.cluster],
+              activeDirectionContract,
+              activeDirectionContextForValidation,
+              activeDirectionContractForValidation,
+              expectedDirectionIdentityForPreview,
+              activeIntentSelectedDirectionContext,
+              activeRouteShapeContract,
+              selectedArtifactDiscoveryPreferences,
               selectedArtifactLineage,
-            },
-          )
-            if (curatePreviewCommitabilityAttemptRef.current[artifactId] !== attemptKey) {
-              return
-            }
-            enforceSelectedDirectionLineage({
-            wrapperSeam: 'sandbox_concierge.curate_preflight',
-            expectedDirectionId: activeDirectionContract.id,
-            actualSelectedDirectionContext: result.intentProfile.selectedDirectionContext,
-            errorMessage:
-              'Route drifted from selected direction contract. Direction context was not preserved.',
-          })
-            const selectedDirectionPreviewContext =
-              buildSelectedDirectionPreviewContext(activeDirection)
-            const {
-            strongCurationPass,
-            anchoredPlan,
-            canonicalItinerary,
-            directionValidation,
-            nextFinalRoute,
-            }: PostPlannerCommitParityStagesResult = await runPostPlannerCommitParityStages({
-            result,
-            contractConstraints: canonicalContractConstraints,
-            expectedDirectionIdentity: expectedDirectionIdentityForPreview,
-            selectedDirectionContextForValidation: activeDirectionContextForValidation,
-            selectedDirectionContractForValidation: activeDirectionContractForValidation,
-            selectedDirectionId: activeDirectionContract.id,
-            selectedDirectionPreviewContext,
-            selectedCluster: activeDirection.cluster,
-            city: districtLocationQuery,
-            persona,
-            vibe: primaryVibe,
-          })
-            if (curatePreviewCommitabilityAttemptRef.current[artifactId] !== attemptKey) {
-              return
-            }
-            const curateHardCommit = result.trace.curateHardCommit
-            const hardCommitRequired = Boolean(curateHardCommit?.hardCommitRequired)
-            const hardCommitPreservationSucceeded = Boolean(
-              curateHardCommit?.hardCommitPreservationSucceeded,
-            )
-            const exactPreservationSatisfied =
-              !hardCommitRequired || hardCommitPreservationSucceeded
-            const commitParitySucceeded = Boolean(
-              exactPreservationSatisfied &&
-                directionValidation.valid &&
-                nextFinalRoute &&
-                nextFinalRoute.selectedDirectionId === activeDirectionContract.id,
-            )
-            const failedCheck = commitParitySucceeded
-              ? null
-              : hardCommitRequired && !hardCommitPreservationSucceeded
-                ? 'curateHardCommit.hardCommitPreservationSucceeded'
-                : !directionValidation.valid
-                  ? directionValidation.generationDriftReason ?? 'directionValidation.valid'
-                  : nextFinalRoute.selectedDirectionId !== activeDirectionContract.id
-                    ? 'nextFinalRoute.selectedDirectionId'
-                    : 'curate_preflight_commit_parity'
-            const failureKind: CuratePreviewCommitabilityState['failureKind'] | undefined =
-              commitParitySucceeded
-                ? undefined
-                : directionValidation.valid
-                  ? 'structural_infeasibility'
-                  : 'validation_failure'
-
-            if (
-              !commitParitySucceeded &&
-              !repairState?.attempted &&
-              (directionValidation.missingRoleForContract === 'windDown' ||
-                directionValidation.candidatePoolSufficiencyByRole.windDown === 0)
-            ) {
-              const repairAttempt = attemptStarterAwareWindDownRepair({
-                artifact: artifactToQualify,
-                opportunity: activeCandidateOpportunity,
-                starterDebug,
-                eligibleWindDownVenueIds: strongCurationPass.rolePoolVenueIdsByRole.windDown,
-              })
-              if (repairAttempt.repairedArtifact) {
-                await executeQualification(repairAttempt.repairedArtifact, {
-                  attempted: true,
-                  originalWindDown: repairAttempt.originalWindDown,
-                  repairedWindDown: repairAttempt.repairedWindDown,
-                  repairedWindDownTarget: repairAttempt.repairedWindDownTarget,
-                  repairReason: repairAttempt.repairReason,
-                  repairSource: repairAttempt.repairSource,
-                })
-                return
-              }
-              setCuratePreviewCommitabilityByArtifactId((current) => ({
-                ...current,
-                [artifactId]: {
-                  ...(current[artifactId] ?? {
-                    status: 'infeasible',
-                    artifactId,
-                    hardCommitCandidateCount: 0,
-                    rankedCandidateCount: 0,
-                    failedRoles: [],
-                    missingRoleForContract: null,
-                  }),
-                  status: 'infeasible',
-                  failureKind,
-                  failedCheck,
-                  errorName: null,
-                  errorMessageRaw: null,
-                  curateCommitSemantics: 'seed_guided',
-                  hardCommitRequired: false,
-                  failedRoles: curateHardCommit?.failedRoles ?? ['start', 'highlight', 'windDown'],
-                  contractBuildabilityStatus: directionValidation.contractBuildabilityStatus,
-                  missingRoleForContract: directionValidation.missingRoleForContract,
-                  candidatePoolSufficiencyByRole: directionValidation.candidatePoolSufficiencyByRole,
-                  selectedDirectionId: activeDirectionContract.id,
-                  activeDistrictPocketId,
-                  selectedArtifactLineageSummary,
-                  plannerInputSummary,
-                  sampledCandidatesSummary: formatCurateHardCommitSampleCandidatesSummary(
-                    curateHardCommit,
-                  ),
-                  rolePoolVenueIdsByRole: strongCurationPass.rolePoolVenueIdsByRole,
-                  explicitFallbackReason:
-                    `${curateHardCommit?.explicitFallbackReason ?? directionValidation.generationDriftReason ?? failedCheck ?? 'curate_preflight_commit_parity_failed'} | repair:${repairAttempt.repairReason}`,
-                  windDownRepairAttempted: true,
-                  windDownRepairSucceeded: false,
-                  windDownRepairOriginal: repairAttempt.originalWindDown,
-                  windDownRepairReplacement: repairAttempt.repairedWindDown,
-                  windDownRepairReplacementId:
-                    repairAttempt.repairedWindDownTarget?.venueId ?? null,
-                  windDownRepairReason: repairAttempt.repairReason,
-                  windDownRepairSource: repairAttempt.repairSource,
-                  windDownRepairPreferenceApplied: false,
-                  windDownRepairPreferenceTarget: repairAttempt.repairedWindDownTarget
-                    ? `${repairAttempt.repairedWindDownTarget.name} [${repairAttempt.repairedWindDownTarget.venueId ?? 'n/a'}] (${repairAttempt.repairedWindDownTarget.source})`
-                    : null,
-                  repairedDiscoveryPrefsWindDown: null,
-                  repairedLineageWindDown: repairAttempt.repairedWindDownTarget
-                    ? `${repairAttempt.repairedWindDownTarget.name} [${repairAttempt.repairedWindDownTarget.venueId ?? 'n/a'}]`
-                    : null,
-                  repairedCandidatePoolSufficiencyByRole:
-                    directionValidation.candidatePoolSufficiencyByRole,
-                  repairedHardCommitCandidateCount:
-                    curateHardCommit?.hardCommitCandidateCount ?? 0,
-                  repairedFailureReason:
-                    `${curateHardCommit?.explicitFallbackReason ?? directionValidation.generationDriftReason ?? failedCheck ?? 'curate_preflight_commit_parity_failed'} | repair:${repairAttempt.repairReason}`,
-                  repairedQualificationStatus: 'infeasible',
-                  approvedRefinementEntryPayload: undefined,
-                },
-              }))
-              return
-            }
-
-            const selectedClusterConfirmation = activeDirection.card.confirmation
-            const tasteCurationDebug = buildTasteCurationDebugForArc({
-            selectedArc: anchoredPlan.selectedArc,
-            qualificationByCandidateId: strongCurationPass.qualificationByCandidateId,
-            personaVibeTasteBiasSummary: strongCurationPass.personaVibeTasteBiasSummary,
-            thinPoolHighlightFallbackApplied:
-              strongCurationPass.thinPoolHighlightFallbackApplied,
-            highlightPoolCountBefore: strongCurationPass.highlightPoolCountBefore,
-            highlightPoolCountAfter: strongCurationPass.highlightPoolCountAfter,
-            rolePoolCountByRoleBefore: strongCurationPass.rolePoolCountByRoleBefore,
-            rolePoolCountByRoleAfter: strongCurationPass.rolePoolCountByRoleAfter,
-            signatureHighlightShortlistCount:
-              strongCurationPass.signatureHighlightShortlistCount,
-            signatureHighlightShortlistIds: strongCurationPass.signatureHighlightShortlistIds,
-            highlightShortlistScoreSummary: strongCurationPass.highlightShortlistScoreSummary,
-            selectedHighlightFromShortlist:
-              strongCurationPass.selectedHighlightFromShortlist,
-            selectedHighlightShortlistRank:
-              strongCurationPass.selectedHighlightShortlistRank,
-            fallbackToQualifiedHighlightPool:
-              strongCurationPass.fallbackToQualifiedHighlightPool,
-            upstreamPoolSelectionApplied: strongCurationPass.upstreamPoolSelectionApplied,
-            postGenerationRepairCount: strongCurationPass.postGenerationRepairCount,
-            rolePoolVenueIdsByRole: strongCurationPass.rolePoolVenueIdsByRole,
-            rolePoolVenueIdsCombined: strongCurationPass.rolePoolVenueIdsCombined,
-            thinPoolRelaxationTrace: strongCurationPass.thinPoolRelaxationTrace,
-          })
-            setCuratePreviewCommitabilityByArtifactId((current) => ({
-            ...current,
-            [artifactId]: {
-              status: commitParitySucceeded ? 'committable' : 'infeasible',
-              artifactId,
-              hardCommitCandidateCount: curateHardCommit?.hardCommitCandidateCount ?? 0,
-              rankedCandidateCount: curateHardCommit?.rankedCandidateCount ?? 0,
-              explicitFallbackReason: commitParitySucceeded
-                ? curateHardCommit?.explicitFallbackReason
-                : curateHardCommit?.explicitFallbackReason ??
-                  directionValidation.generationDriftReason ??
-                  failedCheck ??
-                  'curate_preflight_commit_parity_failed',
-              failureKind,
-              failedCheck,
-              errorName: null,
-              errorMessageRaw: null,
-              curateCommitSemantics: curateHardCommit?.curateCommitSemantics ?? 'seed_guided',
-              hardCommitRequired: curateHardCommit?.hardCommitRequired ?? false,
-              failedRoles: commitParitySucceeded
-                ? curateHardCommit?.failedRoles ?? []
-                : curateHardCommit?.failedRoles ?? ['start', 'highlight', 'windDown'],
-              contractBuildabilityStatus: directionValidation.contractBuildabilityStatus,
-              missingRoleForContract: directionValidation.missingRoleForContract,
-              candidatePoolSufficiencyByRole: directionValidation.candidatePoolSufficiencyByRole,
-              selectedDirectionId: activeDirectionContract.id,
-              activeDistrictPocketId,
               selectedArtifactLineageSummary,
               plannerInputSummary,
-              selectedTargetSummary: formatCurateSelectedTargetSummary(curateHardCommit),
-              exactPreservingCandidateIds: curateHardCommit?.exactPreservingCandidateIds ?? [],
-              finalWinnerSummary: formatCurateFinalWinnerSummary(curateHardCommit),
-              sampledCandidatesSummary: formatCurateHardCommitSampleCandidatesSummary(
-                curateHardCommit,
-              ),
-              rolePoolVenueIdsByRole: strongCurationPass.rolePoolVenueIdsByRole,
-              approvedRefinementEntryPayload: commitParitySucceeded
-                ? buildCurateRefinementEntryPayload({
-                    artifactId,
-                    selectedDirectionId: activeDirectionContract.id,
-                    selectedArtifactLineageSummary,
-                    previewRouteTitle: artifactToQualify.routeTitle,
-                    planSnapshot: {
-                      itinerary: canonicalItinerary,
-                      selectedArc: anchoredPlan.selectedArc,
-                      scoredVenues: strongCurationPass.scoredVenues,
-                      generationTrace: result.trace,
-                      intentProfile: result.intentProfile,
-                      lens: result.lens,
-                      conciergeIntent: canonicalConciergeIntent,
-                      experienceContract: canonicalExperienceContract,
-                      contractConstraints: canonicalContractConstraints,
-                      selectedDirectionContext: activeDirectionContextForValidation,
-                      selectedCluster: activeDirection.cluster,
-                      selectedClusterConfirmation,
-                      selectedDirectionContract: activeDirectionContractForValidation,
-                      routeShapeContract: activeRouteShapeContract,
-                      tasteCurationDebug,
-                      selectedDirectionPreviewContext,
-                      selectedCandidateRouteArtifactId: artifactId,
-                    },
-                    finalRoute: nextFinalRoute,
-                    canonicalStopByRole: anchoredPlan.canonicalStopByRole,
-                    rejectedStopRoles: anchoredPlan.rejectedStopRoles,
-                  })
-                : undefined,
-              windDownRepairAttempted: Boolean(repairState?.attempted),
-              windDownRepairSucceeded: Boolean(repairState?.attempted && commitParitySucceeded),
-              windDownRepairOriginal: repairState?.originalWindDown ?? null,
-              windDownRepairReplacement: repairState?.repairedWindDown ?? null,
-              windDownRepairReplacementId: repairState?.repairedWindDownTarget?.venueId ?? null,
-              windDownRepairReason: repairState?.repairReason ?? null,
-              windDownRepairSource: repairState?.repairSource ?? null,
-              windDownRepairPreferenceApplied: Boolean(
-                repairState?.repairedWindDownTarget?.venueId &&
-                  getCurateDiscoveryPreferenceVenueId(
-                    selectedArtifactDiscoveryPreferences,
-                    'windDown',
-                  ) === repairState.repairedWindDownTarget.venueId,
-              ),
-              windDownRepairPreferenceTarget: repairState?.repairedWindDownTarget
-                ? `${repairState.repairedWindDownTarget.name} [${repairState.repairedWindDownTarget.venueId ?? 'n/a'}] (${repairState.repairedWindDownTarget.source})`
-                : null,
-              repairedDiscoveryPrefsWindDown: repairState?.attempted
-                ? getCurateDiscoveryPreferenceVenueId(
-                    selectedArtifactDiscoveryPreferences,
-                    'windDown',
-                  )
-                : null,
-              repairedLineageWindDown: repairState?.repairedWindDownTarget
-                ? `${repairState.repairedWindDownTarget.name} [${repairState.repairedWindDownTarget.venueId ?? 'n/a'}]`
-                : null,
-              repairedCandidatePoolSufficiencyByRole: repairState?.attempted
-                ? directionValidation.candidatePoolSufficiencyByRole
-                : undefined,
-              repairedHardCommitCandidateCount: repairState?.attempted
-                ? curateHardCommit?.hardCommitCandidateCount ?? 0
-                : null,
-              repairedFailureReason: repairState?.attempted
-                ? commitParitySucceeded
-                  ? null
-                  : curateHardCommit?.explicitFallbackReason ??
-                    directionValidation.generationDriftReason ??
-                    failedCheck ??
-                    'curate_preflight_commit_parity_failed'
-                : null,
-              repairedQualificationStatus: repairState?.attempted
-                ? commitParitySucceeded
-                  ? 'committable'
-                  : 'infeasible'
-                : null,
+              selectedDirectionPreviewContext,
             },
-            }))
-          } catch (preflightError) {
-            if (curatePreviewCommitabilityAttemptRef.current[artifactId] !== attemptKey) {
-              return
-            }
-            const isValidationFailure =
-              preflightError instanceof PostPlannerCommitParityValidationError
-            const errorName = getErrorName(preflightError)
-            const errorMessageRaw = getErrorMessageRaw(preflightError)
-            setCuratePreviewCommitabilityByArtifactId((current) => ({
-              ...current,
-              [artifactId]: {
-                status: 'infeasible',
-                artifactId,
-                hardCommitCandidateCount: 0,
-                rankedCandidateCount: 0,
-                explicitFallbackReason: isValidationFailure
-                  ? preflightError.directionValidation.generationDriftReason ??
-                    preflightError.failedCheck
-                  : getCuratePreflightRuntimeReason(preflightError),
-                failureKind: isValidationFailure ? 'validation_failure' : 'runtime_error',
-                failedCheck: isValidationFailure ? preflightError.failedCheck : null,
-                errorName,
-                errorMessageRaw,
-                curateCommitSemantics: 'seed_guided',
-                hardCommitRequired: false,
-                failedRoles: [],
-                contractBuildabilityStatus: isValidationFailure
-                  ? preflightError.directionValidation.contractBuildabilityStatus
-                  : undefined,
-                missingRoleForContract: isValidationFailure
-                  ? preflightError.directionValidation.missingRoleForContract
-                  : null,
-                candidatePoolSufficiencyByRole: isValidationFailure
-                  ? preflightError.directionValidation.candidatePoolSufficiencyByRole
-                  : undefined,
-                selectedDirectionId: activeDirectionContract.id,
-                activeDistrictPocketId,
-                selectedArtifactLineageSummary,
-                plannerInputSummary,
-                sampledCandidatesSummary: undefined,
-                rolePoolVenueIdsByRole: undefined,
-                approvedRefinementEntryPayload: undefined,
-                windDownRepairAttempted: Boolean(repairState?.attempted),
-                windDownRepairSucceeded: false,
-                windDownRepairOriginal: repairState?.originalWindDown ?? null,
-                windDownRepairReplacement: repairState?.repairedWindDown ?? null,
-                windDownRepairReplacementId:
-                  repairState?.repairedWindDownTarget?.venueId ?? null,
-                windDownRepairReason: repairState?.repairReason ?? null,
-                windDownRepairSource: repairState?.repairSource ?? null,
-                windDownRepairPreferenceApplied: Boolean(
-                  repairState?.repairedWindDownTarget?.venueId &&
-                    getCurateDiscoveryPreferenceVenueId(
-                      selectedArtifactDiscoveryPreferences,
-                      'windDown',
-                    ) === repairState.repairedWindDownTarget.venueId,
+            {
+              runPlanBuild,
+              enforceSelectedDirectionLineage,
+              runPostPlannerCommitParityStages: (params) =>
+                runPostPlannerCommitParityStages(
+                  {
+                    result: params.result,
+                    contractConstraints: params.contractConstraints,
+                    expectedDirectionIdentity: params.expectedDirectionIdentity,
+                    selectedDirectionContextForValidation:
+                      params.selectedDirectionContextForValidation,
+                    selectedDirectionContractForValidation:
+                      params.selectedDirectionContractForValidation,
+                    selectedDirectionId: params.selectedDirectionId,
+                    city: params.city,
+                    persona: params.persona,
+                    vibe: params.vibe,
+                  },
+                  {
+                    buildPassthroughStrongCurationTastePass,
+                    applyStrongCurationTastePass,
+                    enforceFullStopRealityContract,
+                    applyCanonicalIdentityToItinerary,
+                    assessDirectionContractBuildability,
+                    validateDirectionRouteContract,
+                    resolveRouteCopy: ({ canonicalItinerary }) => ({
+                      routeHeadline: getPreviewOneLiner(
+                        params.selectedCluster,
+                        canonicalItinerary,
+                        params.selectedDirectionPreviewContext,
+                      ),
+                      routeSummary: getPreviewContinuityLine(
+                        params.selectedCluster,
+                        canonicalItinerary,
+                        params.selectedDirectionPreviewContext,
+                      ),
+                    }),
+                  },
                 ),
-                windDownRepairPreferenceTarget: repairState?.repairedWindDownTarget
-                  ? `${repairState.repairedWindDownTarget.name} [${repairState.repairedWindDownTarget.venueId ?? 'n/a'}] (${repairState.repairedWindDownTarget.source})`
-                  : null,
-                repairedDiscoveryPrefsWindDown: repairState?.attempted
-                  ? getCurateDiscoveryPreferenceVenueId(
-                      selectedArtifactDiscoveryPreferences,
-                      'windDown',
-                    )
-                  : null,
-                repairedLineageWindDown: repairState?.repairedWindDownTarget
-                  ? `${repairState.repairedWindDownTarget.name} [${repairState.repairedWindDownTarget.venueId ?? 'n/a'}]`
-                  : null,
-                repairedCandidatePoolSufficiencyByRole: repairState?.attempted
-                  ? isValidationFailure
-                    ? preflightError.directionValidation.candidatePoolSufficiencyByRole
-                    : undefined
-                  : undefined,
-                repairedHardCommitCandidateCount: repairState?.attempted ? 0 : null,
-                repairedFailureReason: repairState?.attempted
-                  ? isValidationFailure
-                    ? preflightError.directionValidation.generationDriftReason ??
-                      preflightError.failedCheck
-                    : getCuratePreflightRuntimeReason(preflightError)
-                  : null,
-                repairedQualificationStatus: repairState?.attempted ? 'infeasible' : null,
+              attemptStarterAwareWindDownRepair,
+              buildApprovedRefinementEntryPayload: ({
+                artifactId: approvedArtifactId,
+                artifactToQualify: approvedArtifact,
+                result,
+                parity,
+                selectedArtifactLineageSummary,
+                activeDirection,
+                activeDirectionContextForValidation,
+                activeDirectionContractForValidation,
+                activeRouteShapeContract,
+                selectedDirectionPreviewContext,
+                canonicalConciergeIntent,
+                canonicalExperienceContract,
+                canonicalContractConstraints,
+              }) => {
+                const selectedClusterConfirmation = activeDirection.card.confirmation
+                const tasteCurationDebug = buildTasteCurationDebugForArc({
+                  selectedArc: parity.anchoredPlan.selectedArc,
+                  qualificationByCandidateId:
+                    parity.strongCurationPass.qualificationByCandidateId,
+                  personaVibeTasteBiasSummary:
+                    parity.strongCurationPass.personaVibeTasteBiasSummary,
+                  thinPoolHighlightFallbackApplied:
+                    parity.strongCurationPass.thinPoolHighlightFallbackApplied,
+                  highlightPoolCountBefore:
+                    parity.strongCurationPass.highlightPoolCountBefore,
+                  highlightPoolCountAfter:
+                    parity.strongCurationPass.highlightPoolCountAfter,
+                  rolePoolCountByRoleBefore:
+                    parity.strongCurationPass.rolePoolCountByRoleBefore,
+                  rolePoolCountByRoleAfter:
+                    parity.strongCurationPass.rolePoolCountByRoleAfter,
+                  signatureHighlightShortlistCount:
+                    parity.strongCurationPass.signatureHighlightShortlistCount,
+                  signatureHighlightShortlistIds:
+                    parity.strongCurationPass.signatureHighlightShortlistIds,
+                  highlightShortlistScoreSummary:
+                    parity.strongCurationPass.highlightShortlistScoreSummary,
+                  selectedHighlightFromShortlist:
+                    parity.strongCurationPass.selectedHighlightFromShortlist,
+                  selectedHighlightShortlistRank:
+                    parity.strongCurationPass.selectedHighlightShortlistRank,
+                  fallbackToQualifiedHighlightPool:
+                    parity.strongCurationPass.fallbackToQualifiedHighlightPool,
+                  upstreamPoolSelectionApplied:
+                    parity.strongCurationPass.upstreamPoolSelectionApplied,
+                  postGenerationRepairCount:
+                    parity.strongCurationPass.postGenerationRepairCount,
+                  rolePoolVenueIdsByRole:
+                    parity.strongCurationPass.rolePoolVenueIdsByRole,
+                  rolePoolVenueIdsCombined:
+                    parity.strongCurationPass.rolePoolVenueIdsCombined,
+                  thinPoolRelaxationTrace:
+                    parity.strongCurationPass.thinPoolRelaxationTrace,
+                })
+                return buildCurateRefinementEntryPayload({
+                  artifactId: approvedArtifactId,
+                  selectedDirectionId: activeDirectionContract.id,
+                  selectedArtifactLineageSummary,
+                  previewRouteTitle: approvedArtifact.routeTitle,
+                  planSnapshot: {
+                    itinerary: parity.canonicalItinerary,
+                    selectedArc: parity.anchoredPlan.selectedArc,
+                    scoredVenues: parity.strongCurationPass.scoredVenues,
+                    generationTrace: result.trace,
+                    intentProfile: result.intentProfile,
+                    lens: result.lens,
+                    conciergeIntent: canonicalConciergeIntent,
+                    experienceContract: canonicalExperienceContract,
+                    contractConstraints: canonicalContractConstraints,
+                    selectedDirectionContext: activeDirectionContextForValidation,
+                    selectedCluster: activeDirection.cluster,
+                    selectedClusterConfirmation,
+                    selectedDirectionContract: activeDirectionContractForValidation,
+                    routeShapeContract: activeRouteShapeContract,
+                    tasteCurationDebug,
+                    selectedDirectionPreviewContext,
+                    selectedCandidateRouteArtifactId: approvedArtifactId,
+                  },
+                  finalRoute: parity.nextFinalRoute,
+                  canonicalStopByRole: parity.anchoredPlan.canonicalStopByRole,
+                  rejectedStopRoles: parity.anchoredPlan.rejectedStopRoles,
+                })
               },
-            }))
+              formatCurateSelectedTargetSummary,
+              formatCurateFinalWinnerSummary,
+              formatCurateHardCommitSampleCandidatesSummary,
+              getCurateDiscoveryPreferenceVenueId,
+              getErrorName,
+              getErrorMessageRaw,
+              getCuratePreflightRuntimeReason,
+            },
+          )
+          if (curatePreviewCommitabilityAttemptRef.current[artifactId] !== attemptKey) {
+            return
           }
+          if (qualificationAttempt.kind === 'repairRequested') {
+            await executeQualification(
+              qualificationAttempt.repairedArtifact,
+              qualificationAttempt.repairState,
+            )
+            return
+          }
+          setCuratePreviewCommitabilityByArtifactId((current) => ({
+            ...current,
+            [artifactId]: qualificationAttempt.state,
+          }))
         }
         await executeQualification(candidateArtifact)
       } finally {
@@ -15397,172 +14496,38 @@ export function SandboxConciergePage() {
     }))
 
     try {
-      const nextCanonicalStopByRole: Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>> = {
-        ...canonicalStopByRole,
-        [role]: swapSnapshot.replacementCanonical,
-      }
-      const canonicalItinerary = applyCanonicalIdentityToItinerary(
-        swapSnapshot.swappedItinerary,
-        nextCanonicalStopByRole,
-      )
-      const swapDirectionId = planSnapshot.selectedDirectionContract.id
-      const swapPreviewContext = planSnapshot.selectedDirectionPreviewContext
-      const compatibility = evaluateSwapCompatibility({
-        role,
-        swapSnapshot,
-        canonicalItinerary,
-        planSnapshot,
-        finalRouteSnapshot,
-        routeShapeContract: planSnapshot.routeShapeContract,
-      })
-      setSwapCompatibilityDebug(compatibility)
-      if (!compatibility.swapCompatibilityPassed) {
-        throw new Error(`Swap rejected: ${compatibility.swapCompatibilityReason}`)
-      }
-      if (!swapDirectionId || !swapPreviewContext) {
-        throw new Error('Route update failed: canonical route state is unavailable.')
-      }
-      if (finalRouteSnapshot.selectedDirectionId !== swapDirectionId) {
-        throw new Error('Swap rejected: route direction drifted from the selected direction contract.')
-      }
-      if (swapSnapshot.targetRouteId !== finalRouteSnapshot.routeId) {
-        throw new Error('Swap preview is stale. Please reopen swap options and try again.')
-      }
-      const sourceSwapStop = canonicalItinerary.stops.find((stop) => stop.role === role)
-      const currentRouteStop =
-        finalRouteSnapshot.stops.find((stop) => stop.id === swapSnapshot.targetStopId) ??
-        finalRouteSnapshot.stops.find((stop) => stop.stopIndex === swapSnapshot.targetStopIndex) ??
-        finalRouteSnapshot.stops.find((stop) => stop.role === swapSnapshot.targetRole)
-      if (!sourceSwapStop || !currentRouteStop) {
-        throw new Error('Route update failed: swapped stop could not be resolved.')
-      }
-      if (
-        currentRouteStop.role !== swapSnapshot.targetRole ||
-        currentRouteStop.stopIndex !== swapSnapshot.targetStopIndex
-      ) {
-        throw new Error('Swap target mismatch detected. Please retry from the current route.')
-      }
-      if (swapSnapshot.candidateStop.venueId !== swapSnapshot.requestedReplacementId) {
-        throw new Error(
-          `Swap integrity mismatch: modal requested ${swapSnapshot.requestedReplacementId}, candidate resolved ${swapSnapshot.candidateStop.venueId}.`,
-        )
-      }
-      const projectedSwapMismatch = sourceSwapStop.venueId !== swapSnapshot.requestedReplacementId
-      const canonicalItineraryAfterSwap = projectedSwapMismatch
-        ? {
-            ...canonicalItinerary,
-            stops: canonicalItinerary.stops.map((stop) => {
-              if (stop.role !== role) {
-                return stop
-              }
-              return {
-                ...stop,
-                id: swapSnapshot.candidateStop.id,
-                venueId: swapSnapshot.requestedReplacementId,
-                venueName: swapSnapshot.replacementCanonical.displayName,
-                city: swapSnapshot.replacementCanonical.city,
-                neighborhood:
-                  swapSnapshot.replacementCanonical.neighborhood || swapSnapshot.candidateStop.neighborhood,
-                driveMinutes: swapSnapshot.candidateStop.driveMinutes,
-                imageUrl: swapSnapshot.candidateStop.imageUrl,
-              }
-            }),
-          }
-        : canonicalItinerary
-      const fallbackImageUrl = getSharedItineraryStopFallbackImageUrl(canonicalItineraryAfterSwap.stops)
-      const displayFields = hydrateRuntimeRouteStopDisplayFields({
-        stop: sourceSwapStop,
-        existingRouteStop: {
-          title: currentRouteStop.title,
-          subtitle: currentRouteStop.subtitle,
-          driveMinutes: swapSnapshot.candidateStop.driveMinutes,
-          imageUrl:
-            getNonEmptyRuntimeRouteString(swapSnapshot.candidateStop.imageUrl) ??
-            currentRouteStop.imageUrl,
+      const commitResult = applyPreviewSwapCommit(
+        {
+          role,
+          swapSnapshot,
+          planSnapshot,
+          finalRouteSnapshot,
+          routeVersionAtClick,
+          canonicalStopByRole,
         },
-        fallbackImageUrl,
-      })
-      const replacementStop: RuntimeRouteStop = {
-        id: swapSnapshot.candidateStop.id,
-        sourceStopId: swapSnapshot.candidateStop.id,
-        displayName: swapSnapshot.replacementCanonical.displayName,
-        providerRecordId: swapSnapshot.replacementCanonical.providerRecordId,
-        latitude: swapSnapshot.replacementCanonical.latitude,
-        longitude: swapSnapshot.replacementCanonical.longitude,
-        address: swapSnapshot.replacementCanonical.addressLine,
-        role: currentRouteStop.role,
-        stopIndex: currentRouteStop.stopIndex,
-        venueId: swapSnapshot.requestedReplacementId,
-        title: displayFields.title,
-        subtitle: displayFields.subtitle,
-        neighborhood:
-          swapSnapshot.replacementCanonical.neighborhood || swapSnapshot.candidateStop.neighborhood,
-        driveMinutes: displayFields.driveMinutes,
-        imageUrl: displayFields.imageUrl,
-      }
-      const patched = patchFinalRouteStop({
-        route: finalRouteSnapshot,
-        targetRole: swapSnapshot.targetRole,
-        targetStopId: swapSnapshot.targetStopId,
-        targetStopIndex: swapSnapshot.targetStopIndex,
-        replacementStop,
-        notice: `${role} swapped to ${replacementStop.displayName}.`,
-        activeRole: role,
-      })
-      if (!patched) {
-        throw new Error('Route update failed: canonical route patch did not apply.')
-      }
-      if (
-        patched.resolvedStop.role !== swapSnapshot.targetRole ||
-        patched.resolvedStop.stopIndex !== swapSnapshot.targetStopIndex
-      ) {
-        throw new Error('Swap target mismatch detected. Please retry from the current route.')
-      }
-      const nextFinalRoute = patched.route
-      const appliedStop = nextFinalRoute.stops.find(
-        (stop) => stop.stopIndex === swapSnapshot.targetStopIndex,
+        {
+          applyCanonicalIdentityToItinerary,
+          evaluateSwapCompatibility,
+          patchFinalRouteStop,
+          getSharedItineraryStopFallbackImageUrl,
+          hydrateRuntimeRouteStopDisplayFields,
+          getNonEmptyRuntimeRouteString,
+          getPreviewSwapFeedback,
+        },
       )
-      if (!appliedStop) {
-        throw new Error('Swap integrity mismatch: target slot is missing after route patch.')
-      }
-      if (appliedStop.role !== swapSnapshot.targetRole) {
-        throw new Error(
-          `Swap integrity mismatch: target role changed from ${swapSnapshot.targetRole} to ${appliedStop.role}.`,
-        )
-      }
-      const appliedReplacementId = appliedStop.venueId
-      const swapMismatch = appliedReplacementId !== swapSnapshot.requestedReplacementId
-      setSwapDebugBreadcrumb({
-        swapTargetSlotIndex: swapSnapshot.targetStopIndex,
-        swapTargetRole: swapSnapshot.targetRole,
-        swapBeforeStopId: swapSnapshot.swapBeforeStopId,
-        swapRequestedReplacementId: swapSnapshot.requestedReplacementId,
-        swapAppliedReplacementId: appliedReplacementId,
-        postSwapCanonicalStopIdBySlot: [...nextFinalRoute.stops]
-          .sort((left, right) => left.stopIndex - right.stopIndex)
-          .map((stop) => stop.venueId),
-        postSwapRenderedStopIdBySlot: canonicalItineraryAfterSwap.stops.map((stop) => stop.venueId),
-        swapCommitSucceeded: !swapMismatch,
-        swapRenderSource: 'finalRoute',
-        routeVersion: swapMismatch ? routeVersionAtClick : routeVersionAtClick + 1,
-        mismatch: swapMismatch,
-      })
-      if (swapMismatch) {
-        throw new Error(
-          `Swap integrity mismatch: requested ${swapSnapshot.requestedReplacementId}, applied ${appliedReplacementId}.`,
-        )
-      }
+      setSwapCompatibilityDebug(commitResult.compatibility)
+      setSwapDebugBreadcrumb(commitResult.swapDebugBreadcrumb)
       setPlan({
         ...planSnapshot,
-        itinerary: canonicalItineraryAfterSwap,
-        selectedArc: swapSnapshot.swappedArc,
+        itinerary: commitResult.nextItinerary,
+        selectedArc: commitResult.nextSelectedArc,
       })
       setCurateRefinementEntryPayload(null)
-      updateFinalRoute(nextFinalRoute)
-      setCanonicalStopByRole(nextCanonicalStopByRole)
+      updateFinalRoute(commitResult.nextFinalRoute)
+      setCanonicalStopByRole(commitResult.nextCanonicalStopByRole)
       setPreviewSwap(undefined)
       setAppliedSwapRole(role)
-      const swapFeedback = getPreviewSwapFeedback(role)
+      const swapFeedback = commitResult.previewFeedback
       if (swapFeedback) {
         setPreviewFeedback(swapFeedback)
       }
@@ -15581,19 +14546,22 @@ export function SandboxConciergePage() {
       }))
     } catch (nextError) {
       const reason = nextError instanceof Error ? nextError.message : 'Could not apply this swap option.'
+      const compatibilityFromError =
+        nextError instanceof SwapCommitCoreError ? nextError.compatibility : undefined
       setSwapCompatibilityDebug((current) => {
-        if (current && !current.swapCompatibilityPassed) {
-          return current
+        const baseline = current ?? compatibilityFromError
+        if (baseline && !baseline.swapCompatibilityPassed) {
+          return baseline
         }
         return {
           swapCompatibilityPassed: false,
           swapCompatibilityReason: reason,
           swapCompatibilityRejectClass: 'hard_structural',
-          preservedRole: current?.preservedRole ?? false,
-          preservedDistrict: current?.preservedDistrict ?? false,
-          preservedFamily: current?.preservedFamily ?? false,
-          preservedFeasibility: current?.preservedFeasibility ?? false,
-          softDirectionDriftDetected: current?.softDirectionDriftDetected ?? false,
+          preservedRole: baseline?.preservedRole ?? false,
+          preservedDistrict: baseline?.preservedDistrict ?? false,
+          preservedFamily: baseline?.preservedFamily ?? false,
+          preservedFeasibility: baseline?.preservedFeasibility ?? false,
+          softDirectionDriftDetected: baseline?.softDirectionDriftDetected ?? false,
         }
       })
       setSwapInteractionBreadcrumb((current) => ({
@@ -15696,61 +14664,31 @@ export function SandboxConciergePage() {
     }
     setError(undefined)
     setIsLocking(true)
-    const sessionId = createLiveArtifactPlanId()
-    const lockedCity =
-      canonicalRouteArtifact.finalRoute.location ||
-      canonicalRouteArtifact.itinerary.city ||
-      city.trim() ||
-      'San Jose'
-    const lockedTitle =
-      canonicalRouteArtifact.itinerary.title ||
-      canonicalRouteArtifact.finalRoute.routeHeadline ||
-      "Tonight's route"
-    const lockedItinerary: Itinerary = {
-      ...canonicalRouteArtifact.itinerary,
-      city: lockedCity,
-      title: lockedTitle,
-      stops: lockSafeItineraryStops,
-    }
+    const lockSaveResult = saveLockedLiveArtifactSession({
+      canonicalRouteArtifact,
+      lockSafeItineraryStops,
+      activeRole,
+      fallbackCity: city,
+    })
     if (shouldLogLiveArtifactDebug) {
       console.debug('[live-artifact] lock save attempted', {
-        sessionId,
+        sessionId: lockSaveResult.sessionId,
         lockedAt: canonicalRouteArtifact.lockedAt ?? null,
       })
     }
-    const savedSessionId = saveLiveArtifactSession({
-      sessionId,
-      city: lockedCity,
-      itinerary: lockedItinerary,
-      selectedClusterConfirmation: canonicalRouteArtifact.selectedClusterConfirmation,
-      initialActiveRole: activeRole,
-      lockedAt: Date.now(),
-      finalRoute: {
-        ...canonicalRouteArtifact.finalRoute,
-        activeStopIndex: Math.max(
-          0,
-          canonicalRouteArtifact.finalRoute.stops.findIndex((stop) => stop.role === activeRole),
-        ),
-      },
-    })
-    const storageDebug = getLiveArtifactStorageDebugSnapshot(savedSessionId ?? sessionId)
     if (shouldLogLiveArtifactDebug) {
       console.debug('[live-artifact] lock save result', {
-        requestedSessionId: sessionId,
-        savedSessionId,
-        activeSessionId: storageDebug.activeSessionId,
-        activeSessionIdPresent: storageDebug.activeSessionIdPresent,
-        sessionKey: storageDebug.sessionKey,
-        sessionPayloadPresent: storageDebug.sessionPayloadPresent,
-        saveError: getLastLiveArtifactSaveError(),
+        requestedSessionId: lockSaveResult.sessionId,
+        savedSessionId: lockSaveResult.savedSessionId,
+        activeSessionId: lockSaveResult.storageDebug.activeSessionId,
+        activeSessionIdPresent: lockSaveResult.storageDebug.activeSessionIdPresent,
+        sessionKey: lockSaveResult.storageDebug.sessionKey,
+        sessionPayloadPresent: lockSaveResult.storageDebug.sessionPayloadPresent,
+        saveError: lockSaveResult.saveError,
       })
     }
-    if (!savedSessionId) {
-      const saveError = getLastLiveArtifactSaveError()
-      const failureReason = saveError
-        ? `${saveError.code}: ${saveError.detail}`
-        : 'Live artifact session save returned null.'
-      setError(`Could not lock live session. ${failureReason}`)
+    if (!lockSaveResult.ok) {
+      setError(`Could not lock live session. ${lockSaveResult.failureReason}`)
       setIsLocking(false)
       return
     }
