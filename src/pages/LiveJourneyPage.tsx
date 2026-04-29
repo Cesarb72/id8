@@ -10,8 +10,10 @@ import {
 import { PageShell } from '../components/layout/PageShell'
 import {
   createLiveArtifactPlanId,
+  loadLiveArtifactContinuationUiState,
   loadValidatedSharedLiveArtifactPlan,
   loadValidatedLiveArtifactSession,
+  saveLiveArtifactContinuationUiState,
   saveLiveArtifactSession,
   saveLiveArtifactHomeState,
   saveSharedLiveArtifactPlan,
@@ -27,6 +29,12 @@ import {
   validateFinalRouteAgainstItinerary,
   type LiveArtifactRouteError,
 } from '../domain/live/validateLiveArtifact'
+import type {
+  ContinuationAlertContract,
+  ContinuationArtifactTargetKind,
+  ContinuationOptionContract,
+  ContinuationPreviewContract,
+} from '../domain/lce/continuationContract'
 import { buildTonightSignals } from '../domain/journey/buildTonightSignals'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../domain/types/itinerary'
 import { buildPlanningStopRepresentation } from '../domain/adapters/buildPlanningStopRepresentation'
@@ -61,8 +69,12 @@ const LIVE_ALERT_PREVIEW_BY_DECISION: Record<
   },
 }
 
-const LIVE_CONTINUATION_OPTIONS: Array<{
-  id: LiveContinuationOptionId
+const LIVE_CONTINUATION_ARTIFACT_TARGET_KIND: ContinuationArtifactTargetKind =
+  'runtime_final_route'
+
+type LiveContinuationOptionContract = ContinuationOptionContract<
+  LiveContinuationOptionId,
+  {
   archetypeLabel: string
   continuationArchetype: string
   title: string
@@ -71,9 +83,13 @@ const LIVE_CONTINUATION_OPTIONS: Array<{
   futureVenueSlotLabel: string
   futureVenueReasonSlotLabel: string
   stops: JourneyContinuationStop[]
-}> = [
+  }
+>
+
+const LIVE_CONTINUATION_OPTIONS: LiveContinuationOptionContract[] = [
   {
     id: 'stay-nearby',
+    artifactTargetKind: LIVE_CONTINUATION_ARTIFACT_TARGET_KIND,
     archetypeLabel: 'Continue local',
     continuationArchetype: 'stay_local_extension',
     title: 'Stay nearby',
@@ -98,6 +114,7 @@ const LIVE_CONTINUATION_OPTIONS: Array<{
   },
   {
     id: 'change-pace',
+    artifactTargetKind: LIVE_CONTINUATION_ARTIFACT_TARGET_KIND,
     archetypeLabel: 'Re-lift energy',
     continuationArchetype: 'energy_relift_extension',
     title: 'Change the pace',
@@ -122,6 +139,7 @@ const LIVE_CONTINUATION_OPTIONS: Array<{
   },
   {
     id: 'ease-out',
+    artifactTargetKind: LIVE_CONTINUATION_ARTIFACT_TARGET_KIND,
     archetypeLabel: 'Soft close',
     continuationArchetype: 'soft_close_extension',
     title: 'Ease out',
@@ -154,6 +172,15 @@ const FALLBACK_COORDINATES_BY_ROLE: Record<UserStopRole, [number, number]> = {
   windDown: [-121.9275, 37.3229],
 }
 const LIVE_GOOGLE_STOP_ID_PREFIX = 'live_google_'
+
+function getLiveContinuationOptionById(
+  optionId: LiveContinuationOptionId | null,
+): LiveContinuationOptionContract | null {
+  if (!optionId) {
+    return null
+  }
+  return LIVE_CONTINUATION_OPTIONS.find((option) => option.id === optionId) ?? null
+}
 
 function getNearbyOptionDescriptor(category: JourneyNearbyOption['category']): string {
   if (category === 'nightlife') {
@@ -445,6 +472,9 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     sharedPlanId ? loadValidatedSharedLiveArtifactPlan(sharedPlanId) : loadValidatedLiveArtifactSession(),
   )
   const artifact = loadResult.status === 'ok' ? loadResult.payload : null
+  const persistedContinuationUiState = artifact
+    ? loadLiveArtifactContinuationUiState(artifact.sessionId)
+    : null
   const loadError: LiveArtifactRouteError | null =
     loadResult.status === 'error' ? loadResult.error : null
   const [finalRoute, setFinalRoute] = useState<RuntimeRouteArtifact | null>(() =>
@@ -466,11 +496,30 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     null,
   )
   const [selectedContinuationOptionId, setSelectedContinuationOptionId] =
-    useState<LiveContinuationOptionId | null>(null)
+    useState<LiveContinuationOptionId | null>(
+      () =>
+        (persistedContinuationUiState?.selectedContinuationOptionId as LiveContinuationOptionId | null) ??
+        null,
+    )
   const [previewContinuationOptionId, setPreviewContinuationOptionId] =
-    useState<LiveContinuationOptionId | null>(null)
-  const [continuationStops, setContinuationStops] = useState<JourneyContinuationStop[]>([])
-  const [planDetailsOpen, setPlanDetailsOpen] = useState(false)
+    useState<LiveContinuationOptionId | null>(
+      () =>
+        (persistedContinuationUiState?.previewContinuationOptionId as LiveContinuationOptionId | null) ??
+        null,
+    )
+  const [continuationStops, setContinuationStops] = useState<JourneyContinuationStop[]>(() => {
+    const selectedOption = getLiveContinuationOptionById(
+      (persistedContinuationUiState?.selectedContinuationOptionId as LiveContinuationOptionId | null) ??
+        null,
+    )
+    return selectedOption ? selectedOption.stops.slice(0, 2) : []
+  })
+  const [planDetailsOpen, setPlanDetailsOpen] = useState(
+    Boolean(
+      persistedContinuationUiState?.selectedContinuationOptionId ||
+        persistedContinuationUiState?.previewContinuationOptionId,
+    ),
+  )
   const [utilityModal, setUtilityModal] = useState<LiveUtilityModal>(null)
   const [shareFeedback, setShareFeedback] = useState<string | null>(null)
   const [sharePlanId, setSharePlanId] = useState<string | null>(sharedPlanId ?? null)
@@ -611,6 +660,15 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
       initialActiveRole: activeRole,
     })
   }, [activeRole, canonicalRouteArtifact])
+  useEffect(() => {
+    if (!artifact?.sessionId) {
+      return
+    }
+    saveLiveArtifactContinuationUiState(artifact.sessionId, {
+      selectedContinuationOptionId,
+      previewContinuationOptionId,
+    })
+  }, [artifact?.sessionId, previewContinuationOptionId, selectedContinuationOptionId])
 
   const handleLiveAlertDecision = (decision: LiveAlertDecision) => {
     setActiveRole('highlight')
@@ -653,24 +711,28 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
   }
 
   const handleSelectContinuationOption = (optionId: LiveContinuationOptionId) => {
-    const selectedOption = LIVE_CONTINUATION_OPTIONS.find((option) => option.id === optionId)
-    if (!selectedOption) {
+    const selectedPreviewOption = liveContinuationPreviewContract.options.find(
+      (option) => option.id === optionId,
+    )
+    if (!selectedPreviewOption) {
       return
     }
-    setPreviewContinuationOptionId(selectedOption.id)
+    setPreviewContinuationOptionId(selectedPreviewOption.id)
   }
 
   const handleConfirmContinuationOption = () => {
-    if (!previewContinuationOptionId) {
+    const selectedPreviewOptionId = liveContinuationPreviewContract.selectedOptionId
+    if (!selectedPreviewOptionId) {
       return
     }
-    const selectedOption = LIVE_CONTINUATION_OPTIONS.find(
-      (option) => option.id === previewContinuationOptionId,
+    const selectedPreviewOption = liveContinuationPreviewContract.options.find(
+      (option) => option.id === selectedPreviewOptionId,
     )
-    if (!selectedOption) {
+    if (!selectedPreviewOption) {
       setPreviewContinuationOptionId(null)
       return
     }
+    const selectedOption = selectedPreviewOption.payload
     setSelectedContinuationOptionId(selectedOption.id)
     setContinuationStops(selectedOption.stops.slice(0, 2))
     setPlanDetailsOpen(true)
@@ -966,10 +1028,37 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
       return leftIndex - rightIndex
     })[routeItineraryStops.length - 1] ?? null
   }, [routeItineraryStops])
+  const liveAlertContract = useMemo<
+    ContinuationAlertContract<LiveAlertDecision, LiveContinuationOptionId>
+  >(
+    () => ({
+      step: 'alert',
+      artifactTargetKind: LIVE_CONTINUATION_ARTIFACT_TARGET_KIND,
+      alertedRole: liveAlertStage === 'alert' ? 'highlight' : null,
+      selectedDecisionId: liveAlertDecision,
+      selectedOptionId: null,
+    }),
+    [liveAlertDecision, liveAlertStage],
+  )
+  const liveContinuationPreviewContract = useMemo<
+    ContinuationPreviewContract<LiveContinuationOptionId, LiveContinuationOptionContract>
+  >(
+    () => ({
+      step: 'preview',
+      artifactTargetKind: LIVE_CONTINUATION_ARTIFACT_TARGET_KIND,
+      options: LIVE_CONTINUATION_OPTIONS.map((option) => ({
+        id: option.id,
+        artifactTargetKind: option.artifactTargetKind,
+        payload: option,
+      })),
+      selectedOptionId: previewContinuationOptionId,
+    }),
+    [previewContinuationOptionId],
+  )
   const continuationOptionCards = useMemo(() => {
     const endingRoleLabel = routeEndingStop?.title ?? 'Wind Down'
     const endingStopName = routeEndingStop?.venueName ?? 'your route endpoint'
-    return LIVE_CONTINUATION_OPTIONS.map((option) => {
+    return liveContinuationPreviewContract.options.map(({ payload: option }) => {
       let rationale = option.defaultRationale
       if (option.id === 'stay-nearby') {
         rationale = `Fits your ${endingRoleLabel.toLowerCase()} landing by keeping movement tight from ${endingStopName}.`
@@ -983,7 +1072,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
         rationale,
       }
     })
-  }, [routeEndingStop])
+  }, [liveContinuationPreviewContract, routeEndingStop])
 
   const routeMoments = useMemo(() => {
     if (!canonicalRouteArtifact || !liveRenderRoute) {
@@ -1225,15 +1314,17 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
   ])
 
   const liveContinuationPreview = useMemo(() => {
-    if (!previewContinuationOptionId) {
+    const selectedPreviewOptionId = liveContinuationPreviewContract.selectedOptionId
+    if (!selectedPreviewOptionId) {
       return null
     }
-    const selectedOption = LIVE_CONTINUATION_OPTIONS.find(
-      (option) => option.id === previewContinuationOptionId,
+    const selectedPreviewOption = liveContinuationPreviewContract.options.find(
+      (option) => option.id === selectedPreviewOptionId,
     )
-    if (!selectedOption) {
+    if (!selectedPreviewOption) {
       return null
     }
+    const selectedOption = selectedPreviewOption.payload
 
     const firstStop = selectedOption.stops[0]
     if (!firstStop) {
@@ -1281,7 +1372,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
         selectedOption.stops.length > 1 ? `You'll end here instead: ${lastStop.name}` : null,
       imageUrl: routeItineraryStops[2]?.imageUrl ?? routeItineraryStops[0]?.imageUrl ?? '',
     }
-  }, [previewContinuationOptionId, routeItineraryStops])
+  }, [liveContinuationPreviewContract, routeItineraryStops])
 
   const handleCopyShareLink = useCallback(async () => {
     const nextShareUrl = buildShareUrl()
@@ -1861,7 +1952,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
                 appliedSwapNoteByRole={{}}
                 postSwapHintByRole={{}}
                 activeRole={activeRole}
-                alertedRole={liveAlertStage === 'alert' ? 'highlight' : null}
+                alertedRole={liveAlertContract.alertedRole ?? null}
                 continuationEntries={continuationEntries}
                 changedRoles={[]}
                 animatedRoles={[]}

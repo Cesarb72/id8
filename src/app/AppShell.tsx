@@ -24,10 +24,17 @@ import { getRoleContract } from '../domain/contracts/getRoleContract'
 import type { DiscoveryDirection } from '../domain/discovery/getDiscoveryCandidates'
 import { getDiscoveryCandidates } from '../domain/discovery/getDiscoveryCandidates'
 import { resolveSelectedDirectionContextFromDiscoverySelection } from '../domain/discovery/selectedDirectionContext'
-import { deriveLightNearbyExtensions } from '../domain/exploration/deriveLightNearbyExtensions'
+import {
+  deriveLightNearbyExtensions,
+  type LightNearbyExtensionOption,
+} from '../domain/exploration/deriveLightNearbyExtensions'
 import { planExploration } from '../domain/exploration/planExploration'
 import { getCrewPolicy } from '../domain/intent/getCrewPolicy'
 import { projectItinerary } from '../domain/itinerary/projectItinerary'
+import type {
+  ContinuationArtifactTargetKind,
+  ContinuationPreviewContract,
+} from '../domain/lce/continuationContract'
 import { normalizeRawPlace } from '../domain/normalize/normalizeRawPlace'
 import { getNearbyAlternatives } from '../domain/retrieval/getNearbyAlternatives'
 import { scoreVenueFit } from '../domain/retrieval/scoreVenueFit'
@@ -106,6 +113,9 @@ const stepProgress: Record<FlowStep, number> = {
   reveal: 4,
   ticket: 4,
 }
+
+const LEGACY_CONTINUATION_ARTIFACT_TARGET_KIND: ContinuationArtifactTargetKind =
+  'planner_arc_itinerary'
 
 type AppEnvironment = 'default' | 'dev' | 'archive'
 type DevStartMode = Extract<ExperienceMode, 'surprise' | 'curate' | 'build'>
@@ -1242,6 +1252,21 @@ function AppShellContent({
           lens: state.experienceLens,
         })
       : []
+  const legacyContinuationPreviewContract = useMemo<
+    ContinuationPreviewContract<string, LightNearbyExtensionOption>
+  >(
+    () => ({
+      step: 'preview',
+      artifactTargetKind: LEGACY_CONTINUATION_ARTIFACT_TARGET_KIND,
+      options: lightNearbyExtensions.map((option) => ({
+        id: option.id,
+        artifactTargetKind: LEGACY_CONTINUATION_ARTIFACT_TARGET_KIND,
+        payload: option,
+      })),
+      selectedOptionId: null,
+    }),
+    [lightNearbyExtensions],
+  )
   const previewAdjustDisabledRoles =
     state.lastIntentProfile?.planningMode === 'user-led' && state.lastIntentProfile.anchor?.role
       ? [state.lastIntentProfile.anchor.role]
@@ -2577,7 +2602,9 @@ function AppShellContent({
           compositionConflictMessage={state.compositionConflictMessage}
           explorationPlan={state.explorationPlan}
           explorationLoading={state.explorationLoading}
-          lightNearbyExtensions={lightNearbyExtensions}
+          lightNearbyExtensions={legacyContinuationPreviewContract.options.map(
+            ({ payload }) => payload,
+          )}
           alternativesByRole={baselineVisibleAlternativesByRole}
           alternativeKindsByRole={baselineVisibleAlternativeKindsByRole}
           onShowSwap={handleShowSwap}
@@ -2609,7 +2636,9 @@ function AppShellContent({
       {state.currentStep === 'ticket' && state.generatedItinerary && (
         <TicketPage
           itinerary={baselineVisibleItinerary ?? state.generatedItinerary}
-          lightNearbyExtensions={lightNearbyExtensions}
+          lightNearbyExtensions={legacyContinuationPreviewContract.options.map(
+            ({ payload }) => payload,
+          )}
           explorationPlan={state.explorationPlan}
           explorationLoading={state.explorationLoading}
           lockedAt={state.lockedAt}

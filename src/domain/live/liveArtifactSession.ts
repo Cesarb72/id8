@@ -15,6 +15,7 @@ const LIVE_ARTIFACT_ACTIVE_SESSION_ID_KEY = 'id8.liveArtifact.activeSessionId.v1
 const LIVE_ARTIFACT_EXIT_NOTICE_KEY = 'id8.liveArtifact.exitNotice.v1'
 const LIVE_ARTIFACT_SHARED_PLAN_PREFIX = 'id8.liveArtifact.sharedPlan.v1.'
 const LIVE_ARTIFACT_HOME_STATE_KEY = 'id8.liveArtifact.home.v1'
+const LIVE_ARTIFACT_CONTINUATION_UI_PREFIX = 'id8.liveArtifact.continuationUi.v1.'
 
 export interface LiveArtifactSessionPayload {
   sessionId: string
@@ -39,6 +40,11 @@ export interface LiveArtifactExitNotice {
 export interface LiveArtifactHomeState {
   city: string
   mapPath: string
+}
+
+export interface LiveArtifactContinuationUiState {
+  selectedContinuationOptionId: string | null
+  previewContinuationOptionId: string | null
 }
 
 export interface SharedLiveArtifactPlanEntry {
@@ -206,6 +212,10 @@ function getSharedPlanKey(planId: string): string {
   return `${LIVE_ARTIFACT_SHARED_PLAN_PREFIX}${planId}`
 }
 
+function getLiveArtifactContinuationUiKey(sessionId: string): string {
+  return `${LIVE_ARTIFACT_CONTINUATION_UI_PREFIX}${sessionId}`
+}
+
 export function saveSharedLiveArtifactPlan(
   planId: string,
   payload: LiveArtifactSessionPayload,
@@ -268,6 +278,55 @@ export function loadValidatedSharedLiveArtifactPlan(planId: string): LockedLiveA
         detail: 'Stored shared live artifact could not be parsed.',
       },
     }
+  }
+}
+
+export function saveLiveArtifactContinuationUiState(
+  sessionId: string,
+  state: LiveArtifactContinuationUiState,
+): void {
+  if (typeof window === 'undefined' || !sessionId) {
+    return
+  }
+  try {
+    window.sessionStorage.setItem(
+      getLiveArtifactContinuationUiKey(sessionId),
+      JSON.stringify({
+        selectedContinuationOptionId: state.selectedContinuationOptionId ?? null,
+        previewContinuationOptionId: state.previewContinuationOptionId ?? null,
+      }),
+    )
+  } catch {
+    // noop
+  }
+}
+
+export function loadLiveArtifactContinuationUiState(
+  sessionId: string,
+): LiveArtifactContinuationUiState | null {
+  if (typeof window === 'undefined' || !sessionId) {
+    return null
+  }
+  const raw = window.sessionStorage.getItem(getLiveArtifactContinuationUiKey(sessionId))
+  if (!raw) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<LiveArtifactContinuationUiState>
+    const selectedContinuationOptionId =
+      typeof parsed.selectedContinuationOptionId === 'string'
+        ? parsed.selectedContinuationOptionId
+        : null
+    const previewContinuationOptionId =
+      typeof parsed.previewContinuationOptionId === 'string'
+        ? parsed.previewContinuationOptionId
+        : null
+    return {
+      selectedContinuationOptionId,
+      previewContinuationOptionId,
+    }
+  } catch {
+    return null
   }
 }
 

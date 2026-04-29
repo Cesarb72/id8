@@ -51,10 +51,6 @@ import {
   type DirectionContractBuildability,
   type DirectionCoreRole,
 } from '../domain/bearings/assessDirectionContractBuildability'
-import {
-  buildHyperlocalDirectionExpression,
-  type PocketType,
-} from '../domain/directions/buildHyperlocalDirectionExpression'
 import { saveLockedLiveArtifactSession } from '../app/services/live/liveSessionHandoff'
 import { assembleSandboxDirectionWorld } from '../app/services/sandbox/sandboxDirectionOrchestrator'
 import { runCuratePreviewQualificationAttempt } from '../app/services/sandbox/curatePreviewQualificationService'
@@ -111,9 +107,6 @@ import {
   type BuiltScenarioStop,
 } from '../domain/interpretation/construction/scenarioBuilder'
 import type { ExperienceContract as InterpretationExperienceContract } from '../domain/interpretation/contracts/experienceContract'
-import {
-  type ContractGateWorld,
-} from '../domain/bearings/buildContractGateWorld'
 import { buildGreatStopAdmissibilitySignal } from '../domain/bearings/buildGreatStopAdmissibilitySignal'
 import {
   devGreatStopFixtureVenueIds,
@@ -121,9 +114,6 @@ import {
   readDevGreatStopFixturesEnvRaw,
   readDevGreatStopFixturesEnabled,
 } from '../domain/sources/devGreatStopFixtures'
-import {
-  type StrategyAdmissibleWorld,
-} from '../domain/bearings/buildStrategyAdmissibleWorlds'
 import { mapVenueToTasteInput } from '../domain/interpretation/taste/mapVenueToTasteInput'
 import { interpretVenueTaste } from '../domain/interpretation/taste/interpretVenueTaste'
 import {
