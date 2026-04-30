@@ -143,8 +143,13 @@ export interface RealityDirectionCard {
     contractGateRejectedCount?: number
     contractGateAllowedPreview?: string[]
     contractGateSuppressedPreview?: string[]
+    floorRecoveryAttempted?: boolean
+    floorRecoveryCandidateId?: string
+    floorRecoveryReason?: string
+    floorRecoveryBlockedReason?: string
     directionContractGateStatus?: string
     directionContractGateReasonSummary?: string
+    contrastPocketInjected?: boolean
     strategyWorldSource?: string
     selectedStrategyWorldId?: string
     strategyWorldSummary?: string
@@ -190,6 +195,8 @@ export interface RealityDirectionCard {
     selectedFamilies?: string[]
     familyDiversityApplied?: boolean
     fallbackUsed?: boolean
+    tasteBridgeDirectionDiversificationApplied?: boolean
+    droppedPocketIds?: string[]
     strongestShapedId?: string
     correctedWinnerId?: string
     finalSelectedId?: string
@@ -280,6 +287,8 @@ const FAMILY_DEBUG_KEYS: Array<keyof DebugMeta> = [
   'selectedFamilies',
   'familyDiversityApplied',
   'fallbackUsed',
+  'tasteBridgeDirectionDiversificationApplied',
+  'droppedPocketIds',
   'laneCollapseRisk',
   'laneSeparatedSlot3',
   'laneSeparationReason',
@@ -333,8 +342,13 @@ const EXPERIENCE_CONTRACT_DEBUG_KEYS: Array<keyof DebugMeta> = [
   'contractGateRejectedCount',
   'contractGateAllowedPreview',
   'contractGateSuppressedPreview',
+  'floorRecoveryAttempted',
+  'floorRecoveryCandidateId',
+  'floorRecoveryReason',
+  'floorRecoveryBlockedReason',
   'directionContractGateStatus',
   'directionContractGateReasonSummary',
+  'contrastPocketInjected',
   'directionNarrativeSource',
   'directionNarrativeMode',
   'directionNarrativeSummary',

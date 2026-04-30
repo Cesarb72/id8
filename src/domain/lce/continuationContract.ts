@@ -64,3 +64,58 @@ export interface ContinuationOptionContract<
   TExtra extends object = Record<string, never>,
 > extends ContinuationOptionIdentity<TOptionId>,
     TExtra {}
+
+export function wrapContinuationOptionsWithArtifactTargetKind<
+  TOptionId extends string,
+  TOptionPayload,
+>(
+  artifactTargetKind: ContinuationArtifactTargetKind,
+  options: Array<{
+    id: TOptionId
+    payload: TOptionPayload
+  }>,
+): ContinuationPreviewContract<TOptionId, TOptionPayload>['options'] {
+  return options.map((option) => ({
+    id: option.id,
+    artifactTargetKind,
+    payload: option.payload,
+  }))
+}
+
+export function buildContinuationPreviewContract<
+  TOptionId extends string,
+  TOptionPayload,
+>(params: {
+  artifactTargetKind: ContinuationArtifactTargetKind
+  options: Array<{
+    id: TOptionId
+    payload: TOptionPayload
+  }>
+  selectedOptionId?: TOptionId | null
+}): ContinuationPreviewContract<TOptionId, TOptionPayload> {
+  return {
+    step: 'preview',
+    artifactTargetKind: params.artifactTargetKind,
+    options: wrapContinuationOptionsWithArtifactTargetKind(
+      params.artifactTargetKind,
+      params.options,
+    ),
+    selectedOptionId: params.selectedOptionId,
+  }
+}
+
+export function resolveSelectedContinuationOption<
+  TOptionId extends string,
+  TOptionPayload,
+>(
+  contract: ContinuationPreviewContract<TOptionId, TOptionPayload>,
+): (ContinuationPreviewContract<TOptionId, TOptionPayload>['options'][number] & {
+  id: TOptionId
+}) | null {
+  if (!contract.selectedOptionId) {
+    return null
+  }
+  return (
+    contract.options.find((option) => option.id === contract.selectedOptionId) ?? null
+  )
+}

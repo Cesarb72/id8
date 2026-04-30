@@ -80,6 +80,8 @@ export function getDistrictFallbackPenalty(origin: PocketOrigin): number {
   return 0
 }
 
+import type { DistrictTasteBridgeArtifact } from '../../../domain/interpretation/taste/districtTasteBridgeArtifact'
+
 export type BuildDistrictOpportunityProfilesInput = {
   locationQuery: string
   userLatLng?: { lat: number; lng: number }
@@ -388,6 +390,7 @@ export type DistrictDebugPocketTrace = {
   selected: boolean
   stageNotes: string[]
   notes: string[]
+  tasteBridge?: DistrictTasteBridgeArtifact
   hyperlocal?: {
     microPocketCount: number
     selectedMicroPocketId?: string

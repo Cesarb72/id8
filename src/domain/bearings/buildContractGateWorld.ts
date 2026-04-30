@@ -85,6 +85,10 @@ export interface ContractGateWorld {
     allowedCount: number
     suppressedCount: number
     fallbackAdmittedCount: number
+    floorRecoveryAttempted: boolean
+    floorRecoveryCandidateId?: string
+    floorRecoveryReason?: string
+    floorRecoveryBlockedReason?: string
     allowedPreview: string[]
     suppressedPreview: string[]
     rejectedPreview: string[]
@@ -796,12 +800,43 @@ type ContractGateEvaluationResult = {
   allowedCount: number
   suppressedCount: number
   fallbackAdmittedCount: number
+  floorRecoveryAttempted: boolean
+  floorRecoveryCandidateId?: string
+  floorRecoveryReason?: string
+  floorRecoveryBlockedReason?: string
   allowedPreview: string[]
   suppressedPreview: string[]
   ranked: RankedPocket[]
   decisionByPocketId: Map<string, ContractGatePocketDecision>
 }
 
+
+function getProcessEnvValue(key: string): string | undefined {
+  const processEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env
+  return processEnv?.[key]
+}
+
+function readEnvValue(key: string): string | undefined {
+  const importMetaEnv = (import.meta as ImportMeta & {
+    env?: Record<string, string | undefined>
+  }).env
+  return importMetaEnv?.[key] ?? getProcessEnvValue(key)
+}
+
+function parseBooleanEnv(value: string | undefined): boolean | undefined {
+  if (!value) {
+    return undefined
+  }
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true
+  }
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false
+  }
+  return undefined
+}
 
 const TARGET_DIRECTION_CANDIDATES = 3
 const CONTRACT_GATE_BOOST_WEIGHT = 0.4
@@ -810,6 +845,11 @@ const CONTRACT_GATE_MIN_ALLOWED_SCORE = 0.5
 const CONTRACT_GATE_FALLBACK_MIN_SURVIVORS = TARGET_DIRECTION_CANDIDATES + 1
 const CONTRACT_GATE_FALLBACK_RATIO_TRIGGER = 0.35
 const CONTRACT_GATE_MAX_FALLBACK_ADMITS = 2
+const CONTRACT_GATE_FLOOR_RECOVERY_VIABLE_BAND = 0.09
+
+function readContractGateFloorRecoveryEnabled(): boolean {
+  return parseBooleanEnv(readEnvValue('VITE_ID8_DIRECTION_CANDIDATE_FLOOR_RECOVERY')) === true
+}
 
 const CONTRACT_GATE_LIBRARY: Record<
   Exclude<DirectionStrategyFamily, 'adaptive'>,
@@ -1594,6 +1634,7 @@ function applyContractGate(params: {
       allowedCount: ranked.length,
       suppressedCount: 0,
       fallbackAdmittedCount: 0,
+      floorRecoveryAttempted: false,
       allowedPreview: ranked.slice(0, 3).map((entry) => entry.profile.pocketId),
       suppressedPreview: [],
       ranked,
@@ -1618,6 +1659,11 @@ function applyContractGate(params: {
   }
 
   const decisionByPocketId = new Map<string, ContractGatePocketDecision>()
+  const floorRecoveryEnabled = readContractGateFloorRecoveryEnabled()
+  let floorRecoveryAttempted = false
+  let floorRecoveryCandidateId: string | undefined
+  let floorRecoveryReason: string | undefined
+  let floorRecoveryBlockedReason: string | undefined
   const decorated = ranked.map((entry) => {
     const decision = evaluateContractGateDecision({
       entry,
@@ -1688,6 +1734,56 @@ function applyContractGate(params: {
     })
   }
 
+  if (floorRecoveryEnabled && admitted.length < TARGET_DIRECTION_CANDIDATES) {
+    floorRecoveryAttempted = true
+    const weakestAdmitted = admitted
+      .slice()
+      .sort((left, right) => {
+        if (left.decision.gateAdjustedScore !== right.decision.gateAdjustedScore) {
+          return left.decision.gateAdjustedScore - right.decision.gateAdjustedScore
+        }
+        return right.entry.rank - left.entry.rank
+      })[0]
+
+    if (!weakestAdmitted) {
+      floorRecoveryBlockedReason = 'no_admitted_baseline_for_viable_band'
+    } else {
+      const floorRecoveryCandidate = decorated
+        .filter(({ decision }) => decision.status === 'suppressed' && decision.hardPassed)
+        .sort((left, right) => {
+          if (right.decision.gateAdjustedScore !== left.decision.gateAdjustedScore) {
+            return right.decision.gateAdjustedScore - left.decision.gateAdjustedScore
+          }
+          return left.entry.rank - right.entry.rank
+        })
+        .find(
+          ({ decision }) =>
+            weakestAdmitted.decision.gateAdjustedScore - decision.gateAdjustedScore <=
+            CONTRACT_GATE_FLOOR_RECOVERY_VIABLE_BAND,
+        )
+
+      if (!floorRecoveryCandidate) {
+        floorRecoveryBlockedReason =
+          'no_hard_passed_suppressed_candidate_within_viable_band'
+      } else {
+        floorRecoveryCandidateId = floorRecoveryCandidate.entry.profile.pocketId
+        floorRecoveryReason = 'suppressed_hard_passed_within_viable_band'
+        floorRecoveryCandidate.decision.status = 'fallback_admitted'
+        floorRecoveryCandidate.decision.reasonSummary =
+          `${floorRecoveryCandidate.decision.reasonSummary}|fallback_floor_recovered`
+        admitted.push(floorRecoveryCandidate)
+        decisionByPocketId.set(
+          floorRecoveryCandidate.entry.profile.pocketId,
+          floorRecoveryCandidate.decision,
+        )
+      }
+    }
+  } else if (!floorRecoveryEnabled) {
+    floorRecoveryBlockedReason = 'feature_flag_disabled'
+  } else {
+    floorRecoveryBlockedReason = 'admitted_floor_already_met'
+  }
+
   if (admitted.length === 0 && ranked.length > 0) {
     ranked.slice(0, Math.min(6, ranked.length)).forEach((entry) => {
       const existingDecision = decisionByPocketId.get(entry.profile.pocketId)
@@ -1740,6 +1836,10 @@ function applyContractGate(params: {
     allowedCount,
     suppressedCount,
     fallbackAdmittedCount,
+    floorRecoveryAttempted,
+    floorRecoveryCandidateId,
+    floorRecoveryReason,
+    floorRecoveryBlockedReason,
     allowedPreview,
     suppressedPreview,
     ranked: admitted.map(({ entry }) => entry),
@@ -1878,6 +1978,10 @@ export function buildContractGateWorld(input: BuildContractGateWorldInput): Cont
       allowedCount: gateEvaluation.allowedCount,
       suppressedCount: gateEvaluation.suppressedCount,
       fallbackAdmittedCount: gateEvaluation.fallbackAdmittedCount,
+      floorRecoveryAttempted: gateEvaluation.floorRecoveryAttempted,
+      floorRecoveryCandidateId: gateEvaluation.floorRecoveryCandidateId,
+      floorRecoveryReason: gateEvaluation.floorRecoveryReason,
+      floorRecoveryBlockedReason: gateEvaluation.floorRecoveryBlockedReason,
       allowedPreview: gateEvaluation.allowedPreview,
       suppressedPreview: gateEvaluation.suppressedPreview,
       rejectedPreview: rejectedPockets.slice(0, 3).map((entry) => entry.profile.pocketId),

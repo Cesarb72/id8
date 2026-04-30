@@ -35,6 +35,10 @@ import type {
   ContinuationOptionContract,
   ContinuationPreviewContract,
 } from '../domain/lce/continuationContract'
+import {
+  buildContinuationPreviewContract,
+  resolveSelectedContinuationOption,
+} from '../domain/lce/continuationContract'
 import { buildTonightSignals } from '../domain/journey/buildTonightSignals'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../domain/types/itinerary'
 import { buildPlanningStopRepresentation } from '../domain/adapters/buildPlanningStopRepresentation'
@@ -711,9 +715,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
   }
 
   const handleSelectContinuationOption = (optionId: LiveContinuationOptionId) => {
-    const selectedPreviewOption = liveContinuationPreviewContract.options.find(
-      (option) => option.id === optionId,
-    )
+    const selectedPreviewOption = liveContinuationPreviewContract.options.find((option) => option.id === optionId)
     if (!selectedPreviewOption) {
       return
     }
@@ -721,13 +723,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
   }
 
   const handleConfirmContinuationOption = () => {
-    const selectedPreviewOptionId = liveContinuationPreviewContract.selectedOptionId
-    if (!selectedPreviewOptionId) {
-      return
-    }
-    const selectedPreviewOption = liveContinuationPreviewContract.options.find(
-      (option) => option.id === selectedPreviewOptionId,
-    )
+    const selectedPreviewOption = resolveSelectedContinuationOption(liveContinuationPreviewContract)
     if (!selectedPreviewOption) {
       setPreviewContinuationOptionId(null)
       return
@@ -1043,16 +1039,15 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
   const liveContinuationPreviewContract = useMemo<
     ContinuationPreviewContract<LiveContinuationOptionId, LiveContinuationOptionContract>
   >(
-    () => ({
-      step: 'preview',
+    () =>
+      buildContinuationPreviewContract({
       artifactTargetKind: LIVE_CONTINUATION_ARTIFACT_TARGET_KIND,
       options: LIVE_CONTINUATION_OPTIONS.map((option) => ({
         id: option.id,
-        artifactTargetKind: option.artifactTargetKind,
         payload: option,
       })),
       selectedOptionId: previewContinuationOptionId,
-    }),
+      }),
     [previewContinuationOptionId],
   )
   const continuationOptionCards = useMemo(() => {

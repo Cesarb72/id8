@@ -1,4 +1,5 @@
 import type { BuildDistrictOpportunityProfilesResult } from '../../engines/district'
+import type { DistrictTasteBridgeArtifact } from '../../domain/interpretation/taste/districtTasteBridgeArtifact'
 
 interface DistrictPreviewPanelProps {
   data?: BuildDistrictOpportunityProfilesResult
@@ -48,6 +49,17 @@ function getTierClass(tier: string): string {
     return 'district-preview-tier-weak'
   }
   return 'district-preview-tier-neutral'
+}
+
+function formatTasteBridgeSummary(bridge: DistrictTasteBridgeArtifact): string {
+  const fields = [
+    `tone ${bridge.futurePlannerSignals.zoneTone}`,
+    `variety ${bridge.futurePlannerSignals.zoneVarietySignature}`,
+    `centerpiece ${bridge.futurePlannerSignals.zoneCenterpieceStrength}`,
+    `start ${bridge.futurePlannerSignals.zoneStartSupport}`,
+    `windDown ${bridge.futurePlannerSignals.zoneWindDownSupport}`,
+  ]
+  return fields.join(' | ')
 }
 
 export function DistrictPreviewPanel({
@@ -142,6 +154,7 @@ export function DistrictPreviewPanel({
           const rawPocket = rawPocketById.get(profile.pocketId)
           const identifiedPocket = identifiedById.get(profile.pocketId)
           const debugTrace = debugTraceById.get(profile.pocketId)
+          const tasteBridge = debugTrace?.tasteBridge
           const legacyTasteSignals = profile.appSignals?.tasteSignals
           const stageNotes = [
             ...new Set([
@@ -209,6 +222,11 @@ export function DistrictPreviewPanel({
               <p className="district-preview-inline">
                 moment potential {formatMetric(tasteSignals.momentPotential, 3)}
               </p>
+              {tasteBridge && (
+                <p className="district-preview-inline">
+                  future zone {formatTasteBridgeSummary(tasteBridge)}
+                </p>
+              )}
               {tasteSignals.momentSeeds.length > 0 && (
                 <>
                   <p className="district-preview-section-title">Moment Seeds</p>
@@ -230,6 +248,20 @@ export function DistrictPreviewPanel({
                     <li key={`${profile.pocketId}_note_${index}`}>{note}</li>
                   ))}
                 </ul>
+              )}
+              {tasteBridge && (
+                <>
+                  <p className="district-preview-section-title">Taste Bridge Artifact</p>
+                  <ul className="district-preview-notes">
+                    <li>derived from {tasteBridge.trace.derivedFrom.join(', ')}</li>
+                    <li>
+                      differentiation {tasteBridge.futurePlannerSignals.zoneDifferentiationSignature}
+                    </li>
+                    {tasteBridge.trace.notes.map((note, index) => (
+                      <li key={`${profile.pocketId}_bridge_note_${index}`}>{note}</li>
+                    ))}
+                  </ul>
+                </>
               )}
 
               {debugTrace?.composition && (

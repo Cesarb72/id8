@@ -5,6 +5,7 @@ import type {
 import type { ContractGateWorld } from '../../../domain/bearings/buildContractGateWorld'
 import type { DirectionContractBuildability } from '../../../domain/bearings/assessDirectionContractBuildability'
 import type { CanonicalInterpretationBundle } from '../../../domain/interpretation/buildCanonicalInterpretationBundle'
+import type { DistrictTasteBridgeArtifact } from '../../../domain/interpretation/taste/districtTasteBridgeArtifact'
 import type {
   DirectionIdentityMode,
   DirectionPlanningSelection,
@@ -138,6 +139,7 @@ export interface CuratePreviewQualificationAttemptParams<
   canonicalExperienceContract: ExperienceContract
   canonicalContractConstraints: ContractConstraints
   rankedDistrictPockets?: RankedPocket[]
+  districtTasteBridgeArtifacts?: DistrictTasteBridgeArtifact[]
   contractGateWorld?: ContractGateWorld
   refinementModes: NonNullable<IntentInput['refinementModes']>
   activeDirectionContract: DirectionPlanningSelection
@@ -176,6 +178,7 @@ export interface CuratePreviewQualificationAttemptDependencies<
       contractConstraints: ContractConstraints
       canonicalInterpretationBundle: CanonicalInterpretationBundle
       rankedDistrictPockets?: RankedPocket[]
+      districtTasteBridgeArtifacts?: DistrictTasteBridgeArtifact[]
       contractGateWorld?: ContractGateWorld
       selectedArtifactLineage?: ContractEntryArtifactLineage
     },
@@ -370,6 +373,7 @@ export async function runCuratePreviewQualificationAttempt<
         contractConstraints: params.canonicalContractConstraints,
         canonicalInterpretationBundle: params.canonicalInterpretationBundle,
         rankedDistrictPockets: params.rankedDistrictPockets,
+        districtTasteBridgeArtifacts: params.districtTasteBridgeArtifacts,
         contractGateWorld: params.contractGateWorld,
         selectedArtifactLineage: params.selectedArtifactLineage,
       },

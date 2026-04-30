@@ -40,6 +40,7 @@ import { getRoleContract } from './contracts/getRoleContract'
 import { buildExperienceLens } from './intent/buildExperienceLens'
 import { getCrewPolicy } from './intent/getCrewPolicy'
 import { normalizeIntent } from './intent/normalizeIntent'
+import type { DistrictTasteBridgeArtifact } from './interpretation/taste/districtTasteBridgeArtifact'
 import { projectItinerary } from './itinerary/projectItinerary'
 import { buildTemporalTrace, detectTemporalMode } from './constraints/detectTemporalMode'
 import type { CanonicalInterpretationBundle } from './interpretation/buildCanonicalInterpretationBundle'
@@ -122,6 +123,7 @@ export interface RunGeneratePlanOptions {
   contractConstraints?: ContractConstraints
   canonicalInterpretationBundle?: CanonicalInterpretationBundle
   rankedDistrictPockets?: RankedPocket[]
+  districtTasteBridgeArtifacts?: DistrictTasteBridgeArtifact[]
   contractGateWorld?: ContractGateWorld
   debugMode?: boolean
   strictShape?: boolean
@@ -349,6 +351,59 @@ function buildBearingsIngressDiagnostics(params: {
     overlapPocketIds,
     selectedDistrictMatchesAdmittedPocket: selectedDistrictId
       ? admittedPocketIdSet.has(selectedDistrictId)
+      : undefined,
+  }
+}
+
+function buildTasteBridgeIngressDiagnostics(params: {
+  districtTasteBridgeArtifacts?: DistrictTasteBridgeArtifact[]
+  plannerTopDistrictIds?: string[]
+  selectedDistrictId?: string
+}): NonNullable<GenerationDiagnostics['tasteBridgeIngress']> {
+  const { districtTasteBridgeArtifacts, plannerTopDistrictIds, selectedDistrictId } = params
+  if (!districtTasteBridgeArtifacts || districtTasteBridgeArtifacts.length === 0) {
+    return {
+      supplied: false,
+      plannerTasteBridgeAuthoritative: false,
+      plannerTopDistrictIds,
+      selectedDistrictMatchesBridgeZone: undefined,
+    }
+  }
+
+  const topArtifacts = districtTasteBridgeArtifacts.slice(0, 5)
+  const topZoneIds = topArtifacts.map((artifact) => artifact.identity.zoneId)
+  const topZoneLabels = topArtifacts.map((artifact) => artifact.identity.zoneLabel)
+  const topSourcePocketIds = [
+    ...new Set(
+      topArtifacts
+        .map((artifact) => artifact.identity.sourcePocketId)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ]
+  const dominantExperienceFamilies = [
+    ...new Set(
+      topArtifacts.flatMap((artifact) => artifact.tasteEnrichment.topExperienceFamilies),
+    ),
+  ].slice(0, 6)
+  const zoneDifferentiationSignatures = topArtifacts.map(
+    (artifact) => artifact.futurePlannerSignals.zoneDifferentiationSignature,
+  )
+  const zoneIdSet = new Set(topZoneIds)
+  const overlapZoneIds = (plannerTopDistrictIds ?? []).filter((districtId) => zoneIdSet.has(districtId))
+
+  return {
+    supplied: true,
+    plannerTasteBridgeAuthoritative: false,
+    artifactCount: districtTasteBridgeArtifacts.length,
+    topZoneIds,
+    topZoneLabels,
+    topSourcePocketIds,
+    dominantExperienceFamilies,
+    zoneDifferentiationSignatures,
+    plannerTopDistrictIds,
+    overlapZoneIds,
+    selectedDistrictMatchesBridgeZone: selectedDistrictId
+      ? zoneIdSet.has(selectedDistrictId)
       : undefined,
   }
 }
@@ -2108,6 +2163,11 @@ export async function runGeneratePlan(
     plannerTopDistrictIds,
     selectedDistrictId: districtAnchor.districtId,
   })
+  const tasteBridgeIngress = buildTasteBridgeIngressDiagnostics({
+    districtTasteBridgeArtifacts: options.districtTasteBridgeArtifacts,
+    plannerTopDistrictIds,
+    selectedDistrictId: districtAnchor.districtId,
+  })
   const categoryDiversity: GenerationDiagnostics['categoryDiversity'] = {
     categoryDiversityScore: roundToHundredths(selectedArc.scoreBreakdown.diversityScore),
     repeatedCategoryCount: selectedArc.scoreBreakdown.repeatedCategoryCount ?? 0,
@@ -2976,6 +3036,7 @@ export async function runGeneratePlan(
     canonicalInterpretationIngress,
     districtEngineIngress,
     bearingsIngress,
+    tasteBridgeIngress,
     curateHardCommit:
       selectedArtifactLineage && planningIntent.mode === 'curate' && curateCommitPreferences.length > 0
         ? (() => {

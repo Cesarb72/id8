@@ -189,6 +189,7 @@ const MIN_CANDIDATE_POOL_LIMIT = 3
 const MAX_CANDIDATE_POOL_LIMIT = 12
 const TARGET_DIRECTION_CANDIDATES = 3
 const MAX_COMPOSED_CANDIDATES = 1
+const CONTRAST_POCKET_INJECTION_DEBUG_MARKER = 'contrast_pocket_injected'
 const MIN_BASELINE_VIABILITY = 0.42
 const MIN_BASELINE_CONFIDENCE = 0.45
 const COMPOSED_MAX_DISTANCE_M = 2400
@@ -198,6 +199,40 @@ const RICHNESS_SIMILARITY_BLOCK = 0.86
 const MIN_COMPOSED_FAMILY_CONFIDENCE = 0.52
 const STRATEGY_OVERLAP_BLOCK = 0.66
 const STRATEGY_POOL_WINDOW = 18
+
+function getProcessEnvValue(key: string): string | undefined {
+  const processEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env
+  return processEnv?.[key]
+}
+
+function readEnvValue(key: string): string | undefined {
+  const importMetaEnv = (import.meta as ImportMeta & {
+    env?: Record<string, string | undefined>
+  }).env
+  return importMetaEnv?.[key] ?? getProcessEnvValue(key)
+}
+
+function parseBooleanEnv(value: string | undefined): boolean | undefined {
+  if (!value) {
+    return undefined
+  }
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true
+  }
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false
+  }
+  return undefined
+}
+
+function readDirectionContrastPocketInjectionEnabled(): boolean {
+  return (
+    parseBooleanEnv(readEnvValue('VITE_ID8_DIRECTION_CONTRAST_POCKET_INJECTION')) ===
+    true
+  )
+}
 
 interface DirectionStrategyFeatures {
   compactness: number
@@ -1542,6 +1577,14 @@ function buildDirectionCandidateFromRanked(
   }
 }
 
+function getPocketZoneDifferentiationSignature(
+  pocketId: string,
+  debug: DistrictDebugTrace | undefined,
+): string | undefined {
+  return debug?.pocketTraces.find((trace) => trace.pocketId === pocketId)?.tasteBridge
+    ?.futurePlannerSignals.zoneDifferentiationSignature
+}
+
 function hasBaselineCandidateQuality(
   candidate: DirectionCandidate,
   profile: DistrictOpportunityProfile,
@@ -2398,7 +2441,7 @@ export function buildDirectionCandidates(
     string,
     { entry: RankedPocket; candidate: DirectionCandidate }
   >()
-  for (const entry of gatedRanked) {
+  for (const entry of sortedRanked) {
     const gateDecision = gateDecisionByPocketId.get(entry.profile.pocketId)
     entryCandidateByPocketId.set(entry.profile.pocketId, {
       entry,
@@ -2447,6 +2490,75 @@ export function buildDirectionCandidates(
         .filter((candidate): candidate is DirectionCandidate => Boolean(candidate))
 
   const selectedPocketIds = new Set(candidates.map((candidate) => candidate.pocketId))
+  const selectedZoneSignatures = new Set(
+    candidates
+      .map((candidate) => getPocketZoneDifferentiationSignature(candidate.pocketId, input.debug))
+      .filter((value): value is string => Boolean(value)),
+  )
+
+  if (
+    readDirectionContrastPocketInjectionEnabled() &&
+    candidates.length < TARGET_DIRECTION_CANDIDATES
+  ) {
+    const contrastPocket = contractGateWorld.suppressedPockets
+      .map((entry) => {
+        const gateDecision = gateDecisionByPocketId.get(entry.profile.pocketId)
+        const base = entryCandidateByPocketId.get(entry.profile.pocketId)
+        const signature = getPocketZoneDifferentiationSignature(entry.profile.pocketId, input.debug)
+        if (!gateDecision?.hardPassed || !base || !signature) {
+          return undefined
+        }
+        if (selectedPocketIds.has(base.candidate.pocketId) || selectedZoneSignatures.has(signature)) {
+          return undefined
+        }
+        if (!hasBaselineCandidateQuality(base.candidate, base.entry.profile)) {
+          return undefined
+        }
+        return {
+          entry: base.entry,
+          gateDecision,
+          signature,
+        }
+      })
+      .filter(
+        (
+          value,
+        ): value is {
+          entry: RankedPocket
+          gateDecision: NonNullable<ReturnType<Map<string, DirectionCandidate['directionContractGateReasonSummary']>['get']>>
+          signature: string
+        } => Boolean(value),
+      )
+      .sort((left, right) => {
+        if (right.gateDecision.gateAdjustedScore !== left.gateDecision.gateAdjustedScore) {
+          return right.gateDecision.gateAdjustedScore - left.gateDecision.gateAdjustedScore
+        }
+        return left.entry.rank - right.entry.rank
+      })[0]
+
+    if (contrastPocket) {
+      const injectedCandidate = buildDirectionCandidateFromRanked(contrastPocket.entry, input, {
+        contractGateApplied: contractGateWorld.debug.applied,
+        contractGateSummary: contractGateWorld.gateSummary,
+        contractGateStrengthSummary: contractGateWorld.gateStrengthSummary,
+        contractGateRejectedCount: contractGateWorld.debug.rejectedCount,
+        contractGateAllowedPreview: contractGateWorld.debug.allowedPreview,
+        contractGateSuppressedPreview: contractGateWorld.debug.suppressedPreview,
+        directionContractGateStatus: contrastPocket.gateDecision.status,
+        directionContractGateReasonSummary: `${contrastPocket.gateDecision.reasonSummary}|${CONTRAST_POCKET_INJECTION_DEBUG_MARKER}`,
+        strategySource: `strategy_layer:fallback_adaptive|${CONTRAST_POCKET_INJECTION_DEBUG_MARKER}`,
+        directionStrategyWorldStatus: contrastPocket.gateDecision.status,
+        directionStrategyWorldReasonSummary: CONTRAST_POCKET_INJECTION_DEBUG_MARKER,
+      })
+      injectedCandidate.reasons = [
+        ...injectedCandidate.reasons,
+        'Contrast pocket injected to preserve unseen zone diversity.',
+      ].slice(0, 4)
+      candidates.push(injectedCandidate)
+      selectedPocketIds.add(injectedCandidate.pocketId)
+      selectedZoneSignatures.add(contrastPocket.signature)
+    }
+  }
 
   while (candidates.length < TARGET_DIRECTION_CANDIDATES) {
     const remainingPool = gatedRanked

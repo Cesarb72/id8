@@ -1,4 +1,5 @@
 import type { TasteOpportunityAggregation } from '../interpretation/taste/aggregateTasteOpportunityFromVenues'
+import type { DistrictTasteBridgeArtifact } from '../interpretation/taste/districtTasteBridgeArtifact'
 
 export type DistrictAnchorSource =
   | 'explicit_district'
@@ -38,6 +39,7 @@ export interface DistrictRecommendation {
   }
   reason: string
   debug?: {
+    tasteBridgeArtifact?: DistrictTasteBridgeArtifact
     adjustedDensity: number
     affinity: number
     vibeAffinity: number

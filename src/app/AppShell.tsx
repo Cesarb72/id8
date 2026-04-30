@@ -35,6 +35,7 @@ import type {
   ContinuationArtifactTargetKind,
   ContinuationPreviewContract,
 } from '../domain/lce/continuationContract'
+import { buildContinuationPreviewContract } from '../domain/lce/continuationContract'
 import { normalizeRawPlace } from '../domain/normalize/normalizeRawPlace'
 import { getNearbyAlternatives } from '../domain/retrieval/getNearbyAlternatives'
 import { scoreVenueFit } from '../domain/retrieval/scoreVenueFit'
@@ -1255,16 +1256,15 @@ function AppShellContent({
   const legacyContinuationPreviewContract = useMemo<
     ContinuationPreviewContract<string, LightNearbyExtensionOption>
   >(
-    () => ({
-      step: 'preview',
+    () =>
+      buildContinuationPreviewContract({
       artifactTargetKind: LEGACY_CONTINUATION_ARTIFACT_TARGET_KIND,
       options: lightNearbyExtensions.map((option) => ({
         id: option.id,
-        artifactTargetKind: LEGACY_CONTINUATION_ARTIFACT_TARGET_KIND,
         payload: option,
       })),
       selectedOptionId: null,
-    }),
+      }),
     [lightNearbyExtensions],
   )
   const previewAdjustDisabledRoles =

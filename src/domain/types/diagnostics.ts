@@ -34,6 +34,7 @@ import type {
   TasteHighlightTier,
   TasteRoleSuitability,
 } from '../interpretation/taste/types'
+import type { DistrictTasteBridgeArtifact } from '../interpretation/taste/districtTasteBridgeArtifact'
 
 export type FallbackRelaxationLevel = 'none' | 'lens-soft' | 'lens-off'
 export type SelectionStrengthLabel =
@@ -88,6 +89,20 @@ export interface BearingsIngressDiagnostics {
   plannerTopDistrictIds?: string[]
   overlapPocketIds?: string[]
   selectedDistrictMatchesAdmittedPocket?: boolean
+}
+
+export interface TasteBridgeIngressDiagnostics {
+  supplied: boolean
+  plannerTasteBridgeAuthoritative: false
+  artifactCount?: number
+  topZoneIds?: string[]
+  topZoneLabels?: string[]
+  topSourcePocketIds?: string[]
+  dominantExperienceFamilies?: string[]
+  zoneDifferentiationSignatures?: string[]
+  plannerTopDistrictIds?: string[]
+  overlapZoneIds?: string[]
+  selectedDistrictMatchesBridgeZone?: boolean
 }
 
 export interface RejectedCandidateDiagnostics {
@@ -865,6 +880,7 @@ export interface GenerationDiagnostics {
   canonicalInterpretationIngress?: CanonicalInterpretationIngressDiagnostics
   districtEngineIngress?: DistrictEngineIngressDiagnostics
   bearingsIngress?: BearingsIngressDiagnostics
+  tasteBridgeIngress?: TasteBridgeIngressDiagnostics
   curateHardCommit?: CurateHardCommitDiagnostics
   faultIsolationNotes: string[]
   refinementOutcome?: RefinementOutcome

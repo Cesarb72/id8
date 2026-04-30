@@ -34,6 +34,7 @@ import {
   formatExperienceContractActShape,
   type CanonicalInterpretationBundle,
 } from '../../../domain/interpretation/buildCanonicalInterpretationBundle'
+import type { DistrictTasteBridgeArtifact } from '../../../domain/interpretation/taste/districtTasteBridgeArtifact'
 import type {
   ConciergeIntent,
   ContractConstraints,
@@ -43,6 +44,59 @@ import type {
 } from '../../../domain/types/intent'
 import type { PersonaMode } from '../../../domain/types/intent'
 import type { BuildDistrictOpportunityProfilesResult } from '../../../engines/district'
+
+function getProcessEnvValue(key: string): string | undefined {
+  const processEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env
+  return processEnv?.[key]
+}
+
+function readEnvValue(key: string): string | undefined {
+  const importMetaEnv = (import.meta as ImportMeta & {
+    env?: Record<string, string | undefined>
+  }).env
+  return importMetaEnv?.[key] ?? getProcessEnvValue(key)
+}
+
+function parseBooleanEnv(value: string | undefined): boolean | undefined {
+  if (!value) {
+    return undefined
+  }
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true
+  }
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false
+  }
+  return undefined
+}
+
+function getTasteBridgeDirectionDiversificationFlag(): boolean {
+  return parseBooleanEnv(readEnvValue('VITE_ID8_TASTE_BRIDGE_DIRECTION_DIVERSIFICATION')) ?? false
+}
+
+let hasLoggedDirectionEnvFlags = false
+
+function logDirectionEnvFlags(): void {
+  if (hasLoggedDirectionEnvFlags) {
+    return
+  }
+  hasLoggedDirectionEnvFlags = true
+
+  const env = (import.meta as ImportMeta & {
+    env?: Record<string, string | undefined>
+  }).env
+
+  console.info('[ID8 direction env]', {
+    VITE_ID8_DIRECTION_CANDIDATE_FLOOR_RECOVERY:
+      env?.VITE_ID8_DIRECTION_CANDIDATE_FLOOR_RECOVERY,
+    VITE_ID8_DIRECTION_CONTRAST_POCKET_INJECTION:
+      env?.VITE_ID8_DIRECTION_CONTRAST_POCKET_INJECTION,
+    VITE_ID8_TASTE_BRIDGE_DIRECTION_DIVERSIFICATION:
+      env?.VITE_ID8_TASTE_BRIDGE_DIRECTION_DIVERSIFICATION,
+  })
+}
 
 export interface AssembleSandboxDirectionWorldParams {
   persona: PersonaMode
@@ -86,6 +140,8 @@ export function assembleSandboxDirectionWorld(
   params: AssembleSandboxDirectionWorldParams,
   dependencies: AssembleSandboxDirectionWorldDependencies,
 ): SandboxDirectionWorld {
+  logDirectionEnvFlags()
+
   const canonicalInterpretationBundle = buildCanonicalInterpretationBundle({
     persona: params.persona,
     vibe: params.primaryVibe,
@@ -166,11 +222,21 @@ export function assembleSandboxDirectionWorld(
             personaShapedCandidates,
             params.primaryVibe,
           )
+          const tasteBridgeDirectionDiversification =
+            getTasteBridgeDirectionDiversificationFlag()
+          const tasteBridgeByPocketId = new Map<string, DistrictTasteBridgeArtifact>()
+          for (const trace of params.districtPreviewResult.debug?.pocketTraces ?? []) {
+            if (trace.tasteBridge) {
+              tasteBridgeByPocketId.set(trace.pocketId, trace.tasteBridge)
+            }
+          }
           const finalSelection = selectBestDistinctDirections({
             candidates: vibeShapedCandidates,
             preShapeCandidates: baseCandidates,
             requestedVibe: params.primaryVibe,
             finalLimit: 3,
+            tasteBridgeDirectionDiversification,
+            tasteBridgeByPocketId,
           })
           const correctedWinnerId =
             finalSelection.debug.correctedWinnerId ?? finalSelection.finalists[0]?.pocketId
@@ -346,8 +412,21 @@ export function assembleSandboxDirectionWorld(
                   contractGateRejectedCount: candidate.contractGateRejectedCount,
                   contractGateAllowedPreview: candidate.contractGateAllowedPreview,
                   contractGateSuppressedPreview: candidate.contractGateSuppressedPreview,
+                  floorRecoveryAttempted: contractGateWorld.debug.floorRecoveryAttempted,
+                  floorRecoveryCandidateId: contractGateWorld.debug.floorRecoveryCandidateId,
+                  floorRecoveryReason: contractGateWorld.debug.floorRecoveryReason,
+                  floorRecoveryBlockedReason: contractGateWorld.debug.floorRecoveryBlockedReason,
                   directionContractGateStatus: candidate.directionContractGateStatus,
                   directionContractGateReasonSummary: candidate.directionContractGateReasonSummary,
+                  contrastPocketInjected:
+                    candidate.directionContractGateReasonSummary?.includes(
+                      'contrast_pocket_injected',
+                    ) === true ||
+                    candidate.directionStrategyWorldReasonSummary ===
+                      'contrast_pocket_injected' ||
+                    candidate.directionStrategySource?.includes(
+                      'contrast_pocket_injected',
+                    ) === true,
                   strategyWorldSource: candidate.strategyWorldSource,
                   selectedStrategyWorldId: candidate.selectedStrategyWorldId,
                   strategyWorldSummary: candidate.strategyWorldSummary,
@@ -374,6 +453,9 @@ export function assembleSandboxDirectionWorld(
                   selectedFamilies: finalSelection.debug.selectedFamilies,
                   familyDiversityApplied: finalSelection.debug.familyDiversityApplied,
                   fallbackUsed: finalSelection.debug.fallbackUsed,
+                  tasteBridgeDirectionDiversificationApplied:
+                    finalSelection.debug.tasteBridgeDirectionDiversificationApplied,
+                  droppedPocketIds: finalSelection.debug.droppedPocketIds,
                   expressionMode: hyperlocalExpression.expressionMode,
                   localSpecificityScore: hyperlocalExpression.localSpecificityScore,
                   usedPrimaryMicroPocket: hyperlocalExpression.usedPrimaryMicroPocket,

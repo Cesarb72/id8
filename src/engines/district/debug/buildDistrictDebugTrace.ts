@@ -12,6 +12,7 @@ import type {
   RefinedPocket,
   ResolvedLocation,
 } from '../types/districtTypes'
+import { buildDistrictTasteBridgeArtifact } from '../../../domain/interpretation/taste/districtTasteBridgeArtifact'
 import { getDistrictPocketTruthTier, isFallbackPocketOrigin } from '../types/districtTypes'
 
 type BuildDistrictDebugTraceInput = {
@@ -190,13 +191,20 @@ export function buildDistrictDebugTrace(
           .join('; ')
       : 'none'
 
-  const pocketTraces = input.viability.evaluated.map((pocket) => ({
+  const pocketTraces = input.viability.evaluated.map((pocket) => {
+    const districtProfile = profileByPocketId.get(pocket.id)
+    const tasteBridge = districtProfile
+      ? buildDistrictTasteBridgeArtifact({
+          districtProfile,
+        })
+      : undefined
+    return {
     pocketId: pocket.id,
     origin: pocket.origin,
     truthTier: getDistrictPocketTruthTier(pocket.origin),
     isDegradedFallback: isFallbackPocketOrigin(pocket.origin),
     fallbackPenaltyApplied:
-      profileByPocketId.get(pocket.id)?.meta.fallbackPenaltyApplied ?? 0,
+      districtProfile?.meta.fallbackPenaltyApplied ?? 0,
     fallbackReasonCode: pocket.originMeta.fallbackReasonCode,
     clusteringSource: pocket.originMeta.clusteringSource,
     classification: pocket.viability.classification,
@@ -205,7 +213,8 @@ export function buildDistrictDebugTrace(
     selected: selectedPocketIds.has(pocket.id),
     stageNotes: pocket.originMeta.stageNotes,
     notes: pocket.viability.reasons,
-    hyperlocal: toHyperlocalSnapshot(profileByPocketId.get(pocket.id)),
+    tasteBridge,
+    hyperlocal: toHyperlocalSnapshot(districtProfile),
     metrics: {
       maxDistanceFromCentroidM: pocket.geometry.maxDistanceFromCentroidM,
       avgDistanceFromCentroidM: pocket.geometry.avgDistanceFromCentroidM,
@@ -225,11 +234,11 @@ export function buildDistrictDebugTrace(
       densityScore: pocket.viability.signals.densityScore,
       compactnessScore: pocket.viability.signals.compactnessScore,
       origin: pocket.origin,
-      localSpecificityScore:
-        profileByPocketId.get(pocket.id)?.hyperlocal?.localSpecificityScore,
+      localSpecificityScore: districtProfile?.hyperlocal?.localSpecificityScore,
     },
     composition: buildCompositionSnapshot(pocket),
-  }))
+    }
+  })
 
   return {
     enabled: true,

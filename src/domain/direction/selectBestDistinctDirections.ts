@@ -1,5 +1,6 @@
 import type { VibeShapedDirectionCandidate } from './applyVibeShaping'
 import type { DirectionCandidate, DirectionCluster } from './buildDirectionCandidates'
+import type { DistrictTasteBridgeArtifact } from '../interpretation/taste/districtTasteBridgeArtifact'
 import type { VibeAnchor } from '../types/intent'
 
 type SelectionMode =
@@ -27,6 +28,10 @@ export interface DistinctDirectionSelectionDecision {
   contrastScore: number
   winnerStrengthBonus?: number
   adjustedScore: number
+  tasteBridgeTieBreakApplied?: boolean
+  tasteBridgeTieBreakReason?: string
+  tasteBridgeZoneDifferentiationSignature?: string
+  tasteBridgeTopExperienceFamilies?: string[]
 }
 
 export interface DistinctDirectionSelectionDebug {
@@ -51,6 +56,9 @@ export interface DistinctDirectionSelectionDebug {
   laneSeparationReason?: string
   top1RawSeparation: number
   top1AdjustedSeparation: number
+  tasteBridgeDirectionDiversificationEnabled: boolean
+  tasteBridgeDirectionDiversificationApplied: boolean
+  tasteBridgeDiversifiedPocketIds: string[]
   selectionDecisions: DistinctDirectionSelectionDecision[]
 }
 
@@ -59,6 +67,8 @@ interface SelectBestDistinctDirectionsInput {
   preShapeCandidates?: DirectionCandidate[]
   requestedVibe?: VibeAnchor
   finalLimit?: number
+  tasteBridgeDirectionDiversification?: boolean
+  tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>
 }
 
 export interface SelectBestDistinctDirectionsResult {
@@ -70,6 +80,8 @@ const DEFAULT_FINAL_LIMIT = 3
 const SLOT1_GUARDRAIL_MAX_SCORE_MARGIN = 0.028
 const SLOT1_GUARDRAIL_MIN_ALIGNMENT_GAP = 0.14
 const FAMILY_DIVERSITY_VIABILITY_BAND = 0.065
+const TASTE_BRIDGE_SLOT3_FINAL_SCORE_BAND = 0.12
+const TASTE_BRIDGE_SLOT3_ADJUSTED_SCORE_BAND = 0.09
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
@@ -478,8 +490,9 @@ function buildSlot1Decision(
   candidate: VibeShapedDirectionCandidate,
   mode: SelectionMode,
   winnerStrengthBonus: number,
+  tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>,
 ): DistinctDirectionSelectionDecision {
-  return {
+  return withTasteBridgeMetadata({
     pocketId: candidate.pocketId,
     cluster: candidate.cluster,
     macroLane: candidate.contrastProfile.macroLane,
@@ -494,6 +507,22 @@ function buildSlot1Decision(
     contrastScore: 0,
     winnerStrengthBonus: toFixed(winnerStrengthBonus),
     adjustedScore: toFixed(candidate.finalScore + winnerStrengthBonus),
+  }, tasteBridgeByPocketId?.get(candidate.pocketId))
+}
+
+function withTasteBridgeMetadata(
+  decision: DistinctDirectionSelectionDecision,
+  bridge: DistrictTasteBridgeArtifact | undefined,
+): DistinctDirectionSelectionDecision {
+  if (!bridge) {
+    return decision
+  }
+
+  return {
+    ...decision,
+    tasteBridgeZoneDifferentiationSignature:
+      bridge.futurePlannerSignals.zoneDifferentiationSignature,
+    tasteBridgeTopExperienceFamilies: [...bridge.tasteEnrichment.topExperienceFamilies],
   }
 }
 
@@ -501,11 +530,12 @@ function buildFallbackDecision(
   candidate: VibeShapedDirectionCandidate,
   selected: VibeShapedDirectionCandidate[],
   selectionRank: number,
+  tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>,
 ): DistinctDirectionSelectionDecision {
   const maxSimilarityToSelected = getMaxSimilarityToSelection(candidate, selected)
   const diversityLift = (1 - maxSimilarityToSelected) * 0.04
   const adjustedScore = candidate.finalScore + diversityLift
-  return {
+  return withTasteBridgeMetadata({
     pocketId: candidate.pocketId,
     cluster: candidate.cluster,
     macroLane: candidate.contrastProfile.macroLane,
@@ -519,13 +549,14 @@ function buildFallbackDecision(
     similarityPenalty: 0,
     contrastScore: toFixed(1 - maxSimilarityToSelected),
     adjustedScore: toFixed(adjustedScore),
-  }
+  }, tasteBridgeByPocketId?.get(candidate.pocketId))
 }
 
 function buildSlot2Decision(
   candidate: VibeShapedDirectionCandidate,
   winner: VibeShapedDirectionCandidate,
   vibe: VibeAnchor | undefined,
+  tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>,
 ): DistinctDirectionSelectionDecision {
   const similarityToWinner = getCandidateSimilarity(candidate, winner)
   const laneAlignment = getLaneAlignmentScore(candidate, vibe)
@@ -552,7 +583,7 @@ function buildSlot2Decision(
   const adjustedScore =
     candidate.finalScore + adjacencyLift + diversityLift + laneAlignment * 0.015 - similarityPenalty
 
-  return {
+  return withTasteBridgeMetadata({
     pocketId: candidate.pocketId,
     cluster: candidate.cluster,
     macroLane: candidate.contrastProfile.macroLane,
@@ -569,7 +600,7 @@ function buildSlot2Decision(
     similarityPenalty: toFixed(similarityPenalty),
     contrastScore: toFixed(1 - similarityToWinner),
     adjustedScore: toFixed(adjustedScore),
-  }
+  }, tasteBridgeByPocketId?.get(candidate.pocketId))
 }
 
 function buildSlot3Decision(
@@ -577,6 +608,7 @@ function buildSlot3Decision(
   winner: VibeShapedDirectionCandidate,
   slot2: VibeShapedDirectionCandidate | undefined,
   vibe: VibeAnchor | undefined,
+  tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>,
 ): DistinctDirectionSelectionDecision {
   const similarityToWinner = getCandidateSimilarity(candidate, winner)
   const similarityToSlot2 = slot2 ? getCandidateSimilarity(candidate, slot2) : 0
@@ -622,7 +654,7 @@ function buildSlot3Decision(
     ? Math.max(similarityToWinner, similarityToSlot2)
     : similarityToWinner
 
-  return {
+  return withTasteBridgeMetadata({
     pocketId: candidate.pocketId,
     cluster: candidate.cluster,
     macroLane: candidate.contrastProfile.macroLane,
@@ -640,7 +672,7 @@ function buildSlot3Decision(
     similarityPenalty: toFixed(similarityPenalty + viabilityPenalty),
     contrastScore: toFixed(1 - similarityToWinner),
     adjustedScore: toFixed(adjustedScore),
-  }
+  }, tasteBridgeByPocketId?.get(candidate.pocketId))
 }
 
 function pickByDecision(
@@ -665,13 +697,195 @@ type FamilyAwarePickResult = {
   fallbackUsed: boolean
 }
 
+type TasteBridgeDiversificationContext = {
+  enabled: boolean
+  selected: VibeShapedDirectionCandidate[]
+  tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>
+  viabilityBand: number
+  finalScoreBand?: number
+  adjustedScoreBand?: number
+}
+
+function getTasteBridgeSignatureValue(
+  candidate: VibeShapedDirectionCandidate,
+  tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>,
+): string | undefined {
+  return tasteBridgeByPocketId?.get(candidate.pocketId)?.futurePlannerSignals.zoneDifferentiationSignature
+}
+
+function getTasteBridgeFamilies(
+  candidate: VibeShapedDirectionCandidate,
+  tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>,
+): string[] {
+  return tasteBridgeByPocketId?.get(candidate.pocketId)?.tasteEnrichment.topExperienceFamilies ?? []
+}
+
+function buildSelectedTasteBridgeContext(params: {
+  selected: VibeShapedDirectionCandidate[]
+  tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>
+}): {
+  signatureSet: Set<string>
+  familySet: Set<string>
+} {
+  const signatureSet = new Set<string>()
+  const familySet = new Set<string>()
+
+  for (const candidate of params.selected) {
+    const signature = getTasteBridgeSignatureValue(candidate, params.tasteBridgeByPocketId)
+    if (signature) {
+      signatureSet.add(signature)
+    }
+    for (const family of getTasteBridgeFamilies(candidate, params.tasteBridgeByPocketId)) {
+      familySet.add(family)
+    }
+  }
+
+  return {
+    signatureSet,
+    familySet,
+  }
+}
+
+function getTasteBridgeDistinctnessScore(params: {
+  candidate: VibeShapedDirectionCandidate
+  selectedSignatureSet: Set<string>
+  selectedFamilySet: Set<string>
+  tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>
+}): {
+  unseenSignature: boolean
+  unseenFamilyCount: number
+  score: number
+} {
+  const signature = getTasteBridgeSignatureValue(params.candidate, params.tasteBridgeByPocketId)
+  const families = getTasteBridgeFamilies(params.candidate, params.tasteBridgeByPocketId)
+  const unseenSignature = Boolean(signature) && !params.selectedSignatureSet.has(signature)
+  const unseenFamilyCount = families.filter((family) => !params.selectedFamilySet.has(family)).length
+
+  return {
+    unseenSignature,
+    unseenFamilyCount,
+    score: (unseenSignature ? 10 : 0) + unseenFamilyCount,
+  }
+}
+
+function maybeApplyTasteBridgeTieBreak(
+  scored: Array<{
+    candidate: VibeShapedDirectionCandidate
+    decision: DistinctDirectionSelectionDecision
+  }>,
+  context: TasteBridgeDiversificationContext | undefined,
+): Array<{
+  candidate: VibeShapedDirectionCandidate
+  decision: DistinctDirectionSelectionDecision
+}> {
+  if (!context?.enabled || !context.tasteBridgeByPocketId || scored.length <= 1) {
+    return scored
+  }
+
+  const bestOverall = scored[0]
+  if (!bestOverall) {
+    return scored
+  }
+
+  const selectedContext = buildSelectedTasteBridgeContext({
+    selected: context.selected,
+    tasteBridgeByPocketId: context.tasteBridgeByPocketId,
+  })
+  const bestOverallDistinctness = getTasteBridgeDistinctnessScore({
+    candidate: bestOverall.candidate,
+    selectedSignatureSet: selectedContext.signatureSet,
+    selectedFamilySet: selectedContext.familySet,
+    tasteBridgeByPocketId: context.tasteBridgeByPocketId,
+  })
+  const bridgePreferred = scored.find((entry) => {
+    if (entry.candidate.pocketId === bestOverall.candidate.pocketId) {
+      return false
+    }
+    if (entry.candidate.confidence + 0.0005 < bestOverall.candidate.confidence) {
+      return false
+    }
+    if (bestOverall.decision.adjustedScore - entry.decision.adjustedScore > context.viabilityBand) {
+      return false
+    }
+    if (
+      typeof context.finalScoreBand === 'number' &&
+      bestOverall.candidate.finalScore - entry.candidate.finalScore > context.finalScoreBand
+    ) {
+      return false
+    }
+    if (
+      typeof context.adjustedScoreBand === 'number' &&
+      bestOverall.decision.adjustedScore - entry.decision.adjustedScore > context.adjustedScoreBand
+    ) {
+      return false
+    }
+
+    const distinctness = getTasteBridgeDistinctnessScore({
+      candidate: entry.candidate,
+      selectedSignatureSet: selectedContext.signatureSet,
+      selectedFamilySet: selectedContext.familySet,
+      tasteBridgeByPocketId: context.tasteBridgeByPocketId,
+    })
+
+    if (distinctness.score <= bestOverallDistinctness.score) {
+      return false
+    }
+
+    return distinctness.unseenSignature || distinctness.unseenFamilyCount > 0
+  })
+
+  if (!bridgePreferred) {
+    return scored
+  }
+
+  const distinctness = getTasteBridgeDistinctnessScore({
+    candidate: bridgePreferred.candidate,
+    selectedSignatureSet: selectedContext.signatureSet,
+    selectedFamilySet: selectedContext.familySet,
+    tasteBridgeByPocketId: context.tasteBridgeByPocketId,
+  })
+  const tieBreakReason = distinctness.unseenSignature
+    ? 'unseen_zone_differentiation_signature'
+    : 'unseen_experience_families'
+
+  return scored
+    .map((entry) =>
+      entry.candidate.pocketId === bridgePreferred.candidate.pocketId
+        ? {
+            candidate: entry.candidate,
+            decision: {
+              ...entry.decision,
+              tasteBridgeTieBreakApplied: true,
+              tasteBridgeTieBreakReason: tieBreakReason,
+            },
+          }
+        : entry,
+    )
+    .sort((left, right) => {
+      if (
+        Boolean(right.decision.tasteBridgeTieBreakApplied) !==
+        Boolean(left.decision.tasteBridgeTieBreakApplied)
+      ) {
+        return Number(Boolean(right.decision.tasteBridgeTieBreakApplied)) -
+          Number(Boolean(left.decision.tasteBridgeTieBreakApplied))
+      }
+      if (right.decision.adjustedScore !== left.decision.adjustedScore) {
+        return right.decision.adjustedScore - left.decision.adjustedScore
+      }
+      return compareCandidates(left.candidate, right.candidate)
+    })
+}
+
 function pickByDecisionWithFamilyDiversity(params: {
   candidates: VibeShapedDirectionCandidate[]
   selectedFamilies: Set<string>
+  selected?: VibeShapedDirectionCandidate[]
   decisionBuilder: (candidate: VibeShapedDirectionCandidate) => DistinctDirectionSelectionDecision
   viabilityBand?: number
+  tasteBridgeDiversification?: TasteBridgeDiversificationContext
 }): FamilyAwarePickResult {
-  const scored = params.candidates
+  const scored = maybeApplyTasteBridgeTieBreak(
+    params.candidates
     .map((candidate) => ({
       candidate,
       decision: params.decisionBuilder(candidate),
@@ -681,7 +895,9 @@ function pickByDecisionWithFamilyDiversity(params: {
         return right.decision.adjustedScore - left.decision.adjustedScore
       }
       return compareCandidates(left.candidate, right.candidate)
-    })
+    }),
+    params.tasteBridgeDiversification,
+  )
 
   const bestOverall = scored[0]
   if (!bestOverall) {
@@ -762,6 +978,8 @@ function pickSlot3WithLaneSeparation(params: {
   vibe?: VibeAnchor
   laneCollapseRisk: boolean
   selectedFamilies: Set<string>
+  tasteBridgeDirectionDiversification?: boolean
+  tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>
 }):
   | {
       candidate: VibeShapedDirectionCandidate
@@ -775,10 +993,25 @@ function pickSlot3WithLaneSeparation(params: {
   const bestOverallPick = pickByDecisionWithFamilyDiversity({
     candidates: params.remaining,
     selectedFamilies: params.selectedFamilies,
+    selected: params.slot2 ? [params.winner, params.slot2] : [params.winner],
     decisionBuilder: (candidate) =>
       params.slot2
-        ? buildSlot3Decision(candidate, params.winner, params.slot2, params.vibe)
-        : buildFallbackDecision(candidate, [params.winner], 3),
+        ? buildSlot3Decision(
+            candidate,
+            params.winner,
+            params.slot2,
+            params.vibe,
+            params.tasteBridgeByPocketId,
+          )
+        : buildFallbackDecision(candidate, [params.winner], 3, params.tasteBridgeByPocketId),
+    tasteBridgeDiversification: {
+      enabled: params.tasteBridgeDirectionDiversification ?? false,
+      selected: params.slot2 ? [params.winner, params.slot2] : [params.winner],
+      tasteBridgeByPocketId: params.tasteBridgeByPocketId,
+      viabilityBand: TASTE_BRIDGE_SLOT3_ADJUSTED_SCORE_BAND,
+      finalScoreBand: TASTE_BRIDGE_SLOT3_FINAL_SCORE_BAND,
+      adjustedScoreBand: TASTE_BRIDGE_SLOT3_ADJUSTED_SCORE_BAND,
+    },
   })
   if (!bestOverallPick.pick) {
     return undefined
@@ -811,10 +1044,25 @@ function pickSlot3WithLaneSeparation(params: {
   const bestDifferentLanePick = pickByDecisionWithFamilyDiversity({
     candidates: differentLaneCandidates,
     selectedFamilies: params.selectedFamilies,
+    selected: params.slot2 ? [params.winner, params.slot2] : [params.winner],
     decisionBuilder: (candidate) =>
       params.slot2
-        ? buildSlot3Decision(candidate, params.winner, params.slot2, params.vibe)
-        : buildFallbackDecision(candidate, [params.winner], 3),
+        ? buildSlot3Decision(
+            candidate,
+            params.winner,
+            params.slot2,
+            params.vibe,
+            params.tasteBridgeByPocketId,
+          )
+        : buildFallbackDecision(candidate, [params.winner], 3, params.tasteBridgeByPocketId),
+    tasteBridgeDiversification: {
+      enabled: params.tasteBridgeDirectionDiversification ?? false,
+      selected: params.slot2 ? [params.winner, params.slot2] : [params.winner],
+      tasteBridgeByPocketId: params.tasteBridgeByPocketId,
+      viabilityBand: TASTE_BRIDGE_SLOT3_ADJUSTED_SCORE_BAND,
+      finalScoreBand: TASTE_BRIDGE_SLOT3_FINAL_SCORE_BAND,
+      adjustedScoreBand: TASTE_BRIDGE_SLOT3_ADJUSTED_SCORE_BAND,
+    },
   })
   if (!bestDifferentLanePick.pick) {
     return {
@@ -856,12 +1104,15 @@ export function selectBestDistinctDirections({
   preShapeCandidates,
   requestedVibe,
   finalLimit = DEFAULT_FINAL_LIMIT,
+  tasteBridgeDirectionDiversification = false,
+  tasteBridgeByPocketId,
 }: SelectBestDistinctDirectionsInput): SelectBestDistinctDirectionsResult {
   const rankedCandidates = candidates.slice().sort(compareCandidates)
   const effectiveFinalLimit = clamp(Math.floor(finalLimit), 1, DEFAULT_FINAL_LIMIT)
   const selected: VibeShapedDirectionCandidate[] = []
   const decisions: DistinctDirectionSelectionDecision[] = []
   const selectedFamilies = new Set<string>()
+  const tasteBridgeDiversifiedPocketIds = new Set<string>()
   let familyDiversityApplied = false
   let fallbackUsed = false
 
@@ -928,6 +1179,7 @@ export function selectBestDistinctDirections({
         slot1,
         slot1GuardrailApplied ? 'guardrail_lane_alignment' : 'winner_strength',
         slot1WinnerStrengthBonus,
+        tasteBridgeByPocketId,
       ),
     )
     remainingByPocketId.delete(slot1.pocketId)
@@ -938,13 +1190,23 @@ export function selectBestDistinctDirections({
     const slot2Pick = pickByDecisionWithFamilyDiversity({
       candidates: remaining,
       selectedFamilies,
+      selected: [selected[0]],
       decisionBuilder: (candidate) =>
-        buildSlot2Decision(candidate, selected[0], resolvedVibe),
+        buildSlot2Decision(candidate, selected[0], resolvedVibe, tasteBridgeByPocketId),
+      tasteBridgeDiversification: {
+        enabled: tasteBridgeDirectionDiversification,
+        selected: [selected[0]],
+        tasteBridgeByPocketId,
+        viabilityBand: FAMILY_DIVERSITY_VIABILITY_BAND,
+      },
     })
     if (slot2Pick.pick) {
       selected.push(slot2Pick.pick.candidate)
       selectedFamilies.add(slot2Pick.pick.candidate.experienceFamily)
       decisions.push(slot2Pick.pick.decision)
+      if (slot2Pick.pick.decision.tasteBridgeTieBreakApplied) {
+        tasteBridgeDiversifiedPocketIds.add(slot2Pick.pick.candidate.pocketId)
+      }
       remainingByPocketId.delete(slot2Pick.pick.candidate.pocketId)
       familyDiversityApplied = familyDiversityApplied || slot2Pick.familyDiversityApplied
       fallbackUsed = fallbackUsed || slot2Pick.fallbackUsed
@@ -969,12 +1231,28 @@ export function selectBestDistinctDirections({
           vibe: resolvedVibe,
           laneCollapseRisk,
           selectedFamilies,
+          tasteBridgeDirectionDiversification,
+          tasteBridgeByPocketId,
         })
       : pickByDecisionWithFamilyDiversity({
           candidates: remaining,
           selectedFamilies,
+          selected,
           decisionBuilder: (candidate) =>
-            buildFallbackDecision(candidate, selected, selected.length + 1),
+            buildFallbackDecision(
+              candidate,
+              selected,
+              selected.length + 1,
+              tasteBridgeByPocketId,
+            ),
+          tasteBridgeDiversification: {
+            enabled: tasteBridgeDirectionDiversification,
+            selected,
+            tasteBridgeByPocketId,
+            viabilityBand: TASTE_BRIDGE_SLOT3_ADJUSTED_SCORE_BAND,
+            finalScoreBand: TASTE_BRIDGE_SLOT3_FINAL_SCORE_BAND,
+            adjustedScoreBand: TASTE_BRIDGE_SLOT3_ADJUSTED_SCORE_BAND,
+          },
         })
     if (slot3Pick) {
       const picked = 'pick' in slot3Pick ? slot3Pick.pick : slot3Pick
@@ -982,6 +1260,9 @@ export function selectBestDistinctDirections({
         selected.push(picked.candidate)
         selectedFamilies.add(picked.candidate.experienceFamily)
         decisions.push(picked.decision)
+        if (picked.decision.tasteBridgeTieBreakApplied) {
+          tasteBridgeDiversifiedPocketIds.add(picked.candidate.pocketId)
+        }
         remainingByPocketId.delete(picked.candidate.pocketId)
       }
       if ('laneSeparatedSlot3' in slot3Pick) {
@@ -1008,8 +1289,22 @@ export function selectBestDistinctDirections({
     const fallback = pickByDecisionWithFamilyDiversity({
       candidates: remaining,
       selectedFamilies,
+      selected,
       decisionBuilder: (candidate) =>
-        buildFallbackDecision(candidate, selected, selected.length + 1),
+        buildFallbackDecision(
+          candidate,
+          selected,
+          selected.length + 1,
+          tasteBridgeByPocketId,
+        ),
+      tasteBridgeDiversification: {
+        enabled: tasteBridgeDirectionDiversification,
+        selected,
+        tasteBridgeByPocketId,
+        viabilityBand: TASTE_BRIDGE_SLOT3_ADJUSTED_SCORE_BAND,
+        finalScoreBand: TASTE_BRIDGE_SLOT3_FINAL_SCORE_BAND,
+        adjustedScoreBand: TASTE_BRIDGE_SLOT3_ADJUSTED_SCORE_BAND,
+      },
     })
     if (!fallback.pick) {
       break
@@ -1017,6 +1312,9 @@ export function selectBestDistinctDirections({
     selected.push(fallback.pick.candidate)
     selectedFamilies.add(fallback.pick.candidate.experienceFamily)
     decisions.push(fallback.pick.decision)
+    if (fallback.pick.decision.tasteBridgeTieBreakApplied) {
+      tasteBridgeDiversifiedPocketIds.add(fallback.pick.candidate.pocketId)
+    }
     remainingByPocketId.delete(fallback.pick.candidate.pocketId)
     familyDiversityApplied = familyDiversityApplied || fallback.familyDiversityApplied
     fallbackUsed = fallbackUsed || fallback.fallbackUsed
@@ -1070,6 +1368,9 @@ export function selectBestDistinctDirections({
               adjustedSecond.winnerAdjustedScore
           : 0,
       ),
+      tasteBridgeDirectionDiversificationEnabled: tasteBridgeDirectionDiversification,
+      tasteBridgeDirectionDiversificationApplied: tasteBridgeDiversifiedPocketIds.size > 0,
+      tasteBridgeDiversifiedPocketIds: [...tasteBridgeDiversifiedPocketIds],
       selectionDecisions: decisions,
     },
   }

@@ -120,6 +120,10 @@ import {
   buildDistrictOpportunityProfiles,
   type BuildDistrictOpportunityProfilesResult,
 } from '../engines/district'
+import {
+  buildDistrictTasteBridgeArtifact,
+  type DistrictTasteBridgeArtifact,
+} from '../domain/interpretation/taste/districtTasteBridgeArtifact'
 import type {
   TasteOpportunityAggregation,
   TasteOpportunityRoleCandidate,
@@ -4249,6 +4253,10 @@ function getTasteAggregationIngredientLine(
     return `Supports ${highlightType} peaks with role-ready nearby options`
   }
   return 'Supports role-ready opener, peak, and close options'
+}
+
+function getTasteBridgeLine(bridge: DistrictTasteBridgeArtifact): string {
+  return `Bridge: ${bridge.futurePlannerSignals.zoneTone} | ${bridge.futurePlannerSignals.zoneCenterpieceStrength} centerpiece | ${bridge.futurePlannerSignals.zoneVarietySignature}`
 }
 
 type AggregationMoment = TasteOpportunityAggregation['moments']['primary'][number]
@@ -10485,6 +10493,10 @@ export function SandboxConciergePage() {
         'Clustered area supporting movement and variety'
       const supportedDirections = directionCountByPocketId.get(profile.pocketId) ?? 0
       const aggregation = recommendation?.tasteAggregation
+      const tasteBridgeArtifact = buildDistrictTasteBridgeArtifact({
+        districtProfile: profile,
+        tasteAggregation: aggregation,
+      })
       const signalDescription = describeDistrictSignals({
         density: densityValue,
         walkability: walkabilityValue,
@@ -10520,6 +10532,8 @@ export function SandboxConciergePage() {
         rankLabel: rankIndex <= 0 ? 'Strong match' : 'Alternative',
         matchSignal,
         tasteAggregation: aggregation,
+        tasteBridgeArtifact,
+        tasteBridgeLine: getTasteBridgeLine(tasteBridgeArtifact),
       }
     })
   }, [
@@ -10551,6 +10565,10 @@ export function SandboxConciergePage() {
       ingredientLine: 'Useful when you want options before committing.',
     }
   }, [districtRecommendations])
+  const plannerDistrictTasteBridgeArtifacts = useMemo(
+    () => districtDiscoveryCards.map((district) => district.tasteBridgeArtifact),
+    [districtDiscoveryCards],
+  )
 
   const directionCardsByPocketId = useMemo(() => {
     const next = new Map<string, RealityDirectionCard[]>()
@@ -12714,6 +12732,7 @@ export function SandboxConciergePage() {
               contractConstraints: canonicalContractConstraints,
               canonicalInterpretationBundle,
               rankedDistrictPockets: districtPreviewResult?.ranked,
+              districtTasteBridgeArtifacts: plannerDistrictTasteBridgeArtifacts,
               contractGateWorld,
             selectedArtifactLineage: activeSelectedArtifactLineage,
           },
@@ -12945,6 +12964,7 @@ export function SandboxConciergePage() {
       isBuildWrapperActive,
       isSurpriseWrapperActive,
       isCurateWrapperActive,
+      plannerDistrictTasteBridgeArtifacts,
       persona,
       primaryVibe,
       selectedBuildAnchor?.venueId,
@@ -13650,6 +13670,7 @@ export function SandboxConciergePage() {
               canonicalExperienceContract,
               canonicalContractConstraints,
               rankedDistrictPockets: districtPreviewResult?.ranked,
+              districtTasteBridgeArtifacts: plannerDistrictTasteBridgeArtifacts,
               contractGateWorld,
               refinementModes: clusterRefinementMap[activeDirection.cluster],
               activeDirectionContract,
@@ -13826,6 +13847,7 @@ export function SandboxConciergePage() {
       directionCards,
       districtLocationQuery,
       isCurateWrapperActive,
+      plannerDistrictTasteBridgeArtifacts,
       persona,
       primaryVibe,
       resolveDirectionForCandidateArtifact,
@@ -14907,6 +14929,23 @@ export function SandboxConciergePage() {
     selectedDirection?.debugMeta?.contractGateAllowedPreview?.join(',') ?? 'n/a'
   const selectedContractGateSuppressedPreview =
     selectedDirection?.debugMeta?.contractGateSuppressedPreview?.join(',') ?? 'n/a'
+  const selectedFloorRecoveryAttempted = String(
+    selectedDirection?.debugMeta?.floorRecoveryAttempted ??
+      contractGateWorld.debug.floorRecoveryAttempted ??
+      false,
+  )
+  const selectedFloorRecoveryCandidateId =
+    selectedDirection?.debugMeta?.floorRecoveryCandidateId ??
+    contractGateWorld.debug.floorRecoveryCandidateId ??
+    'n/a'
+  const selectedFloorRecoveryReason =
+    selectedDirection?.debugMeta?.floorRecoveryReason ??
+    contractGateWorld.debug.floorRecoveryReason ??
+    'n/a'
+  const selectedFloorRecoveryBlockedReason =
+    selectedDirection?.debugMeta?.floorRecoveryBlockedReason ??
+    contractGateWorld.debug.floorRecoveryBlockedReason ??
+    'n/a'
   const contractGateStrategyFamilyResolution = contractGateWorld.debug.strategyFamilyResolution
   const contractGateStrategyFamilyResolutionSummary = [
     `resolved:${contractGateStrategyFamilyResolution.resolvedFamily}`,
@@ -14918,6 +14957,9 @@ export function SandboxConciergePage() {
     selectedDirection?.debugMeta?.directionContractGateStatus ?? 'n/a'
   const selectedDirectionContractGateReasonSummary =
     selectedDirection?.debugMeta?.directionContractGateReasonSummary ?? 'n/a'
+  const selectedContrastPocketInjected = String(
+    selectedDirection?.debugMeta?.contrastPocketInjected ?? false,
+  )
   const selectedStrategyWorld = strategyAdmissibleWorlds.find(
     (world) => world.strategyId === selectedDirectionStrategyId,
   )
@@ -14963,6 +15005,11 @@ export function SandboxConciergePage() {
     selectedDirection?.debugMeta?.directionNarrativeMode ?? 'n/a'
   const selectedDirectionNarrativeSummary =
     selectedDirection?.debugMeta?.directionNarrativeSummary ?? 'n/a'
+  const selectedTasteBridgeDirectionDiversificationApplied = String(
+    selectedDirection?.debugMeta?.tasteBridgeDirectionDiversificationApplied ?? false,
+  )
+  const selectedDroppedPocketIds =
+    selectedDirection?.debugMeta?.droppedPocketIds?.join(', ') ?? 'n/a'
   const validatorMode = generationContractDebug?.validatorMode ?? null
   const validatorValid = generationContractDebug?.validatorValid
   const generationDriftReason = generationContractDebug?.generationDriftReason ?? null
@@ -17343,13 +17390,23 @@ export function SandboxConciergePage() {
               <div>contractGateRejectedCount: {selectedContractGateRejectedCount}</div>
               <div>contractGateAllowedPreview: {selectedContractGateAllowedPreview}</div>
               <div>contractGateSuppressedPreview: {selectedContractGateSuppressedPreview}</div>
+              <div>floorRecoveryAttempted: {selectedFloorRecoveryAttempted}</div>
+              <div>floorRecoveryCandidateId: {selectedFloorRecoveryCandidateId}</div>
+              <div>floorRecoveryReason: {selectedFloorRecoveryReason}</div>
+              <div>floorRecoveryBlockedReason: {selectedFloorRecoveryBlockedReason}</div>
               <div>
                 contractGateStrategyFamilyResolution: {contractGateStrategyFamilyResolutionSummary}
               </div>
               <div>directionContractGateStatus: {selectedDirectionContractGateStatus}</div>
               <div>directionContractGateReasonSummary: {selectedDirectionContractGateReasonSummary}</div>
+              <div>contrastPocketInjected: {selectedContrastPocketInjected}</div>
               <div>directionStrategyWorldStatus: {selectedDirectionStrategyWorldStatus}</div>
               <div>directionStrategyWorldReasonSummary: {selectedDirectionStrategyWorldReasonSummary}</div>
+              <div>
+                tasteBridgeDirectionDiversificationApplied:{' '}
+                {selectedTasteBridgeDirectionDiversificationApplied}
+              </div>
+              <div>droppedPocketIds: {selectedDroppedPocketIds}</div>
               <div>directionDistrictSupportSummary: {selectedDirectionDistrictSupportSummary}</div>
               <div>directionNarrativeSummary: {selectedDirectionNarrativeSummary}</div>
               <div>compareSummary: {compareSummary}</div>
@@ -17918,13 +17975,23 @@ export function SandboxConciergePage() {
             <div>contractGateRejectedCount: {selectedContractGateRejectedCount}</div>
             <div>contractGateAllowedPreview: {selectedContractGateAllowedPreview}</div>
             <div>contractGateSuppressedPreview: {selectedContractGateSuppressedPreview}</div>
+            <div>floorRecoveryAttempted: {selectedFloorRecoveryAttempted}</div>
+            <div>floorRecoveryCandidateId: {selectedFloorRecoveryCandidateId}</div>
+            <div>floorRecoveryReason: {selectedFloorRecoveryReason}</div>
+            <div>floorRecoveryBlockedReason: {selectedFloorRecoveryBlockedReason}</div>
             <div>
               contractGateStrategyFamilyResolution: {contractGateStrategyFamilyResolutionSummary}
             </div>
             <div>directionContractGateStatus: {selectedDirectionContractGateStatus}</div>
             <div>directionContractGateReasonSummary: {selectedDirectionContractGateReasonSummary}</div>
+            <div>contrastPocketInjected: {selectedContrastPocketInjected}</div>
             <div>directionStrategyWorldStatus: {selectedDirectionStrategyWorldStatus}</div>
             <div>directionStrategyWorldReasonSummary: {selectedDirectionStrategyWorldReasonSummary}</div>
+            <div>
+              tasteBridgeDirectionDiversificationApplied:{' '}
+              {selectedTasteBridgeDirectionDiversificationApplied}
+            </div>
+            <div>droppedPocketIds: {selectedDroppedPocketIds}</div>
             <div>selectedStrategyWorldId: {selectedStrategyWorldId}</div>
             <div>selectedStrategyWorldSource: {selectedStrategyWorldSource}</div>
             <div>selectedStrategyWorldSummary: {selectedStrategyWorldSummary}</div>
@@ -19073,6 +19140,7 @@ export function SandboxConciergePage() {
                   <ul className="district-signals">
                     <li>{pocket.anchorLine}</li>
                     <li>{pocket.ingredientLine}</li>
+                    <li>{pocket.tasteBridgeLine}</li>
                   </ul>
                   <div className="district-best-for">{pocket.matchSignal}</div>
                 </button>
