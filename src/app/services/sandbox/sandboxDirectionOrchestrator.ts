@@ -1,7 +1,7 @@
 import type {
   RealityDirectionCard,
   RealityCluster,
-} from '../../../components/demo/RealityCommitStep'
+} from '../../types/realityDirectionCard'
 import { applyPersonaShaping } from '../../../domain/direction/applyPersonaShaping'
 import { applyVibeShaping } from '../../../domain/direction/applyVibeShaping'
 import {

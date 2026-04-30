@@ -619,6 +619,217 @@ function getExperienceFamily(candidate: ScoredVenue): string {
   return candidate.taste.signals.experienceFamily
 }
 
+function isPassivePeakArchetype(candidate: ScoredVenue): boolean {
+  const archetype = candidate.taste.signals.primaryExperienceArchetype
+  return archetype === 'dining' || archetype === 'drinks' || archetype === 'sweet'
+}
+
+function getPeakChallengeNeighborhood(candidate: ScoredVenue): string {
+  return candidate.venue.neighborhood.trim().toLowerCase()
+}
+
+function getPeakChallengeSignature(candidate: ScoredVenue): string {
+  return [
+    getExperienceFamily(candidate),
+    candidate.taste.modeAlignment.lane,
+    candidate.taste.signals.primaryExperienceArchetype,
+    candidate.momentIdentity.type,
+    getPeakChallengeNeighborhood(candidate),
+  ].join('|')
+}
+
+function computePeakChallengeDiversity(
+  leader: ScoredVenue,
+  candidate: ScoredVenue,
+): number {
+  let score = 0
+  if (getExperienceFamily(candidate) !== getExperienceFamily(leader)) {
+    score += 1.2
+  }
+  if (candidate.taste.modeAlignment.lane !== leader.taste.modeAlignment.lane) {
+    score += 0.9
+  }
+  if (
+    candidate.taste.signals.primaryExperienceArchetype !==
+    leader.taste.signals.primaryExperienceArchetype
+  ) {
+    score += 0.85
+  }
+  if (candidate.momentIdentity.type !== leader.momentIdentity.type) {
+    score += 0.65
+  }
+  if (getPeakChallengeNeighborhood(candidate) !== getPeakChallengeNeighborhood(leader)) {
+    score += 0.5
+  }
+  return score
+}
+
+function isSurprisePeakChallengeCandidate(params: {
+  candidate: ScoredVenue
+  leader: ScoredVenue
+  selectionScoreByCandidateId: Map<string, number>
+  bestScore: number
+}): boolean {
+  const { candidate, leader, selectionScoreByCandidateId, bestScore } = params
+  if (candidate.highlightValidity.validityLevel !== 'valid') {
+    return false
+  }
+
+  const score =
+    selectionScoreByCandidateId.get(getScoredVenueCandidateId(candidate)) ?? Number.NEGATIVE_INFINITY
+  const scoreGap = bestScore - score
+  if (scoreGap > 0.17) {
+    return false
+  }
+
+  if (
+    candidate.roleScores.peak < roleThresholds.peak - 0.03 ||
+    candidate.stopShapeFit.highlight < 0.34
+  ) {
+    return false
+  }
+
+  const momentPotential = candidate.taste.signals.momentPotential.score
+  const momentIntensity = candidate.taste.signals.momentIntensity.score
+  const specificity = candidate.contextSpecificity.byRole.peak
+  const authority = candidate.vibeAuthority.byRole.highlight
+  const diversity = computePeakChallengeDiversity(leader, candidate)
+  const passive = isPassivePeakArchetype(candidate)
+  const strongCenterpiece =
+    candidate.momentIdentity.strength === 'strong' &&
+    (candidate.momentIdentity.type === 'anchor' || candidate.momentIdentity.type === 'explore')
+  const viabilityScore =
+    (momentPotential >= 0.62 ? 0.8 : 0) +
+    (momentIntensity >= 0.62 ? 0.8 : 0) +
+    (specificity >= 0.48 ? 0.55 : 0) +
+    (authority >= 0.56 ? 0.55 : 0) +
+    (strongCenterpiece ? 0.45 : 0) -
+    (candidate.taste.fallbackPenalty.applied ? 0.5 : 0) -
+    (passive && momentPotential < 0.66 && !strongCenterpiece ? 0.35 : 0)
+
+  return diversity >= 1.75 && viabilityScore >= 1.75
+}
+
+function selectSurprisePeakCandidatesWithDiversity(
+  selectedCandidates: ScoredVenue[],
+  rankedCandidates: ScoredVenue[],
+  selectionScoreByCandidateId: Map<string, number>,
+  limit: number,
+): ScoredVenue[] {
+  if (selectedCandidates.length <= 1 || rankedCandidates.length <= limit) {
+    return selectedCandidates
+  }
+
+  const leader = selectedCandidates[0]
+  if (!leader || leader.highlightValidity.validityLevel !== 'valid') {
+    return selectedCandidates
+  }
+
+  const bestScore =
+    selectionScoreByCandidateId.get(getScoredVenueCandidateId(leader)) ?? Number.NEGATIVE_INFINITY
+  const rankIndexByCandidateId = new Map(
+    rankedCandidates.map((candidate, index) => [getScoredVenueCandidateId(candidate), index] as const),
+  )
+  const selectedIds = new Set(
+    selectedCandidates.map((candidate) => getScoredVenueCandidateId(candidate)),
+  )
+  const candidateWindow = rankedCandidates.slice(0, Math.min(rankedCandidates.length, limit + 10))
+
+  const existingChallengers = selectedCandidates.slice(1).filter((candidate) =>
+    isSurprisePeakChallengeCandidate({
+      candidate,
+      leader,
+      selectionScoreByCandidateId,
+      bestScore,
+    }),
+  )
+  if (existingChallengers.length >= 2) {
+    return selectedCandidates
+  }
+
+  const challengerSignatures = new Set(existingChallengers.map(getPeakChallengeSignature))
+  const challengers = candidateWindow
+    .filter((candidate) => getScoredVenueCandidateId(candidate) !== getScoredVenueCandidateId(leader))
+    .filter((candidate) =>
+      isSurprisePeakChallengeCandidate({
+        candidate,
+        leader,
+        selectionScoreByCandidateId,
+        bestScore,
+      }),
+    )
+    .filter((candidate) => !challengerSignatures.has(getPeakChallengeSignature(candidate)))
+    .sort((left, right) => {
+      const diversityDelta =
+        computePeakChallengeDiversity(leader, right) - computePeakChallengeDiversity(leader, left)
+      if (diversityDelta !== 0) {
+        return diversityDelta
+      }
+      const scoreDelta =
+        (selectionScoreByCandidateId.get(getScoredVenueCandidateId(right)) ?? 0) -
+        (selectionScoreByCandidateId.get(getScoredVenueCandidateId(left)) ?? 0)
+      if (scoreDelta !== 0) {
+        return scoreDelta
+      }
+      return (
+        (rankIndexByCandidateId.get(getScoredVenueCandidateId(left)) ?? 0) -
+        (rankIndexByCandidateId.get(getScoredVenueCandidateId(right)) ?? 0)
+      )
+    })
+
+  if (challengers.length === 0) {
+    return selectedCandidates
+  }
+
+  const selected = [...selectedCandidates]
+  for (const challenger of challengers) {
+    if (selectedIds.has(getScoredVenueCandidateId(challenger))) {
+      continue
+    }
+    if (selected.length >= limit && existingChallengers.length >= 2) {
+      break
+    }
+
+    let replacementIndex = -1
+    let replacementPriority = Number.POSITIVE_INFINITY
+    for (let index = selected.length - 1; index > 0; index -= 1) {
+      const candidate = selected[index]
+      if (!candidate || candidate.isAnchor) {
+        continue
+      }
+      const diversityPenalty = computePeakChallengeDiversity(leader, candidate)
+      const candidateScore =
+        selectionScoreByCandidateId.get(getScoredVenueCandidateId(candidate)) ?? Number.NEGATIVE_INFINITY
+      const rankIndex = rankIndexByCandidateId.get(getScoredVenueCandidateId(candidate)) ?? index
+      const replacementScore = diversityPenalty * 10 + candidateScore - rankIndex * 0.001
+      if (replacementScore < replacementPriority) {
+        replacementPriority = replacementScore
+        replacementIndex = index
+      }
+    }
+
+    if (replacementIndex === -1) {
+      continue
+    }
+
+    selectedIds.delete(getScoredVenueCandidateId(selected[replacementIndex]))
+    selected[replacementIndex] = challenger
+    selectedIds.add(getScoredVenueCandidateId(challenger))
+    existingChallengers.push(challenger)
+    challengerSignatures.add(getPeakChallengeSignature(challenger))
+    if (existingChallengers.length >= 2) {
+      break
+    }
+  }
+
+  return selected.sort((left, right) => {
+    return (
+      (rankIndexByCandidateId.get(getScoredVenueCandidateId(left)) ?? 0) -
+      (rankIndexByCandidateId.get(getScoredVenueCandidateId(right)) ?? 0)
+    )
+  })
+}
+
 function areDirectionFamiliesCompatible(
   selectedFamily: string,
   highlightFamily: string,
@@ -808,6 +1019,7 @@ function selectPeakCandidatesWithFamilyPreservation(
   rankedCandidates: ScoredVenue[],
   selectionScoreByCandidateId: Map<string, number>,
   limit: number,
+  intent?: IntentProfile,
 ): ScoredVenue[] {
   if (rankedCandidates.length <= limit) {
     return rankedCandidates.slice(0, limit)
@@ -876,7 +1088,14 @@ function selectPeakCandidatesWithFamilyPreservation(
     .slice(0, 2)
 
   if (alternateFamilyLeaders.length === 0) {
-    return initial
+    return intent?.mode === 'surprise'
+      ? selectSurprisePeakCandidatesWithDiversity(
+          initial,
+          rankedCandidates,
+          selectionScoreByCandidateId,
+          limit,
+        )
+      : initial
   }
 
   const selected = [...initial]
@@ -911,12 +1130,21 @@ function selectPeakCandidatesWithFamilyPreservation(
     selectedIds.add(getScoredVenueCandidateId(leader))
   }
 
-  return selected.sort((left, right) => {
+  const familyPreserved = selected.sort((left, right) => {
     return (
       (rankIndexByCandidateId.get(getScoredVenueCandidateId(left)) ?? 0) -
       (rankIndexByCandidateId.get(getScoredVenueCandidateId(right)) ?? 0)
     )
   })
+
+  return intent?.mode === 'surprise'
+    ? selectSurprisePeakCandidatesWithDiversity(
+        familyPreserved,
+        rankedCandidates,
+        selectionScoreByCandidateId,
+        limit,
+      )
+    : familyPreserved
 }
 
 function getPeakStrongMomentSelectionBias(
@@ -2142,6 +2370,7 @@ function pickRoleCandidates(
           rankedWithPreference,
           selectionScoreByCandidateId,
           cooldownBoosted ? 16 : 14,
+          intent,
         )
       : rankedWithPreference.slice(0, cooldownBoosted ? 16 : 14)
 

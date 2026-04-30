@@ -442,6 +442,7 @@ function isGenericHospitalityHighlightCandidate(candidate: ArcStop['scoredVenue'
 
 function computeFallbackHighlightSuppression(
   stops: ArcStop[],
+  intent: IntentProfile,
   rolePools?: RolePools,
 ): {
   signal: number
@@ -470,9 +471,24 @@ function computeFallbackHighlightSuppression(
           ).values(),
         ]
   const assessment = assessGenericHospitalityFallbackPenalty(finalHighlight, candidates)
+  const highlightIsAnchor = isUserLedAnchorStop(
+    { role: 'peak', scoredVenue: finalHighlight },
+    intent,
+  )
+  const surprisePenaltyAdjustment =
+    intent.mode === 'surprise' &&
+    !highlightIsAnchor &&
+    assessment.appliedPenalty > 0 &&
+    isGenericHospitalityFallbackCandidate(finalHighlight) &&
+    (finalHighlight.highlightValidity.validityLevel === 'fallback' ||
+      finalHighlight.taste.signals.momentPotential.score < 0.64 ||
+      finalHighlight.taste.signals.momentIntensity.score < 0.66 ||
+      finalHighlight.vibeAuthority.byRole.highlight < 0.58)
+      ? 0.02
+      : 0
   return {
     signal: finalHighlight.taste.fallbackPenalty.signalScore,
-    penalty: clamp01(assessment.appliedPenalty * 0.92),
+    penalty: clamp01(assessment.appliedPenalty * 0.92 + surprisePenaltyAdjustment),
     applied: assessment.appliedPenalty > 0 && isGenericHospitalityFallbackCandidate(finalHighlight),
     reason: assessment.reason,
     strongerAlternativeName: assessment.strongerAlternativeName,
@@ -2294,6 +2310,145 @@ function computeHighlightIntegrityAdjustments(
   }
 }
 
+function computeSurpriseHighlightCalibration(
+  stops: ArcStop[],
+  intent: IntentProfile,
+): {
+  score: number
+  penalty: number
+  applied: boolean
+  reason: string
+} {
+  if (intent.mode !== 'surprise') {
+    return {
+      score: 0,
+      penalty: 0,
+      applied: false,
+      reason: 'not_surprise_mode',
+    }
+  }
+
+  const highlight = stops.find((stop) => stop.role === 'peak')
+  if (!highlight) {
+    return {
+      score: 0,
+      penalty: 0,
+      applied: false,
+      reason: 'no_highlight_selected',
+    }
+  }
+
+  const candidate = highlight.scoredVenue
+  const highlightIsAnchor = isUserLedAnchorStop(highlight, intent)
+  const genericHighlight = isGenericHospitalityHighlightCandidate(candidate)
+  const fallbackishHighlight =
+    candidate.highlightValidity.validityLevel === 'fallback' ||
+    candidate.taste.fallbackPenalty.applied
+  const passiveHighlight =
+    genericHighlight &&
+    candidate.momentIdentity.strength !== 'strong' &&
+    candidate.momentIdentity.type !== 'anchor' &&
+    candidate.momentIdentity.type !== 'explore'
+  const lowMoment =
+    candidate.taste.signals.momentPotential.score < 0.62 ||
+    candidate.taste.signals.momentIntensity.score < 0.64
+  const lowAuthority = candidate.vibeAuthority.byRole.highlight < 0.58
+  const lowSpecificity = candidate.contextSpecificity.byRole.peak < 0.48
+  const strongMoment =
+    candidate.taste.signals.momentPotential.score >= 0.74 &&
+    candidate.taste.signals.momentIntensity.score >= 0.72 &&
+    (candidate.momentIdentity.type === 'anchor' ||
+      candidate.momentIdentity.type === 'explore' ||
+      candidate.momentIdentity.strength === 'strong')
+  const strongSpecificity = candidate.contextSpecificity.byRole.peak >= 0.62
+  const strongAuthority = candidate.vibeAuthority.byRole.highlight >= 0.68
+  const dominantCenterpiece =
+    candidate.taste.signals.anchorStrength >= 0.68 ||
+    candidate.taste.signals.destinationFactor >= 0.7 ||
+    candidate.taste.signals.experientialFactor >= 0.74
+
+  let score = 0
+  if (strongMoment) {
+    score += 0.018
+  }
+  if (strongSpecificity) {
+    score += 0.01
+  }
+  if (strongAuthority) {
+    score += 0.008
+  }
+  if (dominantCenterpiece) {
+    score += 0.01
+  }
+
+  let penalty = 0
+  if (!highlightIsAnchor) {
+    if (fallbackishHighlight) {
+      penalty += 0.012
+    }
+    if (genericHighlight) {
+      penalty += 0.008
+    }
+    if (passiveHighlight) {
+      penalty += 0.01
+    }
+    if (lowMoment) {
+      penalty += 0.01
+    }
+    if (lowAuthority) {
+      penalty += 0.008
+    }
+    if (lowSpecificity) {
+      penalty += 0.007
+    }
+  }
+
+  score = Math.min(score, 0.04)
+  penalty = Math.min(penalty, 0.045)
+  const netApplied = score > 0 || penalty > 0
+  const reasonParts: string[] = []
+  if (strongMoment) {
+    reasonParts.push('strong_moment')
+  }
+  if (strongSpecificity) {
+    reasonParts.push('high_specificity')
+  }
+  if (strongAuthority) {
+    reasonParts.push('high_authority')
+  }
+  if (dominantCenterpiece) {
+    reasonParts.push('clear_centerpiece')
+  }
+  if (!highlightIsAnchor && fallbackishHighlight) {
+    reasonParts.push('fallbackish')
+  }
+  if (!highlightIsAnchor && genericHighlight) {
+    reasonParts.push('generic')
+  }
+  if (!highlightIsAnchor && passiveHighlight) {
+    reasonParts.push('passive')
+  }
+  if (!highlightIsAnchor && lowMoment) {
+    reasonParts.push('low_moment')
+  }
+  if (!highlightIsAnchor && lowAuthority) {
+    reasonParts.push('low_authority')
+  }
+  if (!highlightIsAnchor && lowSpecificity) {
+    reasonParts.push('low_specificity')
+  }
+  if (highlightIsAnchor) {
+    reasonParts.push('anchor_penalty_protected')
+  }
+
+  return {
+    score,
+    penalty,
+    applied: netApplied,
+    reason: reasonParts.join('|') || 'no_surprise_highlight_adjustment',
+  }
+}
+
 function computeFakeCompletenessPenalty(stops: ArcStop[]): {
   penalty: number
   applied: boolean
@@ -3324,6 +3479,7 @@ export function scoreArcAssembly(
   )
   const fallbackHighlightSuppression = computeFallbackHighlightSuppression(
     stops,
+    intent,
     rolePools,
   )
   const familyCompetition = computeFamilyCompetitionPressure(
@@ -3357,6 +3513,7 @@ export function scoreArcAssembly(
   const liveRolePromotionScore = computeLiveRolePromotionScore(stops)
   const roleAwareCategoryLift = computeRoleAwareCategoryLift(stops, intent, lens)
   const surpriseDirectionAlignment = computeSurpriseDirectionAlignmentAdjustments(stops, intent)
+  const surpriseHighlightCalibration = computeSurpriseHighlightCalibration(stops, intent)
 
   const totalScoreRaw =
     breakdown.roleFlowScore * 0.34 +
@@ -3389,6 +3546,7 @@ export function scoreArcAssembly(
       liveRolePromotionScore * 0.06 +
       roleAwareCategoryLift * 0.12 +
       surpriseDirectionAlignment.score +
+      surpriseHighlightCalibration.score +
       highlightIntegrity.dominanceBoost +
       highlightIntegrity.familyAlignmentBoost +
       categoryDiversityGuardrail.bonus +
@@ -3414,6 +3572,7 @@ export function scoreArcAssembly(
       localStretchPolicy.penalty -
       alignmentPreservation.themeSpreadPenalty -
       surpriseDirectionAlignment.penalty -
+      surpriseHighlightCalibration.penalty -
       roleEnergyBalance.penalty -
       missedPeakPenalty.penalty -
       alignmentPreservation.penalty
@@ -3531,6 +3690,10 @@ export function scoreArcAssembly(
       surpriseDirectionAlignmentPenalty: clamp01(surpriseDirectionAlignment.penalty),
       surpriseDirectionAlignmentApplied: surpriseDirectionAlignment.applied,
       surpriseDirectionAlignment: clamp01(surpriseDirectionAlignment.alignment),
+      surpriseHighlightCalibrationScore: clamp01(surpriseHighlightCalibration.score),
+      surpriseHighlightCalibrationPenalty: clamp01(surpriseHighlightCalibration.penalty),
+      surpriseHighlightCalibrationApplied: surpriseHighlightCalibration.applied,
+      surpriseHighlightCalibrationReason: surpriseHighlightCalibration.reason,
       eliteFieldCandidateNames: expressionRelease.eliteCandidateNames,
       eliteFieldCandidateLanes: expressionRelease.eliteCandidateLanes,
       activationMomentElevationScore: clamp01(activationMomentElevation.score),

@@ -3,8 +3,8 @@ import { ID8Butler } from '../components/butler/ID8Butler'
 import {
   RealityCommitStep,
   getRealityInterpretation,
-  type RealityCluster,
 } from '../components/demo/RealityCommitStep'
+import type { RealityCluster } from '../app/types/realityDirectionCard'
 import { JourneyMapReal } from '../components/journey/JourneyMapReal'
 import { RouteSpine } from '../components/journey/RouteSpine'
 import { PageShell } from '../components/layout/PageShell'

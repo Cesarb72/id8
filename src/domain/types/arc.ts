@@ -307,6 +307,10 @@ export interface ArcScoreBreakdown {
   surpriseDirectionAlignmentPenalty?: number
   surpriseDirectionAlignmentApplied?: boolean
   surpriseDirectionAlignment?: number
+  surpriseHighlightCalibrationScore?: number
+  surpriseHighlightCalibrationPenalty?: number
+  surpriseHighlightCalibrationApplied?: boolean
+  surpriseHighlightCalibrationReason?: string
 }
 
 export interface ArcCandidate {
