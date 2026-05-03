@@ -1,4 +1,5 @@
 import type { BuiltScenarioNight } from '../interpretation/construction/scenarioBuilder'
+import type { DirectionContractBuildability } from '../bearings/assessDirectionContractBuildability'
 import type { UserStopRole } from '../types/itinerary'
 
 /**
@@ -29,6 +30,20 @@ export interface ContractEntryArtifactLineage {
   pocketId?: string
 }
 
+export interface ContractEntryArtifactQualification<
+  TDirectionCoreRole extends string = string,
+  TApprovedPayload = unknown,
+> {
+  status: 'checking' | 'committable' | 'infeasible'
+  failureKind?: 'structural_infeasibility' | 'validation_failure' | 'runtime_error'
+  failedCheck?: string | null
+  missingRoleForContract: TDirectionCoreRole | null
+  candidatePoolSufficiencyByRole?: Record<TDirectionCoreRole, number>
+  contractBuildabilityStatus?: DirectionContractBuildability['contractBuildabilityStatus']
+  hardCommitRequired?: boolean
+  approvedRefinementEntryPayload?: TApprovedPayload
+}
+
 export interface ContractEntryArtifact {
   id: string
   sourceOpportunityId: string
@@ -48,6 +63,7 @@ export interface ContractEntryArtifact {
   whyTonightProofLine?: string
   scenarioEvaluation?: BuiltScenarioNight['evaluation']
   selection: ContractEntryArtifactSelection
+  qualification?: ContractEntryArtifactQualification
 }
 
 export function buildContractEntryArtifactLineage(

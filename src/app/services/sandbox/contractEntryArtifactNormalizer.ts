@@ -2,6 +2,7 @@ import type { RealityDirectionCard } from '../../types/realityDirectionCard'
 import type {
   CanonicalCandidateRouteArtifact,
   ContractEntryArtifact,
+  ContractEntryArtifactQualification,
 } from '../../../domain/artifacts/contractEntryArtifact'
 import type { RuntimeRouteArtifact } from '../../../domain/artifacts/runtimeRouteArtifact'
 import type {
@@ -9,6 +10,16 @@ import type {
   DiscoveryDirection,
 } from '../../../domain/discovery/getDiscoveryCandidates'
 import type { CuratePreviewCommitabilityStateLike } from './curatePreviewQualificationTypes'
+
+type QualificationRole<TQualification> =
+  TQualification extends CuratePreviewCommitabilityStateLike<infer TDirectionCoreRole, unknown>
+    ? TDirectionCoreRole
+    : string
+
+type QualificationApprovedPayload<TQualification> =
+  TQualification extends CuratePreviewCommitabilityStateLike<string, infer TApprovedPayload>
+    ? TApprovedPayload
+    : unknown
 
 function normalizeLabel(value: string | null | undefined, fallback: string): string {
   const normalized = value?.trim()
@@ -128,7 +139,10 @@ export function attachQualificationToContractEntryArtifact<
   artifact: TArtifact,
   qualificationState: TQualification | null | undefined,
 ): TArtifact & {
-  qualificationState?: TQualification
+  qualification?: ContractEntryArtifactQualification<
+    QualificationRole<TQualification>,
+    QualificationApprovedPayload<TQualification>
+  >
   qualificationStatus?: TQualification['status'] | 'unchecked'
 } {
   if (!qualificationState) {
@@ -140,7 +154,37 @@ export function attachQualificationToContractEntryArtifact<
 
   return {
     ...artifact,
-    qualificationState,
+    qualification: {
+      status: qualificationState.status,
+      ...(qualificationState.failureKind
+        ? { failureKind: qualificationState.failureKind }
+        : {}),
+      ...(qualificationState.failedCheck !== undefined
+        ? { failedCheck: qualificationState.failedCheck }
+        : {}),
+      missingRoleForContract: qualificationState.missingRoleForContract,
+      ...(qualificationState.candidatePoolSufficiencyByRole
+        ? {
+            candidatePoolSufficiencyByRole:
+              qualificationState.candidatePoolSufficiencyByRole,
+          }
+        : {}),
+      ...(qualificationState.contractBuildabilityStatus
+        ? {
+            contractBuildabilityStatus:
+              qualificationState.contractBuildabilityStatus,
+          }
+        : {}),
+      ...(qualificationState.hardCommitRequired !== undefined
+        ? { hardCommitRequired: qualificationState.hardCommitRequired }
+        : {}),
+      ...(qualificationState.approvedRefinementEntryPayload !== undefined
+        ? {
+            approvedRefinementEntryPayload:
+              qualificationState.approvedRefinementEntryPayload,
+          }
+        : {}),
+    },
     qualificationStatus: qualificationState.status,
   }
 }
