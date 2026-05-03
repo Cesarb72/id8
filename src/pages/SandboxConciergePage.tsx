@@ -1319,17 +1319,24 @@ function getContractEntryArtifactStorySpineFingerprint(
 
 function getCurateQualificationStatus(
   preflight: CuratePreviewCommitabilityState | undefined,
+  qualification: ContractEntryArtifact['qualification'] | undefined = undefined,
 ): CurateVisibleCardModel['qualificationStatus'] {
-  if (!preflight) {
+  // Side-map preflight remains authoritative. Artifact qualification is read-only
+  // fallback for low-risk status derivation when preflight state is missing.
+  const effectiveQualification = preflight ?? qualification
+  if (!effectiveQualification) {
     return 'unchecked'
   }
-  if (preflight.status === 'checking') {
+  if (effectiveQualification.status === 'checking') {
     return 'checking'
   }
-  if (preflight.status === 'committable' && preflight.approvedRefinementEntryPayload) {
+  if (
+    effectiveQualification.status === 'committable' &&
+    effectiveQualification.approvedRefinementEntryPayload
+  ) {
     return 'qualified'
   }
-  if (preflight.failureKind === 'runtime_error') {
+  if (effectiveQualification.failureKind === 'runtime_error') {
     return 'runtime_error'
   }
   return 'rejected'
@@ -8814,7 +8821,10 @@ export function SandboxConciergePage() {
   ])
   const curateQualificationSummary = useMemo(() => {
     const statuses = curateQualificationCandidateArtifacts.map((artifact) =>
-      getCurateQualificationStatus(curatePreviewCommitabilityByArtifactId[artifact.id]),
+      getCurateQualificationStatus(
+        curatePreviewCommitabilityByArtifactId[artifact.id],
+        artifact.qualification,
+      ),
     )
     return {
       qualificationPoolSize: curateQualificationCandidateArtifacts.length,
@@ -12983,7 +12993,10 @@ export function SandboxConciergePage() {
         : undefined
       const qualificationStatus =
         artifact && isCurateWrapperActive
-          ? getCurateQualificationStatus(curatePreviewCommitabilityByArtifactId[artifact.id])
+          ? getCurateQualificationStatus(
+              curatePreviewCommitabilityByArtifactId[artifact.id],
+              artifact.qualification,
+            )
           : 'n/a'
       const cardDisplaySource =
         artifact && isCurateWrapperActive
