@@ -11884,6 +11884,23 @@ export function SandboxConciergePage() {
       enrichedQualifiedStatuses: enrichedVisibleArtifacts.map(
         (artifact) => `${artifact.id}:${artifact.qualificationStatus ?? 'unchecked'}`,
       ),
+      enrichedQualificationDiagnostics: enrichedVisibleArtifacts.map((artifact) => {
+        const qualificationStatus = artifact.qualificationStatus ?? 'unchecked'
+        const canonicalQualificationStatus = artifact.qualification?.status ?? 'none'
+        const qualificationStatusMatches =
+          artifact.qualification == null
+            ? qualificationStatus === 'unchecked'
+            : canonicalQualificationStatus === qualificationStatus
+        const failedCheck = artifact.qualification?.failedCheck ?? 'none'
+        const missingRole = artifact.qualification?.missingRoleForContract ?? 'none'
+        const buildabilityStatus =
+          artifact.qualification?.contractBuildabilityStatus ?? 'none'
+        const hardCommitRequired =
+          artifact.qualification?.hardCommitRequired == null
+            ? 'n/a'
+            : String(artifact.qualification.hardCommitRequired)
+        return `${artifact.id}:compat=${qualificationStatus}|canonical=${canonicalQualificationStatus}|match=${qualificationStatusMatches ? 'yes' : 'no'}|check=${failedCheck}|missing=${missingRole}|buildability=${buildabilityStatus}|hardCommit=${hardCommitRequired}`
+      }),
     }
   }, [
     candidateRouteArtifactsForDisplay,
@@ -15233,6 +15250,12 @@ export function SandboxConciergePage() {
                       enrichedQualifiedStatuses:{' '}
                       {normalizedContractEntryArtifactDebug.enrichedQualifiedStatuses.join(', ') ||
                         'none'}
+                    </div>
+                    <div>
+                      enrichedQualificationDiagnostics:{' '}
+                      {normalizedContractEntryArtifactDebug.enrichedQualificationDiagnostics.join(
+                        ' || ',
+                      ) || 'none'}
                     </div>
                     <div>sharedFlowPhase: {sharedFlowPhase ?? 'n/a'}</div>
                     <div>renderSharedPlanPreview: {String(renderSharedPlanPreview)}</div>
