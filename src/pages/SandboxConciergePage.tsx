@@ -790,6 +790,22 @@ interface Step2RerollOwnershipTrace {
   anyOverrideReason: string | null
 }
 
+interface SurpriseTryAnotherDebug {
+  currentSelectedArtifactId: string | null
+  currentSelectedDirectionId: string | null
+  currentSelectedArtifactTitle: string | null
+  candidateRouteArtifactsForDisplayCount: number
+  step2TryAnotherAlternatesCount: number
+  alternateArtifactIds: string[]
+  alternateDirectionIds: string[]
+  lastTryAnotherChosenArtifactId: string | null
+  lastTryAnotherChosenDirectionId: string | null
+  chosenArtifactDifferedFromPrevious: boolean | null
+  chosenDirectionDifferedFromPrevious: boolean | null
+  generationTriggered: boolean
+  fallbackReason: string | null
+}
+
 type CoreTasteRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
 
 interface TasteRoleEligibilitySnapshot {
@@ -13775,6 +13791,52 @@ export function SandboxConciergePage() {
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
   ])
+  const surpriseTryAnotherDebug = useMemo<SurpriseTryAnotherDebug>(() => {
+    const currentSelectedArtifactId =
+      selectedCandidateRouteArtifact?.id ?? selectedStep2CandidateArtifactId ?? null
+    const currentSelectedDirectionId = selectedDirectionId ?? directionCards[0]?.id ?? null
+    const currentSelectedArtifactTitle =
+      selectedCandidateRouteArtifact?.routeTitle ??
+      candidateRouteArtifactByIdForDisplay.get(selectedStep2CandidateArtifactId ?? '')?.routeTitle ??
+      null
+    const alternateArtifactIds = step2TryAnotherAlternates.map((entry) => entry.artifact.id)
+    const alternateDirectionIds = step2TryAnotherAlternates.map((entry) => entry.direction.id)
+    const lastTryAnotherChosenArtifactId = step2RerollTrace?.nextArtifactId_selected ?? null
+    const lastTryAnotherChosenDirectionId = step2RerollTrace?.nextDirectionId_selected ?? null
+    return {
+      currentSelectedArtifactId,
+      currentSelectedDirectionId,
+      currentSelectedArtifactTitle,
+      candidateRouteArtifactsForDisplayCount: candidateRouteArtifactsForDisplay.length,
+      step2TryAnotherAlternatesCount: step2TryAnotherAlternates.length,
+      alternateArtifactIds,
+      alternateDirectionIds,
+      lastTryAnotherChosenArtifactId,
+      lastTryAnotherChosenDirectionId,
+      chosenArtifactDifferedFromPrevious:
+        step2RerollTrace?.currentSelectedArtifactId_before &&
+        lastTryAnotherChosenArtifactId
+          ? step2RerollTrace.currentSelectedArtifactId_before !== lastTryAnotherChosenArtifactId
+          : null,
+      chosenDirectionDifferedFromPrevious:
+        step2RerollTrace?.currentSelectedDirectionId_before &&
+        lastTryAnotherChosenDirectionId
+          ? step2RerollTrace.currentSelectedDirectionId_before !== lastTryAnotherChosenDirectionId
+          : null,
+      generationTriggered: Boolean(step2RerollTrace?.generatePlan_called),
+      fallbackReason: step2RerollTrace?.anyOverrideReason ?? null,
+    }
+  }, [
+    candidateRouteArtifactByIdForDisplay,
+    candidateRouteArtifactsForDisplay.length,
+    directionCards,
+    selectedCandidateRouteArtifact?.id,
+    selectedCandidateRouteArtifact?.routeTitle,
+    selectedDirectionId,
+    selectedStep2CandidateArtifactId,
+    step2RerollTrace,
+    step2TryAnotherAlternates,
+  ])
   const selectedDirectionTitle = selectedDirection?.card.title?.trim() ?? null
   const previewHeaderTitle = selectedRouteSummaryArtifact?.routeTitle
     ? selectedRouteSummaryArtifact.routeTitle
@@ -16183,6 +16245,62 @@ export function SandboxConciergePage() {
             <div>
               failedState.selectedCandidatePreviewValidationFailed:{' '}
               {String(selectedCandidatePreviewValidationFailed)}
+            </div>
+            <div>
+              surpriseTryAnother.currentSelectedArtifactId:{' '}
+              {surpriseTryAnotherDebug.currentSelectedArtifactId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.currentSelectedDirectionId:{' '}
+              {surpriseTryAnotherDebug.currentSelectedDirectionId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.currentSelectedArtifactTitle:{' '}
+              {surpriseTryAnotherDebug.currentSelectedArtifactTitle ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.candidateRouteArtifactsForDisplayCount:{' '}
+              {surpriseTryAnotherDebug.candidateRouteArtifactsForDisplayCount}
+            </div>
+            <div>
+              surpriseTryAnother.step2TryAnotherAlternatesCount:{' '}
+              {surpriseTryAnotherDebug.step2TryAnotherAlternatesCount}
+            </div>
+            <div>
+              surpriseTryAnother.alternateArtifactIds:{' '}
+              {surpriseTryAnotherDebug.alternateArtifactIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.alternateDirectionIds:{' '}
+              {surpriseTryAnotherDebug.alternateDirectionIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.lastTryAnotherChosenArtifactId:{' '}
+              {surpriseTryAnotherDebug.lastTryAnotherChosenArtifactId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.lastTryAnotherChosenDirectionId:{' '}
+              {surpriseTryAnotherDebug.lastTryAnotherChosenDirectionId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.chosenArtifactDifferedFromPrevious:{' '}
+              {surpriseTryAnotherDebug.chosenArtifactDifferedFromPrevious == null
+                ? 'n/a'
+                : String(surpriseTryAnotherDebug.chosenArtifactDifferedFromPrevious)}
+            </div>
+            <div>
+              surpriseTryAnother.chosenDirectionDifferedFromPrevious:{' '}
+              {surpriseTryAnotherDebug.chosenDirectionDifferedFromPrevious == null
+                ? 'n/a'
+                : String(surpriseTryAnotherDebug.chosenDirectionDifferedFromPrevious)}
+            </div>
+            <div>
+              surpriseTryAnother.generationTriggered:{' '}
+              {String(surpriseTryAnotherDebug.generationTriggered)}
+            </div>
+            <div>
+              surpriseTryAnother.fallbackReason:{' '}
+              {surpriseTryAnotherDebug.fallbackReason ?? 'none'}
             </div>
             <div>step2RerollTrace.clickId: {step2RerollTrace?.clickId ?? 'n/a'}</div>
             <div>step2RerollTrace.clickedAt: {step2RerollTrace?.clickedAt ?? 'n/a'}</div>
