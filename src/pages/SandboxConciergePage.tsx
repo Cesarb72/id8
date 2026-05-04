@@ -8754,6 +8754,7 @@ export function SandboxConciergePage() {
   const curateVisibleCardModels = useMemo<CurateVisibleCardModel[]>(() => {
     return candidateRouteArtifactsForDisplay.map((artifact) => {
       const preflight = curatePreviewCommitabilityByArtifactId[artifact.id]
+      // `qualificationStatus` remains behavior/control state here, not display-only state.
       const qualificationStatus = getCurateQualificationStatus(preflight)
       const approvedRefinementEntryPayload = preflight?.approvedRefinementEntryPayload
       const approvedFinalRoute = approvedRefinementEntryPayload?.finalRoute
@@ -8775,8 +8776,21 @@ export function SandboxConciergePage() {
         preflight?.explicitFallbackReason ??
         preflight?.missingRoleForContract ??
         null
-      return {
-        artifact,
+      const controlState = {
+        preflight,
+        qualificationStatus,
+        approvedRefinementEntryPayload,
+        approvedFinalRoute,
+        hasApprovedPayload,
+        cardDisplaySource:
+          hasApprovedPayload
+            ? 'approved_payload'
+            : qualificationStatus === 'rejected' || qualificationStatus === 'runtime_error'
+              ? 'fallback_unqualified'
+              : 'candidate_draft',
+        isSelectable: hasApprovedPayload,
+      } as const
+      const displayProjection = {
         title: approvedFinalRoute?.routeHeadline ?? artifact.routeTitle,
         summary: approvedFinalRoute?.routeSummary ?? null,
         start: approvedFinalRoute ? qualifiedRouteStart ?? artifact.storySpine.start : artifact.storySpine.start,
@@ -8786,14 +8800,6 @@ export function SandboxConciergePage() {
         windDown: approvedFinalRoute
           ? qualifiedRouteWindDown ?? artifact.storySpine.windDown
           : artifact.storySpine.windDown,
-        cardDisplaySource:
-          hasApprovedPayload
-            ? 'approved_payload'
-            : qualificationStatus === 'rejected' || qualificationStatus === 'runtime_error'
-              ? 'fallback_unqualified'
-              : 'candidate_draft',
-        qualificationStatus,
-        hasApprovedPayload,
         qualifiedRouteStart,
         qualifiedRouteHighlight,
         qualifiedRouteWindDown,
@@ -8806,12 +8812,22 @@ export function SandboxConciergePage() {
           approvedRouteStarterFit.finalRouteMatchedPreferredStopShapes,
         finalRouteMismatchReasons: approvedRouteStarterFit.finalRouteMismatchReasons,
         finalRouteDisplayReason: approvedRouteStarterFit.finalRouteDisplayReason,
+        qualificationReason,
+      } as const
+      const debugProjection = {
         qualifiedDisplayRankReason:
           hasApprovedPayload
             ? `qualified_then_ranked_by_final_starter_fit:${approvedRouteStarterFit.finalRouteStarterFitTier}:${approvedRouteStarterFit.finalRouteStarterFitScore?.toFixed(3) ?? 'n/a'}`
             : null,
-        qualificationReason,
-        isSelectable: hasApprovedPayload,
+      } as const
+      return {
+        artifact,
+        ...displayProjection,
+        cardDisplaySource: controlState.cardDisplaySource,
+        qualificationStatus: controlState.qualificationStatus,
+        hasApprovedPayload: controlState.hasApprovedPayload,
+        ...debugProjection,
+        isSelectable: controlState.isSelectable,
       }
     })
   }, [
