@@ -1368,6 +1368,40 @@ function buildArtifactsByDirectionIdIndex(
   return grouped
 }
 
+function selectArtifactResolutionSources(params: {
+  isCurateWrapperActive: boolean
+  curatePrimarySelectableArtifactById: Map<string, ContractEntryArtifact>
+  curatePrimarySelectableArtifactsByDirectionId: Map<string, ContractEntryArtifact[]>
+  candidateRouteArtifactByIdForDisplay: Map<string, ContractEntryArtifact>
+  candidateRouteArtifactsByDirectionIdForDisplay: Map<string, ContractEntryArtifact[]>
+}): {
+  artifactById: Map<string, ContractEntryArtifact>
+  artifactsByDirectionId: Map<string, ContractEntryArtifact[]>
+  subsetMode: 'curate_primary_selectable' | 'visible_for_display'
+} {
+  const {
+    isCurateWrapperActive,
+    curatePrimarySelectableArtifactById,
+    curatePrimarySelectableArtifactsByDirectionId,
+    candidateRouteArtifactByIdForDisplay,
+    candidateRouteArtifactsByDirectionIdForDisplay,
+  } = params
+
+  if (isCurateWrapperActive) {
+    return {
+      artifactById: curatePrimarySelectableArtifactById,
+      artifactsByDirectionId: curatePrimarySelectableArtifactsByDirectionId,
+      subsetMode: 'curate_primary_selectable',
+    }
+  }
+
+  return {
+    artifactById: candidateRouteArtifactByIdForDisplay,
+    artifactsByDirectionId: candidateRouteArtifactsByDirectionIdForDisplay,
+    subsetMode: 'visible_for_display',
+  }
+}
+
 function buildCurateVisibleCardModelFromArtifact(params: {
   artifact: ContractEntryArtifact
   preflight: CuratePreviewCommitabilityState | undefined
@@ -9001,22 +9035,33 @@ export function SandboxConciergePage() {
     () => buildArtifactByIdIndex(candidateRouteArtifactsForDisplay),
     [candidateRouteArtifactsForDisplay],
   )
+  const artifactResolutionSources = useMemo(
+    () =>
+      selectArtifactResolutionSources({
+        isCurateWrapperActive,
+        curatePrimarySelectableArtifactById,
+        curatePrimarySelectableArtifactsByDirectionId,
+        candidateRouteArtifactByIdForDisplay,
+        candidateRouteArtifactsByDirectionIdForDisplay,
+      }),
+    [
+      candidateRouteArtifactByIdForDisplay,
+      candidateRouteArtifactsByDirectionIdForDisplay,
+      curatePrimarySelectableArtifactById,
+      curatePrimarySelectableArtifactsByDirectionId,
+      isCurateWrapperActive,
+    ],
+  )
   const resolveUniqueCandidateRouteArtifactForDirection = useCallback(
     (directionId: string | null | undefined) => {
       const normalizedDirectionId = directionId?.trim()
       if (!normalizedDirectionId) {
         return null
       }
-      const matches = isCurateWrapperActive
-        ? curatePrimarySelectableArtifactsByDirectionId.get(normalizedDirectionId) ?? []
-        : candidateRouteArtifactsByDirectionIdForDisplay.get(normalizedDirectionId) ?? []
+      const matches = artifactResolutionSources.artifactsByDirectionId.get(normalizedDirectionId) ?? []
       return matches.length === 1 ? matches[0] ?? null : null
     },
-    [
-      candidateRouteArtifactsByDirectionIdForDisplay,
-      curatePrimarySelectableArtifactsByDirectionId,
-      isCurateWrapperActive,
-    ],
+    [artifactResolutionSources],
   )
   const resolveCandidateRouteArtifactSelection = useCallback(
     (params: {
@@ -9031,17 +9076,13 @@ export function SandboxConciergePage() {
       const normalizedDirectionId = params.directionId?.trim()
       const explicitArtifactId = params.explicitArtifactId?.trim()
       const artifactsForDirection = normalizedDirectionId
-        ? isCurateWrapperActive
-          ? curatePrimarySelectableArtifactsByDirectionId.get(normalizedDirectionId) ?? []
-          : candidateRouteArtifactsByDirectionIdForDisplay.get(normalizedDirectionId) ?? []
+        ? artifactResolutionSources.artifactsByDirectionId.get(normalizedDirectionId) ?? []
         : []
       const artifactCountForDirection = artifactsForDirection.length
       const droppedBySingleArtifactDirectionCollapse = artifactCountForDirection > 1
 
       if (explicitArtifactId) {
-        const explicitArtifact = isCurateWrapperActive
-          ? curatePrimarySelectableArtifactById.get(explicitArtifactId) ?? null
-          : candidateRouteArtifactByIdForDisplay.get(explicitArtifactId) ?? null
+        const explicitArtifact = artifactResolutionSources.artifactById.get(explicitArtifactId) ?? null
         if (explicitArtifact) {
           return {
             artifact: explicitArtifact,
@@ -9087,11 +9128,7 @@ export function SandboxConciergePage() {
       }
     },
     [
-      candidateRouteArtifactByIdForDisplay,
-      candidateRouteArtifactsByDirectionIdForDisplay,
-      curatePrimarySelectableArtifactById,
-      curatePrimarySelectableArtifactsByDirectionId,
-      isCurateWrapperActive,
+      artifactResolutionSources,
     ],
   )
   const selectedCandidateRouteArtifact = useMemo(() => {
