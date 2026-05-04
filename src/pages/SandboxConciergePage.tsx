@@ -1343,6 +1343,92 @@ function getCurateQualificationStatus(
   return 'rejected'
 }
 
+function buildCurateVisibleCardModelFromArtifact(params: {
+  artifact: ContractEntryArtifact
+  preflight: CuratePreviewCommitabilityState | undefined
+  starterPack: StarterPack | null
+}): CurateVisibleCardModel {
+  const { artifact, preflight, starterPack } = params
+  // `qualificationStatus` remains behavior/control state here, not display-only state.
+  const qualificationStatus = getCurateQualificationStatus(preflight)
+  const approvedRefinementEntryPayload = preflight?.approvedRefinementEntryPayload
+  const approvedFinalRoute = approvedRefinementEntryPayload?.finalRoute
+  const hasApprovedPayload = Boolean(
+    qualificationStatus === 'qualified' && approvedRefinementEntryPayload && approvedFinalRoute,
+  )
+  const approvedRouteStarterFit = evaluateApprovedRouteStarterFit({
+    finalRoute: approvedFinalRoute,
+    starterPack,
+  })
+  const qualifiedRouteStart =
+    approvedFinalRoute?.stops.find((stop) => stop.role === 'start')?.displayName ?? null
+  const qualifiedRouteHighlight =
+    approvedFinalRoute?.stops.find((stop) => stop.role === 'highlight')?.displayName ?? null
+  const qualifiedRouteWindDown =
+    approvedFinalRoute?.stops.find((stop) => stop.role === 'windDown')?.displayName ?? null
+  const qualificationReason =
+    preflight?.failedCheck ??
+    preflight?.explicitFallbackReason ??
+    preflight?.missingRoleForContract ??
+    null
+  const controlState = {
+    preflight,
+    qualificationStatus,
+    approvedRefinementEntryPayload,
+    approvedFinalRoute,
+    hasApprovedPayload,
+    cardDisplaySource:
+      hasApprovedPayload
+        ? 'approved_payload'
+        : qualificationStatus === 'rejected' || qualificationStatus === 'runtime_error'
+          ? 'fallback_unqualified'
+          : 'candidate_draft',
+    isSelectable: hasApprovedPayload,
+  } as const
+  const displayProjection = {
+    title: approvedFinalRoute?.routeHeadline ?? artifact.routeTitle,
+    summary: approvedFinalRoute?.routeSummary ?? null,
+    start: approvedFinalRoute ? qualifiedRouteStart ?? artifact.storySpine.start : artifact.storySpine.start,
+    highlight: approvedFinalRoute
+      ? qualifiedRouteHighlight ?? artifact.storySpine.highlight
+      : artifact.storySpine.highlight,
+    windDown: approvedFinalRoute
+      ? qualifiedRouteWindDown ?? artifact.storySpine.windDown
+      : artifact.storySpine.windDown,
+    // Render-only label; `qualificationStatus` remains control state.
+    qualificationDisplayStatus: getCurateQualificationStatus(preflight, artifact.qualification),
+    qualifiedRouteStart,
+    qualifiedRouteHighlight,
+    qualifiedRouteWindDown,
+    finalRouteStarterFitScore: approvedRouteStarterFit.finalRouteStarterFitScore,
+    finalRouteStarterFitTier: approvedRouteStarterFit.finalRouteStarterFitTier,
+    finalRouteMatchedPreferredCategories:
+      approvedRouteStarterFit.finalRouteMatchedPreferredCategories,
+    finalRouteMatchedPreferredTags: approvedRouteStarterFit.finalRouteMatchedPreferredTags,
+    finalRouteMatchedPreferredStopShapes:
+      approvedRouteStarterFit.finalRouteMatchedPreferredStopShapes,
+    finalRouteMismatchReasons: approvedRouteStarterFit.finalRouteMismatchReasons,
+    finalRouteDisplayReason: approvedRouteStarterFit.finalRouteDisplayReason,
+    qualificationReason,
+  } as const
+  const debugProjection = {
+    qualifiedDisplayRankReason:
+      hasApprovedPayload
+        ? `qualified_then_ranked_by_final_starter_fit:${approvedRouteStarterFit.finalRouteStarterFitTier}:${approvedRouteStarterFit.finalRouteStarterFitScore?.toFixed(3) ?? 'n/a'}`
+        : null,
+  } as const
+
+  return {
+    artifact,
+    ...displayProjection,
+    cardDisplaySource: controlState.cardDisplaySource,
+    qualificationStatus: controlState.qualificationStatus,
+    hasApprovedPayload: controlState.hasApprovedPayload,
+    ...debugProjection,
+    isSelectable: controlState.isSelectable,
+  }
+}
+
 function findOpportunityStopOptionByName(
   opportunity: VerifiedCityOpportunity | undefined,
   role: 'start' | 'highlight' | 'windDown',
@@ -8753,86 +8839,13 @@ export function SandboxConciergePage() {
   const candidateRouteArtifactsForDisplay = curateDisplayDedupeResult.artifacts
   const curateDisplayDedupeDebug = curateDisplayDedupeResult.debug
   const curateVisibleCardModels = useMemo<CurateVisibleCardModel[]>(() => {
-    return candidateRouteArtifactsForDisplay.map((artifact) => {
-      const preflight = curatePreviewCommitabilityByArtifactId[artifact.id]
-      // `qualificationStatus` remains behavior/control state here, not display-only state.
-      const qualificationStatus = getCurateQualificationStatus(preflight)
-      const approvedRefinementEntryPayload = preflight?.approvedRefinementEntryPayload
-      const approvedFinalRoute = approvedRefinementEntryPayload?.finalRoute
-      const hasApprovedPayload = Boolean(
-        qualificationStatus === 'qualified' && approvedRefinementEntryPayload && approvedFinalRoute,
-      )
-      const approvedRouteStarterFit = evaluateApprovedRouteStarterFit({
-        finalRoute: approvedFinalRoute,
-        starterPack: selectedStarterPack,
-      })
-      const qualifiedRouteStart =
-        approvedFinalRoute?.stops.find((stop) => stop.role === 'start')?.displayName ?? null
-      const qualifiedRouteHighlight =
-        approvedFinalRoute?.stops.find((stop) => stop.role === 'highlight')?.displayName ?? null
-      const qualifiedRouteWindDown =
-        approvedFinalRoute?.stops.find((stop) => stop.role === 'windDown')?.displayName ?? null
-      const qualificationReason =
-        preflight?.failedCheck ??
-        preflight?.explicitFallbackReason ??
-        preflight?.missingRoleForContract ??
-        null
-      const controlState = {
-        preflight,
-        qualificationStatus,
-        approvedRefinementEntryPayload,
-        approvedFinalRoute,
-        hasApprovedPayload,
-        cardDisplaySource:
-          hasApprovedPayload
-            ? 'approved_payload'
-            : qualificationStatus === 'rejected' || qualificationStatus === 'runtime_error'
-              ? 'fallback_unqualified'
-              : 'candidate_draft',
-        isSelectable: hasApprovedPayload,
-      } as const
-      const displayProjection = {
-        title: approvedFinalRoute?.routeHeadline ?? artifact.routeTitle,
-        summary: approvedFinalRoute?.routeSummary ?? null,
-        start: approvedFinalRoute ? qualifiedRouteStart ?? artifact.storySpine.start : artifact.storySpine.start,
-        highlight: approvedFinalRoute
-          ? qualifiedRouteHighlight ?? artifact.storySpine.highlight
-          : artifact.storySpine.highlight,
-        windDown: approvedFinalRoute
-          ? qualifiedRouteWindDown ?? artifact.storySpine.windDown
-          : artifact.storySpine.windDown,
-        // Render-only label; `qualificationStatus` remains control state.
-        qualificationDisplayStatus: getCurateQualificationStatus(preflight, artifact.qualification),
-        qualifiedRouteStart,
-        qualifiedRouteHighlight,
-        qualifiedRouteWindDown,
-        finalRouteStarterFitScore: approvedRouteStarterFit.finalRouteStarterFitScore,
-        finalRouteStarterFitTier: approvedRouteStarterFit.finalRouteStarterFitTier,
-        finalRouteMatchedPreferredCategories:
-          approvedRouteStarterFit.finalRouteMatchedPreferredCategories,
-        finalRouteMatchedPreferredTags: approvedRouteStarterFit.finalRouteMatchedPreferredTags,
-        finalRouteMatchedPreferredStopShapes:
-          approvedRouteStarterFit.finalRouteMatchedPreferredStopShapes,
-        finalRouteMismatchReasons: approvedRouteStarterFit.finalRouteMismatchReasons,
-        finalRouteDisplayReason: approvedRouteStarterFit.finalRouteDisplayReason,
-        qualificationReason,
-      } as const
-      const debugProjection = {
-        qualifiedDisplayRankReason:
-          hasApprovedPayload
-            ? `qualified_then_ranked_by_final_starter_fit:${approvedRouteStarterFit.finalRouteStarterFitTier}:${approvedRouteStarterFit.finalRouteStarterFitScore?.toFixed(3) ?? 'n/a'}`
-            : null,
-      } as const
-      return {
+    return candidateRouteArtifactsForDisplay.map((artifact) =>
+      buildCurateVisibleCardModelFromArtifact({
         artifact,
-        ...displayProjection,
-        cardDisplaySource: controlState.cardDisplaySource,
-        qualificationStatus: controlState.qualificationStatus,
-        hasApprovedPayload: controlState.hasApprovedPayload,
-        ...debugProjection,
-        isSelectable: controlState.isSelectable,
-      }
-    })
+        preflight: curatePreviewCommitabilityByArtifactId[artifact.id],
+        starterPack: selectedStarterPack,
+      }),
+    )
   }, [
     candidateRouteArtifactsForDisplay,
     curatePreviewCommitabilityByArtifactId,
