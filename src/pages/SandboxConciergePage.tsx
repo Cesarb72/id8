@@ -800,6 +800,19 @@ interface SurpriseTryAnotherDebug {
   currentSourceOpportunityId: string | null
   currentScenarioFamilyHint: string | null
   currentPocketId: string | null
+  resolvedScenarioFamiliesConsidered: string
+  surprisePrimaryScenarioFamily: string
+  surpriseContrastScenarioFamily: string
+  scenarioFamiliesGenerated: string
+  scenarioBoardCandidateCountsByFamily: string
+  scenarioBuiltNightCountsByFamily: string
+  verifiedOpportunityCountsByFamily: string
+  artifactCountsByFamily: string
+  artifactDropReasonsByFamily: string
+  scenarioBackedVsLiveSourceCountsByFamily: string
+  visibleCountsByFamily: string
+  hiddenRerollCountsByFamily: string
+  crossFamilyAlternateIds: string[]
   verifiedCityOpportunitiesCount: number
   scenarioBackedVerifiedCityOpportunitiesCount: number
   step2PrimarySourceOpportunitiesCount: number
@@ -14004,6 +14017,23 @@ export function SandboxConciergePage() {
       routeTitle: currentSelectedArtifact?.routeTitle ?? null,
     })
     const currentPocketId = currentSelectedArtifact?.selection.pocketId ?? null
+    const resolvedScenarioFamiliesConsidered = resolvedScenarioFamily ?? 'n/a'
+    const surprisePrimaryScenarioFamily = resolvedScenarioFamily ?? 'n/a'
+    const surpriseContrastScenarioFamily = 'n/a'
+    const scenarioFamiliesGenerated = summarizeDiagnosticCounts(
+      scenarioBuiltNights.map((night) => night.scenarioFamily),
+    )
+    const scenarioBoardCandidateCountsByFamily = scenarioCandidateBoard
+      ? `${scenarioCandidateBoard.scenarioFamily}:${scenarioCandidateBoard.requiredStopTypes
+          .map(
+            (stopType) =>
+              `${stopType}=${scenarioCandidateBoard.candidatesByStopType[stopType]?.length ?? 0}`,
+          )
+          .join('|')}`
+      : 'n/a'
+    const scenarioBuiltNightCountsByFamily = summarizeDiagnosticCounts(
+      scenarioBuiltNights.map((night) => night.scenarioFamily),
+    )
     const activeStep2ArtifactSourceOpportunities =
       shouldUseScenarioBackedArtifacts
         ? isBuildWrapperActive
@@ -14046,6 +14076,17 @@ export function SandboxConciergePage() {
         }),
       ),
     )
+    const verifiedOpportunityCountsByFamily = summarizeDiagnosticCounts(
+      [
+        ...scenarioBackedVerifiedCityOpportunities.map((opportunity) =>
+          deriveScenarioFamilyHintFromOpportunity({
+            opportunityId: opportunity.id,
+            flavor: opportunity.flavor,
+          }),
+        ),
+        ...verifiedCityOpportunities.map(() => 'live_district'),
+      ].filter(Boolean),
+    )
     const step2PrimaryFamilies = summarizeDiagnosticCounts(
       step2PrimarySourceOpportunities.map((opportunity) =>
         deriveScenarioFamilyHintFromOpportunity({
@@ -14054,6 +14095,48 @@ export function SandboxConciergePage() {
         }),
       ),
     )
+    const artifactCountsByFamily = step2CandidateFamilies
+    const artifactDropReasonsByFamily =
+      shouldUseScenarioBackedArtifacts && scenarioBackedVerifiedCityOpportunities.length > 0
+        ? (() => {
+            const counts = new Map<string, number>()
+            scenarioBackedVerifiedCityOpportunities.forEach((opportunity) => {
+              const artifact = step2CandidateRouteArtifacts.find(
+                (entry) => entry.sourceOpportunityId === opportunity.id,
+              )
+              if (artifact) {
+                return
+              }
+              const family =
+                deriveScenarioFamilyHintFromOpportunity({
+                  opportunityId: opportunity.id,
+                  flavor: opportunity.flavor,
+                }) ?? 'n/a'
+              const reason = opportunity.scenarioWindDownDebug?.finalRoleEligible === false
+                ? 'artifact_builder_null:windDown_not_role_eligible'
+                : 'artifact_builder_null:unknown'
+              const key = `${family}:${reason}`
+              counts.set(key, (counts.get(key) ?? 0) + 1)
+            })
+            return counts.size > 0
+              ? [...counts.entries()]
+                  .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+                  .map(([value, count]) => `${value}:${count}`)
+                  .join(', ')
+              : 'none'
+          })()
+        : 'n/a'
+    const scenarioBackedVsLiveSourceCountsByFamily = summarizeDiagnosticCounts([
+      ...scenarioBackedVerifiedCityOpportunities.map((opportunity) => {
+        const family =
+          deriveScenarioFamilyHintFromOpportunity({
+            opportunityId: opportunity.id,
+            flavor: opportunity.flavor,
+          }) ?? 'n/a'
+        return `scenario_backed:${family}`
+      }),
+      ...verifiedCityOpportunities.map(() => 'live_district:live_district'),
+    ])
     const step2CandidateStarts = summarizeUniqueRoleValues(
       step2CandidateRouteArtifacts.map((artifact) => artifact.storySpine.start),
     )
@@ -14074,6 +14157,25 @@ export function SandboxConciergePage() {
     )
     const alternateArtifactIds = step2TryAnotherAlternates.map((entry) => entry.artifact.id)
     const alternateDirectionIds = step2TryAnotherAlternates.map((entry) => entry.direction.id)
+    const hiddenRerollCountsByFamily = summarizeDiagnosticCounts(
+      step2TryAnotherAlternates.map((entry) =>
+        deriveScenarioFamilyHintFromArtifactIdentity({
+          artifactId: entry.artifact.id,
+          sourceOpportunityId: entry.artifact.sourceOpportunityId,
+          routeTitle: entry.artifact.routeTitle,
+        }),
+      ),
+    )
+    const crossFamilyAlternateIds = step2TryAnotherAlternates
+      .filter((entry) => {
+        const family = deriveScenarioFamilyHintFromArtifactIdentity({
+          artifactId: entry.artifact.id,
+          sourceOpportunityId: entry.artifact.sourceOpportunityId,
+          routeTitle: entry.artifact.routeTitle,
+        })
+        return family && currentScenarioFamilyHint && family !== currentScenarioFamilyHint
+      })
+      .map((entry) => entry.artifact.id)
     const lowerOverlapPreferenceAffectedTopChoice =
       step2TryAnotherAlternates[0]?.orderingReason.includes('lower_overlap_preferred') ?? null
     const alternateOverlapDiagnostics = step2TryAnotherAlternates.map((entry) => {
@@ -14114,6 +14216,19 @@ export function SandboxConciergePage() {
       currentSourceOpportunityId,
       currentScenarioFamilyHint,
       currentPocketId,
+      resolvedScenarioFamiliesConsidered,
+      surprisePrimaryScenarioFamily,
+      surpriseContrastScenarioFamily,
+      scenarioFamiliesGenerated,
+      scenarioBoardCandidateCountsByFamily,
+      scenarioBuiltNightCountsByFamily,
+      verifiedOpportunityCountsByFamily,
+      artifactCountsByFamily,
+      artifactDropReasonsByFamily,
+      scenarioBackedVsLiveSourceCountsByFamily,
+      visibleCountsByFamily: visibleArtifactFamilies,
+      hiddenRerollCountsByFamily,
+      crossFamilyAlternateIds,
       verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
       scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
       step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
@@ -14191,6 +14306,9 @@ export function SandboxConciergePage() {
     isCurateWrapperActive,
     persona,
     primaryVibe,
+    resolvedScenarioFamily,
+    scenarioBuiltNights,
+    scenarioCandidateBoard,
     scenarioBackedVerifiedCityOpportunities,
     selectedStarterPack,
     selectedCandidateRouteArtifact,
@@ -16649,6 +16767,58 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.currentPocketId:{' '}
               {surpriseTryAnotherDebug.currentPocketId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.resolvedScenarioFamiliesConsidered:{' '}
+              {surpriseTryAnotherDebug.resolvedScenarioFamiliesConsidered}
+            </div>
+            <div>
+              surpriseTryAnother.surprisePrimaryScenarioFamily:{' '}
+              {surpriseTryAnotherDebug.surprisePrimaryScenarioFamily}
+            </div>
+            <div>
+              surpriseTryAnother.surpriseContrastScenarioFamily:{' '}
+              {surpriseTryAnotherDebug.surpriseContrastScenarioFamily}
+            </div>
+            <div>
+              surpriseTryAnother.scenarioFamiliesGenerated:{' '}
+              {surpriseTryAnotherDebug.scenarioFamiliesGenerated}
+            </div>
+            <div>
+              surpriseTryAnother.scenarioBoardCandidateCountsByFamily:{' '}
+              {surpriseTryAnotherDebug.scenarioBoardCandidateCountsByFamily}
+            </div>
+            <div>
+              surpriseTryAnother.scenarioBuiltNightCountsByFamily:{' '}
+              {surpriseTryAnotherDebug.scenarioBuiltNightCountsByFamily}
+            </div>
+            <div>
+              surpriseTryAnother.verifiedOpportunityCountsByFamily:{' '}
+              {surpriseTryAnotherDebug.verifiedOpportunityCountsByFamily}
+            </div>
+            <div>
+              surpriseTryAnother.artifactCountsByFamily:{' '}
+              {surpriseTryAnotherDebug.artifactCountsByFamily}
+            </div>
+            <div>
+              surpriseTryAnother.artifactDropReasonsByFamily:{' '}
+              {surpriseTryAnotherDebug.artifactDropReasonsByFamily}
+            </div>
+            <div>
+              surpriseTryAnother.scenarioBackedVsLiveSourceCountsByFamily:{' '}
+              {surpriseTryAnotherDebug.scenarioBackedVsLiveSourceCountsByFamily}
+            </div>
+            <div>
+              surpriseTryAnother.visibleCountsByFamily:{' '}
+              {surpriseTryAnotherDebug.visibleCountsByFamily}
+            </div>
+            <div>
+              surpriseTryAnother.hiddenRerollCountsByFamily:{' '}
+              {surpriseTryAnotherDebug.hiddenRerollCountsByFamily}
+            </div>
+            <div>
+              surpriseTryAnother.crossFamilyAlternateIds:{' '}
+              {surpriseTryAnotherDebug.crossFamilyAlternateIds.join(', ') || 'none'}
             </div>
             <div>
               surpriseTryAnother.verifiedCityOpportunitiesCount:{' '}
