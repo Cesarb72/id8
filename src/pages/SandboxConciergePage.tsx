@@ -794,10 +794,17 @@ interface SurpriseTryAnotherDebug {
   currentSelectedArtifactId: string | null
   currentSelectedDirectionId: string | null
   currentSelectedArtifactTitle: string | null
+  currentStoryStart: string | null
+  currentStoryHighlight: string | null
+  currentStoryWindDown: string | null
+  currentSourceOpportunityId: string | null
+  currentScenarioFamilyHint: string | null
+  currentPocketId: string | null
   candidateRouteArtifactsForDisplayCount: number
   step2TryAnotherAlternatesCount: number
   alternateArtifactIds: string[]
   alternateDirectionIds: string[]
+  alternateOverlapDiagnostics: string[]
   lastTryAnotherChosenArtifactId: string | null
   lastTryAnotherChosenDirectionId: string | null
   chosenArtifactDifferedFromPrevious: boolean | null
@@ -912,6 +919,25 @@ function buildVisibleNightFingerprint(params: {
     normalizeList(params.stops),
     normalizeList(params.stopVenueIds),
   ].join('::')
+}
+
+function deriveScenarioFamilyHintFromArtifactIdentity(input: {
+  artifactId?: string | null
+  sourceOpportunityId?: string | null
+  routeTitle?: string | null
+}): string | null {
+  const corpus = [input.artifactId, input.sourceOpportunityId, input.routeTitle]
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .join(' ')
+    .toLowerCase()
+  const builtFamilyMatch = corpus.match(/built_([a-z]+_[a-z]+)(?:_|$)/)
+  if (builtFamilyMatch?.[1]) {
+    return builtFamilyMatch[1]
+  }
+  const familyTokenMatch = corpus.match(
+    /\b(romantic_(?:cozy|lively|cultured)|friends_(?:cozy|lively|cultured)|family_(?:cozy|lively|cultured))\b/,
+  )
+  return familyTokenMatch?.[1] ?? null
 }
 
 function computeVisibleNightDifferenceScore(
@@ -13792,25 +13818,86 @@ export function SandboxConciergePage() {
     selectedStep2CandidateArtifactId,
   ])
   const surpriseTryAnotherDebug = useMemo<SurpriseTryAnotherDebug>(() => {
-    const currentSelectedArtifactId =
-      selectedCandidateRouteArtifact?.id ?? selectedStep2CandidateArtifactId ?? null
+    const currentSelectedArtifact =
+      selectedCandidateRouteArtifact ??
+      candidateRouteArtifactByIdForDisplay.get(selectedStep2CandidateArtifactId ?? '') ??
+      null
+    const currentSelectedArtifactId = currentSelectedArtifact?.id ?? selectedStep2CandidateArtifactId ?? null
     const currentSelectedDirectionId = selectedDirectionId ?? directionCards[0]?.id ?? null
     const currentSelectedArtifactTitle =
-      selectedCandidateRouteArtifact?.routeTitle ??
-      candidateRouteArtifactByIdForDisplay.get(selectedStep2CandidateArtifactId ?? '')?.routeTitle ??
-      null
+      currentSelectedArtifact?.routeTitle ?? null
+    const currentStoryStart = currentSelectedArtifact?.storySpine.start ?? null
+    const currentStoryHighlight = currentSelectedArtifact?.storySpine.highlight ?? null
+    const currentStoryWindDown = currentSelectedArtifact?.storySpine.windDown ?? null
+    const currentSourceOpportunityId = currentSelectedArtifact?.sourceOpportunityId ?? null
+    const currentScenarioFamilyHint = deriveScenarioFamilyHintFromArtifactIdentity({
+      artifactId: currentSelectedArtifact?.id ?? null,
+      sourceOpportunityId: currentSelectedArtifact?.sourceOpportunityId ?? null,
+      routeTitle: currentSelectedArtifact?.routeTitle ?? null,
+    })
+    const currentPocketId = currentSelectedArtifact?.selection.pocketId ?? null
     const alternateArtifactIds = step2TryAnotherAlternates.map((entry) => entry.artifact.id)
     const alternateDirectionIds = step2TryAnotherAlternates.map((entry) => entry.direction.id)
+    const alternateOverlapDiagnostics = step2TryAnotherAlternates.map((entry) => {
+      const sameStart =
+        normalizeCurateAuditStopName(entry.artifact.storySpine.start) ===
+        normalizeCurateAuditStopName(currentStoryStart ?? undefined)
+      const sameHighlight =
+        normalizeCurateAuditStopName(entry.artifact.storySpine.highlight) ===
+        normalizeCurateAuditStopName(currentStoryHighlight ?? undefined)
+      const sameWindDown =
+        normalizeCurateAuditStopName(entry.artifact.storySpine.windDown) ===
+        normalizeCurateAuditStopName(currentStoryWindDown ?? undefined)
+      const roleOverlapCount = [sameStart, sameHighlight, sameWindDown].filter(Boolean).length
+      const scenarioFamilyHint = deriveScenarioFamilyHintFromArtifactIdentity({
+        artifactId: entry.artifact.id,
+        sourceOpportunityId: entry.artifact.sourceOpportunityId,
+        routeTitle: entry.artifact.routeTitle,
+      })
+      const inclusionReason =
+        entry.score > 0
+          ? 'score_positive'
+          : surpriseVariationByDirectionId.get(entry.direction.id)
+                ?.scenarioFamily ||
+              surpriseVariationByDirectionId.get(entry.direction.id)?.pocketId ||
+              surpriseVariationByDirectionId.get(entry.direction.id)?.anchorVenueId
+            ? 'variation_boost_only'
+            : 'unknown'
+      return [
+        `artifact=${entry.artifact.id}`,
+        `source=${entry.artifact.sourceOpportunityId}`,
+        `title=${entry.artifact.routeTitle}`,
+        `direction=${entry.direction.id}`,
+        `pocket=${entry.artifact.selection.pocketId ?? 'n/a'}`,
+        `start=${entry.artifact.storySpine.start}`,
+        `highlight=${entry.artifact.storySpine.highlight}`,
+        `windDown=${entry.artifact.storySpine.windDown}`,
+        `sameStart=${String(sameStart)}`,
+        `sameHighlight=${String(sameHighlight)}`,
+        `sameWindDown=${String(sameWindDown)}`,
+        `roleOverlapCount=${roleOverlapCount}`,
+        `family=${scenarioFamilyHint ?? 'n/a'}`,
+        `rerollScore=${entry.score.toFixed(3)}`,
+        `reason=${inclusionReason}`,
+      ].join('|')
+    })
     const lastTryAnotherChosenArtifactId = step2RerollTrace?.nextArtifactId_selected ?? null
     const lastTryAnotherChosenDirectionId = step2RerollTrace?.nextDirectionId_selected ?? null
     return {
       currentSelectedArtifactId,
       currentSelectedDirectionId,
       currentSelectedArtifactTitle,
+      currentStoryStart,
+      currentStoryHighlight,
+      currentStoryWindDown,
+      currentSourceOpportunityId,
+      currentScenarioFamilyHint,
+      currentPocketId,
       candidateRouteArtifactsForDisplayCount: candidateRouteArtifactsForDisplay.length,
       step2TryAnotherAlternatesCount: step2TryAnotherAlternates.length,
       alternateArtifactIds,
       alternateDirectionIds,
+      alternateOverlapDiagnostics,
       lastTryAnotherChosenArtifactId,
       lastTryAnotherChosenDirectionId,
       chosenArtifactDifferedFromPrevious:
@@ -13830,10 +13917,10 @@ export function SandboxConciergePage() {
     candidateRouteArtifactByIdForDisplay,
     candidateRouteArtifactsForDisplay.length,
     directionCards,
-    selectedCandidateRouteArtifact?.id,
-    selectedCandidateRouteArtifact?.routeTitle,
+    selectedCandidateRouteArtifact,
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
+    surpriseVariationByDirectionId,
     step2RerollTrace,
     step2TryAnotherAlternates,
   ])
@@ -16259,6 +16346,30 @@ export function SandboxConciergePage() {
               {surpriseTryAnotherDebug.currentSelectedArtifactTitle ?? 'n/a'}
             </div>
             <div>
+              surpriseTryAnother.currentStoryStart:{' '}
+              {surpriseTryAnotherDebug.currentStoryStart ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.currentStoryHighlight:{' '}
+              {surpriseTryAnotherDebug.currentStoryHighlight ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.currentStoryWindDown:{' '}
+              {surpriseTryAnotherDebug.currentStoryWindDown ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.currentSourceOpportunityId:{' '}
+              {surpriseTryAnotherDebug.currentSourceOpportunityId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.currentScenarioFamilyHint:{' '}
+              {surpriseTryAnotherDebug.currentScenarioFamilyHint ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.currentPocketId:{' '}
+              {surpriseTryAnotherDebug.currentPocketId ?? 'n/a'}
+            </div>
+            <div>
               surpriseTryAnother.candidateRouteArtifactsForDisplayCount:{' '}
               {surpriseTryAnotherDebug.candidateRouteArtifactsForDisplayCount}
             </div>
@@ -16273,6 +16384,10 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.alternateDirectionIds:{' '}
               {surpriseTryAnotherDebug.alternateDirectionIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.alternateOverlapDiagnostics:{' '}
+              {surpriseTryAnotherDebug.alternateOverlapDiagnostics.join(' || ') || 'none'}
             </div>
             <div>
               surpriseTryAnother.lastTryAnotherChosenArtifactId:{' '}
