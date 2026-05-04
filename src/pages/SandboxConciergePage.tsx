@@ -817,6 +817,13 @@ interface SurpriseTryAnotherDebug {
   contrastGenerated: boolean
   contrastVisibleCount: number
   contrastArtifactCount: number
+  contrastDropReasonsByNight: string[]
+  contrastWindDownEligibilityByNight: string[]
+  contrastStorySpines: string[]
+  contrastMappedOpportunityIds: string[]
+  contrastArtifactBuilderNullReasons: string[]
+  contrastReachedArtifactBuilderCount: number
+  contrastReachedWaypointCount: number
   verifiedCityOpportunitiesCount: number
   scenarioBackedVerifiedCityOpportunitiesCount: number
   step2PrimarySourceOpportunitiesCount: number
@@ -14330,6 +14337,62 @@ export function SandboxConciergePage() {
       isSurpriseWrapperActive &&
       Boolean(scenarioContrastCandidateBoard) &&
       scenarioContrastBuiltNights.some((night) => night.complete)
+    const contrastOpportunities = scenarioBackedVerifiedCityOpportunities.filter((opportunity) => {
+      const family = deriveScenarioFamilyHintFromOpportunity({
+        opportunityId: opportunity.id,
+        flavor: opportunity.flavor,
+      })
+      return Boolean(family && surpriseContrastScenarioFamily && family === surpriseContrastScenarioFamily)
+    })
+    const contrastMappedOpportunityIds = contrastOpportunities.map((opportunity) => opportunity.id)
+    const contrastReachedArtifactBuilderCount = contrastOpportunities.length
+    const contrastStorySpines = contrastOpportunities.map((opportunity) => {
+      const nightId = opportunity.scenarioNight?.id ?? 'n/a'
+      const family =
+        opportunity.scenarioNight?.scenarioFamily ??
+        deriveScenarioFamilyHintFromOpportunity({
+          opportunityId: opportunity.id,
+          flavor: opportunity.flavor,
+        }) ??
+        'n/a'
+      return [
+        `night=${nightId}`,
+        `family=${family}`,
+        `start=${opportunity.storySpine.start}`,
+        `highlight=${opportunity.storySpine.highlight}`,
+        `windDown=${opportunity.storySpine.windDown}`,
+      ].join('|')
+    })
+    const contrastWindDownEligibilityByNight = contrastOpportunities.map((opportunity) => {
+      const nightId = opportunity.scenarioNight?.id ?? 'n/a'
+      const family =
+        opportunity.scenarioNight?.scenarioFamily ??
+        deriveScenarioFamilyHintFromOpportunity({
+          opportunityId: opportunity.id,
+          flavor: opportunity.flavor,
+        }) ??
+        'n/a'
+      const originalVenueId = opportunity.scenarioWindDownDebug?.originalVenueId ?? null
+      const originalStop =
+        originalVenueId && opportunity.scenarioNight
+          ? opportunity.scenarioNight.stops.find((stop) => stop.venueId === originalVenueId)
+          : undefined
+      return [
+        `night=${nightId}`,
+        `family=${family}`,
+        `originalWindDownId=${opportunity.scenarioWindDownDebug?.originalVenueId ?? 'n/a'}`,
+        `originalWindDownName=${opportunity.scenarioWindDownDebug?.originalName ?? 'n/a'}`,
+        `originalWindDownCategory=${originalStop?.venueCategory ?? 'n/a'}`,
+        `originalWindDownSourceType=${originalStop?.sourceType ?? 'n/a'}`,
+        `originalWindDownStopType=${originalStop?.stopType ?? 'n/a'}`,
+        `originalWindDownRoleFitWindDown=${originalStop?.roleFit.windDown?.toFixed(3) ?? 'n/a'}`,
+        `originalWindDownRoleFitHighlight=${originalStop?.roleFit.highlight?.toFixed(3) ?? 'n/a'}`,
+        `finalRoleEligible=${String(opportunity.scenarioWindDownDebug?.finalRoleEligible ?? false)}`,
+        `finalName=${opportunity.scenarioWindDownDebug?.finalName ?? 'n/a'}`,
+        `repairReason=${opportunity.scenarioWindDownDebug?.repairReason ?? 'n/a'}`,
+        `repairSource=${opportunity.scenarioWindDownDebug?.repairSource ?? 'n/a'}`,
+      ].join('|')
+    })
     const contrastArtifactCount = step2CandidateRouteArtifacts.filter((artifact) => {
       const family = deriveScenarioFamilyHintFromArtifactIdentity({
         artifactId: artifact.id,
@@ -14338,6 +14401,9 @@ export function SandboxConciergePage() {
       })
       return Boolean(family && surpriseContrastScenarioFamily && family === surpriseContrastScenarioFamily)
     }).length
+    const contrastArtifacts = step2CandidateRouteArtifacts.filter((artifact) =>
+      contrastMappedOpportunityIds.includes(artifact.sourceOpportunityId),
+    )
     const contrastVisibleCount = candidateRouteArtifactsForDisplay.filter((artifact) => {
       const family = deriveScenarioFamilyHintFromArtifactIdentity({
         artifactId: artifact.id,
@@ -14346,6 +14412,62 @@ export function SandboxConciergePage() {
       })
       return Boolean(family && surpriseContrastScenarioFamily && family === surpriseContrastScenarioFamily)
     }).length
+    const contrastArtifactBuilderNullReasons = contrastOpportunities
+      .filter(
+        (opportunity) =>
+          !contrastArtifacts.some((artifact) => artifact.sourceOpportunityId === opportunity.id),
+      )
+      .map((opportunity) => {
+        const nightId = opportunity.scenarioNight?.id ?? 'n/a'
+        const family =
+          opportunity.scenarioNight?.scenarioFamily ??
+          deriveScenarioFamilyHintFromOpportunity({
+            opportunityId: opportunity.id,
+            flavor: opportunity.flavor,
+          }) ??
+          'n/a'
+        const nullReason =
+          opportunity.scenarioWindDownDebug?.finalRoleEligible === false
+            ? 'windDown_not_role_eligible'
+            : 'artifact_builder_null_unknown'
+        return [
+          `night=${nightId}`,
+          `opportunity=${opportunity.id}`,
+          `family=${family}`,
+          `nullReason=${nullReason}`,
+          `finalRoleEligible=${String(opportunity.scenarioWindDownDebug?.finalRoleEligible ?? false)}`,
+          `finalName=${opportunity.scenarioWindDownDebug?.finalName ?? 'n/a'}`,
+          `repairReason=${opportunity.scenarioWindDownDebug?.repairReason ?? 'n/a'}`,
+        ].join('|')
+      })
+    const contrastDropReasonsByNight = contrastOpportunities.map((opportunity) => {
+      const artifactBuilt = contrastArtifacts.some(
+        (artifact) => artifact.sourceOpportunityId === opportunity.id,
+      )
+      const nightId = opportunity.scenarioNight?.id ?? 'n/a'
+      const family =
+        opportunity.scenarioNight?.scenarioFamily ??
+        deriveScenarioFamilyHintFromOpportunity({
+          opportunityId: opportunity.id,
+          flavor: opportunity.flavor,
+        }) ??
+        'n/a'
+      const nullReason = artifactBuilt
+        ? 'none'
+        : opportunity.scenarioWindDownDebug?.finalRoleEligible === false
+          ? 'windDown_not_role_eligible'
+          : 'artifact_builder_null_unknown'
+      return [
+        `night=${nightId}`,
+        `opportunity=${opportunity.id}`,
+        `family=${family}`,
+        `artifactBuilt=${String(artifactBuilt)}`,
+        `reachedStep2CandidateRouteArtifacts=${String(artifactBuilt)}`,
+        `reachedWaypoint=false`,
+        `dropReason=${nullReason}`,
+      ].join('|')
+    })
+    const contrastReachedWaypointCount = 0
     const lowerOverlapPreferenceAffectedTopChoice =
       step2TryAnotherAlternates[0]?.orderingReason.includes('lower_overlap_preferred') ?? null
     const alternateOverlapDiagnostics = step2TryAnotherAlternates.map((entry) => {
@@ -14402,6 +14524,13 @@ export function SandboxConciergePage() {
       contrastGenerated,
       contrastVisibleCount,
       contrastArtifactCount,
+      contrastDropReasonsByNight,
+      contrastWindDownEligibilityByNight,
+      contrastStorySpines,
+      contrastMappedOpportunityIds,
+      contrastArtifactBuilderNullReasons,
+      contrastReachedArtifactBuilderCount,
+      contrastReachedWaypointCount,
       verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
       scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
       step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
@@ -17008,6 +17137,34 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.contrastArtifactCount:{' '}
               {surpriseTryAnotherDebug.contrastArtifactCount}
+            </div>
+            <div>
+              surpriseTryAnother.contrastMappedOpportunityIds:{' '}
+              {surpriseTryAnotherDebug.contrastMappedOpportunityIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastReachedArtifactBuilderCount:{' '}
+              {surpriseTryAnotherDebug.contrastReachedArtifactBuilderCount}
+            </div>
+            <div>
+              surpriseTryAnother.contrastReachedWaypointCount:{' '}
+              {surpriseTryAnotherDebug.contrastReachedWaypointCount}
+            </div>
+            <div>
+              surpriseTryAnother.contrastStorySpines:{' '}
+              {surpriseTryAnotherDebug.contrastStorySpines.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastWindDownEligibilityByNight:{' '}
+              {surpriseTryAnotherDebug.contrastWindDownEligibilityByNight.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastArtifactBuilderNullReasons:{' '}
+              {surpriseTryAnotherDebug.contrastArtifactBuilderNullReasons.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastDropReasonsByNight:{' '}
+              {surpriseTryAnotherDebug.contrastDropReasonsByNight.join(' || ') || 'none'}
             </div>
             <div>
               surpriseTryAnother.verifiedCityOpportunitiesCount:{' '}
