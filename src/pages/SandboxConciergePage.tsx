@@ -9630,27 +9630,104 @@ export function SandboxConciergePage() {
         : undefined,
     [allDirectionCards, directionCards, selectedDirectionId],
   )
-  const resolveDirectionForCandidateArtifact = useCallback(
-    (artifact: CanonicalCandidateRouteArtifact) => {
-      const artifactDirectionId = artifact.selection.directionId
-      if (artifactDirectionId) {
-        return (
-          directionCards.find((entry) => entry.id === artifactDirectionId) ??
-          allDirectionCards.find((entry) => entry.id === artifactDirectionId) ??
-          null
-        )
+  const resolveDirectionForArtifactPocketId = useCallback(
+    (artifactPocketId: string | null | undefined) => {
+      if (!artifactPocketId) {
+        return null
       }
-      const artifactPocketId = artifact.selection.pocketId
-      if (artifactPocketId) {
-        return (
-          directionCards.find((entry) => (entry.debugMeta?.pocketId ?? entry.id) === artifactPocketId) ??
-          allDirectionCards.find((entry) => (entry.debugMeta?.pocketId ?? entry.id) === artifactPocketId) ??
-          null
-        )
-      }
-      return directionCards[0] ?? allDirectionCards[0] ?? null
+      return (
+        directionCards.find((entry) => (entry.debugMeta?.pocketId ?? entry.id) === artifactPocketId) ??
+        allDirectionCards.find((entry) => (entry.debugMeta?.pocketId ?? entry.id) === artifactPocketId) ??
+        null
+      )
     },
     [allDirectionCards, directionCards],
+  )
+  const resolveDirectionForCandidateArtifactWithTrace = useCallback(
+    (
+      artifact: CanonicalCandidateRouteArtifact,
+      options?: {
+        allowPocketFallbackOnUnmatchedDirectionId?: boolean
+      },
+    ) => {
+      const artifactDirectionId = artifact.selection.directionId
+      const artifactPocketId = artifact.selection.pocketId
+      const directionById = artifactDirectionId
+        ? (directionCards.find((entry) => entry.id === artifactDirectionId) ??
+          allDirectionCards.find((entry) => entry.id === artifactDirectionId) ??
+          null)
+        : null
+      if (directionById) {
+        return {
+          direction: directionById,
+          directionIdMatched: true,
+          pocketFallbackMatched: false,
+          resolvedDirectionId: directionById.id,
+          fallbackDirectionCandidateId: null,
+          resolveDirectionFailureReason: null,
+        }
+      }
+      if (
+        artifactDirectionId &&
+        options?.allowPocketFallbackOnUnmatchedDirectionId &&
+        artifactPocketId
+      ) {
+        const directionByPocket = resolveDirectionForArtifactPocketId(artifactPocketId)
+        if (directionByPocket) {
+          return {
+            direction: directionByPocket,
+            directionIdMatched: false,
+            pocketFallbackMatched: true,
+            resolvedDirectionId: directionByPocket.id,
+            fallbackDirectionCandidateId: directionByPocket.id,
+            resolveDirectionFailureReason: 'direction_id_unmatched_pocket_fallback_used',
+          }
+        }
+      }
+      if (!artifactDirectionId && artifactPocketId) {
+        const directionByPocket = resolveDirectionForArtifactPocketId(artifactPocketId)
+        if (directionByPocket) {
+          return {
+            direction: directionByPocket,
+            directionIdMatched: false,
+            pocketFallbackMatched: true,
+            resolvedDirectionId: directionByPocket.id,
+            fallbackDirectionCandidateId: directionByPocket.id,
+            resolveDirectionFailureReason: null,
+          }
+        }
+      }
+      const fallbackDirection = directionCards[0] ?? allDirectionCards[0] ?? null
+      if (fallbackDirection && !artifactDirectionId && !artifactPocketId) {
+        return {
+          direction: fallbackDirection,
+          directionIdMatched: false,
+          pocketFallbackMatched: false,
+          resolvedDirectionId: fallbackDirection.id,
+          fallbackDirectionCandidateId: fallbackDirection.id,
+          resolveDirectionFailureReason: null,
+        }
+      }
+      return {
+        direction: null,
+        directionIdMatched: false,
+        pocketFallbackMatched: false,
+        resolvedDirectionId: null,
+        fallbackDirectionCandidateId: null,
+        resolveDirectionFailureReason: artifactDirectionId
+          ? 'direction_id_unmatched'
+          : artifactPocketId
+            ? 'pocket_id_unmatched'
+            : 'no_direction_or_pocket',
+      }
+    },
+    [allDirectionCards, directionCards, resolveDirectionForArtifactPocketId],
+  )
+  const resolveDirectionForCandidateArtifact = useCallback(
+    (artifact: CanonicalCandidateRouteArtifact) => {
+      return resolveDirectionForCandidateArtifactWithTrace(artifact).direction
+    },
+    [resolveDirectionForCandidateArtifactWithTrace],
   )
   const buildAnchorMatchedCandidateArtifacts = useMemo(
     () => {
@@ -14188,7 +14265,9 @@ export function SandboxConciergePage() {
         if (candidateArtifact.id === currentArtifactId) {
           return null
         }
-        const candidateDirection = resolveDirectionForCandidateArtifact(candidateArtifact)
+        const candidateDirection = resolveDirectionForCandidateArtifactWithTrace(candidateArtifact, {
+          allowPocketFallbackOnUnmatchedDirectionId: isSurpriseWrapperActive,
+        }).direction
         if (!candidateDirection) {
           return null
         }
@@ -14395,7 +14474,9 @@ export function SandboxConciergePage() {
       candidateRouteArtifactsForDisplay
         .filter((artifact) => artifact.id !== currentArtifactId)
         .map((artifact) => {
-          const direction = resolveDirectionForCandidateArtifact(artifact)
+          const direction = resolveDirectionForCandidateArtifactWithTrace(artifact, {
+            allowPocketFallbackOnUnmatchedDirectionId: isSurpriseWrapperActive,
+          }).direction
           if (!direction) {
             return null
           }
@@ -14489,7 +14570,8 @@ export function SandboxConciergePage() {
     step2TryAnotherAlternates,
     handleSelectDirection,
     loading,
-    resolveDirectionForCandidateArtifact,
+    isSurpriseWrapperActive,
+    resolveDirectionForCandidateArtifactWithTrace,
     selectedCandidateRouteArtifact?.id,
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
@@ -15086,13 +15168,21 @@ export function SandboxConciergePage() {
                 sourceOpportunityId: artifact.sourceOpportunityId,
                 routeTitle: artifact.routeTitle,
               }) ?? 'n/a'
-            const direction = resolveDirectionForCandidateArtifact(artifact)
+            const directionResolution = resolveDirectionForCandidateArtifactWithTrace(artifact, {
+              allowPocketFallbackOnUnmatchedDirectionId: isSurpriseWrapperActive,
+            })
+            const direction = directionResolution.direction
             const directionId = direction?.id ?? 'n/a'
             if (artifact.id === currentArtifactIdForReroll) {
               return [
                 `artifactId=${artifact.id}`,
                 `familyHint=${familyHint}`,
                 `directionId=${directionId}`,
+                `directionIdMatched=${String(directionResolution.directionIdMatched)}`,
+                `pocketFallbackMatched=${String(directionResolution.pocketFallbackMatched)}`,
+                `resolvedDirectionId=${directionResolution.resolvedDirectionId ?? 'n/a'}`,
+                `fallbackDirectionCandidateId=${directionResolution.fallbackDirectionCandidateId ?? 'n/a'}`,
+                `resolveDirectionFailureReason=${directionResolution.resolveDirectionFailureReason ?? 'n/a'}`,
                 'rejectionReason=current_selected',
               ].join('|')
             }
@@ -15101,6 +15191,11 @@ export function SandboxConciergePage() {
                 `artifactId=${artifact.id}`,
                 `familyHint=${familyHint}`,
                 `directionId=${directionId}`,
+                `directionIdMatched=${String(directionResolution.directionIdMatched)}`,
+                `pocketFallbackMatched=${String(directionResolution.pocketFallbackMatched)}`,
+                `resolvedDirectionId=${directionResolution.resolvedDirectionId ?? 'n/a'}`,
+                `fallbackDirectionCandidateId=${directionResolution.fallbackDirectionCandidateId ?? 'n/a'}`,
+                `resolveDirectionFailureReason=${directionResolution.resolveDirectionFailureReason ?? 'n/a'}`,
                 'rejectionReason=no_direction',
               ].join('|')
             }
@@ -15152,6 +15247,11 @@ export function SandboxConciergePage() {
                 `artifactId=${artifact.id}`,
                 `familyHint=${familyHint}`,
                 `directionId=${directionId}`,
+                `directionIdMatched=${String(directionResolution.directionIdMatched)}`,
+                `pocketFallbackMatched=${String(directionResolution.pocketFallbackMatched)}`,
+                `resolvedDirectionId=${directionResolution.resolvedDirectionId ?? 'n/a'}`,
+                `fallbackDirectionCandidateId=${directionResolution.fallbackDirectionCandidateId ?? 'n/a'}`,
+                `resolveDirectionFailureReason=${directionResolution.resolveDirectionFailureReason ?? 'n/a'}`,
                 'rejectionReason=not_structurally_different',
               ].join('|')
             }
@@ -15160,6 +15260,11 @@ export function SandboxConciergePage() {
                 `artifactId=${artifact.id}`,
                 `familyHint=${familyHint}`,
                 `directionId=${directionId}`,
+                `directionIdMatched=${String(directionResolution.directionIdMatched)}`,
+                `pocketFallbackMatched=${String(directionResolution.pocketFallbackMatched)}`,
+                `resolvedDirectionId=${directionResolution.resolvedDirectionId ?? 'n/a'}`,
+                `fallbackDirectionCandidateId=${directionResolution.fallbackDirectionCandidateId ?? 'n/a'}`,
+                `resolveDirectionFailureReason=${directionResolution.resolveDirectionFailureReason ?? 'n/a'}`,
                 'rejectionReason=duplicate_fingerprint',
               ].join('|')
             }
@@ -15168,6 +15273,11 @@ export function SandboxConciergePage() {
               `artifactId=${artifact.id}`,
               `familyHint=${familyHint}`,
               `directionId=${directionId}`,
+              `directionIdMatched=${String(directionResolution.directionIdMatched)}`,
+              `pocketFallbackMatched=${String(directionResolution.pocketFallbackMatched)}`,
+              `resolvedDirectionId=${directionResolution.resolvedDirectionId ?? 'n/a'}`,
+              `fallbackDirectionCandidateId=${directionResolution.fallbackDirectionCandidateId ?? 'n/a'}`,
+              `resolveDirectionFailureReason=${directionResolution.resolveDirectionFailureReason ?? 'n/a'}`,
               'rejectionReason=unknown',
             ].join('|')
           })
@@ -15182,6 +15292,11 @@ export function SandboxConciergePage() {
             `artifactId=${artifact.id}`,
             `familyHint=${familyHint}`,
             'directionId=n/a',
+            'directionIdMatched=false',
+            'pocketFallbackMatched=false',
+            'resolvedDirectionId=n/a',
+            'fallbackDirectionCandidateId=n/a',
+            'resolveDirectionFailureReason=no_current_direction',
             'rejectionReason=no_direction',
           ].join('|')
         })
