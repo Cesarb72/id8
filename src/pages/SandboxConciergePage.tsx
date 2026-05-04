@@ -824,6 +824,12 @@ interface SurpriseTryAnotherDebug {
   contrastArtifactBuilderNullReasons: string[]
   contrastReachedArtifactBuilderCount: number
   contrastReachedWaypointCount: number
+  contrastRepairCandidateLists: string[]
+  contrastRepairCandidateCountsByNight: string[]
+  contrastRepairCandidateMissingCategoryCount: number
+  contrastRepairCandidateMissingRoleFitCount: number
+  contrastRepairCandidateNoisyEventLikeCategoryCount: number
+  contrastRepairCandidatesWithPerformanceOrEventSignalsCount: number
   verifiedCityOpportunitiesCount: number
   scenarioBackedVerifiedCityOpportunitiesCount: number
   step2PrimarySourceOpportunitiesCount: number
@@ -866,6 +872,144 @@ interface SurpriseTryAnotherDebug {
   chosenDirectionDifferedFromPrevious: boolean | null
   generationTriggered: boolean
   fallbackReason: string | null
+}
+
+function isDiagnosticPreferredWindDownCategory(
+  category: BuiltScenarioStop['venueCategory'],
+): boolean {
+  return (
+    category === 'restaurant' ||
+    category === 'bar' ||
+    category === 'cafe' ||
+    category === 'dessert'
+  )
+}
+
+function isDiagnosticDisallowedWindDownCategory(
+  category: BuiltScenarioStop['venueCategory'],
+): boolean {
+  return (
+    category === 'event' ||
+    category === 'museum' ||
+    category === 'activity' ||
+    category === 'live_music'
+  )
+}
+
+function evaluateDiagnosticWindDownEligibility(params: {
+  stop: BuiltScenarioStop | undefined
+  contractConstraints?: ContractConstraints
+}): {
+  wouldPassGenericWindDownEligibility: boolean
+  rejectionReason: string
+  missingCategory: boolean
+  missingRoleFit: boolean
+  noisyEventLikeCategory: boolean
+  hasPerformanceOrEventSignals: boolean
+} {
+  const { stop, contractConstraints } = params
+  if (!stop) {
+    return {
+      wouldPassGenericWindDownEligibility: false,
+      rejectionReason: 'missing_stop',
+      missingCategory: true,
+      missingRoleFit: true,
+      noisyEventLikeCategory: false,
+      hasPerformanceOrEventSignals: false,
+    }
+  }
+  const category = stop.venueCategory
+  const roleFitWindDown = stop.roleFit.windDown
+  const roleFitHighlight = stop.roleFit.highlight
+  const missingCategory = !category
+  const missingRoleFit = typeof roleFitWindDown !== 'number' || typeof roleFitHighlight !== 'number'
+  const noisyEventLikeCategory =
+    category === 'event' || category === 'live_music' || category === 'activity'
+  const hasPerformanceOrEventSignals =
+    (stop.eventPotential ?? 0) >= 0.58 || (stop.performancePotential ?? 0) >= 0.66
+  const isPreferredCategory = isDiagnosticPreferredWindDownCategory(category)
+
+  if (isDiagnosticDisallowedWindDownCategory(category)) {
+    return {
+      wouldPassGenericWindDownEligibility: false,
+      rejectionReason: 'category_disallowed',
+      missingCategory,
+      missingRoleFit,
+      noisyEventLikeCategory,
+      hasPerformanceOrEventSignals,
+    }
+  }
+  if (stop.sourceType === 'event') {
+    return {
+      wouldPassGenericWindDownEligibility: false,
+      rejectionReason: 'sourceType_event',
+      missingCategory,
+      missingRoleFit,
+      noisyEventLikeCategory,
+      hasPerformanceOrEventSignals,
+    }
+  }
+  if (hasPerformanceOrEventSignals) {
+    return {
+      wouldPassGenericWindDownEligibility: false,
+      rejectionReason: 'performance_or_event_signal',
+      missingCategory,
+      missingRoleFit,
+      noisyEventLikeCategory,
+      hasPerformanceOrEventSignals,
+    }
+  }
+  if ((roleFitWindDown ?? 0) < 0.5) {
+    return {
+      wouldPassGenericWindDownEligibility: false,
+      rejectionReason: 'roleFitWindDown_below_min',
+      missingCategory,
+      missingRoleFit,
+      noisyEventLikeCategory,
+      hasPerformanceOrEventSignals,
+    }
+  }
+  if (!isPreferredCategory && (roleFitWindDown ?? 0) < 0.62) {
+    return {
+      wouldPassGenericWindDownEligibility: false,
+      rejectionReason: 'non_preferred_category_roleFitWindDown_below_min',
+      missingCategory,
+      missingRoleFit,
+      noisyEventLikeCategory,
+      hasPerformanceOrEventSignals,
+    }
+  }
+  if ((roleFitHighlight ?? 0) >= (roleFitWindDown ?? 0) + 0.12) {
+    return {
+      wouldPassGenericWindDownEligibility: false,
+      rejectionReason: 'highlight_dominates_windDown',
+      missingCategory,
+      missingRoleFit,
+      noisyEventLikeCategory,
+      hasPerformanceOrEventSignals,
+    }
+  }
+  if (
+    contractConstraints?.windDownStrictness === 'soft_required' &&
+    (roleFitWindDown ?? 0) < (isPreferredCategory ? 0.56 : 0.64)
+  ) {
+    return {
+      wouldPassGenericWindDownEligibility: false,
+      rejectionReason: 'soft_required_threshold_failure',
+      missingCategory,
+      missingRoleFit,
+      noisyEventLikeCategory,
+      hasPerformanceOrEventSignals,
+    }
+  }
+  return {
+    wouldPassGenericWindDownEligibility: true,
+    rejectionReason: 'passes',
+    missingCategory,
+    missingRoleFit,
+    noisyEventLikeCategory,
+    hasPerformanceOrEventSignals,
+  }
 }
 
 function getDeterministicContrastScenarioFamily(
@@ -14468,6 +14612,119 @@ export function SandboxConciergePage() {
       ].join('|')
     })
     const contrastReachedWaypointCount = 0
+    let contrastRepairCandidateMissingCategoryCount = 0
+    let contrastRepairCandidateMissingRoleFitCount = 0
+    let contrastRepairCandidateNoisyEventLikeCategoryCount = 0
+    let contrastRepairCandidatesWithPerformanceOrEventSignalsCount = 0
+    const contrastRepairCandidateLists = contrastOpportunities.map((opportunity) => {
+      const night = opportunity.scenarioNight
+      const nightId = night?.id ?? 'n/a'
+      const family =
+        night?.scenarioFamily ??
+        deriveScenarioFamilyHintFromOpportunity({
+          opportunityId: opportunity.id,
+          flavor: opportunity.flavor,
+        }) ??
+        'n/a'
+      const startVenueId =
+        night?.stops.find((stop) => stop.position === 'start')?.venueId ?? night?.stops[0]?.venueId ?? null
+      const highlightVenueId =
+        night?.stops.find((stop) => stop.position === 'highlight')?.venueId ?? null
+      const currentFailedWindDownId = opportunity.scenarioWindDownDebug?.originalVenueId ?? null
+      const currentFailedWindDownName = opportunity.scenarioWindDownDebug?.originalName ?? 'n/a'
+      const candidateStops = (night?.stops ?? []).filter(
+        (stop) => stop.venueId !== startVenueId && stop.venueId !== highlightVenueId,
+      )
+      const acceptedCandidateIds: string[] = []
+      const rejectedCandidateIds: string[] = []
+      const candidates = candidateStops.map((candidate) => {
+        const diagnosticEligibility = evaluateDiagnosticWindDownEligibility({
+          stop: candidate,
+          contractConstraints: canonicalContractConstraints,
+        })
+        if (diagnosticEligibility.missingCategory) {
+          contrastRepairCandidateMissingCategoryCount += 1
+        }
+        if (diagnosticEligibility.missingRoleFit) {
+          contrastRepairCandidateMissingRoleFitCount += 1
+        }
+        if (diagnosticEligibility.noisyEventLikeCategory) {
+          contrastRepairCandidateNoisyEventLikeCategoryCount += 1
+        }
+        if (diagnosticEligibility.hasPerformanceOrEventSignals) {
+          contrastRepairCandidatesWithPerformanceOrEventSignalsCount += 1
+        }
+        if (diagnosticEligibility.wouldPassGenericWindDownEligibility) {
+          acceptedCandidateIds.push(candidate.venueId)
+        } else {
+          rejectedCandidateIds.push(candidate.venueId)
+        }
+        return [
+          `candidateId=${candidate.venueId}`,
+          `candidateName=${candidate.name}`,
+          `candidateCategory=${candidate.venueCategory ?? 'n/a'}`,
+          `candidateSourceType=${candidate.sourceType ?? 'n/a'}`,
+          `candidateStopType=${candidate.stopType ?? 'n/a'}`,
+          `candidateRoleFitWindDown=${candidate.roleFit.windDown?.toFixed(3) ?? 'n/a'}`,
+          `candidateRoleFitHighlight=${candidate.roleFit.highlight?.toFixed(3) ?? 'n/a'}`,
+          `candidateEventPotential=${candidate.eventPotential?.toFixed(3) ?? 'n/a'}`,
+          `candidatePerformancePotential=${candidate.performancePotential?.toFixed(3) ?? 'n/a'}`,
+          `candidateSamePocket=n/a`,
+          `candidateSameDirection=n/a`,
+          `candidateSourceReason=${candidate.reasons[0] ?? 'n/a'}`,
+          `wouldPassGenericWindDownEligibility=${String(
+            diagnosticEligibility.wouldPassGenericWindDownEligibility,
+          )}`,
+          `rejectionReason=${diagnosticEligibility.rejectionReason}`,
+        ].join('|')
+      })
+      return [
+        `night=${nightId}`,
+        `opportunity=${opportunity.id}`,
+        `family=${family}`,
+        `currentFailedWindDownId=${currentFailedWindDownId ?? 'n/a'}`,
+        `currentFailedWindDownName=${currentFailedWindDownName}`,
+        `acceptedCandidateIds=${acceptedCandidateIds.join(',') || 'none'}`,
+        `rejectedCandidateIds=${rejectedCandidateIds.join(',') || 'none'}`,
+        `candidates=${candidates.join(' && ') || 'none'}`,
+      ].join('|')
+    })
+    const contrastRepairCandidateCountsByNight = contrastOpportunities.map((opportunity) => {
+      const night = opportunity.scenarioNight
+      const nightId = night?.id ?? 'n/a'
+      const family =
+        night?.scenarioFamily ??
+        deriveScenarioFamilyHintFromOpportunity({
+          opportunityId: opportunity.id,
+          flavor: opportunity.flavor,
+        }) ??
+        'n/a'
+      const startVenueId =
+        night?.stops.find((stop) => stop.position === 'start')?.venueId ?? night?.stops[0]?.venueId ?? null
+      const highlightVenueId =
+        night?.stops.find((stop) => stop.position === 'highlight')?.venueId ?? null
+      const candidateStops = (night?.stops ?? []).filter(
+        (stop) => stop.venueId !== startVenueId && stop.venueId !== highlightVenueId,
+      )
+      let acceptedCount = 0
+      candidateStops.forEach((candidate) => {
+        const diagnosticEligibility = evaluateDiagnosticWindDownEligibility({
+          stop: candidate,
+          contractConstraints: canonicalContractConstraints,
+        })
+        if (diagnosticEligibility.wouldPassGenericWindDownEligibility) {
+          acceptedCount += 1
+        }
+      })
+      return [
+        `night=${nightId}`,
+        `opportunity=${opportunity.id}`,
+        `family=${family}`,
+        `candidateCount=${candidateStops.length}`,
+        `acceptedCandidateCount=${acceptedCount}`,
+        `rejectedCandidateCount=${Math.max(0, candidateStops.length - acceptedCount)}`,
+      ].join('|')
+    })
     const lowerOverlapPreferenceAffectedTopChoice =
       step2TryAnotherAlternates[0]?.orderingReason.includes('lower_overlap_preferred') ?? null
     const alternateOverlapDiagnostics = step2TryAnotherAlternates.map((entry) => {
@@ -14531,6 +14788,12 @@ export function SandboxConciergePage() {
       contrastArtifactBuilderNullReasons,
       contrastReachedArtifactBuilderCount,
       contrastReachedWaypointCount,
+      contrastRepairCandidateLists,
+      contrastRepairCandidateCountsByNight,
+      contrastRepairCandidateMissingCategoryCount,
+      contrastRepairCandidateMissingRoleFitCount,
+      contrastRepairCandidateNoisyEventLikeCategoryCount,
+      contrastRepairCandidatesWithPerformanceOrEventSignalsCount,
       verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
       scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
       step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
@@ -17149,6 +17412,30 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.contrastReachedWaypointCount:{' '}
               {surpriseTryAnotherDebug.contrastReachedWaypointCount}
+            </div>
+            <div>
+              surpriseTryAnother.contrastRepairCandidateCountsByNight:{' '}
+              {surpriseTryAnotherDebug.contrastRepairCandidateCountsByNight.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastRepairCandidateLists:{' '}
+              {surpriseTryAnotherDebug.contrastRepairCandidateLists.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastRepairCandidateMissingCategoryCount:{' '}
+              {surpriseTryAnotherDebug.contrastRepairCandidateMissingCategoryCount}
+            </div>
+            <div>
+              surpriseTryAnother.contrastRepairCandidateMissingRoleFitCount:{' '}
+              {surpriseTryAnotherDebug.contrastRepairCandidateMissingRoleFitCount}
+            </div>
+            <div>
+              surpriseTryAnother.contrastRepairCandidateNoisyEventLikeCategoryCount:{' '}
+              {surpriseTryAnotherDebug.contrastRepairCandidateNoisyEventLikeCategoryCount}
+            </div>
+            <div>
+              surpriseTryAnother.contrastRepairCandidatesWithPerformanceOrEventSignalsCount:{' '}
+              {surpriseTryAnotherDebug.contrastRepairCandidatesWithPerformanceOrEventSignalsCount}
             </div>
             <div>
               surpriseTryAnother.contrastStorySpines:{' '}
