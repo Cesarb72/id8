@@ -1735,6 +1735,119 @@ function buildSelectedRouteArtifactProjection(params: {
   return null
 }
 
+function buildVisibleCardArtifactParityRow(params: {
+  entry: RealityDirectionCard
+  resolution: {
+    artifact: ContractEntryArtifact | null
+    mode: ArtifactResolutionMode
+    artifactCountForDirection: number
+    droppedBySingleArtifactDirectionCollapse: boolean
+  }
+  isCurateWrapperActive: boolean
+  selectedRouteArtifact: SelectedRouteArtifact<CanonicalRouteArtifact> | null
+  visibleCardModelByArtifactId: Map<string, CurateVisibleCardModel>
+  curatePreviewCommitabilityByArtifactId: Record<
+    string,
+    CuratePreviewCommitabilityState | undefined
+  >
+  verifiedCityOpportunityById: Map<string, VerifiedCityOpportunity>
+  finalRouteForParity: RuntimeRouteArtifact | null
+}): VisibleCardArtifactParityRow {
+  const {
+    entry,
+    resolution,
+    isCurateWrapperActive,
+    selectedRouteArtifact,
+    visibleCardModelByArtifactId,
+    curatePreviewCommitabilityByArtifactId,
+    verifiedCityOpportunityById,
+    finalRouteForParity,
+  } = params
+  const artifact = resolution.artifact
+  const opportunity = artifact
+    ? verifiedCityOpportunityById.get(artifact.sourceOpportunityId)
+    : undefined
+  const discoveryPreferences = artifact
+    ? buildSelectedArtifactDiscoveryPreferences({
+        artifact,
+        opportunity,
+      })
+    : undefined
+  const qualificationStatus =
+    artifact && isCurateWrapperActive
+      ? getCurateQualificationStatus(
+          curatePreviewCommitabilityByArtifactId[artifact.id],
+          artifact.qualification,
+        )
+      : 'n/a'
+  const cardDisplaySource =
+    artifact && isCurateWrapperActive
+      ? visibleCardModelByArtifactId.get(artifact.id)?.cardDisplaySource ?? 'candidate_draft'
+      : selectedRouteArtifact?.source === 'committed' && selectedRouteArtifact.directionId === entry.id
+        ? 'committed_final_route'
+        : 'direction_card'
+  const finalStartStop = finalRouteForParity?.stops.find((stop) => stop.role === 'start') ?? null
+  const finalHighlightStop =
+    finalRouteForParity?.stops.find((stop) => stop.role === 'highlight') ?? null
+  const finalWindDownStop =
+    finalRouteForParity?.stops.find((stop) => stop.role === 'windDown') ?? null
+
+  return {
+    visibleCardId: entry.id,
+    directionId: entry.id,
+    artifactId: artifact?.id ?? 'n/a',
+    artifactCountForDirection: resolution.artifactCountForDirection,
+    artifactResolutionMode: resolution.mode,
+    cardDisplaySource,
+    qualificationStatus,
+    artifactStoryStart: artifact?.storySpine.start ?? 'n/a',
+    artifactStoryHighlight: artifact?.storySpine.highlight ?? 'n/a',
+    artifactStoryWindDown: artifact?.storySpine.windDown ?? 'n/a',
+    discoveryStartVenueId:
+      artifact && discoveryPreferences
+        ? getCurateDiscoveryPreferenceVenueId(discoveryPreferences, 'start')
+        : 'n/a',
+    discoveryHighlightVenueId:
+      artifact && discoveryPreferences
+        ? getCurateDiscoveryPreferenceVenueId(discoveryPreferences, 'highlight')
+        : 'n/a',
+    discoveryWindDownVenueId:
+      artifact && discoveryPreferences
+        ? getCurateDiscoveryPreferenceVenueId(discoveryPreferences, 'windDown')
+        : 'n/a',
+    finalPlannedStart: finalStartStop?.displayName ?? 'n/a',
+    finalPlannedHighlight: finalHighlightStop?.displayName ?? 'n/a',
+    finalPlannedWindDown: finalWindDownStop?.displayName ?? 'n/a',
+    finalPlannedStartVenueId: finalStartStop?.venueId ?? 'n/a',
+    finalPlannedHighlightVenueId: finalHighlightStop?.venueId ?? 'n/a',
+    finalPlannedWindDownVenueId: finalWindDownStop?.venueId ?? 'n/a',
+    startMatch: String(
+      getArtifactStoryRoleMatch({
+        artifact,
+        finalRoute: finalRouteForParity,
+        role: 'start',
+      }),
+    ),
+    highlightMatch: String(
+      getArtifactStoryRoleMatch({
+        artifact,
+        finalRoute: finalRouteForParity,
+        role: 'highlight',
+      }),
+    ),
+    windDownMatch: String(
+      getArtifactStoryRoleMatch({
+        artifact,
+        finalRoute: finalRouteForParity,
+        role: 'windDown',
+      }),
+    ),
+    droppedBySingleArtifactDirectionCollapse: String(
+      resolution.droppedBySingleArtifactDirectionCollapse,
+    ),
+  }
+}
+
 function findOpportunityStopOptionByName(
   opportunity: VerifiedCityOpportunity | undefined,
   role: 'start' | 'highlight' | 'windDown',
@@ -13071,11 +13184,9 @@ export function SandboxConciergePage() {
   }, [selectedRouteArtifact])
   const visibleCardArtifactParityRows = useMemo<VisibleCardArtifactParityRow[]>(() => {
     const finalRouteForParity = canonicalRouteArtifact?.finalRoute ?? null
-    const finalStartStop = finalRouteForParity?.stops.find((stop) => stop.role === 'start') ?? null
-    const finalHighlightStop =
-      finalRouteForParity?.stops.find((stop) => stop.role === 'highlight') ?? null
-    const finalWindDownStop =
-      finalRouteForParity?.stops.find((stop) => stop.role === 'windDown') ?? null
+    const visibleCardModelByArtifactId = new Map(
+      curateVisibleCardModels.map((model) => [model.artifact.id, model] as const),
+    )
 
     return directionCards.map((entry) => {
       const explicitArtifactIdForDirection =
@@ -13094,84 +13205,16 @@ export function SandboxConciergePage() {
               directionId: entry.id,
               explicitArtifactId: explicitArtifactIdForDirection,
             })
-      const artifact = resolution.artifact
-      const opportunity = artifact
-        ? verifiedCityOpportunityById.get(artifact.sourceOpportunityId)
-        : undefined
-      const discoveryPreferences = artifact
-        ? buildSelectedArtifactDiscoveryPreferences({
-            artifact,
-            opportunity,
-          })
-        : undefined
-      const qualificationStatus =
-        artifact && isCurateWrapperActive
-          ? getCurateQualificationStatus(
-              curatePreviewCommitabilityByArtifactId[artifact.id],
-              artifact.qualification,
-            )
-          : 'n/a'
-      const cardDisplaySource =
-        artifact && isCurateWrapperActive
-          ? curateVisibleCardModels.find((model) => model.artifact.id === artifact.id)?.cardDisplaySource ??
-            'candidate_draft'
-          : selectedRouteArtifact?.source === 'committed' && selectedRouteArtifact.directionId === entry.id
-            ? 'committed_final_route'
-            : 'direction_card'
-      return {
-        visibleCardId: entry.id,
-        directionId: entry.id,
-        artifactId: artifact?.id ?? 'n/a',
-        artifactCountForDirection: resolution.artifactCountForDirection,
-        artifactResolutionMode: resolution.mode,
-        cardDisplaySource,
-        qualificationStatus,
-        artifactStoryStart: artifact?.storySpine.start ?? 'n/a',
-        artifactStoryHighlight: artifact?.storySpine.highlight ?? 'n/a',
-        artifactStoryWindDown: artifact?.storySpine.windDown ?? 'n/a',
-        discoveryStartVenueId:
-          artifact && discoveryPreferences
-            ? getCurateDiscoveryPreferenceVenueId(discoveryPreferences, 'start')
-            : 'n/a',
-        discoveryHighlightVenueId:
-          artifact && discoveryPreferences
-            ? getCurateDiscoveryPreferenceVenueId(discoveryPreferences, 'highlight')
-            : 'n/a',
-        discoveryWindDownVenueId:
-          artifact && discoveryPreferences
-            ? getCurateDiscoveryPreferenceVenueId(discoveryPreferences, 'windDown')
-            : 'n/a',
-        finalPlannedStart: finalStartStop?.displayName ?? 'n/a',
-        finalPlannedHighlight: finalHighlightStop?.displayName ?? 'n/a',
-        finalPlannedWindDown: finalWindDownStop?.displayName ?? 'n/a',
-        finalPlannedStartVenueId: finalStartStop?.venueId ?? 'n/a',
-        finalPlannedHighlightVenueId: finalHighlightStop?.venueId ?? 'n/a',
-        finalPlannedWindDownVenueId: finalWindDownStop?.venueId ?? 'n/a',
-        startMatch: String(
-          getArtifactStoryRoleMatch({
-            artifact,
-            finalRoute: finalRouteForParity,
-            role: 'start',
-          }),
-        ),
-        highlightMatch: String(
-          getArtifactStoryRoleMatch({
-            artifact,
-            finalRoute: finalRouteForParity,
-            role: 'highlight',
-          }),
-        ),
-        windDownMatch: String(
-          getArtifactStoryRoleMatch({
-            artifact,
-            finalRoute: finalRouteForParity,
-            role: 'windDown',
-          }),
-        ),
-        droppedBySingleArtifactDirectionCollapse: String(
-          resolution.droppedBySingleArtifactDirectionCollapse,
-        ),
-      }
+      return buildVisibleCardArtifactParityRow({
+        entry,
+        resolution,
+        isCurateWrapperActive,
+        selectedRouteArtifact,
+        visibleCardModelByArtifactId,
+        curatePreviewCommitabilityByArtifactId,
+        verifiedCityOpportunityById,
+        finalRouteForParity,
+      })
     })
   }, [
     canonicalRouteArtifact?.finalRoute,
