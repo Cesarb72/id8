@@ -831,6 +831,11 @@ interface SurpriseTryAnotherDebug {
   contrastRepairCandidateNoisyEventLikeCategoryCount: number
   contrastRepairCandidatesWithPerformanceOrEventSignalsCount: number
   contrastRepairOutcomes: string[]
+  surpriseScenarioArtifactSourceCount: number | null
+  surpriseScenarioArtifactSourceIds: string[]
+  surpriseScenarioArtifactSourceFamilies: string
+  contrastIncludedInArtifactSource: boolean | null
+  contrastIncludedInArtifactSourceIds: string[]
   verifiedCityOpportunitiesCount: number
   scenarioBackedVerifiedCityOpportunitiesCount: number
   step2PrimarySourceOpportunitiesCount: number
@@ -1123,6 +1128,55 @@ function repairSurpriseContrastWindDownOpportunity(params: {
     repairApplied: true,
     repairedCandidate,
   }
+}
+
+function selectSurpriseScenarioBackedArtifactSourceOpportunities(params: {
+  opportunities: VerifiedCityOpportunity[]
+  primaryFamily: ScenarioFamily | null
+  contrastFamily: ScenarioFamily | null
+  maxCount?: number
+}): VerifiedCityOpportunity[] {
+  const { opportunities, primaryFamily, contrastFamily, maxCount = 4 } = params
+  if (maxCount <= 0 || opportunities.length === 0) {
+    return []
+  }
+  if (!contrastFamily) {
+    return opportunities.slice(0, maxCount)
+  }
+
+  const getOpportunityFamily = (opportunity: VerifiedCityOpportunity): string | null =>
+    opportunity.scenarioNight?.scenarioFamily ??
+    deriveScenarioFamilyHintFromOpportunity({
+      opportunityId: opportunity.id,
+      flavor: opportunity.flavor,
+    })
+  const primaryOpportunities = opportunities.filter(
+    (opportunity) => getOpportunityFamily(opportunity) === primaryFamily,
+  )
+  const contrastOpportunities = opportunities.filter(
+    (opportunity) => getOpportunityFamily(opportunity) === contrastFamily,
+  )
+  if (contrastOpportunities.length === 0) {
+    return opportunities.slice(0, maxCount)
+  }
+
+  const selected: VerifiedCityOpportunity[] = []
+  const selectedIds = new Set<string>()
+  const pushOpportunity = (opportunity: VerifiedCityOpportunity | undefined) => {
+    if (!opportunity || selectedIds.has(opportunity.id) || selected.length >= maxCount) {
+      return
+    }
+    selected.push(opportunity)
+    selectedIds.add(opportunity.id)
+  }
+  const preferredContrastOpportunity =
+    contrastOpportunities.find((opportunity) => opportunity.scenarioWindDownDebug?.finalRoleEligible) ??
+    contrastOpportunities[0]
+
+  primaryOpportunities.slice(0, Math.max(0, maxCount - 1)).forEach(pushOpportunity)
+  pushOpportunity(preferredContrastOpportunity)
+  opportunities.forEach(pushOpportunity)
+  return selected
 }
 
 function getDeterministicContrastScenarioFamily(
@@ -9282,6 +9336,30 @@ export function SandboxConciergePage() {
   const shouldUseScenarioBackedArtifacts = Boolean(
     resolvedScenarioFamily && scenarioBackedVerifiedCityOpportunities.length > 0,
   )
+  const surpriseScenarioArtifactSourceOpportunities = useMemo<VerifiedCityOpportunity[]>(() => {
+    if (
+      !shouldUseScenarioBackedArtifacts ||
+      isBuildWrapperActive ||
+      isCurateWrapperActive ||
+      !isSurpriseWrapperActive
+    ) {
+      return []
+    }
+    return selectSurpriseScenarioBackedArtifactSourceOpportunities({
+      opportunities: scenarioBackedVerifiedCityOpportunities,
+      primaryFamily: resolvedScenarioFamily,
+      contrastFamily: surpriseContrastScenarioFamily,
+      maxCount: 4,
+    })
+  }, [
+    isBuildWrapperActive,
+    isCurateWrapperActive,
+    isSurpriseWrapperActive,
+    resolvedScenarioFamily,
+    scenarioBackedVerifiedCityOpportunities,
+    shouldUseScenarioBackedArtifacts,
+    surpriseContrastScenarioFamily,
+  ])
   const buildStep2CandidateRouteArtifact = useCallback(
     (opportunity: VerifiedCityOpportunity): ContractEntryArtifact | null => {
       return buildContractEntryArtifactFromVerifiedOpportunity({
@@ -9300,7 +9378,9 @@ export function SandboxConciergePage() {
           ? step2PrimarySourceOpportunities
           : isCurateWrapperActive && selectedStarterPack
             ? starterAwareStep2SourceOpportunities
-            : scenarioBackedVerifiedCityOpportunities.slice(0, 4)
+            : isSurpriseWrapperActive
+              ? surpriseScenarioArtifactSourceOpportunities
+              : scenarioBackedVerifiedCityOpportunities.slice(0, 4)
       return sourceOpportunities
         .map(buildStep2CandidateRouteArtifact)
         .filter((artifact): artifact is ContractEntryArtifact => Boolean(artifact))
@@ -9331,6 +9411,8 @@ export function SandboxConciergePage() {
     starterAwareStep2SourceOpportunities,
     scenarioBackedVerifiedCityOpportunities,
     shouldUseScenarioBackedArtifacts,
+    surpriseScenarioArtifactSourceOpportunities,
+    isSurpriseWrapperActive,
     verifiedCityOpportunities,
   ])
   const curateQualificationSourceFingerprint = useMemo(
@@ -14460,7 +14542,9 @@ export function SandboxConciergePage() {
           ? step2PrimarySourceOpportunities
           : isCurateWrapperActive && selectedStarterPack
             ? starterAwareStep2SourceOpportunities
-            : scenarioBackedVerifiedCityOpportunities.slice(0, 4)
+            : isSurpriseWrapperActive
+              ? surpriseScenarioArtifactSourceOpportunities
+              : scenarioBackedVerifiedCityOpportunities.slice(0, 4)
         : selectStep2ExcellentSurvivors({
             rankedCards:
               isCurateWrapperActive && selectedStarterPack
@@ -14608,6 +14692,20 @@ export function SandboxConciergePage() {
       return Boolean(family && surpriseContrastScenarioFamily && family === surpriseContrastScenarioFamily)
     })
     const contrastMappedOpportunityIds = contrastOpportunities.map((opportunity) => opportunity.id)
+    const surpriseScenarioArtifactSourceIds = surpriseScenarioArtifactSourceOpportunities.map(
+      (opportunity) => opportunity.id,
+    )
+    const surpriseScenarioArtifactSourceFamilies = summarizeDiagnosticCounts(
+      surpriseScenarioArtifactSourceOpportunities.map((opportunity) =>
+        deriveScenarioFamilyHintFromOpportunity({
+          opportunityId: opportunity.id,
+          flavor: opportunity.flavor,
+        }),
+      ),
+    )
+    const contrastIncludedInArtifactSourceIds = surpriseScenarioArtifactSourceOpportunities
+      .filter((opportunity) => contrastMappedOpportunityIds.includes(opportunity.id))
+      .map((opportunity) => opportunity.id)
     const contrastReachedArtifactBuilderCount = contrastOpportunities.length
     const contrastStorySpines = contrastOpportunities.map((opportunity) => {
       const nightId = opportunity.scenarioNight?.id ?? 'n/a'
@@ -14944,6 +15042,23 @@ export function SandboxConciergePage() {
       contrastRepairCandidateNoisyEventLikeCategoryCount,
       contrastRepairCandidatesWithPerformanceOrEventSignalsCount,
       contrastRepairOutcomes,
+      surpriseScenarioArtifactSourceCount:
+        shouldUseScenarioBackedArtifacts &&
+        isSurpriseWrapperActive &&
+        !isBuildWrapperActive &&
+        !isCurateWrapperActive
+          ? surpriseScenarioArtifactSourceOpportunities.length
+          : null,
+      surpriseScenarioArtifactSourceIds,
+      surpriseScenarioArtifactSourceFamilies,
+      contrastIncludedInArtifactSource:
+        shouldUseScenarioBackedArtifacts &&
+        isSurpriseWrapperActive &&
+        !isBuildWrapperActive &&
+        !isCurateWrapperActive
+          ? contrastIncludedInArtifactSourceIds.length > 0
+          : null,
+      contrastIncludedInArtifactSourceIds,
       verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
       scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
       step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
@@ -14982,7 +15097,7 @@ export function SandboxConciergePage() {
       visibleArtifactUniqueWindDowns: visibleArtifactWindDowns.values,
       scenarioBackedVisibleSliceCount:
         shouldUseScenarioBackedArtifacts && !isBuildWrapperActive && !(isCurateWrapperActive && selectedStarterPack)
-          ? Math.min(scenarioBackedVerifiedCityOpportunities.length, 4)
+          ? activeStep2ArtifactSourceOpportunities.length
           : null,
       scenarioBackedSliceCap:
         shouldUseScenarioBackedArtifacts && !isBuildWrapperActive && !(isCurateWrapperActive && selectedStarterPack)
@@ -15033,6 +15148,7 @@ export function SandboxConciergePage() {
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
     shouldUseScenarioBackedArtifacts,
+    surpriseScenarioArtifactSourceOpportunities,
     starterAwareStep2SourceOpportunities,
     surpriseContrastScenarioFamily,
     step2CandidateRouteArtifacts,
@@ -17606,6 +17722,28 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.contrastDropReasonsByNight:{' '}
               {surpriseTryAnotherDebug.contrastDropReasonsByNight.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.surpriseScenarioArtifactSourceCount:{' '}
+              {surpriseTryAnotherDebug.surpriseScenarioArtifactSourceCount ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.surpriseScenarioArtifactSourceIds:{' '}
+              {surpriseTryAnotherDebug.surpriseScenarioArtifactSourceIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.surpriseScenarioArtifactSourceFamilies:{' '}
+              {surpriseTryAnotherDebug.surpriseScenarioArtifactSourceFamilies}
+            </div>
+            <div>
+              surpriseTryAnother.contrastIncludedInArtifactSource:{' '}
+              {surpriseTryAnotherDebug.contrastIncludedInArtifactSource === null
+                ? 'n/a'
+                : String(surpriseTryAnotherDebug.contrastIncludedInArtifactSource)}
+            </div>
+            <div>
+              surpriseTryAnother.contrastIncludedInArtifactSourceIds:{' '}
+              {surpriseTryAnotherDebug.contrastIncludedInArtifactSourceIds.join(', ') || 'none'}
             </div>
             <div>
               surpriseTryAnother.verifiedCityOpportunitiesCount:{' '}
