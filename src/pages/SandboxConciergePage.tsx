@@ -836,6 +836,19 @@ interface SurpriseTryAnotherDebug {
   surpriseScenarioArtifactSourceFamilies: string
   contrastIncludedInArtifactSource: boolean | null
   contrastIncludedInArtifactSourceIds: string[]
+  step2CandidateRouteArtifactIds: string[]
+  candidateRouteArtifactsForDisplayIds: string[]
+  step2TryAnotherAlternateArtifactIds: string[]
+  contrastArtifactIds: string[]
+  contrastArtifactIdsInDisplay: string[]
+  contrastArtifactIdsInRerollAlternates: string[]
+  step2CandidateRouteArtifactStageSummary: string[]
+  candidateRouteArtifactsForDisplayStageSummary: string[]
+  step2TryAnotherAlternateArtifactStageSummary: string[]
+  rerollRejectedArtifactDiagnostics: string[]
+  contrastArtifactFingerprint: string
+  primaryArtifactFingerprints: string[]
+  duplicateFingerprintMatches: string[]
   verifiedCityOpportunitiesCount: number
   scenarioBackedVerifiedCityOpportunitiesCount: number
   step2PrimarySourceOpportunitiesCount: number
@@ -14659,6 +14672,54 @@ export function SandboxConciergePage() {
     const visibleArtifactWindDowns = summarizeUniqueRoleValues(
       candidateRouteArtifactsForDisplay.map((artifact) => artifact.storySpine.windDown),
     )
+    const step2CandidateRouteArtifactIds = step2CandidateRouteArtifacts.map((artifact) => artifact.id)
+    const candidateRouteArtifactsForDisplayIds = candidateRouteArtifactsForDisplay.map(
+      (artifact) => artifact.id,
+    )
+    const step2TryAnotherAlternateArtifactIds = step2TryAnotherAlternates.map(
+      (entry) => entry.artifact.id,
+    )
+    const buildArtifactStageSummary = (artifact: ContractEntryArtifact, stage: string): string => {
+      const family =
+        deriveScenarioFamilyHintFromArtifactIdentity({
+          artifactId: artifact.id,
+          sourceOpportunityId: artifact.sourceOpportunityId,
+          routeTitle: artifact.routeTitle,
+        }) ?? 'n/a'
+      const directionId = artifact.selection.directionId ?? 'n/a'
+      const fingerprint = getContractEntryArtifactStorySpineFingerprint(artifact) || 'n/a'
+      return [
+        `stage=${stage}`,
+        `artifactId=${artifact.id}`,
+        `sourceOpportunityId=${artifact.sourceOpportunityId}`,
+        `family=${family}`,
+        `directionId=${directionId}`,
+        `fingerprint=${fingerprint}`,
+      ].join('|')
+    }
+    const step2CandidateRouteArtifactStageSummary = step2CandidateRouteArtifacts.map((artifact) =>
+      buildArtifactStageSummary(artifact, 'step2_candidate'),
+    )
+    const candidateRouteArtifactsForDisplayStageSummary = candidateRouteArtifactsForDisplay.map(
+      (artifact) => buildArtifactStageSummary(artifact, 'display'),
+    )
+    const step2TryAnotherAlternateArtifactStageSummary = step2TryAnotherAlternates.map((entry) => {
+      const family =
+        deriveScenarioFamilyHintFromArtifactIdentity({
+          artifactId: entry.artifact.id,
+          sourceOpportunityId: entry.artifact.sourceOpportunityId,
+          routeTitle: entry.artifact.routeTitle,
+        }) ?? 'n/a'
+      return [
+        `stage=reroll`,
+        `artifactId=${entry.artifact.id}`,
+        `sourceOpportunityId=${entry.artifact.sourceOpportunityId}`,
+        `family=${family}`,
+        `directionId=${entry.direction.id}`,
+        `fingerprint=${entry.fingerprint || 'n/a'}`,
+        `orderingReason=${entry.orderingReason}`,
+      ].join('|')
+    })
     const alternateArtifactIds = step2TryAnotherAlternates.map((entry) => entry.artifact.id)
     const alternateDirectionIds = step2TryAnotherAlternates.map((entry) => entry.direction.id)
     const hiddenRerollCountsByFamily = summarizeDiagnosticCounts(
@@ -14765,6 +14826,7 @@ export function SandboxConciergePage() {
     const contrastArtifacts = step2CandidateRouteArtifacts.filter((artifact) =>
       contrastMappedOpportunityIds.includes(artifact.sourceOpportunityId),
     )
+    const contrastArtifactIds = contrastArtifacts.map((artifact) => artifact.id)
     const contrastVisibleCount = candidateRouteArtifactsForDisplay.filter((artifact) => {
       const family = deriveScenarioFamilyHintFromArtifactIdentity({
         artifactId: artifact.id,
@@ -14773,6 +14835,33 @@ export function SandboxConciergePage() {
       })
       return Boolean(family && surpriseContrastScenarioFamily && family === surpriseContrastScenarioFamily)
     }).length
+    const contrastArtifactIdsInDisplay = candidateRouteArtifactsForDisplay
+      .filter((artifact) => contrastMappedOpportunityIds.includes(artifact.sourceOpportunityId))
+      .map((artifact) => artifact.id)
+    const contrastArtifactIdsInRerollAlternates = step2TryAnotherAlternates
+      .filter((entry) => contrastMappedOpportunityIds.includes(entry.artifact.sourceOpportunityId))
+      .map((entry) => entry.artifact.id)
+    const contrastArtifactFingerprint = contrastArtifacts
+      .map((artifact) => `${artifact.id}:${getContractEntryArtifactStorySpineFingerprint(artifact) || 'n/a'}`)
+      .join(' || ') || 'none'
+    const primaryArtifactFingerprints = step2CandidateRouteArtifacts
+      .filter((artifact) => !contrastMappedOpportunityIds.includes(artifact.sourceOpportunityId))
+      .map((artifact) => `${artifact.id}:${getContractEntryArtifactStorySpineFingerprint(artifact) || 'n/a'}`)
+    const duplicateFingerprintMatches = contrastArtifacts.flatMap((contrastArtifact) => {
+      const contrastFingerprint = getContractEntryArtifactStorySpineFingerprint(contrastArtifact)
+      if (!contrastFingerprint) {
+        return []
+      }
+      return step2CandidateRouteArtifacts
+        .filter((artifact) => artifact.id !== contrastArtifact.id)
+        .filter(
+          (artifact) => getContractEntryArtifactStorySpineFingerprint(artifact) === contrastFingerprint,
+        )
+        .map(
+          (artifact) =>
+            `${contrastArtifact.id}<->${artifact.id}:${contrastFingerprint}`,
+        )
+    })
     const contrastArtifactBuilderNullReasons = contrastOpportunities
       .filter(
         (opportunity) =>
@@ -14972,6 +15061,130 @@ export function SandboxConciergePage() {
         `artifactBuiltAfterRepair=${String(artifactBuilt)}`,
       ].join('|')
     })
+    const currentDirectionIdForReroll = selectedDirectionId ?? directionCards[0]?.id ?? null
+    const currentStructureForReroll = {
+      routeTitle: selectedRouteSummaryArtifact?.routeTitle,
+      routeSummary: previewNarrativeSummary,
+      flavorLine: selectedRouteSummaryArtifact?.flavorLine,
+      traits: selectedRouteSummaryArtifact?.traits,
+      proofLines: currentVisibleProofLines,
+      districtAnchorLine: selectedRouteSummaryArtifact?.districtAnchorLine,
+      stops: previewVisibleStops,
+      stopVenueIds: canonicalRouteArtifact?.finalRoute.stops.map((stop) => stop.venueId),
+    }
+    const currentArtifactIdForReroll =
+      selectedCandidateRouteArtifact?.id ?? selectedStep2CandidateArtifactId ?? null
+    const rerollAlternateArtifactIdSet = new Set(step2TryAnotherAlternateArtifactIds)
+    const seenRerollDiagnosticFingerprints = new Set<string>()
+    const rerollRejectedArtifactDiagnostics = currentDirectionIdForReroll
+      ? candidateRouteArtifactsForDisplay
+          .filter((artifact) => !rerollAlternateArtifactIdSet.has(artifact.id))
+          .map((artifact) => {
+            const familyHint =
+              deriveScenarioFamilyHintFromArtifactIdentity({
+                artifactId: artifact.id,
+                sourceOpportunityId: artifact.sourceOpportunityId,
+                routeTitle: artifact.routeTitle,
+              }) ?? 'n/a'
+            const direction = resolveDirectionForCandidateArtifact(artifact)
+            const directionId = direction?.id ?? 'n/a'
+            if (artifact.id === currentArtifactIdForReroll) {
+              return [
+                `artifactId=${artifact.id}`,
+                `familyHint=${familyHint}`,
+                `directionId=${directionId}`,
+                'rejectionReason=current_selected',
+              ].join('|')
+            }
+            if (!direction) {
+              return [
+                `artifactId=${artifact.id}`,
+                `familyHint=${familyHint}`,
+                `directionId=${directionId}`,
+                'rejectionReason=no_direction',
+              ].join('|')
+            }
+            const candidateStops = [
+              artifact.storySpine.start,
+              artifact.storySpine.highlight,
+              artifact.storySpine.windDown,
+            ]
+            const candidateProofLines = [
+              artifact.whyChooseLine,
+              artifact.whyTonightProofLine,
+              artifact.scenarioEvaluation?.notes?.[0],
+              artifact.authorityLine,
+              artifact.happeningsLine,
+            ].filter((value): value is string => Boolean(value && value.trim()))
+            const visibleDifferenceScore = computeVisibleNightDifferenceScore(currentStructureForReroll, {
+              routeTitle: artifact.routeTitle,
+              routeSummary: artifact.routeSummary,
+              flavorLine: artifact.flavorLine,
+              traits: artifact.traits,
+              proofLines: candidateProofLines,
+              districtAnchorLine: artifact.districtAnchorLine ?? artifact.districtLine,
+              stops: candidateStops,
+              stopVenueIds: artifact.anchorVenueId ? [artifact.anchorVenueId] : undefined,
+            })
+            const fingerprint = buildVisibleNightFingerprint({
+              routeTitle: artifact.routeTitle,
+              routeSummary: artifact.routeSummary,
+              flavorLine: artifact.flavorLine,
+              traits: artifact.traits,
+              proofLines: candidateProofLines,
+              districtAnchorLine: artifact.districtAnchorLine ?? artifact.districtLine,
+              stops: candidateStops,
+              stopVenueIds: artifact.anchorVenueId ? [artifact.anchorVenueId] : undefined,
+            })
+            const variation = surpriseVariationByDirectionId.get(direction.id)
+            const variationBoost =
+              variation &&
+              (variation.anchorVenueId || variation.pocketId || variation.scenarioFamily)
+                ? 1
+                : 0
+            const structurallyDifferent =
+              (fingerprint.length > 0 &&
+                fingerprint !== currentVisibleNightFingerprint &&
+                visibleDifferenceScore > 0) ||
+              variationBoost > 0
+            if (!structurallyDifferent) {
+              return [
+                `artifactId=${artifact.id}`,
+                `familyHint=${familyHint}`,
+                `directionId=${directionId}`,
+                'rejectionReason=not_structurally_different',
+              ].join('|')
+            }
+            if (seenRerollDiagnosticFingerprints.has(fingerprint)) {
+              return [
+                `artifactId=${artifact.id}`,
+                `familyHint=${familyHint}`,
+                `directionId=${directionId}`,
+                'rejectionReason=duplicate_fingerprint',
+              ].join('|')
+            }
+            seenRerollDiagnosticFingerprints.add(fingerprint)
+            return [
+              `artifactId=${artifact.id}`,
+              `familyHint=${familyHint}`,
+              `directionId=${directionId}`,
+              'rejectionReason=unknown',
+            ].join('|')
+          })
+      : candidateRouteArtifactsForDisplay.map((artifact) => {
+          const familyHint =
+            deriveScenarioFamilyHintFromArtifactIdentity({
+              artifactId: artifact.id,
+              sourceOpportunityId: artifact.sourceOpportunityId,
+              routeTitle: artifact.routeTitle,
+            }) ?? 'n/a'
+          return [
+            `artifactId=${artifact.id}`,
+            `familyHint=${familyHint}`,
+            'directionId=n/a',
+            'rejectionReason=no_direction',
+          ].join('|')
+        })
     const lowerOverlapPreferenceAffectedTopChoice =
       step2TryAnotherAlternates[0]?.orderingReason.includes('lower_overlap_preferred') ?? null
     const alternateOverlapDiagnostics = step2TryAnotherAlternates.map((entry) => {
@@ -15059,6 +15272,19 @@ export function SandboxConciergePage() {
           ? contrastIncludedInArtifactSourceIds.length > 0
           : null,
       contrastIncludedInArtifactSourceIds,
+      step2CandidateRouteArtifactIds,
+      candidateRouteArtifactsForDisplayIds,
+      step2TryAnotherAlternateArtifactIds,
+      contrastArtifactIds,
+      contrastArtifactIdsInDisplay,
+      contrastArtifactIdsInRerollAlternates,
+      step2CandidateRouteArtifactStageSummary,
+      candidateRouteArtifactsForDisplayStageSummary,
+      step2TryAnotherAlternateArtifactStageSummary,
+      rerollRejectedArtifactDiagnostics,
+      contrastArtifactFingerprint,
+      primaryArtifactFingerprints,
+      duplicateFingerprintMatches,
       verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
       scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
       step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
@@ -17744,6 +17970,58 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.contrastIncludedInArtifactSourceIds:{' '}
               {surpriseTryAnotherDebug.contrastIncludedInArtifactSourceIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.step2CandidateRouteArtifactIds:{' '}
+              {surpriseTryAnotherDebug.step2CandidateRouteArtifactIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.candidateRouteArtifactsForDisplayIds:{' '}
+              {surpriseTryAnotherDebug.candidateRouteArtifactsForDisplayIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.step2TryAnotherAlternateArtifactIds:{' '}
+              {surpriseTryAnotherDebug.step2TryAnotherAlternateArtifactIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastArtifactIds:{' '}
+              {surpriseTryAnotherDebug.contrastArtifactIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastArtifactIdsInDisplay:{' '}
+              {surpriseTryAnotherDebug.contrastArtifactIdsInDisplay.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastArtifactIdsInRerollAlternates:{' '}
+              {surpriseTryAnotherDebug.contrastArtifactIdsInRerollAlternates.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.step2CandidateRouteArtifactStageSummary:{' '}
+              {surpriseTryAnotherDebug.step2CandidateRouteArtifactStageSummary.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.candidateRouteArtifactsForDisplayStageSummary:{' '}
+              {surpriseTryAnotherDebug.candidateRouteArtifactsForDisplayStageSummary.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.step2TryAnotherAlternateArtifactStageSummary:{' '}
+              {surpriseTryAnotherDebug.step2TryAnotherAlternateArtifactStageSummary.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.rerollRejectedArtifactDiagnostics:{' '}
+              {surpriseTryAnotherDebug.rerollRejectedArtifactDiagnostics.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastArtifactFingerprint:{' '}
+              {surpriseTryAnotherDebug.contrastArtifactFingerprint}
+            </div>
+            <div>
+              surpriseTryAnother.primaryArtifactFingerprints:{' '}
+              {surpriseTryAnotherDebug.primaryArtifactFingerprints.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.duplicateFingerprintMatches:{' '}
+              {surpriseTryAnotherDebug.duplicateFingerprintMatches.join(' || ') || 'none'}
             </div>
             <div>
               surpriseTryAnother.verifiedCityOpportunitiesCount:{' '}
