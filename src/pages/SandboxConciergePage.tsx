@@ -800,8 +800,38 @@ interface SurpriseTryAnotherDebug {
   currentSourceOpportunityId: string | null
   currentScenarioFamilyHint: string | null
   currentPocketId: string | null
+  verifiedCityOpportunitiesCount: number
+  scenarioBackedVerifiedCityOpportunitiesCount: number
+  step2PrimarySourceOpportunitiesCount: number
+  starterAwareStep2SourceOpportunitiesCount: number
+  step2CandidateRouteArtifactsCount: number
+  curateDisplayFallbackRouteArtifactsCount: number
   candidateRouteArtifactsForDisplayCount: number
   step2TryAnotherAlternatesCount: number
+  scenarioBackedFamilyCounts: string
+  step2PrimarySourceFamilyCounts: string
+  step2CandidateArtifactFamilyCounts: string
+  candidateRouteArtifactsForDisplayFamilyCounts: string
+  step2CandidateArtifactDirectionCounts: string
+  candidateRouteArtifactsForDisplayDirectionCounts: string
+  step2CandidateArtifactPocketCounts: string
+  candidateRouteArtifactsForDisplayPocketCounts: string
+  step2CandidateUniqueStartCount: number
+  step2CandidateUniqueHighlightCount: number
+  step2CandidateUniqueWindDownCount: number
+  step2CandidateUniqueStarts: string[]
+  step2CandidateUniqueHighlights: string[]
+  step2CandidateUniqueWindDowns: string[]
+  visibleArtifactUniqueStartCount: number
+  visibleArtifactUniqueHighlightCount: number
+  visibleArtifactUniqueWindDownCount: number
+  visibleArtifactUniqueStarts: string[]
+  visibleArtifactUniqueHighlights: string[]
+  visibleArtifactUniqueWindDowns: string[]
+  scenarioBackedVisibleSliceCount: number | null
+  scenarioBackedSliceCap: number | null
+  artifactBuilderNullDropCount: number | null
+  visibleVsCandidateArtifactCountDelta: number
   alternateArtifactIds: string[]
   alternateDirectionIds: string[]
   alternateOverlapDiagnostics: string[]
@@ -939,6 +969,52 @@ function deriveScenarioFamilyHintFromArtifactIdentity(input: {
     /\b(romantic_(?:cozy|lively|cultured)|friends_(?:cozy|lively|cultured)|family_(?:cozy|lively|cultured))\b/,
   )
   return familyTokenMatch?.[1] ?? null
+}
+
+function deriveScenarioFamilyHintFromOpportunity(input: {
+  opportunityId?: string | null
+  flavor?: string | null
+}): string | null {
+  return deriveScenarioFamilyHintFromArtifactIdentity({
+    artifactId: input.opportunityId,
+    sourceOpportunityId: input.opportunityId,
+    routeTitle: input.flavor,
+  })
+}
+
+function summarizeDiagnosticCounts(values: Array<string | null | undefined>): string {
+  const counts = new Map<string, number>()
+  values.forEach((value) => {
+    const normalized = value?.trim()
+    if (!normalized) {
+      return
+    }
+    counts.set(normalized, (counts.get(normalized) ?? 0) + 1)
+  })
+  if (counts.size === 0) {
+    return 'none'
+  }
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([value, count]) => `${value}:${count}`)
+    .join(', ')
+}
+
+function summarizeUniqueRoleValues(
+  values: Array<string | null | undefined>,
+): { count: number; values: string[] } {
+  const byNormalized = new Map<string, string>()
+  values.forEach((value) => {
+    const normalized = normalizeCurateAuditStopName(value ?? undefined)
+    if (!normalized || byNormalized.has(normalized)) {
+      return
+    }
+    byNormalized.set(normalized, value?.trim() ?? normalized)
+  })
+  return {
+    count: byNormalized.size,
+    values: [...byNormalized.values()],
+  }
 }
 
 function computeStorySpineRoleOverlap(params: {
@@ -13928,6 +14004,74 @@ export function SandboxConciergePage() {
       routeTitle: currentSelectedArtifact?.routeTitle ?? null,
     })
     const currentPocketId = currentSelectedArtifact?.selection.pocketId ?? null
+    const activeStep2ArtifactSourceOpportunities =
+      shouldUseScenarioBackedArtifacts
+        ? isBuildWrapperActive
+          ? step2PrimarySourceOpportunities
+          : isCurateWrapperActive && selectedStarterPack
+            ? starterAwareStep2SourceOpportunities
+            : scenarioBackedVerifiedCityOpportunities.slice(0, 4)
+        : selectStep2ExcellentSurvivors({
+            rankedCards:
+              isCurateWrapperActive && selectedStarterPack
+                ? starterAwareStep2SourceOpportunities
+                : verifiedCityOpportunities,
+            persona,
+            vibe: primaryVibe,
+            scenarioContract: activeScenarioContract,
+          })
+    const step2CandidateFamilies = summarizeDiagnosticCounts(
+      step2CandidateRouteArtifacts.map((artifact) =>
+        deriveScenarioFamilyHintFromArtifactIdentity({
+          artifactId: artifact.id,
+          sourceOpportunityId: artifact.sourceOpportunityId,
+          routeTitle: artifact.routeTitle,
+        }),
+      ),
+    )
+    const visibleArtifactFamilies = summarizeDiagnosticCounts(
+      candidateRouteArtifactsForDisplay.map((artifact) =>
+        deriveScenarioFamilyHintFromArtifactIdentity({
+          artifactId: artifact.id,
+          sourceOpportunityId: artifact.sourceOpportunityId,
+          routeTitle: artifact.routeTitle,
+        }),
+      ),
+    )
+    const scenarioBackedFamilies = summarizeDiagnosticCounts(
+      scenarioBackedVerifiedCityOpportunities.map((opportunity) =>
+        deriveScenarioFamilyHintFromOpportunity({
+          opportunityId: opportunity.id,
+          flavor: opportunity.flavor,
+        }),
+      ),
+    )
+    const step2PrimaryFamilies = summarizeDiagnosticCounts(
+      step2PrimarySourceOpportunities.map((opportunity) =>
+        deriveScenarioFamilyHintFromOpportunity({
+          opportunityId: opportunity.id,
+          flavor: opportunity.flavor,
+        }),
+      ),
+    )
+    const step2CandidateStarts = summarizeUniqueRoleValues(
+      step2CandidateRouteArtifacts.map((artifact) => artifact.storySpine.start),
+    )
+    const step2CandidateHighlights = summarizeUniqueRoleValues(
+      step2CandidateRouteArtifacts.map((artifact) => artifact.storySpine.highlight),
+    )
+    const step2CandidateWindDowns = summarizeUniqueRoleValues(
+      step2CandidateRouteArtifacts.map((artifact) => artifact.storySpine.windDown),
+    )
+    const visibleArtifactStarts = summarizeUniqueRoleValues(
+      candidateRouteArtifactsForDisplay.map((artifact) => artifact.storySpine.start),
+    )
+    const visibleArtifactHighlights = summarizeUniqueRoleValues(
+      candidateRouteArtifactsForDisplay.map((artifact) => artifact.storySpine.highlight),
+    )
+    const visibleArtifactWindDowns = summarizeUniqueRoleValues(
+      candidateRouteArtifactsForDisplay.map((artifact) => artifact.storySpine.windDown),
+    )
     const alternateArtifactIds = step2TryAnotherAlternates.map((entry) => entry.artifact.id)
     const alternateDirectionIds = step2TryAnotherAlternates.map((entry) => entry.direction.id)
     const lowerOverlapPreferenceAffectedTopChoice =
@@ -13970,8 +14114,54 @@ export function SandboxConciergePage() {
       currentSourceOpportunityId,
       currentScenarioFamilyHint,
       currentPocketId,
+      verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
+      scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
+      step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
+      starterAwareStep2SourceOpportunitiesCount: starterAwareStep2SourceOpportunities.length,
+      step2CandidateRouteArtifactsCount: step2CandidateRouteArtifacts.length,
+      curateDisplayFallbackRouteArtifactsCount: curateDisplayFallbackRouteArtifacts.length,
       candidateRouteArtifactsForDisplayCount: candidateRouteArtifactsForDisplay.length,
       step2TryAnotherAlternatesCount: step2TryAnotherAlternates.length,
+      scenarioBackedFamilyCounts: scenarioBackedFamilies,
+      step2PrimarySourceFamilyCounts: step2PrimaryFamilies,
+      step2CandidateArtifactFamilyCounts: step2CandidateFamilies,
+      candidateRouteArtifactsForDisplayFamilyCounts: visibleArtifactFamilies,
+      step2CandidateArtifactDirectionCounts: summarizeDiagnosticCounts(
+        step2CandidateRouteArtifacts.map((artifact) => artifact.selection.directionId ?? null),
+      ),
+      candidateRouteArtifactsForDisplayDirectionCounts: summarizeDiagnosticCounts(
+        candidateRouteArtifactsForDisplay.map((artifact) => artifact.selection.directionId ?? null),
+      ),
+      step2CandidateArtifactPocketCounts: summarizeDiagnosticCounts(
+        step2CandidateRouteArtifacts.map((artifact) => artifact.selection.pocketId ?? null),
+      ),
+      candidateRouteArtifactsForDisplayPocketCounts: summarizeDiagnosticCounts(
+        candidateRouteArtifactsForDisplay.map((artifact) => artifact.selection.pocketId ?? null),
+      ),
+      step2CandidateUniqueStartCount: step2CandidateStarts.count,
+      step2CandidateUniqueHighlightCount: step2CandidateHighlights.count,
+      step2CandidateUniqueWindDownCount: step2CandidateWindDowns.count,
+      step2CandidateUniqueStarts: step2CandidateStarts.values,
+      step2CandidateUniqueHighlights: step2CandidateHighlights.values,
+      step2CandidateUniqueWindDowns: step2CandidateWindDowns.values,
+      visibleArtifactUniqueStartCount: visibleArtifactStarts.count,
+      visibleArtifactUniqueHighlightCount: visibleArtifactHighlights.count,
+      visibleArtifactUniqueWindDownCount: visibleArtifactWindDowns.count,
+      visibleArtifactUniqueStarts: visibleArtifactStarts.values,
+      visibleArtifactUniqueHighlights: visibleArtifactHighlights.values,
+      visibleArtifactUniqueWindDowns: visibleArtifactWindDowns.values,
+      scenarioBackedVisibleSliceCount:
+        shouldUseScenarioBackedArtifacts && !isBuildWrapperActive && !(isCurateWrapperActive && selectedStarterPack)
+          ? Math.min(scenarioBackedVerifiedCityOpportunities.length, 4)
+          : null,
+      scenarioBackedSliceCap:
+        shouldUseScenarioBackedArtifacts && !isBuildWrapperActive && !(isCurateWrapperActive && selectedStarterPack)
+          ? 4
+          : null,
+      artifactBuilderNullDropCount:
+        activeStep2ArtifactSourceOpportunities.length - step2CandidateRouteArtifacts.length,
+      visibleVsCandidateArtifactCountDelta:
+        candidateRouteArtifactsForDisplay.length - step2CandidateRouteArtifacts.length,
       alternateArtifactIds,
       alternateDirectionIds,
       alternateOverlapDiagnostics,
@@ -13993,13 +14183,27 @@ export function SandboxConciergePage() {
     }
   }, [
     candidateRouteArtifactByIdForDisplay,
+    candidateRouteArtifactsForDisplay,
+    curateDisplayFallbackRouteArtifacts.length,
     candidateRouteArtifactsForDisplay.length,
     directionCards,
+    isBuildWrapperActive,
+    isCurateWrapperActive,
+    persona,
+    primaryVibe,
+    scenarioBackedVerifiedCityOpportunities,
+    selectedStarterPack,
     selectedCandidateRouteArtifact,
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
+    shouldUseScenarioBackedArtifacts,
+    starterAwareStep2SourceOpportunities,
+    step2CandidateRouteArtifacts,
+    step2PrimarySourceOpportunities,
     step2RerollTrace,
     step2TryAnotherAlternates,
+    verifiedCityOpportunities,
+    activeScenarioContract,
   ])
   const selectedDirectionTitle = selectedDirection?.card.title?.trim() ?? null
   const previewHeaderTitle = selectedRouteSummaryArtifact?.routeTitle
@@ -16447,12 +16651,132 @@ export function SandboxConciergePage() {
               {surpriseTryAnotherDebug.currentPocketId ?? 'n/a'}
             </div>
             <div>
+              surpriseTryAnother.verifiedCityOpportunitiesCount:{' '}
+              {surpriseTryAnotherDebug.verifiedCityOpportunitiesCount}
+            </div>
+            <div>
+              surpriseTryAnother.scenarioBackedVerifiedCityOpportunitiesCount:{' '}
+              {surpriseTryAnotherDebug.scenarioBackedVerifiedCityOpportunitiesCount}
+            </div>
+            <div>
+              surpriseTryAnother.step2PrimarySourceOpportunitiesCount:{' '}
+              {surpriseTryAnotherDebug.step2PrimarySourceOpportunitiesCount}
+            </div>
+            <div>
+              surpriseTryAnother.starterAwareStep2SourceOpportunitiesCount:{' '}
+              {surpriseTryAnotherDebug.starterAwareStep2SourceOpportunitiesCount}
+            </div>
+            <div>
+              surpriseTryAnother.step2CandidateRouteArtifactsCount:{' '}
+              {surpriseTryAnotherDebug.step2CandidateRouteArtifactsCount}
+            </div>
+            <div>
+              surpriseTryAnother.curateDisplayFallbackRouteArtifactsCount:{' '}
+              {surpriseTryAnotherDebug.curateDisplayFallbackRouteArtifactsCount}
+            </div>
+            <div>
               surpriseTryAnother.candidateRouteArtifactsForDisplayCount:{' '}
               {surpriseTryAnotherDebug.candidateRouteArtifactsForDisplayCount}
             </div>
             <div>
               surpriseTryAnother.step2TryAnotherAlternatesCount:{' '}
               {surpriseTryAnotherDebug.step2TryAnotherAlternatesCount}
+            </div>
+            <div>
+              surpriseTryAnother.scenarioBackedFamilyCounts:{' '}
+              {surpriseTryAnotherDebug.scenarioBackedFamilyCounts}
+            </div>
+            <div>
+              surpriseTryAnother.step2PrimarySourceFamilyCounts:{' '}
+              {surpriseTryAnotherDebug.step2PrimarySourceFamilyCounts}
+            </div>
+            <div>
+              surpriseTryAnother.step2CandidateArtifactFamilyCounts:{' '}
+              {surpriseTryAnotherDebug.step2CandidateArtifactFamilyCounts}
+            </div>
+            <div>
+              surpriseTryAnother.candidateRouteArtifactsForDisplayFamilyCounts:{' '}
+              {surpriseTryAnotherDebug.candidateRouteArtifactsForDisplayFamilyCounts}
+            </div>
+            <div>
+              surpriseTryAnother.step2CandidateArtifactDirectionCounts:{' '}
+              {surpriseTryAnotherDebug.step2CandidateArtifactDirectionCounts}
+            </div>
+            <div>
+              surpriseTryAnother.candidateRouteArtifactsForDisplayDirectionCounts:{' '}
+              {surpriseTryAnotherDebug.candidateRouteArtifactsForDisplayDirectionCounts}
+            </div>
+            <div>
+              surpriseTryAnother.step2CandidateArtifactPocketCounts:{' '}
+              {surpriseTryAnotherDebug.step2CandidateArtifactPocketCounts}
+            </div>
+            <div>
+              surpriseTryAnother.candidateRouteArtifactsForDisplayPocketCounts:{' '}
+              {surpriseTryAnotherDebug.candidateRouteArtifactsForDisplayPocketCounts}
+            </div>
+            <div>
+              surpriseTryAnother.step2CandidateUniqueStartCount:{' '}
+              {surpriseTryAnotherDebug.step2CandidateUniqueStartCount}
+            </div>
+            <div>
+              surpriseTryAnother.step2CandidateUniqueHighlightCount:{' '}
+              {surpriseTryAnotherDebug.step2CandidateUniqueHighlightCount}
+            </div>
+            <div>
+              surpriseTryAnother.step2CandidateUniqueWindDownCount:{' '}
+              {surpriseTryAnotherDebug.step2CandidateUniqueWindDownCount}
+            </div>
+            <div>
+              surpriseTryAnother.step2CandidateUniqueStarts:{' '}
+              {surpriseTryAnotherDebug.step2CandidateUniqueStarts.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.step2CandidateUniqueHighlights:{' '}
+              {surpriseTryAnotherDebug.step2CandidateUniqueHighlights.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.step2CandidateUniqueWindDowns:{' '}
+              {surpriseTryAnotherDebug.step2CandidateUniqueWindDowns.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.visibleArtifactUniqueStartCount:{' '}
+              {surpriseTryAnotherDebug.visibleArtifactUniqueStartCount}
+            </div>
+            <div>
+              surpriseTryAnother.visibleArtifactUniqueHighlightCount:{' '}
+              {surpriseTryAnotherDebug.visibleArtifactUniqueHighlightCount}
+            </div>
+            <div>
+              surpriseTryAnother.visibleArtifactUniqueWindDownCount:{' '}
+              {surpriseTryAnotherDebug.visibleArtifactUniqueWindDownCount}
+            </div>
+            <div>
+              surpriseTryAnother.visibleArtifactUniqueStarts:{' '}
+              {surpriseTryAnotherDebug.visibleArtifactUniqueStarts.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.visibleArtifactUniqueHighlights:{' '}
+              {surpriseTryAnotherDebug.visibleArtifactUniqueHighlights.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.visibleArtifactUniqueWindDowns:{' '}
+              {surpriseTryAnotherDebug.visibleArtifactUniqueWindDowns.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.scenarioBackedVisibleSliceCount:{' '}
+              {surpriseTryAnotherDebug.scenarioBackedVisibleSliceCount ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.scenarioBackedSliceCap:{' '}
+              {surpriseTryAnotherDebug.scenarioBackedSliceCap ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.artifactBuilderNullDropCount:{' '}
+              {surpriseTryAnotherDebug.artifactBuilderNullDropCount ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.visibleVsCandidateArtifactCountDelta:{' '}
+              {surpriseTryAnotherDebug.visibleVsCandidateArtifactCountDelta}
             </div>
             <div>
               surpriseTryAnother.alternateArtifactIds:{' '}
