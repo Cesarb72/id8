@@ -805,6 +805,7 @@ interface SurpriseTryAnotherDebug {
   alternateArtifactIds: string[]
   alternateDirectionIds: string[]
   alternateOverlapDiagnostics: string[]
+  lowerOverlapPreferenceAffectedTopChoice: boolean | null
   lastTryAnotherChosenArtifactId: string | null
   lastTryAnotherChosenDirectionId: string | null
   chosenArtifactDifferedFromPrevious: boolean | null
@@ -938,6 +939,33 @@ function deriveScenarioFamilyHintFromArtifactIdentity(input: {
     /\b(romantic_(?:cozy|lively|cultured)|friends_(?:cozy|lively|cultured)|family_(?:cozy|lively|cultured))\b/,
   )
   return familyTokenMatch?.[1] ?? null
+}
+
+function computeStorySpineRoleOverlap(params: {
+  currentStorySpine: Pick<ContractEntryArtifact['storySpine'], 'start' | 'highlight' | 'windDown'> | null
+  candidateStorySpine: Pick<ContractEntryArtifact['storySpine'], 'start' | 'highlight' | 'windDown'>
+}): {
+  sameStart: boolean
+  sameHighlight: boolean
+  sameWindDown: boolean
+  roleOverlapCount: number
+} {
+  const { currentStorySpine, candidateStorySpine } = params
+  const sameStart =
+    normalizeCurateAuditStopName(candidateStorySpine.start) ===
+    normalizeCurateAuditStopName(currentStorySpine?.start)
+  const sameHighlight =
+    normalizeCurateAuditStopName(candidateStorySpine.highlight) ===
+    normalizeCurateAuditStopName(currentStorySpine?.highlight)
+  const sameWindDown =
+    normalizeCurateAuditStopName(candidateStorySpine.windDown) ===
+    normalizeCurateAuditStopName(currentStorySpine?.windDown)
+  return {
+    sameStart,
+    sameHighlight,
+    sameWindDown,
+    roleOverlapCount: [sameStart, sameHighlight, sameWindDown].filter(Boolean).length,
+  }
 }
 
 function computeVisibleNightDifferenceScore(
@@ -13550,6 +13578,12 @@ export function SandboxConciergePage() {
         direction: (typeof directionCards)[number]
         score: number
         fingerprint: string
+        sameStart: boolean
+        sameHighlight: boolean
+        sameWindDown: boolean
+        roleOverlapCount: number
+        sameDirection: boolean
+        orderingReason: string
       }>
     }
     const currentStructure = {
@@ -13563,6 +13597,7 @@ export function SandboxConciergePage() {
       stopVenueIds: canonicalRouteArtifact?.finalRoute.stops.map((stop) => stop.venueId),
     }
     const currentArtifactId = selectedCandidateRouteArtifact?.id ?? selectedStep2CandidateArtifactId ?? null
+    const currentSelectedStorySpine = selectedCandidateRouteArtifact?.storySpine ?? null
     const candidates = candidateRouteArtifactsForDisplay
       .map((candidateArtifact) => {
         if (candidateArtifact.id === currentArtifactId) {
@@ -13610,6 +13645,10 @@ export function SandboxConciergePage() {
           (variation.anchorVenueId || variation.pocketId || variation.scenarioFamily)
             ? 1
             : 0
+        const overlap = computeStorySpineRoleOverlap({
+          currentStorySpine: currentSelectedStorySpine,
+          candidateStorySpine: candidateArtifact.storySpine,
+        })
         const structurallyDifferent =
           (fingerprint.length > 0 &&
             fingerprint !== currentVisibleNightFingerprint &&
@@ -13623,6 +13662,14 @@ export function SandboxConciergePage() {
           direction: candidateDirection,
           score: visibleDifferenceScore + variationBoost,
           fingerprint,
+          ...overlap,
+          sameDirection: candidateDirection.id === currentDirectionId,
+          orderingReason:
+            visibleDifferenceScore > 0
+              ? 'score_then_overlap_tiebreak'
+              : variationBoost > 0
+                ? 'variation_boost_then_overlap_tiebreak'
+                : 'score_then_overlap_tiebreak',
         }
       })
       .filter(
@@ -13633,23 +13680,67 @@ export function SandboxConciergePage() {
           direction: (typeof directionCards)[number]
           score: number
           fingerprint: string
+          sameStart: boolean
+          sameHighlight: boolean
+          sameWindDown: boolean
+          roleOverlapCount: number
+          sameDirection: boolean
+          orderingReason: string
         } => Boolean(entry),
       )
-      .sort((left, right) => right.score - left.score || left.direction.id.localeCompare(right.direction.id))
+    const scoreOnlyTopCandidate = [...candidates].sort(
+      (left, right) => right.score - left.score || left.direction.id.localeCompare(right.direction.id),
+    )[0] ?? null
+    const sortedCandidates = candidates.sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score
+      }
+      if (left.roleOverlapCount !== right.roleOverlapCount) {
+        return left.roleOverlapCount - right.roleOverlapCount
+      }
+      if (left.sameWindDown !== right.sameWindDown) {
+        return Number(left.sameWindDown) - Number(right.sameWindDown)
+      }
+      if (left.sameHighlight !== right.sameHighlight) {
+        return Number(left.sameHighlight) - Number(right.sameHighlight)
+      }
+      if (left.sameStart !== right.sameStart) {
+        return Number(left.sameStart) - Number(right.sameStart)
+      }
+      if (left.sameDirection !== right.sameDirection) {
+        return Number(left.sameDirection) - Number(right.sameDirection)
+      }
+      return left.direction.id.localeCompare(right.direction.id)
+    })
 
     const uniqueByFingerprint: Array<{
       artifact: CanonicalCandidateRouteArtifact
       direction: (typeof directionCards)[number]
       score: number
       fingerprint: string
+      sameStart: boolean
+      sameHighlight: boolean
+      sameWindDown: boolean
+      roleOverlapCount: number
+      sameDirection: boolean
+      orderingReason: string
     }> = []
     const seenFingerprints = new Set<string>()
-    for (const candidate of candidates) {
+    for (const candidate of sortedCandidates) {
       if (seenFingerprints.has(candidate.fingerprint)) {
         continue
       }
       seenFingerprints.add(candidate.fingerprint)
       uniqueByFingerprint.push(candidate)
+    }
+    if (uniqueByFingerprint.length > 0 && scoreOnlyTopCandidate) {
+      uniqueByFingerprint[0] = {
+        ...uniqueByFingerprint[0],
+        orderingReason:
+          uniqueByFingerprint[0].artifact.id !== scoreOnlyTopCandidate.artifact.id
+            ? `${uniqueByFingerprint[0].orderingReason}|lower_overlap_preferred`
+            : uniqueByFingerprint[0].orderingReason,
+      }
     }
     return uniqueByFingerprint
   }, [
@@ -13666,6 +13757,7 @@ export function SandboxConciergePage() {
     previewWindDownLabel,
     selectedDirectionId,
     selectedCandidateRouteArtifact?.id,
+    selectedCandidateRouteArtifact?.storySpine,
     selectedStep2CandidateArtifactId,
     selectedRouteSummaryArtifact?.districtAnchorLine,
     selectedRouteSummaryArtifact?.flavorLine,
@@ -13838,31 +13930,14 @@ export function SandboxConciergePage() {
     const currentPocketId = currentSelectedArtifact?.selection.pocketId ?? null
     const alternateArtifactIds = step2TryAnotherAlternates.map((entry) => entry.artifact.id)
     const alternateDirectionIds = step2TryAnotherAlternates.map((entry) => entry.direction.id)
+    const lowerOverlapPreferenceAffectedTopChoice =
+      step2TryAnotherAlternates[0]?.orderingReason.includes('lower_overlap_preferred') ?? null
     const alternateOverlapDiagnostics = step2TryAnotherAlternates.map((entry) => {
-      const sameStart =
-        normalizeCurateAuditStopName(entry.artifact.storySpine.start) ===
-        normalizeCurateAuditStopName(currentStoryStart ?? undefined)
-      const sameHighlight =
-        normalizeCurateAuditStopName(entry.artifact.storySpine.highlight) ===
-        normalizeCurateAuditStopName(currentStoryHighlight ?? undefined)
-      const sameWindDown =
-        normalizeCurateAuditStopName(entry.artifact.storySpine.windDown) ===
-        normalizeCurateAuditStopName(currentStoryWindDown ?? undefined)
-      const roleOverlapCount = [sameStart, sameHighlight, sameWindDown].filter(Boolean).length
       const scenarioFamilyHint = deriveScenarioFamilyHintFromArtifactIdentity({
         artifactId: entry.artifact.id,
         sourceOpportunityId: entry.artifact.sourceOpportunityId,
         routeTitle: entry.artifact.routeTitle,
       })
-      const inclusionReason =
-        entry.score > 0
-          ? 'score_positive'
-          : surpriseVariationByDirectionId.get(entry.direction.id)
-                ?.scenarioFamily ||
-              surpriseVariationByDirectionId.get(entry.direction.id)?.pocketId ||
-              surpriseVariationByDirectionId.get(entry.direction.id)?.anchorVenueId
-            ? 'variation_boost_only'
-            : 'unknown'
       return [
         `artifact=${entry.artifact.id}`,
         `source=${entry.artifact.sourceOpportunityId}`,
@@ -13872,13 +13947,15 @@ export function SandboxConciergePage() {
         `start=${entry.artifact.storySpine.start}`,
         `highlight=${entry.artifact.storySpine.highlight}`,
         `windDown=${entry.artifact.storySpine.windDown}`,
-        `sameStart=${String(sameStart)}`,
-        `sameHighlight=${String(sameHighlight)}`,
-        `sameWindDown=${String(sameWindDown)}`,
-        `roleOverlapCount=${roleOverlapCount}`,
+        `sameStart=${String(entry.sameStart)}`,
+        `sameHighlight=${String(entry.sameHighlight)}`,
+        `sameWindDown=${String(entry.sameWindDown)}`,
+        `roleOverlapCount=${entry.roleOverlapCount}`,
+        `sameDirection=${String(entry.sameDirection)}`,
         `family=${scenarioFamilyHint ?? 'n/a'}`,
         `rerollScore=${entry.score.toFixed(3)}`,
-        `reason=${inclusionReason}`,
+        `reason=${entry.score > 0 ? 'score_positive' : 'unknown'}`,
+        `ordering=${entry.orderingReason}`,
       ].join('|')
     })
     const lastTryAnotherChosenArtifactId = step2RerollTrace?.nextArtifactId_selected ?? null
@@ -13898,6 +13975,7 @@ export function SandboxConciergePage() {
       alternateArtifactIds,
       alternateDirectionIds,
       alternateOverlapDiagnostics,
+      lowerOverlapPreferenceAffectedTopChoice,
       lastTryAnotherChosenArtifactId,
       lastTryAnotherChosenDirectionId,
       chosenArtifactDifferedFromPrevious:
@@ -13920,7 +13998,6 @@ export function SandboxConciergePage() {
     selectedCandidateRouteArtifact,
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
-    surpriseVariationByDirectionId,
     step2RerollTrace,
     step2TryAnotherAlternates,
   ])
@@ -16388,6 +16465,12 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.alternateOverlapDiagnostics:{' '}
               {surpriseTryAnotherDebug.alternateOverlapDiagnostics.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.lowerOverlapPreferenceAffectedTopChoice:{' '}
+              {surpriseTryAnotherDebug.lowerOverlapPreferenceAffectedTopChoice == null
+                ? 'n/a'
+                : String(surpriseTryAnotherDebug.lowerOverlapPreferenceAffectedTopChoice)}
             </div>
             <div>
               surpriseTryAnother.lastTryAnotherChosenArtifactId:{' '}
