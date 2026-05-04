@@ -830,6 +830,7 @@ interface SurpriseTryAnotherDebug {
   contrastRepairCandidateMissingRoleFitCount: number
   contrastRepairCandidateNoisyEventLikeCategoryCount: number
   contrastRepairCandidatesWithPerformanceOrEventSignalsCount: number
+  contrastRepairOutcomes: string[]
   verifiedCityOpportunitiesCount: number
   scenarioBackedVerifiedCityOpportunitiesCount: number
   step2PrimarySourceOpportunitiesCount: number
@@ -1009,6 +1010,118 @@ function evaluateDiagnosticWindDownEligibility(params: {
     missingRoleFit,
     noisyEventLikeCategory,
     hasPerformanceOrEventSignals,
+  }
+}
+
+function scoreSurpriseContrastWindDownRepairCandidate(stop: BuiltScenarioStop): number {
+  let score = stop.roleFit.windDown ?? 0
+  if (stop.stopType === 'atmospheric_nightcap') {
+    score += 0.24
+  } else if (stop.stopType === 'performance_or_fine_dining') {
+    score += 0.08
+  }
+  if (stop.position === 'closer') {
+    score += 0.12
+  } else if (stop.position === 'windDown') {
+    score += 0.09
+  }
+  if (isDiagnosticPreferredWindDownCategory(stop.venueCategory)) {
+    score += 0.14
+  }
+  score += (stop.currentRelevance ?? 0) * 0.08
+  score += (stop.authorityScore ?? 0) * 0.08
+  return score
+}
+
+function repairSurpriseContrastWindDownOpportunity(params: {
+  opportunity: VerifiedCityOpportunity
+  contractConstraints?: ContractConstraints
+}): {
+  opportunity: VerifiedCityOpportunity
+  repairApplied: boolean
+  repairedCandidate?: BuiltScenarioStop
+} {
+  const { opportunity, contractConstraints } = params
+  if (opportunity.scenarioWindDownDebug?.finalRoleEligible !== false || !opportunity.scenarioNight) {
+    return {
+      opportunity,
+      repairApplied: false,
+    }
+  }
+  const scenarioNight = opportunity.scenarioNight
+  const startVenueId =
+    scenarioNight.stops.find((stop) => stop.position === 'start')?.venueId ??
+    scenarioNight.stops[0]?.venueId ??
+    null
+  const highlightVenueId =
+    scenarioNight.stops.find((stop) => stop.position === 'highlight')?.venueId ?? null
+  const failedWindDownVenueId = opportunity.scenarioWindDownDebug.originalVenueId ?? null
+  const repairCandidates = scenarioNight.stops
+    .filter((stop) => stop.venueId !== startVenueId)
+    .filter((stop) => stop.venueId !== highlightVenueId)
+    .filter((stop) => stop.venueId !== failedWindDownVenueId)
+    .map((stop) => ({
+      stop,
+      diagnostic: evaluateDiagnosticWindDownEligibility({
+        stop,
+        contractConstraints,
+      }),
+    }))
+    .filter((entry) => entry.diagnostic.wouldPassGenericWindDownEligibility)
+    .sort(
+      (left, right) =>
+        scoreSurpriseContrastWindDownRepairCandidate(right.stop) -
+          scoreSurpriseContrastWindDownRepairCandidate(left.stop) ||
+        left.stop.name.localeCompare(right.stop.name),
+    )
+  const repairedCandidate = repairCandidates[0]?.stop
+  if (!repairedCandidate) {
+    return {
+      opportunity,
+      repairApplied: false,
+    }
+  }
+
+  const repairedCloses: CityOpportunityStopOption[] = [
+    {
+      venueId: repairedCandidate.venueId,
+      name: repairedCandidate.name,
+      address: repairedCandidate.address,
+      reason:
+        repairedCandidate.whyThisStop ||
+        repairedCandidate.reasons[0] ||
+        'Strong repaired scenario landing.',
+      score:
+        repairedCandidate.roleFit.windDown ??
+        repairedCandidate.authorityScore ??
+        opportunity.closes[0]?.score ??
+        0.62,
+    },
+    ...opportunity.closes.filter((stop) => stop.venueId !== repairedCandidate.venueId),
+  ].slice(0, 4)
+
+  return {
+    opportunity: {
+      ...opportunity,
+      closes: repairedCloses,
+      storySpine: {
+        ...opportunity.storySpine,
+        windDown: repairedCandidate.name,
+      },
+      scenarioWindDownDebug: {
+        ...opportunity.scenarioWindDownDebug,
+        repairApplied: true,
+        repairReplacementVenueId: repairedCandidate.venueId,
+        repairReplacementName: repairedCandidate.name,
+        repairSource: 'surprise_contrast_same_scenario_candidate',
+        repairReason: 'pre_artifact_windDown_repair',
+        finalVenueId: repairedCandidate.venueId,
+        finalName: repairedCandidate.name,
+        finalRoleEligible: true,
+      },
+    },
+    repairApplied: true,
+    repairedCandidate,
   }
 }
 
@@ -9027,6 +9140,12 @@ export function SandboxConciergePage() {
         }),
       )
       .filter((entry): entry is VerifiedCityOpportunity => Boolean(entry))
+      .map((opportunity) =>
+        repairSurpriseContrastWindDownOpportunity({
+          opportunity,
+          contractConstraints: canonicalContractConstraints,
+        }).opportunity,
+      )
     return [...primaryOpportunities, ...contrastOpportunities]
   }, [
     allDirectionCards,
@@ -14725,6 +14844,36 @@ export function SandboxConciergePage() {
         `rejectedCandidateCount=${Math.max(0, candidateStops.length - acceptedCount)}`,
       ].join('|')
     })
+    const contrastRepairOutcomes = contrastOpportunities.map((opportunity) => {
+      const artifactBuilt = contrastArtifacts.some(
+        (artifact) => artifact.sourceOpportunityId === opportunity.id,
+      )
+      const nightId = opportunity.scenarioNight?.id ?? 'n/a'
+      const family =
+        opportunity.scenarioNight?.scenarioFamily ??
+        deriveScenarioFamilyHintFromOpportunity({
+          opportunityId: opportunity.id,
+          flavor: opportunity.flavor,
+        }) ??
+        'n/a'
+      return [
+        `night=${nightId}`,
+        `opportunity=${opportunity.id}`,
+        `family=${family}`,
+        `contrastRepairApplied=${String(opportunity.scenarioWindDownDebug?.repairApplied ?? false)}`,
+        `repairedOpportunityId=${opportunity.id}`,
+        `originalWindDownId=${opportunity.scenarioWindDownDebug?.originalVenueId ?? 'n/a'}`,
+        `originalWindDownName=${opportunity.scenarioWindDownDebug?.originalName ?? 'n/a'}`,
+        `repairedWindDownId=${opportunity.scenarioWindDownDebug?.finalVenueId ?? 'n/a'}`,
+        `repairedWindDownName=${opportunity.scenarioWindDownDebug?.finalName ?? 'n/a'}`,
+        `repairedCandidateSource=${opportunity.scenarioWindDownDebug?.repairSource ?? 'n/a'}`,
+        `repairedCandidateReason=${opportunity.scenarioWindDownDebug?.repairReason ?? 'n/a'}`,
+        `repairedFinalRoleEligible=${String(
+          opportunity.scenarioWindDownDebug?.finalRoleEligible ?? false,
+        )}`,
+        `artifactBuiltAfterRepair=${String(artifactBuilt)}`,
+      ].join('|')
+    })
     const lowerOverlapPreferenceAffectedTopChoice =
       step2TryAnotherAlternates[0]?.orderingReason.includes('lower_overlap_preferred') ?? null
     const alternateOverlapDiagnostics = step2TryAnotherAlternates.map((entry) => {
@@ -14794,6 +14943,7 @@ export function SandboxConciergePage() {
       contrastRepairCandidateMissingRoleFitCount,
       contrastRepairCandidateNoisyEventLikeCategoryCount,
       contrastRepairCandidatesWithPerformanceOrEventSignalsCount,
+      contrastRepairOutcomes,
       verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
       scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
       step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
@@ -17436,6 +17586,10 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.contrastRepairCandidatesWithPerformanceOrEventSignalsCount:{' '}
               {surpriseTryAnotherDebug.contrastRepairCandidatesWithPerformanceOrEventSignalsCount}
+            </div>
+            <div>
+              surpriseTryAnother.contrastRepairOutcomes:{' '}
+              {surpriseTryAnotherDebug.contrastRepairOutcomes.join(' || ') || 'none'}
             </div>
             <div>
               surpriseTryAnother.contrastStorySpines:{' '}
