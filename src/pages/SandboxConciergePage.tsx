@@ -1343,6 +1343,31 @@ function getCurateQualificationStatus(
   return 'rejected'
 }
 
+function buildArtifactByIdIndex(
+  artifacts: ContractEntryArtifact[],
+): Map<string, ContractEntryArtifact> {
+  return new Map(artifacts.map((artifact) => [artifact.id, artifact] as const))
+}
+
+function buildArtifactsByDirectionIdIndex(
+  artifacts: ContractEntryArtifact[],
+): Map<string, ContractEntryArtifact[]> {
+  const grouped = new Map<string, ContractEntryArtifact[]>()
+  artifacts.forEach((artifact) => {
+    const directionId = artifact.selection.directionId
+    if (!directionId) {
+      return
+    }
+    const existing = grouped.get(directionId)
+    if (existing) {
+      existing.push(artifact)
+      return
+    }
+    grouped.set(directionId, [artifact])
+  })
+  return grouped
+}
+
 function buildCurateVisibleCardModelFromArtifact(params: {
   artifact: ContractEntryArtifact
   preflight: CuratePreviewCommitabilityState | undefined
@@ -8948,49 +8973,21 @@ export function SandboxConciergePage() {
     isCurateWrapperActive,
   ])
   const curatePrimarySelectableArtifactById = useMemo(
-    () =>
-      new Map(curatePrimarySelectableArtifacts.map((artifact) => [artifact.id, artifact] as const)),
+    () => buildArtifactByIdIndex(curatePrimarySelectableArtifacts),
     [curatePrimarySelectableArtifacts],
   )
   const curateQualifiedVisibleArtifactById = useMemo(
-    () =>
-      new Map(
-        curateQualifiedVisibleCardModels.map((model) => [model.artifact.id, model.artifact] as const),
-      ),
+    () => buildArtifactByIdIndex(curateQualifiedVisibleCardModels.map((model) => model.artifact)),
     [curateQualifiedVisibleCardModels],
   )
-  const curatePrimarySelectableArtifactsByDirectionId = useMemo(() => {
-    const grouped = new Map<string, ContractEntryArtifact[]>()
-    curatePrimarySelectableArtifacts.forEach((artifact) => {
-      const directionId = artifact.selection.directionId
-      if (!directionId) {
-        return
-      }
-      const existing = grouped.get(directionId)
-      if (existing) {
-        existing.push(artifact)
-        return
-      }
-      grouped.set(directionId, [artifact])
-    })
-    return grouped
-  }, [curatePrimarySelectableArtifacts])
-  const candidateRouteArtifactsByDirectionIdForDisplay = useMemo(() => {
-    const grouped = new Map<string, ContractEntryArtifact[]>()
-    candidateRouteArtifactsForDisplay.forEach((artifact) => {
-      const directionId = artifact.selection.directionId
-      if (!directionId) {
-        return
-      }
-      const existing = grouped.get(directionId)
-      if (existing) {
-        existing.push(artifact)
-        return
-      }
-      grouped.set(directionId, [artifact])
-    })
-    return grouped
-  }, [candidateRouteArtifactsForDisplay])
+  const curatePrimarySelectableArtifactsByDirectionId = useMemo(
+    () => buildArtifactsByDirectionIdIndex(curatePrimarySelectableArtifacts),
+    [curatePrimarySelectableArtifacts],
+  )
+  const candidateRouteArtifactsByDirectionIdForDisplay = useMemo(
+    () => buildArtifactsByDirectionIdIndex(candidateRouteArtifactsForDisplay),
+    [candidateRouteArtifactsForDisplay],
+  )
   const candidateRouteArtifactByDirectionIdForDisplay = useMemo(
     () =>
       new Map(
@@ -9001,7 +8998,7 @@ export function SandboxConciergePage() {
     [candidateRouteArtifactsByDirectionIdForDisplay],
   )
   const candidateRouteArtifactByIdForDisplay = useMemo(
-    () => new Map(candidateRouteArtifactsForDisplay.map((artifact) => [artifact.id, artifact] as const)),
+    () => buildArtifactByIdIndex(candidateRouteArtifactsForDisplay),
     [candidateRouteArtifactsForDisplay],
   )
   const resolveUniqueCandidateRouteArtifactForDirection = useCallback(
