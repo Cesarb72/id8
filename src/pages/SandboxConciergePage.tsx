@@ -706,6 +706,7 @@ interface CurateVisibleCardModel {
   highlight: string
   windDown: string
   cardDisplaySource: 'approved_payload' | 'candidate_draft' | 'fallback_unqualified'
+  qualificationDisplayStatus: 'unchecked' | 'checking' | 'qualified' | 'rejected' | 'runtime_error'
   qualificationStatus: 'unchecked' | 'checking' | 'qualified' | 'rejected' | 'runtime_error'
   hasApprovedPayload: boolean
   qualifiedRouteStart: string | null
@@ -8800,6 +8801,8 @@ export function SandboxConciergePage() {
         windDown: approvedFinalRoute
           ? qualifiedRouteWindDown ?? artifact.storySpine.windDown
           : artifact.storySpine.windDown,
+        // Render-only label; `qualificationStatus` remains control state.
+        qualificationDisplayStatus: getCurateQualificationStatus(preflight, artifact.qualification),
         qualifiedRouteStart,
         qualifiedRouteHighlight,
         qualifiedRouteWindDown,
@@ -16620,7 +16623,7 @@ export function SandboxConciergePage() {
                   </div>
                   <p className="step2-night-option-context">{option.districtLine}</p>
                   <p className="step2-night-option-match">
-                    Qualification: {cardModel.qualificationStatus} via {cardModel.cardDisplaySource}
+                    Qualification: {cardModel.qualificationDisplayStatus} via {cardModel.cardDisplaySource}
                   </p>
                   {cardModel.qualificationStatus === 'qualified' &&
                   cardModel.finalRouteStarterFitTier !== 'strong_starter_fit' &&
