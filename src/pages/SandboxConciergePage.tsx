@@ -1488,6 +1488,253 @@ function buildCurateVisibleCardModelFromArtifact(params: {
   }
 }
 
+function buildSelectedRouteArtifactProjection(params: {
+  effectiveCurateSelectedArtifact: ContractEntryArtifact | null
+  selectedRouteDirectionId: string | null
+  isCurateWrapperActive: boolean
+  selectedCuratePreviewCommitability: CuratePreviewCommitabilityState | null
+  canonicalRouteArtifact: CanonicalRouteArtifact | null
+  selectedDirection: RealityDirectionCard | undefined
+  selectedCandidateArtifactResolution: {
+    artifact: ContractEntryArtifact | null
+    mode: ArtifactResolutionMode
+    artifactCountForDirection: number
+    droppedBySingleArtifactDirectionCollapse: boolean
+  }
+  selectedBuildAnchor: BuildAnchorSelection | null
+  isBuildWrapperActive: boolean
+  selectedDirectionContractId: string | null
+  selectedDirectionId: string | null
+  city: string
+}): SelectedRouteArtifact<CanonicalRouteArtifact> | null {
+  const {
+    effectiveCurateSelectedArtifact,
+    selectedRouteDirectionId,
+    isCurateWrapperActive,
+    selectedCuratePreviewCommitability,
+    canonicalRouteArtifact,
+    selectedDirection,
+    selectedCandidateArtifactResolution,
+    selectedBuildAnchor,
+    isBuildWrapperActive,
+    selectedDirectionContractId,
+    selectedDirectionId,
+    city,
+  } = params
+
+  const approvedCuratePreviewPayload =
+    isCurateWrapperActive &&
+    selectedCuratePreviewCommitability?.status === 'committable' &&
+    selectedCuratePreviewCommitability.approvedRefinementEntryPayload &&
+    effectiveCurateSelectedArtifact &&
+    selectedCuratePreviewCommitability.artifactId === effectiveCurateSelectedArtifact.id
+      ? selectedCuratePreviewCommitability.approvedRefinementEntryPayload
+      : null
+  if (
+    approvedCuratePreviewPayload &&
+    selectedRouteDirectionId &&
+    approvedCuratePreviewPayload.selectedDirectionId === selectedRouteDirectionId
+  ) {
+    const approvedFinalRoute = approvedCuratePreviewPayload.finalRoute
+    const approvedPlanSnapshot = approvedCuratePreviewPayload.planSnapshot
+    const approvedHighlightStop =
+      approvedFinalRoute.stops.find((stop) => stop.role === 'highlight') ?? null
+    const approvedCanonicalRouteArtifact: CanonicalRouteArtifact = {
+      selectedDirectionId: approvedCuratePreviewPayload.selectedDirectionId,
+      selectedClusterConfirmation: approvedPlanSnapshot.selectedClusterConfirmation,
+      itinerary: approvedPlanSnapshot.itinerary,
+      finalRoute: approvedFinalRoute,
+      canonicalStopByRole: approvedCuratePreviewPayload.canonicalStopByRole,
+      planSnapshot: approvedPlanSnapshot,
+    }
+    return {
+      source: 'committed',
+      directionId: selectedRouteDirectionId,
+      canonicalRouteArtifact: approvedCanonicalRouteArtifact,
+      activeHighlight: {
+        provenance: 'committed_runtime_route',
+        activeName: approvedHighlightStop?.displayName ?? 'Selected highlight',
+        activeVenueId: approvedHighlightStop?.venueId,
+        activeStopId: approvedHighlightStop?.id,
+      },
+      preview: buildPreviewFromFinalRoute(approvedFinalRoute),
+      routeTitle: approvedFinalRoute.routeHeadline,
+      routeSummary: approvedFinalRoute.routeSummary,
+      districtLine: `Mostly in ${approvedFinalRoute.location || city.trim()}`,
+      districtAnchorLine: `District anchor: ${approvedFinalRoute.location || city.trim()}`,
+      authorityLine: approvedPlanSnapshot.selectedClusterConfirmation,
+      happeningsLine: undefined as string | undefined,
+      whyChooseLine: approvedPlanSnapshot.selectedClusterConfirmation,
+      whyTonightProofLine: undefined as string | undefined,
+    }
+  }
+  const committedArtifactMatchesSelection =
+    !effectiveCurateSelectedArtifact ||
+    canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ===
+      effectiveCurateSelectedArtifact.id
+  if (
+    canonicalRouteArtifact &&
+    selectedRouteDirectionId &&
+    canonicalRouteArtifact.selectedDirectionId === selectedRouteDirectionId &&
+    committedArtifactMatchesSelection
+  ) {
+    const committedHighlightStop =
+      canonicalRouteArtifact.finalRoute.stops.find((stop) => stop.role === 'highlight') ?? null
+    const committedAnchorVenueId = canonicalRouteArtifact.planSnapshot.intentProfile.anchor?.venueId
+    const committedAnchorName =
+      selectedBuildAnchor?.name ??
+      canonicalRouteArtifact.planSnapshot.itinerary.stops.find(
+        (stop) => stop.venueId === committedAnchorVenueId,
+      )?.venueName
+    const committedAnchorPreserved = Boolean(
+      isBuildWrapperActive &&
+        committedAnchorVenueId &&
+        canonicalRouteArtifact.planSnapshot.itinerary.stops.some(
+          (stop) => stop.venueId === committedAnchorVenueId,
+        ),
+    )
+    return {
+      source: 'committed',
+      directionId: selectedRouteDirectionId,
+      canonicalRouteArtifact,
+      activeHighlight: {
+        provenance: 'committed_runtime_route',
+        activeName: committedHighlightStop?.displayName ?? 'Selected highlight',
+        activeVenueId: committedHighlightStop?.venueId,
+        activeStopId: committedHighlightStop?.id,
+      },
+      preview: buildPreviewFromFinalRoute(canonicalRouteArtifact.finalRoute),
+      routeTitle: canonicalRouteArtifact.finalRoute.routeHeadline,
+      routeSummary: canonicalRouteArtifact.finalRoute.routeSummary,
+      districtLine: `Mostly in ${canonicalRouteArtifact.finalRoute.location || city.trim()}`,
+      districtAnchorLine:
+        committedAnchorPreserved && committedAnchorName
+          ? `Required anchor: ${committedAnchorName}`
+          : `District anchor: ${canonicalRouteArtifact.finalRoute.location || city.trim()}`,
+      authorityLine: canonicalRouteArtifact.selectedClusterConfirmation,
+      happeningsLine: undefined as string | undefined,
+      whyChooseLine:
+        committedAnchorPreserved && committedAnchorName
+          ? `Includes required anchor: ${committedAnchorName}.`
+          : canonicalRouteArtifact.selectedClusterConfirmation,
+      whyTonightProofLine: undefined as string | undefined,
+    }
+  }
+  if (effectiveCurateSelectedArtifact) {
+    const candidateDirectionId =
+      effectiveCurateSelectedArtifact.selection.directionId ??
+      selectedDirectionContractId ??
+      selectedDirectionId ??
+      effectiveCurateSelectedArtifact.id
+    const buildAnchorClaimAllowed = Boolean(
+      isBuildWrapperActive &&
+        selectedBuildAnchor &&
+        effectiveCurateSelectedArtifact.anchorVenueId === selectedBuildAnchor.venueId,
+    )
+    const buildAnchorLine =
+      buildAnchorClaimAllowed
+        ? `Required anchor: ${selectedBuildAnchor.name}`
+        : effectiveCurateSelectedArtifact.districtAnchorLine
+    const buildWhyChooseLine =
+      buildAnchorClaimAllowed
+        ? `Includes required anchor: ${selectedBuildAnchor.name}.`
+        : effectiveCurateSelectedArtifact.whyChooseLine
+    return {
+      source: 'candidate',
+      directionId: candidateDirectionId,
+      candidateArtifactId: effectiveCurateSelectedArtifact.id,
+      candidateRouteArtifact: effectiveCurateSelectedArtifact,
+      activeHighlight: {
+        provenance: 'candidate_story_spine',
+        activeName: effectiveCurateSelectedArtifact.storySpine.highlight,
+        activeVenueId:
+          effectiveCurateSelectedArtifact.anchorRole === 'highlight'
+            ? effectiveCurateSelectedArtifact.anchorVenueId
+            : undefined,
+      },
+      preview: {
+        directionId: candidateDirectionId,
+        headline: effectiveCurateSelectedArtifact.routeTitle,
+        tone: effectiveCurateSelectedArtifact.routeSummary,
+        continuityLine: effectiveCurateSelectedArtifact.routeSummary,
+        stops: [
+          { role: 'start' as const, name: effectiveCurateSelectedArtifact.storySpine.start },
+          { role: 'highlight' as const, name: effectiveCurateSelectedArtifact.storySpine.highlight },
+          { role: 'windDown' as const, name: effectiveCurateSelectedArtifact.storySpine.windDown },
+        ],
+      },
+      routeTitle: effectiveCurateSelectedArtifact.routeTitle,
+      flavorLine: effectiveCurateSelectedArtifact.flavorLine,
+      routeSummary: effectiveCurateSelectedArtifact.routeSummary,
+      traits: effectiveCurateSelectedArtifact.traits,
+      districtLine: effectiveCurateSelectedArtifact.districtLine,
+      districtAnchorLine: buildAnchorLine,
+      authorityLine: effectiveCurateSelectedArtifact.authorityLine,
+      happeningsLine: effectiveCurateSelectedArtifact.happeningsLine,
+      whyChooseLine: buildWhyChooseLine,
+      whyTonightProofLine: effectiveCurateSelectedArtifact.whyTonightProofLine,
+      scenarioEvaluationNotes: effectiveCurateSelectedArtifact.scenarioEvaluation?.notes,
+    }
+  }
+  if (selectedDirection && selectedRouteDirectionId) {
+    return {
+      source: 'candidate',
+      directionId: selectedRouteDirectionId,
+      activeHighlight: {
+        provenance: 'candidate_story_spine',
+        activeName: selectedDirection.card.storySpinePreview?.highlight ?? 'Selected highlight',
+      },
+      preview: {
+        directionId: selectedRouteDirectionId,
+        headline: selectedDirection.card.title,
+        tone: selectedDirection.card.whyNow,
+        continuityLine:
+          selectedDirection.card.storySpinePreview?.whyThisWorks ??
+          selectedDirection.card.supportLine ??
+          selectedDirection.card.whyYou,
+        stops: [
+          {
+            role: 'start' as const,
+            name: selectedDirection.card.storySpinePreview?.start ?? 'Selected start',
+          },
+          {
+            role: 'highlight' as const,
+            name: selectedDirection.card.storySpinePreview?.highlight ?? 'Selected highlight',
+          },
+          {
+            role: 'windDown' as const,
+            name: selectedDirection.card.storySpinePreview?.windDown ?? 'Selected wind-down',
+          },
+        ],
+      },
+      routeTitle: selectedDirection.card.title,
+      flavorLine: selectedDirection.card.subtitle,
+      routeSummary: selectedDirection.card.whyNow,
+      traits: [],
+      districtLine: selectedDirection.debugMeta?.pocketLabel
+        ? `Mostly in ${selectedDirection.debugMeta.pocketLabel}`
+        : selectedDirection.card.supportLine ?? selectedDirection.id,
+      districtAnchorLine:
+        selectedCandidateArtifactResolution.mode === 'ambiguous_direction_artifacts'
+          ? `Direction preview only: ${selectedCandidateArtifactResolution.artifactCountForDirection} route artifacts remain unresolved for this direction.`
+          : selectedDirection.card.supportLine ??
+            selectedDirection.debugMeta?.pocketLabel ??
+            selectedDirection.id,
+      authorityLine: selectedDirection.card.whyYou,
+      happeningsLine: undefined as string | undefined,
+      whyChooseLine:
+        selectedCandidateArtifactResolution.mode === 'ambiguous_direction_artifacts'
+          ? 'Preview reflects the selected direction card only. Exact stop preservation is not claimed until a route artifact is explicitly selected or a committed route exists.'
+          : selectedDirection.card.whyYou,
+      whyTonightProofLine:
+        selectedCandidateArtifactResolution.mode === 'ambiguous_direction_artifacts'
+          ? selectedDirection.card.proofLine
+          : selectedDirection.card.selectedProofLine ?? selectedDirection.card.proofLine,
+    }
+  }
+  return null
+}
+
 function findOpportunityStopOptionByName(
   opportunity: VerifiedCityOpportunity | undefined,
   role: 'start' | 'highlight' | 'windDown',
@@ -12772,220 +13019,20 @@ export function SandboxConciergePage() {
       selectedDirectionContractId ??
       selectedDirectionId ??
       null
-    const approvedCuratePreviewPayload =
-      isCurateWrapperActive &&
-      selectedCuratePreviewCommitability?.status === 'committable' &&
-      selectedCuratePreviewCommitability.approvedRefinementEntryPayload &&
-      effectiveCurateSelectedArtifact &&
-      selectedCuratePreviewCommitability.artifactId === effectiveCurateSelectedArtifact.id
-        ? selectedCuratePreviewCommitability.approvedRefinementEntryPayload
-        : null
-    if (
-      approvedCuratePreviewPayload &&
-      selectedRouteDirectionId &&
-      approvedCuratePreviewPayload.selectedDirectionId === selectedRouteDirectionId
-    ) {
-      const approvedFinalRoute = approvedCuratePreviewPayload.finalRoute
-      const approvedPlanSnapshot = approvedCuratePreviewPayload.planSnapshot
-      const approvedHighlightStop =
-        approvedFinalRoute.stops.find((stop) => stop.role === 'highlight') ?? null
-      const approvedCanonicalRouteArtifact: CanonicalRouteArtifact = {
-        selectedDirectionId: approvedCuratePreviewPayload.selectedDirectionId,
-        selectedClusterConfirmation: approvedPlanSnapshot.selectedClusterConfirmation,
-        itinerary: approvedPlanSnapshot.itinerary,
-        finalRoute: approvedFinalRoute,
-        canonicalStopByRole: approvedCuratePreviewPayload.canonicalStopByRole,
-        planSnapshot: approvedPlanSnapshot,
-      }
-      return {
-        source: 'committed',
-        directionId: selectedRouteDirectionId,
-        canonicalRouteArtifact: approvedCanonicalRouteArtifact,
-        activeHighlight: {
-          provenance: 'committed_runtime_route',
-          activeName: approvedHighlightStop?.displayName ?? 'Selected highlight',
-          activeVenueId: approvedHighlightStop?.venueId,
-          activeStopId: approvedHighlightStop?.id,
-        },
-        preview: buildPreviewFromFinalRoute(approvedFinalRoute),
-        routeTitle: approvedFinalRoute.routeHeadline,
-        routeSummary: approvedFinalRoute.routeSummary,
-        districtLine: `Mostly in ${approvedFinalRoute.location || city.trim()}`,
-        districtAnchorLine: `District anchor: ${approvedFinalRoute.location || city.trim()}`,
-        authorityLine: approvedPlanSnapshot.selectedClusterConfirmation,
-        happeningsLine: undefined as string | undefined,
-        whyChooseLine: approvedPlanSnapshot.selectedClusterConfirmation,
-        whyTonightProofLine: undefined as string | undefined,
-      }
-    }
-    const committedArtifactMatchesSelection =
-      !effectiveCurateSelectedArtifact ||
-      canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ===
-        effectiveCurateSelectedArtifact.id
-    if (
-      canonicalRouteArtifact &&
-      selectedRouteDirectionId &&
-      canonicalRouteArtifact.selectedDirectionId === selectedRouteDirectionId &&
-      committedArtifactMatchesSelection
-    ) {
-      const committedHighlightStop =
-        canonicalRouteArtifact.finalRoute.stops.find((stop) => stop.role === 'highlight') ?? null
-      const committedAnchorVenueId = canonicalRouteArtifact.planSnapshot.intentProfile.anchor?.venueId
-      const committedAnchorName =
-        selectedBuildAnchor?.name ??
-        canonicalRouteArtifact.planSnapshot.itinerary.stops.find(
-          (stop) => stop.venueId === committedAnchorVenueId,
-        )?.venueName
-      const committedAnchorPreserved = Boolean(
-        isBuildWrapperActive &&
-          committedAnchorVenueId &&
-          canonicalRouteArtifact.planSnapshot.itinerary.stops.some(
-            (stop) => stop.venueId === committedAnchorVenueId,
-          ),
-      )
-      return {
-        source: 'committed',
-        directionId: selectedRouteDirectionId,
-        canonicalRouteArtifact,
-        activeHighlight: {
-          provenance: 'committed_runtime_route',
-          activeName: committedHighlightStop?.displayName ?? 'Selected highlight',
-          activeVenueId: committedHighlightStop?.venueId,
-          activeStopId: committedHighlightStop?.id,
-        },
-        preview: buildPreviewFromFinalRoute(canonicalRouteArtifact.finalRoute),
-        routeTitle: canonicalRouteArtifact.finalRoute.routeHeadline,
-        routeSummary: canonicalRouteArtifact.finalRoute.routeSummary,
-        districtLine: `Mostly in ${canonicalRouteArtifact.finalRoute.location || city.trim()}`,
-        districtAnchorLine:
-          committedAnchorPreserved && committedAnchorName
-            ? `Required anchor: ${committedAnchorName}`
-            : `District anchor: ${canonicalRouteArtifact.finalRoute.location || city.trim()}`,
-        authorityLine: canonicalRouteArtifact.selectedClusterConfirmation,
-        happeningsLine: undefined as string | undefined,
-        whyChooseLine:
-          committedAnchorPreserved && committedAnchorName
-            ? `Includes required anchor: ${committedAnchorName}.`
-            : canonicalRouteArtifact.selectedClusterConfirmation,
-        whyTonightProofLine: undefined as string | undefined,
-      }
-    }
-    if (effectiveCurateSelectedArtifact) {
-      const candidateDirectionId =
-        effectiveCurateSelectedArtifact.selection.directionId ??
-        selectedDirectionContractId ??
-        selectedDirectionId ??
-        effectiveCurateSelectedArtifact.id
-      const buildAnchorClaimAllowed = Boolean(
-        isBuildWrapperActive &&
-          selectedBuildAnchor &&
-          effectiveCurateSelectedArtifact.anchorVenueId === selectedBuildAnchor.venueId,
-      )
-      const buildAnchorLine =
-        buildAnchorClaimAllowed
-          ? `Required anchor: ${selectedBuildAnchor.name}`
-          : effectiveCurateSelectedArtifact.districtAnchorLine
-      const buildWhyChooseLine =
-        buildAnchorClaimAllowed
-          ? `Includes required anchor: ${selectedBuildAnchor.name}.`
-          : effectiveCurateSelectedArtifact.whyChooseLine
-      return {
-        source: 'candidate',
-        directionId: candidateDirectionId,
-        candidateArtifactId: effectiveCurateSelectedArtifact.id,
-        candidateRouteArtifact: effectiveCurateSelectedArtifact,
-        activeHighlight: {
-          provenance: 'candidate_story_spine',
-          activeName: effectiveCurateSelectedArtifact.storySpine.highlight,
-          activeVenueId:
-            effectiveCurateSelectedArtifact.anchorRole === 'highlight'
-              ? effectiveCurateSelectedArtifact.anchorVenueId
-              : undefined,
-        },
-        preview: {
-          directionId: candidateDirectionId,
-          headline: effectiveCurateSelectedArtifact.routeTitle,
-          tone: effectiveCurateSelectedArtifact.routeSummary,
-          continuityLine: effectiveCurateSelectedArtifact.routeSummary,
-          stops: [
-            { role: 'start' as const, name: effectiveCurateSelectedArtifact.storySpine.start },
-            { role: 'highlight' as const, name: effectiveCurateSelectedArtifact.storySpine.highlight },
-            { role: 'windDown' as const, name: effectiveCurateSelectedArtifact.storySpine.windDown },
-          ],
-        },
-        routeTitle: effectiveCurateSelectedArtifact.routeTitle,
-        flavorLine: effectiveCurateSelectedArtifact.flavorLine,
-        routeSummary: effectiveCurateSelectedArtifact.routeSummary,
-        traits: effectiveCurateSelectedArtifact.traits,
-        districtLine: effectiveCurateSelectedArtifact.districtLine,
-        districtAnchorLine: buildAnchorLine,
-        authorityLine: effectiveCurateSelectedArtifact.authorityLine,
-        happeningsLine: effectiveCurateSelectedArtifact.happeningsLine,
-        whyChooseLine: buildWhyChooseLine,
-        whyTonightProofLine: effectiveCurateSelectedArtifact.whyTonightProofLine,
-        scenarioEvaluationNotes: effectiveCurateSelectedArtifact.scenarioEvaluation?.notes,
-      }
-    }
-    if (selectedDirection && selectedRouteDirectionId) {
-      return {
-        source: 'candidate',
-        directionId: selectedRouteDirectionId,
-        activeHighlight: {
-          provenance: 'candidate_story_spine',
-          activeName:
-            selectedDirection.card.storySpinePreview?.highlight ?? 'Selected highlight',
-        },
-        preview: {
-          directionId: selectedRouteDirectionId,
-          headline: selectedDirection.card.title,
-          tone: selectedDirection.card.whyNow,
-          continuityLine:
-            selectedDirection.card.storySpinePreview?.whyThisWorks ??
-            selectedDirection.card.supportLine ??
-            selectedDirection.card.whyYou,
-          stops: [
-            {
-              role: 'start' as const,
-              name: selectedDirection.card.storySpinePreview?.start ?? 'Selected start',
-            },
-            {
-              role: 'highlight' as const,
-              name:
-                selectedDirection.card.storySpinePreview?.highlight ?? 'Selected highlight',
-            },
-            {
-              role: 'windDown' as const,
-              name:
-                selectedDirection.card.storySpinePreview?.windDown ?? 'Selected wind-down',
-            },
-          ],
-        },
-        routeTitle: selectedDirection.card.title,
-        flavorLine: selectedDirection.card.subtitle,
-        routeSummary: selectedDirection.card.whyNow,
-        traits: [],
-        districtLine: selectedDirection.debugMeta?.pocketLabel
-          ? `Mostly in ${selectedDirection.debugMeta.pocketLabel}`
-          : selectedDirection.card.supportLine ?? selectedDirection.id,
-        districtAnchorLine:
-          selectedCandidateArtifactResolution.mode === 'ambiguous_direction_artifacts'
-            ? `Direction preview only: ${selectedCandidateArtifactResolution.artifactCountForDirection} route artifacts remain unresolved for this direction.`
-            : selectedDirection.card.supportLine ??
-              selectedDirection.debugMeta?.pocketLabel ??
-              selectedDirection.id,
-        authorityLine: selectedDirection.card.whyYou,
-        happeningsLine: undefined as string | undefined,
-        whyChooseLine:
-          selectedCandidateArtifactResolution.mode === 'ambiguous_direction_artifacts'
-            ? 'Preview reflects the selected direction card only. Exact stop preservation is not claimed until a route artifact is explicitly selected or a committed route exists.'
-            : selectedDirection.card.whyYou,
-        whyTonightProofLine:
-          selectedCandidateArtifactResolution.mode === 'ambiguous_direction_artifacts'
-            ? selectedDirection.card.proofLine
-            : selectedDirection.card.selectedProofLine ?? selectedDirection.card.proofLine,
-      }
-    }
-    return null
+    return buildSelectedRouteArtifactProjection({
+      effectiveCurateSelectedArtifact,
+      selectedRouteDirectionId,
+      isCurateWrapperActive,
+      selectedCuratePreviewCommitability,
+      canonicalRouteArtifact,
+      selectedDirection,
+      selectedCandidateArtifactResolution,
+      selectedBuildAnchor,
+      isBuildWrapperActive,
+      selectedDirectionContractId,
+      selectedDirectionId,
+      city,
+    })
   }, [
     canonicalRouteArtifact,
     city,
