@@ -116,6 +116,7 @@ import {
 import {
   buildStopTypeCandidateBoardFromIntent,
   resolveScenarioFamily,
+  type ScenarioFamily,
   type StopTypeCandidateBoard,
 } from '../domain/interpretation/discovery/stopTypeCandidateBoard'
 import {
@@ -813,6 +814,9 @@ interface SurpriseTryAnotherDebug {
   visibleCountsByFamily: string
   hiddenRerollCountsByFamily: string
   crossFamilyAlternateIds: string[]
+  contrastGenerated: boolean
+  contrastVisibleCount: number
+  contrastArtifactCount: number
   verifiedCityOpportunitiesCount: number
   scenarioBackedVerifiedCityOpportunitiesCount: number
   step2PrimarySourceOpportunitiesCount: number
@@ -855,6 +859,58 @@ interface SurpriseTryAnotherDebug {
   chosenDirectionDifferedFromPrevious: boolean | null
   generationTriggered: boolean
   fallbackReason: string | null
+}
+
+function getDeterministicContrastScenarioFamily(
+  primaryFamily: ScenarioFamily | null,
+): ScenarioFamily | null {
+  if (!primaryFamily) {
+    return null
+  }
+  const contrastByPrimaryFamily: Record<ScenarioFamily, ScenarioFamily> = {
+    romantic_cozy: 'romantic_cultured',
+    romantic_lively: 'romantic_cultured',
+    romantic_cultured: 'romantic_lively',
+    friends_cozy: 'friends_lively',
+    friends_lively: 'friends_cultured',
+    friends_cultured: 'friends_lively',
+    family_cozy: 'family_cultured',
+    family_lively: 'family_cultured',
+    family_cultured: 'family_lively',
+  }
+  return contrastByPrimaryFamily[primaryFamily] ?? null
+}
+
+function getScenarioFamilyVibeAnchor(family: ScenarioFamily | null): VibeAnchor | null {
+  if (!family) {
+    return null
+  }
+  if (family.endsWith('_cozy')) {
+    return 'cozy'
+  }
+  if (family.endsWith('_lively')) {
+    return 'lively'
+  }
+  if (family.endsWith('_cultured')) {
+    return 'cultured'
+  }
+  return null
+}
+
+function getScenarioFamilyVibeLabel(family: ScenarioFamily | null): string | null {
+  if (!family) {
+    return null
+  }
+  if (family.endsWith('_cozy')) {
+    return 'Cozy'
+  }
+  if (family.endsWith('_lively')) {
+    return 'Lively'
+  }
+  if (family.endsWith('_cultured')) {
+    return 'Cultured'
+  }
+  return null
 }
 
 type CoreTasteRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
@@ -8103,6 +8159,9 @@ export function SandboxConciergePage() {
     null,
   )
   const [scenarioBuiltNights, setScenarioBuiltNights] = useState<BuiltScenarioNight[]>([])
+  const [scenarioContrastCandidateBoard, setScenarioContrastCandidateBoard] =
+    useState<StopTypeCandidateBoard | null>(null)
+  const [scenarioContrastBuiltNights, setScenarioContrastBuiltNights] = useState<BuiltScenarioNight[]>([])
   const [districtPreviewLoading, setDistrictPreviewLoading] = useState(false)
   const [districtPreviewError, setDistrictPreviewError] = useState<string>()
   const [stageFingerprintsByScenario, setStageFingerprintsByScenario] = useState<
@@ -8150,6 +8209,13 @@ export function SandboxConciergePage() {
         vibe: primaryVibe,
       }),
     [districtLocationQuery, persona, primaryVibe],
+  )
+  const surpriseContrastScenarioFamily = useMemo(
+    () =>
+      isSurpriseWrapperActive
+        ? getDeterministicContrastScenarioFamily(resolvedScenarioFamily)
+        : null,
+    [isSurpriseWrapperActive, resolvedScenarioFamily],
   )
   const activeScenarioContract = useMemo(
     () =>
@@ -8292,6 +8358,8 @@ export function SandboxConciergePage() {
       if (!resolvedScenarioFamily) {
         setScenarioCandidateBoard(null)
         setScenarioBuiltNights([])
+        setScenarioContrastCandidateBoard(null)
+        setScenarioContrastBuiltNights([])
         return
       }
       try {
@@ -8307,24 +8375,60 @@ export function SandboxConciergePage() {
         if (!board) {
           setScenarioCandidateBoard(null)
           setScenarioBuiltNights([])
+          setScenarioContrastCandidateBoard(null)
+          setScenarioContrastBuiltNights([])
           return
         }
         const builtNights = buildScenarioNightsFromCandidateBoard(board)
+        let contrastBoard: StopTypeCandidateBoard | null = null
+        let contrastBuiltNights: BuiltScenarioNight[] = []
+        if (
+          isSurpriseWrapperActive &&
+          surpriseContrastScenarioFamily &&
+          surpriseContrastScenarioFamily !== resolvedScenarioFamily
+        ) {
+          const contrastVibe = getScenarioFamilyVibeAnchor(surpriseContrastScenarioFamily)
+          if (contrastVibe) {
+            contrastBoard = await buildStopTypeCandidateBoardFromIntent({
+              city: districtLocationQuery,
+              persona,
+              vibe: contrastVibe,
+              sourceMode: 'curated',
+            })
+            if (cancelled) {
+              return
+            }
+            if (contrastBoard) {
+              contrastBuiltNights = buildScenarioNightsFromCandidateBoard(contrastBoard)
+            }
+          }
+        }
         setScenarioCandidateBoard(board)
         setScenarioBuiltNights(builtNights)
+        setScenarioContrastCandidateBoard(contrastBoard)
+        setScenarioContrastBuiltNights(contrastBuiltNights)
       } catch {
         if (cancelled) {
           return
         }
         setScenarioCandidateBoard(null)
         setScenarioBuiltNights([])
+        setScenarioContrastCandidateBoard(null)
+        setScenarioContrastBuiltNights([])
       }
     }
     void loadScenarioBuilderArtifacts()
     return () => {
       cancelled = true
     }
-  }, [districtLocationQuery, persona, primaryVibe, resolvedScenarioFamily])
+  }, [
+    districtLocationQuery,
+    isSurpriseWrapperActive,
+    persona,
+    primaryVibe,
+    resolvedScenarioFamily,
+    surpriseContrastScenarioFamily,
+  ])
   useEffect(() => {
     setSwapCanonicalIdentityByVenueId({})
     setSwapCanonicalIdentityMissingByVenueId({})
@@ -8737,7 +8841,7 @@ export function SandboxConciergePage() {
     if (!resolvedScenarioFamily || !scenarioCandidateBoard) {
       return []
     }
-    return scenarioBuiltNights
+    const primaryOpportunities = scenarioBuiltNights
       .map((night) =>
         mapBuiltScenarioNightToVerifiedOpportunity({
           night,
@@ -8750,16 +8854,43 @@ export function SandboxConciergePage() {
         }),
       )
       .filter((entry): entry is VerifiedCityOpportunity => Boolean(entry))
+    if (
+      !isSurpriseWrapperActive ||
+      !scenarioContrastCandidateBoard ||
+      scenarioContrastBuiltNights.length === 0
+    ) {
+      return primaryOpportunities
+    }
+    const contrastVibeLabel =
+      getScenarioFamilyVibeLabel(surpriseContrastScenarioFamily) ?? selectedVibeLabel
+    const contrastOpportunities = scenarioContrastBuiltNights
+      .map((night) =>
+        mapBuiltScenarioNightToVerifiedOpportunity({
+          night,
+          districtDiscoveryCards,
+          directionCards: allDirectionCards,
+          personaLabel: selectedPersonaLabel,
+          vibeLabel: contrastVibeLabel,
+          expandedProjection: isBuildWrapperActive,
+          contractConstraints: canonicalContractConstraints,
+        }),
+      )
+      .filter((entry): entry is VerifiedCityOpportunity => Boolean(entry))
+    return [...primaryOpportunities, ...contrastOpportunities]
   }, [
     allDirectionCards,
     canonicalContractConstraints,
     districtDiscoveryCards,
     isBuildWrapperActive,
+    isSurpriseWrapperActive,
     resolvedScenarioFamily,
+    scenarioContrastBuiltNights,
+    scenarioContrastCandidateBoard,
     scenarioBuiltNights,
     scenarioCandidateBoard,
     selectedPersonaLabel,
     selectedVibeLabel,
+    surpriseContrastScenarioFamily,
   ])
   const devGreatStopFixtureDebugSource = plan?.generationTrace.retrievalDiagnostics.liveSource
   const debugDevGreatStopFixturesEnvRaw =
@@ -13999,6 +14130,14 @@ export function SandboxConciergePage() {
     selectedStep2CandidateArtifactId,
   ])
   const surpriseTryAnotherDebug = useMemo<SurpriseTryAnotherDebug>(() => {
+    const scenarioFamilyBoardsForDiagnostics = [
+      scenarioCandidateBoard,
+      isSurpriseWrapperActive ? scenarioContrastCandidateBoard : null,
+    ].filter((board): board is StopTypeCandidateBoard => Boolean(board))
+    const scenarioFamilyNightsForDiagnostics = [
+      ...scenarioBuiltNights,
+      ...(isSurpriseWrapperActive ? scenarioContrastBuiltNights : []),
+    ]
     const currentSelectedArtifact =
       selectedCandidateRouteArtifact ??
       candidateRouteArtifactByIdForDisplay.get(selectedStep2CandidateArtifactId ?? '') ??
@@ -14017,22 +14156,33 @@ export function SandboxConciergePage() {
       routeTitle: currentSelectedArtifact?.routeTitle ?? null,
     })
     const currentPocketId = currentSelectedArtifact?.selection.pocketId ?? null
-    const resolvedScenarioFamiliesConsidered = resolvedScenarioFamily ?? 'n/a'
+    const resolvedScenarioFamiliesConsidered = [
+      resolvedScenarioFamily,
+      isSurpriseWrapperActive ? surpriseContrastScenarioFamily : null,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(', ') || 'n/a'
     const surprisePrimaryScenarioFamily = resolvedScenarioFamily ?? 'n/a'
-    const surpriseContrastScenarioFamily = 'n/a'
+    const surpriseContrastScenarioFamilyDebug =
+      isSurpriseWrapperActive ? surpriseContrastScenarioFamily ?? 'n/a' : 'n/a'
     const scenarioFamiliesGenerated = summarizeDiagnosticCounts(
-      scenarioBuiltNights.map((night) => night.scenarioFamily),
+      scenarioFamilyNightsForDiagnostics.map((night) => night.scenarioFamily),
     )
-    const scenarioBoardCandidateCountsByFamily = scenarioCandidateBoard
-      ? `${scenarioCandidateBoard.scenarioFamily}:${scenarioCandidateBoard.requiredStopTypes
-          .map(
-            (stopType) =>
-              `${stopType}=${scenarioCandidateBoard.candidatesByStopType[stopType]?.length ?? 0}`,
-          )
-          .join('|')}`
-      : 'n/a'
+    const scenarioBoardCandidateCountsByFamily =
+      scenarioFamilyBoardsForDiagnostics.length > 0
+        ? scenarioFamilyBoardsForDiagnostics
+            .map(
+              (board) =>
+                `${board.scenarioFamily}:${board.requiredStopTypes
+                  .map(
+                    (stopType) => `${stopType}=${board.candidatesByStopType[stopType]?.length ?? 0}`,
+                  )
+                  .join('|')}`,
+            )
+            .join(' || ')
+        : 'n/a'
     const scenarioBuiltNightCountsByFamily = summarizeDiagnosticCounts(
-      scenarioBuiltNights.map((night) => night.scenarioFamily),
+      scenarioFamilyNightsForDiagnostics.map((night) => night.scenarioFamily),
     )
     const activeStep2ArtifactSourceOpportunities =
       shouldUseScenarioBackedArtifacts
@@ -14176,6 +14326,26 @@ export function SandboxConciergePage() {
         return family && currentScenarioFamilyHint && family !== currentScenarioFamilyHint
       })
       .map((entry) => entry.artifact.id)
+    const contrastGenerated =
+      isSurpriseWrapperActive &&
+      Boolean(scenarioContrastCandidateBoard) &&
+      scenarioContrastBuiltNights.some((night) => night.complete)
+    const contrastArtifactCount = step2CandidateRouteArtifacts.filter((artifact) => {
+      const family = deriveScenarioFamilyHintFromArtifactIdentity({
+        artifactId: artifact.id,
+        sourceOpportunityId: artifact.sourceOpportunityId,
+        routeTitle: artifact.routeTitle,
+      })
+      return Boolean(family && surpriseContrastScenarioFamily && family === surpriseContrastScenarioFamily)
+    }).length
+    const contrastVisibleCount = candidateRouteArtifactsForDisplay.filter((artifact) => {
+      const family = deriveScenarioFamilyHintFromArtifactIdentity({
+        artifactId: artifact.id,
+        sourceOpportunityId: artifact.sourceOpportunityId,
+        routeTitle: artifact.routeTitle,
+      })
+      return Boolean(family && surpriseContrastScenarioFamily && family === surpriseContrastScenarioFamily)
+    }).length
     const lowerOverlapPreferenceAffectedTopChoice =
       step2TryAnotherAlternates[0]?.orderingReason.includes('lower_overlap_preferred') ?? null
     const alternateOverlapDiagnostics = step2TryAnotherAlternates.map((entry) => {
@@ -14218,7 +14388,7 @@ export function SandboxConciergePage() {
       currentPocketId,
       resolvedScenarioFamiliesConsidered,
       surprisePrimaryScenarioFamily,
-      surpriseContrastScenarioFamily,
+      surpriseContrastScenarioFamily: surpriseContrastScenarioFamilyDebug,
       scenarioFamiliesGenerated,
       scenarioBoardCandidateCountsByFamily,
       scenarioBuiltNightCountsByFamily,
@@ -14229,6 +14399,9 @@ export function SandboxConciergePage() {
       visibleCountsByFamily: visibleArtifactFamilies,
       hiddenRerollCountsByFamily,
       crossFamilyAlternateIds,
+      contrastGenerated,
+      contrastVisibleCount,
+      contrastArtifactCount,
       verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
       scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
       step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
@@ -14304,9 +14477,12 @@ export function SandboxConciergePage() {
     directionCards,
     isBuildWrapperActive,
     isCurateWrapperActive,
+    isSurpriseWrapperActive,
     persona,
     primaryVibe,
     resolvedScenarioFamily,
+    scenarioContrastBuiltNights,
+    scenarioContrastCandidateBoard,
     scenarioBuiltNights,
     scenarioCandidateBoard,
     scenarioBackedVerifiedCityOpportunities,
@@ -14316,6 +14492,7 @@ export function SandboxConciergePage() {
     selectedStep2CandidateArtifactId,
     shouldUseScenarioBackedArtifacts,
     starterAwareStep2SourceOpportunities,
+    surpriseContrastScenarioFamily,
     step2CandidateRouteArtifacts,
     step2PrimarySourceOpportunities,
     step2RerollTrace,
@@ -16819,6 +16996,18 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.crossFamilyAlternateIds:{' '}
               {surpriseTryAnotherDebug.crossFamilyAlternateIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastGenerated:{' '}
+              {String(surpriseTryAnotherDebug.contrastGenerated)}
+            </div>
+            <div>
+              surpriseTryAnother.contrastVisibleCount:{' '}
+              {surpriseTryAnotherDebug.contrastVisibleCount}
+            </div>
+            <div>
+              surpriseTryAnother.contrastArtifactCount:{' '}
+              {surpriseTryAnotherDebug.contrastArtifactCount}
             </div>
             <div>
               surpriseTryAnother.verifiedCityOpportunitiesCount:{' '}
