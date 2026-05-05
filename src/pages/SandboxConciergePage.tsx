@@ -60,7 +60,9 @@ import {
   attachQualificationToContractEntryArtifact,
   buildContractEntryArtifactFromDirectionCard,
   enrichContractEntryArtifactWithDirectionBacking,
+  isContractEntryArtifactDirectionBacked,
   normalizeExistingContractEntryArtifact,
+  partitionContractEntryArtifactsByDirectionBacking,
 } from '../app/services/sandbox/contractEntryArtifactNormalizer'
 import { runCuratePreviewQualificationAttempt } from '../app/services/sandbox/curatePreviewQualificationService'
 import {
@@ -869,6 +871,12 @@ interface SurpriseTryAnotherDebug {
   artifactDirectionBackingSummaries: string[]
   directionBackingStatusCounts: string
   unbackedArtifactIds: string[]
+  suppressedDirectionUnbackedArtifactIds: string[]
+  suppressedDirectionUnbackedCount: number
+  suppressedDirectionUnbackedReasons: string[]
+  directionBackedArtifactCount: number
+  directionBackedArtifactIds: string[]
+  visibleVsSuppressedDirectionBackingSummary: string
   verifiedCityOpportunitiesCount: number
   scenarioBackedVerifiedCityOpportunitiesCount: number
   step2PrimarySourceOpportunitiesCount: number
@@ -10079,6 +10087,33 @@ export function SandboxConciergePage() {
       step2CandidateRouteArtifacts,
     ],
   )
+  const directionBackedDisplayArtifactsPartition = useMemo(
+    () => partitionContractEntryArtifactsByDirectionBacking(curateDisplayArtifactsBeforeDedupe),
+    [curateDisplayArtifactsBeforeDedupe],
+  )
+  const directionBackedCurateDisplayFallbackArtifactsPartition = useMemo(
+    () => partitionContractEntryArtifactsByDirectionBacking(curateDisplayFallbackRouteArtifacts),
+    [curateDisplayFallbackRouteArtifacts],
+  )
+  const directionBackedArtifactsForDisplay =
+    directionBackedDisplayArtifactsPartition.backedArtifacts
+  const directionBackedCurateDisplayFallbackRouteArtifacts =
+    directionBackedCurateDisplayFallbackArtifactsPartition.backedArtifacts
+  const suppressedDirectionUnbackedArtifacts = useMemo(() => {
+    const byId = new Map<string, ContractEntryArtifact>()
+    ;[
+      ...directionBackedDisplayArtifactsPartition.suppressedUnbackedArtifacts,
+      ...directionBackedCurateDisplayFallbackArtifactsPartition.suppressedUnbackedArtifacts,
+    ].forEach((artifact) => {
+      if (!byId.has(artifact.id)) {
+        byId.set(artifact.id, artifact)
+      }
+    })
+    return [...byId.values()]
+  }, [
+    directionBackedCurateDisplayFallbackArtifactsPartition.suppressedUnbackedArtifacts,
+    directionBackedDisplayArtifactsPartition.suppressedUnbackedArtifacts,
+  ])
   const curateQualificationCandidateArtifacts = useMemo(() => {
     if (!isCurateWrapperActive) {
       return [] as ContractEntryArtifact[]
@@ -10122,7 +10157,7 @@ export function SandboxConciergePage() {
     artifacts: ContractEntryArtifact[]
     debug: CurateDisplayDedupeDebug
   }>(() => {
-    const before = curateDisplayArtifactsBeforeDedupe
+    const before = directionBackedArtifactsForDisplay
     const defaultDebug: CurateDisplayDedupeDebug = {
       visibleCardCountBeforeDedupe: before.length,
       visibleCardCountAfterDedupe: before.length,
@@ -10176,7 +10211,10 @@ export function SandboxConciergePage() {
     before.forEach((artifact) => {
       tryAddUniqueBeforeArtifact(artifact)
     })
-    const rankedUniqueCandidates = [...dedupedBefore, ...curateDisplayFallbackRouteArtifacts]
+    const rankedUniqueCandidates = [
+      ...dedupedBefore,
+      ...directionBackedCurateDisplayFallbackRouteArtifacts,
+    ]
       .map((artifact, index) => ({
         artifact,
         index,
@@ -10262,8 +10300,8 @@ export function SandboxConciergePage() {
       },
     }
   }, [
-    curateDisplayArtifactsBeforeDedupe,
-    curateDisplayFallbackRouteArtifacts,
+    directionBackedArtifactsForDisplay,
+    directionBackedCurateDisplayFallbackRouteArtifacts,
     curatePreDisplayBuildabilityByArtifactId,
     curatePreviewCommitabilityByArtifactId,
     isCurateWrapperActive,
@@ -15302,8 +15340,22 @@ export function SandboxConciergePage() {
       step2CandidateRouteArtifacts.map((artifact) => artifact.directionBacking?.status ?? null),
     )
     const unbackedArtifactIds = step2CandidateRouteArtifacts
-      .filter((artifact) => artifact.directionBacking?.status === 'unbacked')
+      .filter((artifact) => !isContractEntryArtifactDirectionBacked(artifact))
       .map((artifact) => artifact.id)
+    const suppressedDirectionUnbackedArtifactIds = suppressedDirectionUnbackedArtifacts.map(
+      (artifact) => artifact.id,
+    )
+    const suppressedDirectionUnbackedCount = suppressedDirectionUnbackedArtifacts.length
+    const suppressedDirectionUnbackedReasons = suppressedDirectionUnbackedArtifacts.map(
+      (artifact) =>
+        `${artifact.id}:${artifact.directionBacking?.reason ?? 'missing_direction_backing'}`,
+    )
+    const directionBackedArtifactCount = directionBackedArtifactsForDisplay.length
+    const directionBackedArtifactIds = directionBackedArtifactsForDisplay.map((artifact) => artifact.id)
+    const visibleVsSuppressedDirectionBackingSummary = [
+      `visible_backed=${directionBackedArtifactCount}`,
+      `suppressed_unbacked=${suppressedDirectionUnbackedCount}`,
+    ].join(', ')
     const contrastArtifactFingerprint = contrastArtifacts
       .map((artifact) => `${artifact.id}:${getContractEntryArtifactStorySpineFingerprint(artifact) || 'n/a'}`)
       .join(' || ') || 'none'
@@ -15800,6 +15852,12 @@ export function SandboxConciergePage() {
       artifactDirectionBackingSummaries,
       directionBackingStatusCounts,
       unbackedArtifactIds,
+      suppressedDirectionUnbackedArtifactIds,
+      suppressedDirectionUnbackedCount,
+      suppressedDirectionUnbackedReasons,
+      directionBackedArtifactCount,
+      directionBackedArtifactIds,
+      visibleVsSuppressedDirectionBackingSummary,
       verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
       scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
       step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
@@ -15892,8 +15950,10 @@ export function SandboxConciergePage() {
     shouldUseScenarioBackedArtifacts,
     surpriseContrastOpportunityRepairEntries,
     surpriseScenarioArtifactSourceOpportunities,
+    suppressedDirectionUnbackedArtifacts,
     starterAwareStep2SourceOpportunities,
     surpriseContrastScenarioFamily,
+    directionBackedArtifactsForDisplay,
     step2CandidateRouteArtifacts,
     step2PrimarySourceOpportunities,
     step2RerollTrace,
@@ -18615,6 +18675,30 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.unbackedArtifactIds:{' '}
               {surpriseTryAnotherDebug.unbackedArtifactIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.suppressedDirectionUnbackedArtifactIds:{' '}
+              {surpriseTryAnotherDebug.suppressedDirectionUnbackedArtifactIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.suppressedDirectionUnbackedCount:{' '}
+              {surpriseTryAnotherDebug.suppressedDirectionUnbackedCount}
+            </div>
+            <div>
+              surpriseTryAnother.suppressedDirectionUnbackedReasons:{' '}
+              {surpriseTryAnotherDebug.suppressedDirectionUnbackedReasons.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.directionBackedArtifactCount:{' '}
+              {surpriseTryAnotherDebug.directionBackedArtifactCount}
+            </div>
+            <div>
+              surpriseTryAnother.directionBackedArtifactIds:{' '}
+              {surpriseTryAnotherDebug.directionBackedArtifactIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.visibleVsSuppressedDirectionBackingSummary:{' '}
+              {surpriseTryAnotherDebug.visibleVsSuppressedDirectionBackingSummary}
             </div>
             <div>
               surpriseTryAnother.verifiedCityOpportunitiesCount:{' '}

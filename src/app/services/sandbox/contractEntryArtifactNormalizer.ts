@@ -235,6 +235,35 @@ export function normalizeExistingContractEntryArtifact(
   return artifact
 }
 
+export function isContractEntryArtifactDirectionBacked(
+  artifact: ContractEntryArtifact,
+): boolean {
+  return artifact.directionBacking?.status === 'backed'
+}
+
+export function partitionContractEntryArtifactsByDirectionBacking<
+  TArtifact extends ContractEntryArtifact,
+>(artifacts: TArtifact[]): {
+  backedArtifacts: TArtifact[]
+  suppressedUnbackedArtifacts: TArtifact[]
+} {
+  const backedArtifacts: TArtifact[] = []
+  const suppressedUnbackedArtifacts: TArtifact[] = []
+
+  artifacts.forEach((artifact) => {
+    if (isContractEntryArtifactDirectionBacked(artifact)) {
+      backedArtifacts.push(artifact)
+      return
+    }
+    suppressedUnbackedArtifacts.push(artifact)
+  })
+
+  return {
+    backedArtifacts,
+    suppressedUnbackedArtifacts,
+  }
+}
+
 export function enrichContractEntryArtifactWithDirectionBacking<
   TArtifact extends ContractEntryArtifact,
 >(params: {
