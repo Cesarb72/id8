@@ -2,6 +2,7 @@ import type { RealityDirectionCard } from '../../types/realityDirectionCard'
 import type {
   CanonicalCandidateRouteArtifact,
   ContractEntryArtifact,
+  ContractEntryArtifactDirectionBacking,
   ContractEntryArtifactQualification,
 } from '../../../domain/artifacts/contractEntryArtifact'
 import type { RuntimeRouteArtifact } from '../../../domain/artifacts/runtimeRouteArtifact'
@@ -58,6 +59,10 @@ function normalizeRoleStopName(
 
 function normalizeStopName(value: string): string {
   return value.trim().toLowerCase()
+}
+
+function getDirectionBackingPocketKey(directionCard: RealityDirectionCard): string {
+  return directionCard.debugMeta?.pocketId ?? directionCard.id
 }
 
 function getFinalRouteStopNameByRole(
@@ -228,4 +233,81 @@ export function normalizeExistingContractEntryArtifact(
   artifact: CanonicalCandidateRouteArtifact,
 ): ContractEntryArtifact {
   return artifact
+}
+
+export function enrichContractEntryArtifactWithDirectionBacking<
+  TArtifact extends ContractEntryArtifact,
+>(params: {
+  artifact: TArtifact
+  directionCards: RealityDirectionCard[]
+  allDirectionCards: RealityDirectionCard[]
+}): TArtifact & {
+  directionBacking: ContractEntryArtifactDirectionBacking
+} {
+  const { artifact, directionCards, allDirectionCards } = params
+  const selectionDirectionId = artifact.selection.directionId?.trim() || undefined
+  const selectionPocketId = artifact.selection.pocketId?.trim() || undefined
+  const findDirectionById = (directionId: string | undefined) => {
+    if (!directionId) {
+      return null
+    }
+    return (
+      directionCards.find((entry) => entry.id === directionId) ??
+      allDirectionCards.find((entry) => entry.id === directionId) ??
+      null
+    )
+  }
+  const findDirectionByPocket = (pocketId: string | undefined) => {
+    if (!pocketId) {
+      return null
+    }
+    return (
+      directionCards.find((entry) => getDirectionBackingPocketKey(entry) === pocketId) ??
+      allDirectionCards.find((entry) => getDirectionBackingPocketKey(entry) === pocketId) ??
+      null
+    )
+  }
+
+  const directionById = findDirectionById(selectionDirectionId)
+  if (directionById) {
+    return {
+      ...artifact,
+      directionBacking: {
+        status: 'backed',
+        directionId: directionById.id,
+        pocketId: getDirectionBackingPocketKey(directionById),
+        source: 'selection_direction',
+        reason: 'matched_selection_direction',
+      },
+    }
+  }
+
+  const directionByPocket = findDirectionByPocket(selectionPocketId)
+  if (directionByPocket) {
+    return {
+      ...artifact,
+      directionBacking: {
+        status: 'backed',
+        directionId: directionByPocket.id,
+        pocketId: getDirectionBackingPocketKey(directionByPocket),
+        source: 'selection_pocket',
+        reason: 'matched_selection_pocket',
+      },
+    }
+  }
+
+  return {
+    ...artifact,
+    directionBacking: {
+      status: 'unbacked',
+      ...(selectionDirectionId ? { directionId: selectionDirectionId } : {}),
+      ...(selectionPocketId ? { pocketId: selectionPocketId } : {}),
+      source: 'none',
+      reason: selectionDirectionId
+        ? 'selection_direction_unmatched'
+        : selectionPocketId
+          ? 'selection_pocket_unmatched'
+          : 'selection_missing_direction_and_pocket',
+    },
+  }
 }

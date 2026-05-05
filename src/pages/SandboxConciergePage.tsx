@@ -59,6 +59,7 @@ import {
   attachFinalRouteParityToContractEntryArtifact,
   attachQualificationToContractEntryArtifact,
   buildContractEntryArtifactFromDirectionCard,
+  enrichContractEntryArtifactWithDirectionBacking,
   normalizeExistingContractEntryArtifact,
 } from '../app/services/sandbox/contractEntryArtifactNormalizer'
 import { runCuratePreviewQualificationAttempt } from '../app/services/sandbox/curatePreviewQualificationService'
@@ -865,6 +866,9 @@ interface SurpriseTryAnotherDebug {
   selectionRepairReason: string[]
   selectionRepairResolverTrace: string[]
   contrastArtifactResolverTrace: string[]
+  artifactDirectionBackingSummaries: string[]
+  directionBackingStatusCounts: string
+  unbackedArtifactIds: string[]
   verifiedCityOpportunitiesCount: number
   scenarioBackedVerifiedCityOpportunitiesCount: number
   step2PrimarySourceOpportunitiesCount: number
@@ -9755,13 +9759,20 @@ export function SandboxConciergePage() {
   ])
   const buildStep2CandidateRouteArtifact = useCallback(
     (opportunity: VerifiedCityOpportunity): ContractEntryArtifact | null => {
-      return buildContractEntryArtifactFromVerifiedOpportunity({
+      const artifact = buildContractEntryArtifactFromVerifiedOpportunity({
         opportunity,
         ecsState,
         useScenarioBackedArtifacts: shouldUseScenarioBackedArtifacts,
       })
+      return artifact
+        ? enrichContractEntryArtifactWithDirectionBacking({
+            artifact,
+            directionCards,
+            allDirectionCards,
+          })
+        : null
     },
-    [ecsState, shouldUseScenarioBackedArtifacts],
+    [allDirectionCards, directionCards, ecsState, shouldUseScenarioBackedArtifacts],
   )
 
   const step2CandidateRouteArtifacts = useMemo<ContractEntryArtifact[]>(() => {
@@ -15274,6 +15285,25 @@ export function SandboxConciergePage() {
           `failureReason=${resolution.resolveDirectionFailureReason ?? 'none'}`,
         ].join('|')
       })
+    const artifactDirectionBackingSummaries = step2CandidateRouteArtifacts.map((artifact) => {
+      const directionBacking = artifact.directionBacking
+      return [
+        `artifactId=${artifact.id}`,
+        `selectionDirectionId=${artifact.selection.directionId ?? 'n/a'}`,
+        `selectionPocketId=${artifact.selection.pocketId ?? 'n/a'}`,
+        `directionBackingStatus=${directionBacking?.status ?? 'n/a'}`,
+        `directionBackingDirectionId=${directionBacking?.directionId ?? 'n/a'}`,
+        `directionBackingPocketId=${directionBacking?.pocketId ?? 'n/a'}`,
+        `directionBackingSource=${directionBacking?.source ?? 'n/a'}`,
+        `directionBackingReason=${directionBacking?.reason ?? 'n/a'}`,
+      ].join('|')
+    })
+    const directionBackingStatusCounts = summarizeDiagnosticCounts(
+      step2CandidateRouteArtifacts.map((artifact) => artifact.directionBacking?.status ?? null),
+    )
+    const unbackedArtifactIds = step2CandidateRouteArtifacts
+      .filter((artifact) => artifact.directionBacking?.status === 'unbacked')
+      .map((artifact) => artifact.id)
     const contrastArtifactFingerprint = contrastArtifacts
       .map((artifact) => `${artifact.id}:${getContractEntryArtifactStorySpineFingerprint(artifact) || 'n/a'}`)
       .join(' || ') || 'none'
@@ -15767,6 +15797,9 @@ export function SandboxConciergePage() {
       selectionRepairReason,
       selectionRepairResolverTrace,
       contrastArtifactResolverTrace,
+      artifactDirectionBackingSummaries,
+      directionBackingStatusCounts,
+      unbackedArtifactIds,
       verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
       scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
       step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
@@ -18570,6 +18603,18 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.contrastArtifactResolverTrace:{' '}
               {surpriseTryAnotherDebug.contrastArtifactResolverTrace.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.artifactDirectionBackingSummaries:{' '}
+              {surpriseTryAnotherDebug.artifactDirectionBackingSummaries.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.directionBackingStatusCounts:{' '}
+              {surpriseTryAnotherDebug.directionBackingStatusCounts}
+            </div>
+            <div>
+              surpriseTryAnother.unbackedArtifactIds:{' '}
+              {surpriseTryAnotherDebug.unbackedArtifactIds.join(', ') || 'none'}
             </div>
             <div>
               surpriseTryAnother.verifiedCityOpportunitiesCount:{' '}

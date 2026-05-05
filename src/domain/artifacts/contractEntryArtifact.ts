@@ -21,6 +21,14 @@ export interface ContractEntryArtifactSelection {
   directionId?: string
 }
 
+export interface ContractEntryArtifactDirectionBacking {
+  status: 'backed' | 'unbacked' | 'suppressed'
+  directionId?: string
+  pocketId?: string
+  source: 'selection_direction' | 'selection_pocket' | 'direction_label_support' | 'none'
+  reason: string
+}
+
 export interface ContractEntryArtifactLineage {
   artifactId: string
   sourceOpportunityId: string
@@ -63,6 +71,7 @@ export interface ContractEntryArtifact {
   whyTonightProofLine?: string
   scenarioEvaluation?: BuiltScenarioNight['evaluation']
   selection: ContractEntryArtifactSelection
+  directionBacking?: ContractEntryArtifactDirectionBacking
   qualification?: ContractEntryArtifactQualification
 }
 
