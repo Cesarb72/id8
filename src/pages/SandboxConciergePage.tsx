@@ -1230,6 +1230,18 @@ function repairSurpriseContrastSelectionContext(params: {
     current.push(card)
     directionsByPocketKey.set(pocketKey, current)
   })
+  const hasLooseTextMatch = (source: string | undefined | null, target: string | undefined | null) => {
+    const normalizedSource = normalizeQualityText(source ?? undefined)
+    const normalizedTarget = normalizeQualityText(target ?? undefined)
+    if (!normalizedSource || !normalizedTarget) {
+      return false
+    }
+    return (
+      normalizedSource === normalizedTarget ||
+      normalizedSource.includes(normalizedTarget) ||
+      normalizedTarget.includes(normalizedSource)
+    )
+  }
   const rankDirections = (cards: RealityDirectionCard[]) =>
     cards.slice().sort((left, right) => {
       const leftScore = left.debugMeta?.confidence ?? 0
@@ -1260,7 +1272,7 @@ function repairSurpriseContrastSelectionContext(params: {
       : null) ??
     districtHints
       .flatMap((hint) =>
-        districtDiscoveryCards.filter((district) => hasLoosePhraseMatch(district.name, hint)),
+        districtDiscoveryCards.filter((district) => hasLooseTextMatch(district.name, hint)),
       )[0] ??
     null
   const matchedDistrictId = matchedDistrict?.id ?? null
@@ -1269,7 +1281,7 @@ function repairSurpriseContrastSelectionContext(params: {
     ? rankDirections(
         allDirectionCards.filter((card) => {
           const summary = card.debugMeta?.directionDistrictSupportSummary ?? ''
-          return hasLoosePhraseMatch(summary, matchedDistrictName)
+          return hasLooseTextMatch(summary, matchedDistrictName)
         }),
       )
     : []
