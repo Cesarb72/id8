@@ -856,11 +856,15 @@ interface SurpriseTryAnotherDebug {
   matchedDirectionId: string[]
   directionCardsPocketKeys: string[]
   allDirectionCardsPocketKeys: string[]
+  directionResolverKeySummary: string[]
+  allDirectionCardsResolverKeys: string[]
   fallbackSelectionCandidate: string[]
   selectionRepairApplied: string[]
   repairedSelectionDirectionId: string[]
   repairedSelectionPocketId: string[]
   selectionRepairReason: string[]
+  selectionRepairResolverTrace: string[]
+  contrastArtifactResolverTrace: string[]
   verifiedCityOpportunitiesCount: number
   scenarioBackedVerifiedCityOpportunitiesCount: number
   step2PrimarySourceOpportunitiesCount: number
@@ -1204,8 +1208,137 @@ function selectSurpriseScenarioBackedArtifactSourceOpportunities(params: {
   return selected
 }
 
+function getDirectionResolverPocketKey(card: RealityDirectionCard): string {
+  return card.debugMeta?.pocketId ?? card.id
+}
+
+function rankDirectionResolverCards(cards: RealityDirectionCard[]): RealityDirectionCard[] {
+  return cards.slice().sort((left, right) => {
+    const leftScore = left.debugMeta?.confidence ?? 0
+    const rightScore = right.debugMeta?.confidence ?? 0
+    if (rightScore !== leftScore) {
+      return rightScore - leftScore
+    }
+    return left.id.localeCompare(right.id)
+  })
+}
+
+function resolveDirectionCardById(
+  directionId: string | null | undefined,
+  directionCards: RealityDirectionCard[],
+  allDirectionCards: RealityDirectionCard[],
+): RealityDirectionCard | null {
+  if (!directionId) {
+    return null
+  }
+  return (
+    directionCards.find((entry) => entry.id === directionId) ??
+    allDirectionCards.find((entry) => entry.id === directionId) ??
+    null
+  )
+}
+
+function resolveDirectionCardByPocketId(
+  pocketId: string | null | undefined,
+  directionCards: RealityDirectionCard[],
+  allDirectionCards: RealityDirectionCard[],
+): RealityDirectionCard | null {
+  if (!pocketId) {
+    return null
+  }
+  return (
+    directionCards.find((entry) => getDirectionResolverPocketKey(entry) === pocketId) ??
+    allDirectionCards.find((entry) => getDirectionResolverPocketKey(entry) === pocketId) ??
+    null
+  )
+}
+
+function resolveDirectionCardForArtifactWithTrace(params: {
+  directionCards: RealityDirectionCard[]
+  allDirectionCards: RealityDirectionCard[]
+  directionId?: string | null
+  pocketId?: string | null
+  allowPocketFallbackOnUnmatchedDirectionId?: boolean
+}): {
+  direction: RealityDirectionCard | null
+  directionIdMatched: boolean
+  pocketFallbackMatched: boolean
+  resolvedDirectionId: string | null
+  fallbackDirectionCandidateId: string | null
+  resolveDirectionFailureReason: string | null
+} {
+  const {
+    directionCards,
+    allDirectionCards,
+    directionId,
+    pocketId,
+    allowPocketFallbackOnUnmatchedDirectionId,
+  } = params
+  const directionById = resolveDirectionCardById(directionId, directionCards, allDirectionCards)
+  if (directionById) {
+    return {
+      direction: directionById,
+      directionIdMatched: true,
+      pocketFallbackMatched: false,
+      resolvedDirectionId: directionById.id,
+      fallbackDirectionCandidateId: null,
+      resolveDirectionFailureReason: null,
+    }
+  }
+  if (directionId && allowPocketFallbackOnUnmatchedDirectionId && pocketId) {
+    const directionByPocket = resolveDirectionCardByPocketId(pocketId, directionCards, allDirectionCards)
+    if (directionByPocket) {
+      return {
+        direction: directionByPocket,
+        directionIdMatched: false,
+        pocketFallbackMatched: true,
+        resolvedDirectionId: directionByPocket.id,
+        fallbackDirectionCandidateId: directionByPocket.id,
+        resolveDirectionFailureReason: 'direction_id_unmatched_pocket_fallback_used',
+      }
+    }
+  }
+  if (!directionId && pocketId) {
+    const directionByPocket = resolveDirectionCardByPocketId(pocketId, directionCards, allDirectionCards)
+    if (directionByPocket) {
+      return {
+        direction: directionByPocket,
+        directionIdMatched: false,
+        pocketFallbackMatched: true,
+        resolvedDirectionId: directionByPocket.id,
+        fallbackDirectionCandidateId: directionByPocket.id,
+        resolveDirectionFailureReason: null,
+      }
+    }
+  }
+  const fallbackDirection = directionCards[0] ?? allDirectionCards[0] ?? null
+  if (fallbackDirection && !directionId && !pocketId) {
+    return {
+      direction: fallbackDirection,
+      directionIdMatched: false,
+      pocketFallbackMatched: false,
+      resolvedDirectionId: fallbackDirection.id,
+      fallbackDirectionCandidateId: fallbackDirection.id,
+      resolveDirectionFailureReason: null,
+    }
+  }
+  return {
+    direction: null,
+    directionIdMatched: false,
+    pocketFallbackMatched: false,
+    resolvedDirectionId: null,
+    fallbackDirectionCandidateId: null,
+    resolveDirectionFailureReason: directionId
+      ? 'direction_id_unmatched'
+      : pocketId
+        ? 'pocket_id_unmatched'
+        : 'no_direction_or_pocket',
+  }
+}
+
 function repairSurpriseContrastSelectionContext(params: {
   opportunity: VerifiedCityOpportunity
+  directionCards: RealityDirectionCard[]
   allDirectionCards: RealityDirectionCard[]
   districtDiscoveryCards: Array<{ id: string; name: string }>
 }): {
@@ -1217,19 +1350,11 @@ function repairSurpriseContrastSelectionContext(params: {
   matchedDistrictId: string | null
   matchedDirectionId: string | null
   fallbackSelectionCandidate: string | null
+  selectionRepairResolverTrace: string
   sourceOpportunitySelection: string
   scenarioSelectionContext: string
 } {
-  const { opportunity, allDirectionCards, districtDiscoveryCards } = params
-  const getPocketKey = (card: RealityDirectionCard) => card.debugMeta?.pocketId ?? card.id
-  const directionById = new Map(allDirectionCards.map((card) => [card.id, card] as const))
-  const directionsByPocketKey = new Map<string, RealityDirectionCard[]>()
-  allDirectionCards.forEach((card) => {
-    const pocketKey = getPocketKey(card)
-    const current = directionsByPocketKey.get(pocketKey) ?? []
-    current.push(card)
-    directionsByPocketKey.set(pocketKey, current)
-  })
+  const { opportunity, directionCards, allDirectionCards, districtDiscoveryCards } = params
   const hasLooseTextMatch = (source: string | undefined | null, target: string | undefined | null) => {
     const normalizedSource = normalizeQualityText(source ?? undefined)
     const normalizedTarget = normalizeQualityText(target ?? undefined)
@@ -1242,21 +1367,15 @@ function repairSurpriseContrastSelectionContext(params: {
       normalizedTarget.includes(normalizedSource)
     )
   }
-  const rankDirections = (cards: RealityDirectionCard[]) =>
-    cards.slice().sort((left, right) => {
-      const leftScore = left.debugMeta?.confidence ?? 0
-      const rightScore = right.debugMeta?.confidence ?? 0
-      if (rightScore !== leftScore) {
-        return rightScore - leftScore
-      }
-      return left.id.localeCompare(right.id)
-    })
   const originalDirectionId = opportunity.selection.directionId ?? null
   const originalPocketId = opportunity.selection.pocketId ?? null
-  const resolvedDirection = originalDirectionId ? directionById.get(originalDirectionId) ?? null : null
-  const resolvedPocketDirections = originalPocketId
-    ? rankDirections(directionsByPocketKey.get(originalPocketId) ?? [])
-    : []
+  const originalResolution = resolveDirectionCardForArtifactWithTrace({
+    directionCards,
+    allDirectionCards,
+    directionId: originalDirectionId,
+    pocketId: originalPocketId,
+    allowPocketFallbackOnUnmatchedDirectionId: true,
+  })
   const scenarioHighlightDistrict =
     opportunity.scenarioNight?.stops.find((stop) => stop.position === 'highlight')?.district ?? null
   const districtHints = dedupeStringIds(
@@ -1278,32 +1397,28 @@ function repairSurpriseContrastSelectionContext(params: {
   const matchedDistrictId = matchedDistrict?.id ?? null
   const matchedDistrictName = matchedDistrict?.name ?? districtHints[0] ?? null
   const labelMatchedDirections = matchedDistrictName
-    ? rankDirections(
+    ? rankDirectionResolverCards(
         allDirectionCards.filter((card) => {
           const summary = card.debugMeta?.directionDistrictSupportSummary ?? ''
           return hasLooseTextMatch(summary, matchedDistrictName)
         }),
       )
     : []
+  const labelMatchedDirectionIds = labelMatchedDirections.map((card) => card.id)
   const fallbackCandidate =
-    (resolvedDirection
+    (originalResolution.direction
       ? {
-          direction: resolvedDirection,
-          pocketKey: getPocketKey(resolvedDirection),
-          reason: 'existing_direction_resolved',
-        }
-      : null) ??
-    (resolvedPocketDirections[0]
-      ? {
-          direction: resolvedPocketDirections[0],
-          pocketKey: getPocketKey(resolvedPocketDirections[0]),
-          reason: 'existing_pocket_resolved',
+          direction: originalResolution.direction,
+          pocketKey: getDirectionResolverPocketKey(originalResolution.direction),
+          reason: originalResolution.directionIdMatched
+            ? 'existing_direction_resolved'
+            : 'existing_pocket_resolved',
         }
       : null) ??
     (labelMatchedDirections[0]
       ? {
           direction: labelMatchedDirections[0],
-          pocketKey: getPocketKey(labelMatchedDirections[0]),
+          pocketKey: getDirectionResolverPocketKey(labelMatchedDirections[0]),
           reason: 'district_label_direction_support_match',
         }
       : null)
@@ -1320,6 +1435,17 @@ function repairSurpriseContrastSelectionContext(params: {
     `matchedDistrictId=${matchedDistrictId ?? 'n/a'}`,
     `matchedDistrictName=${matchedDistrictName ?? 'n/a'}`,
   ].join('|')
+  const selectionRepairResolverTrace = [
+    `opportunityId=${opportunity.id}`,
+    `originalDirectionId=${originalDirectionId ?? 'n/a'}`,
+    `originalPocketId=${originalPocketId ?? 'n/a'}`,
+    `resolvedDirectionById=${originalResolution.directionIdMatched ? originalResolution.resolvedDirectionId ?? 'n/a' : 'n/a'}`,
+    `resolvedDirectionByPocket=${originalResolution.pocketFallbackMatched ? originalResolution.resolvedDirectionId ?? 'n/a' : 'n/a'}`,
+    `matchedPocketKey=${originalResolution.direction ? getDirectionResolverPocketKey(originalResolution.direction) : 'n/a'}`,
+    `labelMatchedDirectionIds=${labelMatchedDirectionIds.join(',') || 'none'}`,
+    `chosenFallbackCandidate=${fallbackCandidate ? `${fallbackCandidate.direction.id}|${fallbackCandidate.pocketKey}|${fallbackCandidate.reason}` : 'none'}`,
+    `failureReason=${fallbackCandidate ? 'none' : originalResolution.resolveDirectionFailureReason ?? 'no_resolvable_selection_candidate'}`,
+  ].join('|')
 
   if (!fallbackCandidate) {
     return {
@@ -1331,6 +1457,7 @@ function repairSurpriseContrastSelectionContext(params: {
       matchedDistrictId,
       matchedDirectionId: null,
       fallbackSelectionCandidate: null,
+      selectionRepairResolverTrace,
       sourceOpportunitySelection,
       scenarioSelectionContext,
     }
@@ -1359,6 +1486,7 @@ function repairSurpriseContrastSelectionContext(params: {
     matchedDistrictId,
     matchedDirectionId: repairedDirectionId,
     fallbackSelectionCandidate: `${repairedDirectionId}|${repairedPocketId}|${fallbackCandidate.reason}`,
+    selectionRepairResolverTrace,
     sourceOpportunitySelection,
     scenarioSelectionContext,
   }
@@ -9339,6 +9467,46 @@ export function SandboxConciergePage() {
     selectedPersonaLabel,
     selectedVibeLabel,
   ])
+  const directionView = useMemo(() => {
+    if (activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID) {
+      return {
+        cards: allDirectionCards,
+        mode: 'all' as const,
+      }
+    }
+    const exactPocketMatches = allDirectionCards.filter((card) => {
+      const pocketId = card.debugMeta?.pocketId ?? card.id
+      return pocketId === activeDistrictPocketId
+    })
+    if (exactPocketMatches.length > 0) {
+      return {
+        cards: exactPocketMatches,
+        mode: 'district_exact' as const,
+      }
+    }
+
+    const selectedDistrictLabel =
+      districtDiscoveryCards.find((district) => district.id === activeDistrictPocketId)?.name?.toLowerCase() ??
+      ''
+    if (selectedDistrictLabel.length > 0) {
+      const labelBiasMatches = allDirectionCards.filter((card) => {
+        const summary = card.debugMeta?.directionDistrictSupportSummary?.toLowerCase() ?? ''
+        return summary.includes(selectedDistrictLabel)
+      })
+      if (labelBiasMatches.length > 0) {
+        return {
+          cards: labelBiasMatches,
+          mode: 'district_bias' as const,
+        }
+      }
+    }
+
+    return {
+      cards: allDirectionCards,
+      mode: 'district_fallback' as const,
+    }
+  }, [activeDistrictPocketId, allDirectionCards, districtDiscoveryCards])
+  const directionCards = directionView.cards
 
   const surpriseContrastOpportunityRepairEntries = useMemo(
     () => {
@@ -9358,6 +9526,7 @@ export function SandboxConciergePage() {
           repairedSelectionDirectionId: string | null
           repairedSelectionPocketId: string | null
           selectionRepairReason: string | null
+          selectionRepairResolverTrace: string
         }>
       }
       const contrastVibeLabel =
@@ -9384,12 +9553,14 @@ export function SandboxConciergePage() {
         .map((opportunity) =>
           repairSurpriseContrastSelectionContext({
             opportunity,
+            directionCards,
             allDirectionCards,
             districtDiscoveryCards,
           }),
         )
     },
     [
+      directionCards,
       allDirectionCards,
       canonicalContractConstraints,
       districtDiscoveryCards,
@@ -9754,47 +9925,6 @@ export function SandboxConciergePage() {
       verifiedCityOpportunityById,
     ],
   )
-  const directionView = useMemo(() => {
-    if (activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID) {
-      return {
-        cards: allDirectionCards,
-        mode: 'all' as const,
-      }
-    }
-    const exactPocketMatches = allDirectionCards.filter((card) => {
-      const pocketId = card.debugMeta?.pocketId ?? card.id
-      return pocketId === activeDistrictPocketId
-    })
-    if (exactPocketMatches.length > 0) {
-      return {
-        cards: exactPocketMatches,
-        mode: 'district_exact' as const,
-      }
-    }
-
-    const selectedDistrictLabel =
-      districtDiscoveryCards.find((district) => district.id === activeDistrictPocketId)?.name?.toLowerCase() ??
-      ''
-    if (selectedDistrictLabel.length > 0) {
-      const labelBiasMatches = allDirectionCards.filter((card) => {
-        const summary = card.debugMeta?.directionDistrictSupportSummary?.toLowerCase() ?? ''
-        return summary.includes(selectedDistrictLabel)
-      })
-      if (labelBiasMatches.length > 0) {
-        return {
-          cards: labelBiasMatches,
-          mode: 'district_bias' as const,
-        }
-      }
-    }
-
-    return {
-      cards: allDirectionCards,
-      mode: 'district_fallback' as const,
-    }
-  }, [activeDistrictPocketId, allDirectionCards, districtDiscoveryCards])
-  const directionCards = directionView.cards
-
   const activeDistrictLabel = useMemo(() => {
     if (activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID) {
       return null
@@ -9841,14 +9971,7 @@ export function SandboxConciergePage() {
   )
   const resolveDirectionForArtifactPocketId = useCallback(
     (artifactPocketId: string | null | undefined) => {
-      if (!artifactPocketId) {
-        return null
-      }
-      return (
-        directionCards.find((entry) => (entry.debugMeta?.pocketId ?? entry.id) === artifactPocketId) ??
-        allDirectionCards.find((entry) => (entry.debugMeta?.pocketId ?? entry.id) === artifactPocketId) ??
-        null
-      )
+      return resolveDirectionCardByPocketId(artifactPocketId, directionCards, allDirectionCards)
     },
     [allDirectionCards, directionCards],
   )
@@ -9859,78 +9982,16 @@ export function SandboxConciergePage() {
         allowPocketFallbackOnUnmatchedDirectionId?: boolean
       },
     ) => {
-      const artifactDirectionId = artifact.selection.directionId
-      const artifactPocketId = artifact.selection.pocketId
-      const directionById = artifactDirectionId
-        ? (directionCards.find((entry) => entry.id === artifactDirectionId) ??
-          allDirectionCards.find((entry) => entry.id === artifactDirectionId) ??
-          null)
-        : null
-      if (directionById) {
-        return {
-          direction: directionById,
-          directionIdMatched: true,
-          pocketFallbackMatched: false,
-          resolvedDirectionId: directionById.id,
-          fallbackDirectionCandidateId: null,
-          resolveDirectionFailureReason: null,
-        }
-      }
-      if (
-        artifactDirectionId &&
-        options?.allowPocketFallbackOnUnmatchedDirectionId &&
-        artifactPocketId
-      ) {
-        const directionByPocket = resolveDirectionForArtifactPocketId(artifactPocketId)
-        if (directionByPocket) {
-          return {
-            direction: directionByPocket,
-            directionIdMatched: false,
-            pocketFallbackMatched: true,
-            resolvedDirectionId: directionByPocket.id,
-            fallbackDirectionCandidateId: directionByPocket.id,
-            resolveDirectionFailureReason: 'direction_id_unmatched_pocket_fallback_used',
-          }
-        }
-      }
-      if (!artifactDirectionId && artifactPocketId) {
-        const directionByPocket = resolveDirectionForArtifactPocketId(artifactPocketId)
-        if (directionByPocket) {
-          return {
-            direction: directionByPocket,
-            directionIdMatched: false,
-            pocketFallbackMatched: true,
-            resolvedDirectionId: directionByPocket.id,
-            fallbackDirectionCandidateId: directionByPocket.id,
-            resolveDirectionFailureReason: null,
-          }
-        }
-      }
-      const fallbackDirection = directionCards[0] ?? allDirectionCards[0] ?? null
-      if (fallbackDirection && !artifactDirectionId && !artifactPocketId) {
-        return {
-          direction: fallbackDirection,
-          directionIdMatched: false,
-          pocketFallbackMatched: false,
-          resolvedDirectionId: fallbackDirection.id,
-          fallbackDirectionCandidateId: fallbackDirection.id,
-          resolveDirectionFailureReason: null,
-        }
-      }
-      return {
-        direction: null,
-        directionIdMatched: false,
-        pocketFallbackMatched: false,
-        resolvedDirectionId: null,
-        fallbackDirectionCandidateId: null,
-        resolveDirectionFailureReason: artifactDirectionId
-          ? 'direction_id_unmatched'
-          : artifactPocketId
-            ? 'pocket_id_unmatched'
-            : 'no_direction_or_pocket',
-      }
+      return resolveDirectionCardForArtifactWithTrace({
+        directionCards,
+        allDirectionCards,
+        directionId: artifact.selection.directionId,
+        pocketId: artifact.selection.pocketId,
+        allowPocketFallbackOnUnmatchedDirectionId:
+          options?.allowPocketFallbackOnUnmatchedDirectionId,
+      })
     },
-    [allDirectionCards, directionCards, resolveDirectionForArtifactPocketId],
+    [allDirectionCards, directionCards],
   )
   const resolveDirectionForCandidateArtifact = useCallback(
     (artifact: CanonicalCandidateRouteArtifact) => {
@@ -15042,6 +15103,12 @@ export function SandboxConciergePage() {
     const allDirectionCardsPocketKeys = dedupeStringIds(
       allDirectionCards.map((card) => card.debugMeta?.pocketId ?? card.id),
     )
+    const directionResolverKeySummary = directionCards.map(
+      (card) => `${card.id}->${getDirectionResolverPocketKey(card)}`,
+    )
+    const allDirectionCardsResolverKeys = allDirectionCards.map(
+      (card) => `${card.id}->${getDirectionResolverPocketKey(card)}`,
+    )
     const contrastOpportunities = scenarioBackedVerifiedCityOpportunities.filter((opportunity) => {
       const family = deriveScenarioFamilyHintFromOpportunity({
         opportunityId: opportunity.id,
@@ -15183,6 +15250,30 @@ export function SandboxConciergePage() {
       const repairEntry = contrastRepairEntryByOpportunityId.get(opportunity.id)
       return `${opportunity.id}:${repairEntry?.selectionRepairReason ?? 'n/a'}`
     })
+    const selectionRepairResolverTrace = contrastOpportunities.map((opportunity) => {
+      const repairEntry = contrastRepairEntryByOpportunityId.get(opportunity.id)
+      return repairEntry?.selectionRepairResolverTrace ?? `opportunityId=${opportunity.id}|failureReason=no_repair_entry`
+    })
+    const contrastArtifactResolverTrace = candidateRouteArtifactsForDisplay
+      .filter((artifact) =>
+        contrastArtifactIdsInDisplay.includes(artifact.id),
+      )
+      .map((artifact) => {
+        const resolution = resolveDirectionForCandidateArtifactWithTrace(artifact, {
+          allowPocketFallbackOnUnmatchedDirectionId: isSurpriseWrapperActive,
+        })
+        return [
+          `artifactId=${artifact.id}`,
+          `originalDirectionId=${artifact.selection.directionId ?? 'n/a'}`,
+          `originalPocketId=${artifact.selection.pocketId ?? 'n/a'}`,
+          `resolvedDirectionById=${resolution.directionIdMatched ? resolution.resolvedDirectionId ?? 'n/a' : 'n/a'}`,
+          `resolvedDirectionByPocket=${resolution.pocketFallbackMatched ? resolution.resolvedDirectionId ?? 'n/a' : 'n/a'}`,
+          `matchedPocketKey=${resolution.direction ? getDirectionResolverPocketKey(resolution.direction) : 'n/a'}`,
+          `labelMatchedDirectionIds=none`,
+          `chosenFallbackCandidate=${resolution.fallbackDirectionCandidateId ?? 'none'}`,
+          `failureReason=${resolution.resolveDirectionFailureReason ?? 'none'}`,
+        ].join('|')
+      })
     const contrastArtifactFingerprint = contrastArtifacts
       .map((artifact) => `${artifact.id}:${getContractEntryArtifactStorySpineFingerprint(artifact) || 'n/a'}`)
       .join(' || ') || 'none'
@@ -15667,11 +15758,15 @@ export function SandboxConciergePage() {
       matchedDirectionId,
       directionCardsPocketKeys,
       allDirectionCardsPocketKeys,
+      directionResolverKeySummary,
+      allDirectionCardsResolverKeys,
       fallbackSelectionCandidate,
       selectionRepairApplied,
       repairedSelectionDirectionId,
       repairedSelectionPocketId,
       selectionRepairReason,
+      selectionRepairResolverTrace,
+      contrastArtifactResolverTrace,
       verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
       scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
       step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
@@ -18441,6 +18536,14 @@ export function SandboxConciergePage() {
               {surpriseTryAnotherDebug.allDirectionCardsPocketKeys.join(', ') || 'none'}
             </div>
             <div>
+              surpriseTryAnother.directionResolverKeySummary:{' '}
+              {surpriseTryAnotherDebug.directionResolverKeySummary.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.allDirectionCardsResolverKeys:{' '}
+              {surpriseTryAnotherDebug.allDirectionCardsResolverKeys.join(' || ') || 'none'}
+            </div>
+            <div>
               surpriseTryAnother.fallbackSelectionCandidate:{' '}
               {surpriseTryAnotherDebug.fallbackSelectionCandidate.join(' || ') || 'none'}
             </div>
@@ -18459,6 +18562,14 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.selectionRepairReason:{' '}
               {surpriseTryAnotherDebug.selectionRepairReason.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.selectionRepairResolverTrace:{' '}
+              {surpriseTryAnotherDebug.selectionRepairResolverTrace.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastArtifactResolverTrace:{' '}
+              {surpriseTryAnotherDebug.contrastArtifactResolverTrace.join(' || ') || 'none'}
             </div>
             <div>
               surpriseTryAnother.verifiedCityOpportunitiesCount:{' '}
