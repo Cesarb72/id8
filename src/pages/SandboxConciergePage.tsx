@@ -849,6 +849,18 @@ interface SurpriseTryAnotherDebug {
   contrastArtifactFingerprint: string
   primaryArtifactFingerprints: string[]
   duplicateFingerprintMatches: string[]
+  contrastSourceOpportunitySelection: string[]
+  contrastArtifactSelection: string[]
+  scenarioSelectionContext: string[]
+  matchedDistrictId: string[]
+  matchedDirectionId: string[]
+  directionCardsPocketKeys: string[]
+  allDirectionCardsPocketKeys: string[]
+  fallbackSelectionCandidate: string[]
+  selectionRepairApplied: string[]
+  repairedSelectionDirectionId: string[]
+  repairedSelectionPocketId: string[]
+  selectionRepairReason: string[]
   verifiedCityOpportunitiesCount: number
   scenarioBackedVerifiedCityOpportunitiesCount: number
   step2PrimarySourceOpportunitiesCount: number
@@ -1190,6 +1202,154 @@ function selectSurpriseScenarioBackedArtifactSourceOpportunities(params: {
   pushOpportunity(preferredContrastOpportunity)
   opportunities.forEach(pushOpportunity)
   return selected
+}
+
+function repairSurpriseContrastSelectionContext(params: {
+  opportunity: VerifiedCityOpportunity
+  allDirectionCards: RealityDirectionCard[]
+  districtDiscoveryCards: Array<{ id: string; name: string }>
+}): {
+  opportunity: VerifiedCityOpportunity
+  selectionRepairApplied: boolean
+  repairedSelectionDirectionId: string | null
+  repairedSelectionPocketId: string | null
+  selectionRepairReason: string | null
+  matchedDistrictId: string | null
+  matchedDirectionId: string | null
+  fallbackSelectionCandidate: string | null
+  sourceOpportunitySelection: string
+  scenarioSelectionContext: string
+} {
+  const { opportunity, allDirectionCards, districtDiscoveryCards } = params
+  const getPocketKey = (card: RealityDirectionCard) => card.debugMeta?.pocketId ?? card.id
+  const directionById = new Map(allDirectionCards.map((card) => [card.id, card] as const))
+  const directionsByPocketKey = new Map<string, RealityDirectionCard[]>()
+  allDirectionCards.forEach((card) => {
+    const pocketKey = getPocketKey(card)
+    const current = directionsByPocketKey.get(pocketKey) ?? []
+    current.push(card)
+    directionsByPocketKey.set(pocketKey, current)
+  })
+  const rankDirections = (cards: RealityDirectionCard[]) =>
+    cards.slice().sort((left, right) => {
+      const leftScore = left.debugMeta?.confidence ?? 0
+      const rightScore = right.debugMeta?.confidence ?? 0
+      if (rightScore !== leftScore) {
+        return rightScore - leftScore
+      }
+      return left.id.localeCompare(right.id)
+    })
+  const originalDirectionId = opportunity.selection.directionId ?? null
+  const originalPocketId = opportunity.selection.pocketId ?? null
+  const resolvedDirection = originalDirectionId ? directionById.get(originalDirectionId) ?? null : null
+  const resolvedPocketDirections = originalPocketId
+    ? rankDirections(directionsByPocketKey.get(originalPocketId) ?? [])
+    : []
+  const scenarioHighlightDistrict =
+    opportunity.scenarioNight?.stops.find((stop) => stop.position === 'highlight')?.district ?? null
+  const districtHints = dedupeStringIds(
+    [
+      opportunity.districtContext.primaryDistrict,
+      opportunity.anchor.district,
+      scenarioHighlightDistrict,
+    ].filter((value): value is string => Boolean(value && value.trim())),
+  )
+  const matchedDistrict =
+    (originalPocketId
+      ? districtDiscoveryCards.find((district) => district.id === originalPocketId) ?? null
+      : null) ??
+    districtHints
+      .flatMap((hint) =>
+        districtDiscoveryCards.filter((district) => hasLoosePhraseMatch(district.name, hint)),
+      )[0] ??
+    null
+  const matchedDistrictId = matchedDistrict?.id ?? null
+  const matchedDistrictName = matchedDistrict?.name ?? districtHints[0] ?? null
+  const labelMatchedDirections = matchedDistrictName
+    ? rankDirections(
+        allDirectionCards.filter((card) => {
+          const summary = card.debugMeta?.directionDistrictSupportSummary ?? ''
+          return hasLoosePhraseMatch(summary, matchedDistrictName)
+        }),
+      )
+    : []
+  const fallbackCandidate =
+    (resolvedDirection
+      ? {
+          direction: resolvedDirection,
+          pocketKey: getPocketKey(resolvedDirection),
+          reason: 'existing_direction_resolved',
+        }
+      : null) ??
+    (resolvedPocketDirections[0]
+      ? {
+          direction: resolvedPocketDirections[0],
+          pocketKey: getPocketKey(resolvedPocketDirections[0]),
+          reason: 'existing_pocket_resolved',
+        }
+      : null) ??
+    (labelMatchedDirections[0]
+      ? {
+          direction: labelMatchedDirections[0],
+          pocketKey: getPocketKey(labelMatchedDirections[0]),
+          reason: 'district_label_direction_support_match',
+        }
+      : null)
+  const sourceOpportunitySelection = [
+    `opportunity=${opportunity.id}`,
+    `directionId=${originalDirectionId ?? 'n/a'}`,
+    `pocketId=${originalPocketId ?? 'n/a'}`,
+  ].join('|')
+  const scenarioSelectionContext = [
+    `opportunity=${opportunity.id}`,
+    `primaryDistrict=${opportunity.districtContext.primaryDistrict ?? 'n/a'}`,
+    `anchorDistrict=${opportunity.anchor.district ?? 'n/a'}`,
+    `highlightDistrict=${scenarioHighlightDistrict ?? 'n/a'}`,
+    `matchedDistrictId=${matchedDistrictId ?? 'n/a'}`,
+    `matchedDistrictName=${matchedDistrictName ?? 'n/a'}`,
+  ].join('|')
+
+  if (!fallbackCandidate) {
+    return {
+      opportunity,
+      selectionRepairApplied: false,
+      repairedSelectionDirectionId: originalDirectionId,
+      repairedSelectionPocketId: originalPocketId,
+      selectionRepairReason: 'no_resolvable_selection_candidate',
+      matchedDistrictId,
+      matchedDirectionId: null,
+      fallbackSelectionCandidate: null,
+      sourceOpportunitySelection,
+      scenarioSelectionContext,
+    }
+  }
+
+  const repairedDirectionId = fallbackCandidate.direction.id
+  const repairedPocketId = fallbackCandidate.pocketKey
+  const selectionAlreadyResolvable =
+    originalDirectionId === repairedDirectionId && originalPocketId === repairedPocketId
+  return {
+    opportunity: selectionAlreadyResolvable
+      ? opportunity
+      : {
+          ...opportunity,
+          selection: {
+            pocketId: repairedPocketId,
+            directionId: repairedDirectionId,
+          },
+        },
+    selectionRepairApplied: !selectionAlreadyResolvable,
+    repairedSelectionDirectionId: repairedDirectionId,
+    repairedSelectionPocketId: repairedPocketId,
+    selectionRepairReason: selectionAlreadyResolvable
+      ? 'selection_already_resolvable'
+      : fallbackCandidate.reason,
+    matchedDistrictId,
+    matchedDirectionId: repairedDirectionId,
+    fallbackSelectionCandidate: `${repairedDirectionId}|${repairedPocketId}|${fallbackCandidate.reason}`,
+    sourceOpportunitySelection,
+    scenarioSelectionContext,
+  }
 }
 
 function getDeterministicContrastScenarioFamily(
@@ -9168,6 +9328,68 @@ export function SandboxConciergePage() {
     selectedVibeLabel,
   ])
 
+  const surpriseContrastOpportunityRepairEntries = useMemo(
+    () => {
+      if (
+        !isSurpriseWrapperActive ||
+        !scenarioContrastCandidateBoard ||
+        scenarioContrastBuiltNights.length === 0
+      ) {
+        return [] as Array<{
+          opportunity: VerifiedCityOpportunity
+          sourceOpportunitySelection: string
+          scenarioSelectionContext: string
+          matchedDistrictId: string | null
+          matchedDirectionId: string | null
+          fallbackSelectionCandidate: string | null
+          selectionRepairApplied: boolean
+          repairedSelectionDirectionId: string | null
+          repairedSelectionPocketId: string | null
+          selectionRepairReason: string | null
+        }>
+      }
+      const contrastVibeLabel =
+        getScenarioFamilyVibeLabel(surpriseContrastScenarioFamily) ?? selectedVibeLabel
+      return scenarioContrastBuiltNights
+        .map((night) =>
+          mapBuiltScenarioNightToVerifiedOpportunity({
+            night,
+            districtDiscoveryCards,
+            directionCards: allDirectionCards,
+            personaLabel: selectedPersonaLabel,
+            vibeLabel: contrastVibeLabel,
+            expandedProjection: isBuildWrapperActive,
+            contractConstraints: canonicalContractConstraints,
+          }),
+        )
+        .filter((entry): entry is VerifiedCityOpportunity => Boolean(entry))
+        .map((opportunity) =>
+          repairSurpriseContrastWindDownOpportunity({
+            opportunity,
+            contractConstraints: canonicalContractConstraints,
+          }).opportunity,
+        )
+        .map((opportunity) =>
+          repairSurpriseContrastSelectionContext({
+            opportunity,
+            allDirectionCards,
+            districtDiscoveryCards,
+          }),
+        )
+    },
+    [
+      allDirectionCards,
+      canonicalContractConstraints,
+      districtDiscoveryCards,
+      isBuildWrapperActive,
+      isSurpriseWrapperActive,
+      scenarioContrastBuiltNights,
+      scenarioContrastCandidateBoard,
+      selectedPersonaLabel,
+      selectedVibeLabel,
+      surpriseContrastScenarioFamily,
+    ],
+  )
   const scenarioBackedVerifiedCityOpportunities = useMemo<VerifiedCityOpportunity[]>(() => {
     if (!resolvedScenarioFamily || !scenarioCandidateBoard) {
       return []
@@ -9185,49 +9407,24 @@ export function SandboxConciergePage() {
         }),
       )
       .filter((entry): entry is VerifiedCityOpportunity => Boolean(entry))
-    if (
-      !isSurpriseWrapperActive ||
-      !scenarioContrastCandidateBoard ||
-      scenarioContrastBuiltNights.length === 0
-    ) {
+    if (surpriseContrastOpportunityRepairEntries.length === 0) {
       return primaryOpportunities
     }
-    const contrastVibeLabel =
-      getScenarioFamilyVibeLabel(surpriseContrastScenarioFamily) ?? selectedVibeLabel
-    const contrastOpportunities = scenarioContrastBuiltNights
-      .map((night) =>
-        mapBuiltScenarioNightToVerifiedOpportunity({
-          night,
-          districtDiscoveryCards,
-          directionCards: allDirectionCards,
-          personaLabel: selectedPersonaLabel,
-          vibeLabel: contrastVibeLabel,
-          expandedProjection: isBuildWrapperActive,
-          contractConstraints: canonicalContractConstraints,
-        }),
-      )
-      .filter((entry): entry is VerifiedCityOpportunity => Boolean(entry))
-      .map((opportunity) =>
-        repairSurpriseContrastWindDownOpportunity({
-          opportunity,
-          contractConstraints: canonicalContractConstraints,
-        }).opportunity,
-      )
-    return [...primaryOpportunities, ...contrastOpportunities]
+    return [
+      ...primaryOpportunities,
+      ...surpriseContrastOpportunityRepairEntries.map((entry) => entry.opportunity),
+    ]
   }, [
     allDirectionCards,
     canonicalContractConstraints,
     districtDiscoveryCards,
     isBuildWrapperActive,
-    isSurpriseWrapperActive,
     resolvedScenarioFamily,
-    scenarioContrastBuiltNights,
-    scenarioContrastCandidateBoard,
     scenarioBuiltNights,
     scenarioCandidateBoard,
     selectedPersonaLabel,
     selectedVibeLabel,
-    surpriseContrastScenarioFamily,
+    surpriseContrastOpportunityRepairEntries,
   ])
   const devGreatStopFixtureDebugSource = plan?.generationTrace.retrievalDiagnostics.liveSource
   const debugDevGreatStopFixturesEnvRaw =
@@ -14827,6 +15024,12 @@ export function SandboxConciergePage() {
       isSurpriseWrapperActive &&
       Boolean(scenarioContrastCandidateBoard) &&
       scenarioContrastBuiltNights.some((night) => night.complete)
+    const directionCardsPocketKeys = dedupeStringIds(
+      directionCards.map((card) => card.debugMeta?.pocketId ?? card.id),
+    )
+    const allDirectionCardsPocketKeys = dedupeStringIds(
+      allDirectionCards.map((card) => card.debugMeta?.pocketId ?? card.id),
+    )
     const contrastOpportunities = scenarioBackedVerifiedCityOpportunities.filter((opportunity) => {
       const family = deriveScenarioFamilyHintFromOpportunity({
         opportunityId: opportunity.id,
@@ -14834,6 +15037,9 @@ export function SandboxConciergePage() {
       })
       return Boolean(family && surpriseContrastScenarioFamily && family === surpriseContrastScenarioFamily)
     })
+    const contrastRepairEntryByOpportunityId = new Map(
+      surpriseContrastOpportunityRepairEntries.map((entry) => [entry.opportunity.id, entry] as const),
+    )
     const contrastMappedOpportunityIds = contrastOpportunities.map((opportunity) => opportunity.id)
     const surpriseScenarioArtifactSourceIds = surpriseScenarioArtifactSourceOpportunities.map(
       (opportunity) => opportunity.id,
@@ -14923,6 +15129,48 @@ export function SandboxConciergePage() {
     const contrastArtifactIdsInRerollAlternates = step2TryAnotherAlternates
       .filter((entry) => contrastMappedOpportunityIds.includes(entry.artifact.sourceOpportunityId))
       .map((entry) => entry.artifact.id)
+    const contrastSourceOpportunitySelection = contrastOpportunities.map((opportunity) => {
+      const repairEntry = contrastRepairEntryByOpportunityId.get(opportunity.id)
+      return repairEntry?.sourceOpportunitySelection ?? `opportunity=${opportunity.id}|directionId=n/a|pocketId=n/a`
+    })
+    const contrastArtifactSelection = contrastArtifacts.map((artifact) => [
+      `artifactId=${artifact.id}`,
+      `sourceOpportunityId=${artifact.sourceOpportunityId}`,
+      `directionId=${artifact.selection.directionId ?? 'n/a'}`,
+      `pocketId=${artifact.selection.pocketId ?? 'n/a'}`,
+    ].join('|'))
+    const scenarioSelectionContext = contrastOpportunities.map((opportunity) => {
+      const repairEntry = contrastRepairEntryByOpportunityId.get(opportunity.id)
+      return repairEntry?.scenarioSelectionContext ?? `opportunity=${opportunity.id}|matchedDistrictId=n/a`
+    })
+    const matchedDistrictId = contrastOpportunities.map((opportunity) => {
+      const repairEntry = contrastRepairEntryByOpportunityId.get(opportunity.id)
+      return `${opportunity.id}:${repairEntry?.matchedDistrictId ?? 'n/a'}`
+    })
+    const matchedDirectionId = contrastOpportunities.map((opportunity) => {
+      const repairEntry = contrastRepairEntryByOpportunityId.get(opportunity.id)
+      return `${opportunity.id}:${repairEntry?.matchedDirectionId ?? 'n/a'}`
+    })
+    const fallbackSelectionCandidate = contrastOpportunities.map((opportunity) => {
+      const repairEntry = contrastRepairEntryByOpportunityId.get(opportunity.id)
+      return `${opportunity.id}:${repairEntry?.fallbackSelectionCandidate ?? 'n/a'}`
+    })
+    const selectionRepairApplied = contrastOpportunities.map((opportunity) => {
+      const repairEntry = contrastRepairEntryByOpportunityId.get(opportunity.id)
+      return `${opportunity.id}:${String(repairEntry?.selectionRepairApplied ?? false)}`
+    })
+    const repairedSelectionDirectionId = contrastOpportunities.map((opportunity) => {
+      const repairEntry = contrastRepairEntryByOpportunityId.get(opportunity.id)
+      return `${opportunity.id}:${repairEntry?.repairedSelectionDirectionId ?? 'n/a'}`
+    })
+    const repairedSelectionPocketId = contrastOpportunities.map((opportunity) => {
+      const repairEntry = contrastRepairEntryByOpportunityId.get(opportunity.id)
+      return `${opportunity.id}:${repairEntry?.repairedSelectionPocketId ?? 'n/a'}`
+    })
+    const selectionRepairReason = contrastOpportunities.map((opportunity) => {
+      const repairEntry = contrastRepairEntryByOpportunityId.get(opportunity.id)
+      return `${opportunity.id}:${repairEntry?.selectionRepairReason ?? 'n/a'}`
+    })
     const contrastArtifactFingerprint = contrastArtifacts
       .map((artifact) => `${artifact.id}:${getContractEntryArtifactStorySpineFingerprint(artifact) || 'n/a'}`)
       .join(' || ') || 'none'
@@ -15400,6 +15648,18 @@ export function SandboxConciergePage() {
       contrastArtifactFingerprint,
       primaryArtifactFingerprints,
       duplicateFingerprintMatches,
+      contrastSourceOpportunitySelection,
+      contrastArtifactSelection,
+      scenarioSelectionContext,
+      matchedDistrictId,
+      matchedDirectionId,
+      directionCardsPocketKeys,
+      allDirectionCardsPocketKeys,
+      fallbackSelectionCandidate,
+      selectionRepairApplied,
+      repairedSelectionDirectionId,
+      repairedSelectionPocketId,
+      selectionRepairReason,
       verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
       scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
       step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
@@ -15468,6 +15728,7 @@ export function SandboxConciergePage() {
       fallbackReason: step2RerollTrace?.anyOverrideReason ?? null,
     }
   }, [
+    allDirectionCards,
     candidateRouteArtifactByIdForDisplay,
     candidateRouteArtifactsForDisplay,
     curateDisplayFallbackRouteArtifacts.length,
@@ -15489,6 +15750,7 @@ export function SandboxConciergePage() {
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
     shouldUseScenarioBackedArtifacts,
+    surpriseContrastOpportunityRepairEntries,
     surpriseScenarioArtifactSourceOpportunities,
     starterAwareStep2SourceOpportunities,
     surpriseContrastScenarioFamily,
@@ -18137,6 +18399,54 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.duplicateFingerprintMatches:{' '}
               {surpriseTryAnotherDebug.duplicateFingerprintMatches.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastSourceOpportunitySelection:{' '}
+              {surpriseTryAnotherDebug.contrastSourceOpportunitySelection.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.contrastArtifactSelection:{' '}
+              {surpriseTryAnotherDebug.contrastArtifactSelection.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.scenarioSelectionContext:{' '}
+              {surpriseTryAnotherDebug.scenarioSelectionContext.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.matchedDistrictId:{' '}
+              {surpriseTryAnotherDebug.matchedDistrictId.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.matchedDirectionId:{' '}
+              {surpriseTryAnotherDebug.matchedDirectionId.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.directionCardsPocketKeys:{' '}
+              {surpriseTryAnotherDebug.directionCardsPocketKeys.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.allDirectionCardsPocketKeys:{' '}
+              {surpriseTryAnotherDebug.allDirectionCardsPocketKeys.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.fallbackSelectionCandidate:{' '}
+              {surpriseTryAnotherDebug.fallbackSelectionCandidate.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.selectionRepairApplied:{' '}
+              {surpriseTryAnotherDebug.selectionRepairApplied.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.repairedSelectionDirectionId:{' '}
+              {surpriseTryAnotherDebug.repairedSelectionDirectionId.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.repairedSelectionPocketId:{' '}
+              {surpriseTryAnotherDebug.repairedSelectionPocketId.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.selectionRepairReason:{' '}
+              {surpriseTryAnotherDebug.selectionRepairReason.join(' || ') || 'none'}
             </div>
             <div>
               surpriseTryAnother.verifiedCityOpportunitiesCount:{' '}
