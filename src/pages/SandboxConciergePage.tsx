@@ -8769,6 +8769,8 @@ export function SandboxConciergePage() {
   const [error, setError] = useState<string>()
   const [surpriseContractValidationFailedDirectionId, setSurpriseContractValidationFailedDirectionId] =
     useState<string | null>(null)
+  const [surpriseContractValidationFailedArtifactId, setSurpriseContractValidationFailedArtifactId] =
+    useState<string | null>(null)
   const [selectedDirectionGeneratePlanTrace, setSelectedDirectionGeneratePlanTrace] =
     useState<SelectedDirectionGeneratePlanTrace | null>(null)
   const [showDebug] = useState(() => debugQueryEnabled || verticalDebugEnvEnabled)
@@ -11410,6 +11412,7 @@ export function SandboxConciergePage() {
       setLoading(true)
       setError(undefined)
       setSurpriseContractValidationFailedDirectionId(null)
+      setSurpriseContractValidationFailedArtifactId(null)
       setIsLocking(false)
       setHasRevealed(false)
       setPreviewSwap(undefined)
@@ -11640,6 +11643,7 @@ export function SandboxConciergePage() {
             : current,
         )
         setSurpriseContractValidationFailedDirectionId(null)
+        setSurpriseContractValidationFailedArtifactId(null)
         setStep2RerollTrace((current) =>
           current
             ? {
@@ -11706,6 +11710,7 @@ export function SandboxConciergePage() {
             driftFailureDirectionId: activeDirectionId,
           }))
           setSurpriseContractValidationFailedDirectionId(activeDirectionId)
+          setSurpriseContractValidationFailedArtifactId(activeCandidateRouteArtifact?.id ?? null)
         }
         setError(toUserSafeGenerateError(nextError))
         return false
@@ -11924,6 +11929,7 @@ export function SandboxConciergePage() {
         surpriseAutoGenerateAttemptRef.current = null
         buildValidationAttemptRef.current = null
         setSurpriseContractValidationFailedDirectionId(null)
+        setSurpriseContractValidationFailedArtifactId(null)
         setLoading(false)
         setHasRevealed(false)
         setPreviewSwap(undefined)
@@ -14453,6 +14459,37 @@ export function SandboxConciergePage() {
       selectedDirectionContractId &&
       surpriseContractValidationFailedDirectionId === selectedDirectionContractId,
   )
+  const selectedCandidatePreviewValidationArtifactId =
+    selectedCandidateRouteArtifact?.id ??
+    (selectedRouteArtifact?.source === 'candidate' ? selectedRouteArtifact.candidateArtifactId ?? null : null)
+  const failureMatchesCurrentSelection = Boolean(
+    surpriseContractValidationFailedDirectionId &&
+      selectedDirectionContractId === surpriseContractValidationFailedDirectionId &&
+      (!surpriseContractValidationFailedArtifactId ||
+        selectedCandidatePreviewValidationArtifactId === surpriseContractValidationFailedArtifactId),
+  )
+  useEffect(() => {
+    if (!surpriseContractValidationFailedDirectionId) {
+      return
+    }
+    if (selectedDirectionContractId !== surpriseContractValidationFailedDirectionId) {
+      setSurpriseContractValidationFailedDirectionId(null)
+      setSurpriseContractValidationFailedArtifactId(null)
+      return
+    }
+    if (
+      surpriseContractValidationFailedArtifactId &&
+      selectedCandidatePreviewValidationArtifactId !== surpriseContractValidationFailedArtifactId
+    ) {
+      setSurpriseContractValidationFailedDirectionId(null)
+      setSurpriseContractValidationFailedArtifactId(null)
+    }
+  }, [
+    selectedCandidatePreviewValidationArtifactId,
+    selectedDirectionContractId,
+    surpriseContractValidationFailedArtifactId,
+    surpriseContractValidationFailedDirectionId,
+  ])
   const preview = selectedRouteSummaryArtifact?.preview ?? null
   const previewDirectionId = preview?.directionId ?? null
   const finalRouteDirectionId = canonicalRouteArtifact?.selectedDirectionId ?? null
@@ -14969,9 +15006,14 @@ export function SandboxConciergePage() {
           }
         : current,
     )
-    setSurpriseContractValidationFailedDirectionId((current) =>
-      current === nextCandidate.direction.id ? null : current,
-    )
+    if (
+      surpriseContractValidationFailedDirectionId === nextCandidate.direction.id &&
+      surpriseContractValidationFailedArtifactId &&
+      surpriseContractValidationFailedArtifactId !== nextCandidate.artifact.id
+    ) {
+      setSurpriseContractValidationFailedDirectionId(null)
+      setSurpriseContractValidationFailedArtifactId(null)
+    }
   }, [
     candidateRouteArtifactsForDisplay,
     directionCards,
@@ -14980,6 +15022,8 @@ export function SandboxConciergePage() {
     loading,
     isSurpriseWrapperActive,
     resolveDirectionForCandidateArtifactWithTrace,
+    surpriseContractValidationFailedArtifactId,
+    surpriseContractValidationFailedDirectionId,
     selectedCandidateRouteArtifact?.id,
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
@@ -15052,6 +15096,8 @@ export function SandboxConciergePage() {
     const warningVisible = selectedCandidatePreviewValidationFailed
     const selectedDirectionCoherenceWarningState = [
       `surpriseContractValidationFailedDirectionId=${surpriseContractValidationFailedDirectionId ?? 'n/a'}`,
+      `surpriseContractValidationFailedArtifactId=${surpriseContractValidationFailedArtifactId ?? 'n/a'}`,
+      `failureMatchesCurrentSelection=${String(failureMatchesCurrentSelection)}`,
       `selectedCandidatePreviewValidationFailed=${String(selectedCandidatePreviewValidationFailed)}`,
       `directionSyncMismatch=${String(directionSyncMismatch)}`,
       `selectedDirectionNeedsRegeneration=${String(selectedCandidatePreviewValidationFailed)}`,
@@ -16457,6 +16503,7 @@ export function SandboxConciergePage() {
       setNearbySummaryByRole({})
       autoDirectionSyncAttemptRef.current = null
       setSurpriseContractValidationFailedDirectionId(null)
+      setSurpriseContractValidationFailedArtifactId(null)
       setError(undefined)
       setHasRevealed(true)
       return
@@ -18578,6 +18625,10 @@ export function SandboxConciergePage() {
             <div>
               failedState.surpriseContractValidationFailedDirectionId:{' '}
               {surpriseContractValidationFailedDirectionId ?? 'n/a'}
+            </div>
+            <div>
+              failedState.surpriseContractValidationFailedArtifactId:{' '}
+              {surpriseContractValidationFailedArtifactId ?? 'n/a'}
             </div>
             <div>failedState.selectedDirectionContractId: {selectedDirectionContractId ?? 'n/a'}</div>
             <div>
