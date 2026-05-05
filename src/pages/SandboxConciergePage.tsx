@@ -804,6 +804,66 @@ interface SelectedDirectionGeneratePlanTrace {
   caughtDriftError: boolean
   driftErrorMessage: string | null
   driftFailureDirectionId: string | null
+  generatePlanFailureSource: 'selected_direction_lineage' | 'post_planner_contract' | 'unknown' | null
+  preLineageExpectedDirectionId: string | null
+  preLineageActualDirectionId: string | null
+  preLineagePassed: boolean | null
+  postPlannerFailedCheck: string | null
+  postPlannerGenerationDriftReason: string | null
+  postPlannerExpectedDirectionIdentity: string | null
+  postPlannerObservedDirectionIdentity: string | null
+  postPlannerDirectionAlignmentScore: number | null
+  rawDriftErrorMessageCompact: string | null
+}
+
+function compactDiagnosticMessage(message: string): string | null {
+  const normalized = message.replace(/\s+/g, ' ').trim()
+  return normalized.length > 0 ? normalized : null
+}
+
+function readPostPlannerContractDiagnostics(error: unknown): {
+  failedCheck: string | null
+  generationDriftReason: string | null
+  expectedDirectionIdentity: string | null
+  observedDirectionIdentity: string | null
+  directionAlignmentScore: number | null
+} | null {
+  if (!error || typeof error !== 'object') {
+    return null
+  }
+  const errorRecord = error as {
+    name?: unknown
+    failedCheck?: unknown
+    directionValidation?: {
+      generationDriftReason?: unknown
+      expectedDirectionIdentity?: unknown
+      observedDirectionIdentity?: unknown
+      directionAlignmentScore?: unknown
+    }
+  }
+  if (errorRecord.name !== 'PostPlannerCommitParityValidationError') {
+    return null
+  }
+  const directionValidation = errorRecord.directionValidation
+  return {
+    failedCheck: typeof errorRecord.failedCheck === 'string' ? errorRecord.failedCheck : null,
+    generationDriftReason:
+      typeof directionValidation?.generationDriftReason === 'string'
+        ? directionValidation.generationDriftReason
+        : null,
+    expectedDirectionIdentity:
+      typeof directionValidation?.expectedDirectionIdentity === 'string'
+        ? directionValidation.expectedDirectionIdentity
+        : null,
+    observedDirectionIdentity:
+      typeof directionValidation?.observedDirectionIdentity === 'string'
+        ? directionValidation.observedDirectionIdentity
+        : null,
+    directionAlignmentScore:
+      typeof directionValidation?.directionAlignmentScore === 'number'
+        ? directionValidation.directionAlignmentScore
+        : null,
+  }
 }
 
 interface SurpriseTryAnotherDebug {
@@ -11244,6 +11304,16 @@ export function SandboxConciergePage() {
         caughtDriftError: false,
         driftErrorMessage: null,
         driftFailureDirectionId: null,
+        generatePlanFailureSource: null,
+        preLineageExpectedDirectionId: null,
+        preLineageActualDirectionId: null,
+        preLineagePassed: null,
+        postPlannerFailedCheck: null,
+        postPlannerGenerationDriftReason: null,
+        postPlannerExpectedDirectionIdentity: null,
+        postPlannerObservedDirectionIdentity: null,
+        postPlannerDirectionAlignmentScore: null,
+        rawDriftErrorMessageCompact: null,
       })
       setStep2RerollTrace((current) =>
         current
@@ -11427,6 +11497,9 @@ export function SandboxConciergePage() {
       setRejectedStopRoles([])
 
       try {
+        let preLineageExpectedDirectionId: string | null = null
+        let preLineageActualDirectionId: string | null = null
+        let preLineagePassed: boolean | null = null
         const selectedClusterConfirmation = activeDirection.card.confirmation
         const selectedDirectionPreviewContext =
           buildSelectedDirectionPreviewContext(activeDirection)
@@ -11475,13 +11548,47 @@ export function SandboxConciergePage() {
             selectedArtifactLineage: activeSelectedArtifactLineage,
           },
         )
-        enforceSelectedDirectionLineage({
-          wrapperSeam: 'sandbox_concierge.generate',
-          expectedDirectionId: activeDirectionContract.id,
-          actualSelectedDirectionContext: result.intentProfile.selectedDirectionContext,
-          errorMessage:
-            'Route drifted from selected direction contract. Direction context was not preserved.',
-        })
+        preLineageExpectedDirectionId = activeDirectionContract.id
+        preLineageActualDirectionId = result.intentProfile.selectedDirectionContext?.directionId ?? null
+        preLineagePassed = preLineageActualDirectionId === preLineageExpectedDirectionId
+        try {
+          enforceSelectedDirectionLineage({
+            wrapperSeam: 'sandbox_concierge.generate',
+            expectedDirectionId: preLineageExpectedDirectionId,
+            actualSelectedDirectionContext: result.intentProfile.selectedDirectionContext,
+            errorMessage:
+              'Route drifted from selected direction contract. Direction context was not preserved.',
+          })
+        } catch (lineageError) {
+          setSelectedDirectionGeneratePlanTrace((current) => ({
+            requestedDirectionId: current?.requestedDirectionId ?? normalizedDirectionOverride,
+            requestedArtifactId:
+              current?.requestedArtifactId ?? normalizedSelectedRouteArtifactIdOverride,
+            activeDirectionId: activeDirectionId ?? current?.activeDirectionId ?? null,
+            activeCandidateArtifactId:
+              activeCandidateRouteArtifact?.id ?? current?.activeCandidateArtifactId ?? null,
+            requestMode:
+              current?.requestMode ??
+              (isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build'),
+            caughtDriftError: true,
+            driftErrorMessage:
+              lineageError instanceof Error ? lineageError.message : String(lineageError),
+            driftFailureDirectionId: activeDirectionId,
+            generatePlanFailureSource: 'selected_direction_lineage',
+            preLineageExpectedDirectionId,
+            preLineageActualDirectionId,
+            preLineagePassed,
+            postPlannerFailedCheck: null,
+            postPlannerGenerationDriftReason: null,
+            postPlannerExpectedDirectionIdentity: null,
+            postPlannerObservedDirectionIdentity: null,
+            postPlannerDirectionAlignmentScore: null,
+            rawDriftErrorMessageCompact: compactDiagnosticMessage(
+              lineageError instanceof Error ? lineageError.message : String(lineageError),
+            ),
+          }))
+          throw lineageError
+        }
         // Post-orchestrator wrapper work: reconcile the engine-authored plan with current
         // application/runtime artifacts. Keep this downstream of `runGeneratePlan`.
         const {
@@ -11639,6 +11746,16 @@ export function SandboxConciergePage() {
                 caughtDriftError: false,
                 driftErrorMessage: null,
                 driftFailureDirectionId: null,
+                generatePlanFailureSource: null,
+                preLineageExpectedDirectionId,
+                preLineageActualDirectionId,
+                preLineagePassed,
+                postPlannerFailedCheck: null,
+                postPlannerGenerationDriftReason: null,
+                postPlannerExpectedDirectionIdentity: null,
+                postPlannerObservedDirectionIdentity: null,
+                postPlannerDirectionAlignmentScore: null,
+                rawDriftErrorMessageCompact: null,
               }
             : current,
         )
@@ -11656,6 +11773,16 @@ export function SandboxConciergePage() {
         return true
       } catch (nextError) {
         const rawMessage = nextError instanceof Error ? nextError.message : ''
+        const compactRawMessage = compactDiagnosticMessage(rawMessage)
+        const postPlannerDiagnostics = readPostPlannerContractDiagnostics(nextError)
+        const generatePlanFailureSource =
+          postPlannerDiagnostics != null
+            ? 'post_planner_contract'
+            : rawMessage.toLowerCase().includes('direction context was not preserved')
+              ? 'selected_direction_lineage'
+              : rawMessage.toLowerCase().includes('route drifted from selected direction contract')
+                ? 'unknown'
+                : null
         setStep2RerollTrace((current) =>
           current
             ? {
@@ -11708,6 +11835,20 @@ export function SandboxConciergePage() {
             caughtDriftError: true,
             driftErrorMessage: rawMessage || null,
             driftFailureDirectionId: activeDirectionId,
+            generatePlanFailureSource,
+            preLineageExpectedDirectionId: current?.preLineageExpectedDirectionId ?? null,
+            preLineageActualDirectionId: current?.preLineageActualDirectionId ?? null,
+            preLineagePassed: current?.preLineagePassed ?? null,
+            postPlannerFailedCheck: postPlannerDiagnostics?.failedCheck ?? null,
+            postPlannerGenerationDriftReason:
+              postPlannerDiagnostics?.generationDriftReason ?? null,
+            postPlannerExpectedDirectionIdentity:
+              postPlannerDiagnostics?.expectedDirectionIdentity ?? null,
+            postPlannerObservedDirectionIdentity:
+              postPlannerDiagnostics?.observedDirectionIdentity ?? null,
+            postPlannerDirectionAlignmentScore:
+              postPlannerDiagnostics?.directionAlignmentScore ?? null,
+            rawDriftErrorMessageCompact: compactRawMessage,
           }))
           setSurpriseContractValidationFailedDirectionId(activeDirectionId)
           setSurpriseContractValidationFailedArtifactId(activeCandidateRouteArtifact?.id ?? null)
@@ -15111,6 +15252,20 @@ export function SandboxConciergePage() {
       `activeCandidateArtifactId=${selectedDirectionGeneratePlanTrace?.activeCandidateArtifactId ?? 'n/a'}`,
       `requestMode=${selectedDirectionGeneratePlanTrace?.requestMode ?? 'n/a'}`,
       `caughtDriftError=${String(selectedDirectionGeneratePlanTrace?.caughtDriftError ?? false)}`,
+      `generatePlanFailureSource=${selectedDirectionGeneratePlanTrace?.generatePlanFailureSource ?? 'n/a'}`,
+      `preLineageExpectedDirectionId=${selectedDirectionGeneratePlanTrace?.preLineageExpectedDirectionId ?? 'n/a'}`,
+      `preLineageActualDirectionId=${selectedDirectionGeneratePlanTrace?.preLineageActualDirectionId ?? 'n/a'}`,
+      `preLineagePassed=${String(selectedDirectionGeneratePlanTrace?.preLineagePassed ?? false)}`,
+      `postPlannerFailedCheck=${selectedDirectionGeneratePlanTrace?.postPlannerFailedCheck ?? 'n/a'}`,
+      `postPlannerGenerationDriftReason=${selectedDirectionGeneratePlanTrace?.postPlannerGenerationDriftReason ?? 'n/a'}`,
+      `postPlannerExpectedDirectionIdentity=${selectedDirectionGeneratePlanTrace?.postPlannerExpectedDirectionIdentity ?? 'n/a'}`,
+      `postPlannerObservedDirectionIdentity=${selectedDirectionGeneratePlanTrace?.postPlannerObservedDirectionIdentity ?? 'n/a'}`,
+      `postPlannerDirectionAlignmentScore=${
+        selectedDirectionGeneratePlanTrace?.postPlannerDirectionAlignmentScore == null
+          ? 'n/a'
+          : String(selectedDirectionGeneratePlanTrace.postPlannerDirectionAlignmentScore)
+      }`,
+      `rawDriftErrorMessageCompact=${selectedDirectionGeneratePlanTrace?.rawDriftErrorMessageCompact ?? 'none'}`,
       `driftErrorMessage=${selectedDirectionGeneratePlanTrace?.driftErrorMessage ?? 'none'}`,
       `driftFailureDirectionId=${selectedDirectionGeneratePlanTrace?.driftFailureDirectionId ?? 'n/a'}`,
       `step2RerollTraceRequestedDirectionId=${step2RerollTrace?.generatePlan_directionId ?? 'n/a'}`,
