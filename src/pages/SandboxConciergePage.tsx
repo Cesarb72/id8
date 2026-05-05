@@ -63,6 +63,7 @@ import {
   isContractEntryArtifactDirectionBacked,
   normalizeExistingContractEntryArtifact,
   partitionContractEntryArtifactsByDirectionBacking,
+  resolveContractEntryArtifactDirectionBacking,
 } from '../app/services/sandbox/contractEntryArtifactNormalizer'
 import { runCuratePreviewQualificationAttempt } from '../app/services/sandbox/curatePreviewQualificationService'
 import {
@@ -877,6 +878,12 @@ interface SurpriseTryAnotherDebug {
   directionBackedArtifactCount: number
   directionBackedArtifactIds: string[]
   visibleVsSuppressedDirectionBackingSummary: string
+  admittedScenarioOpportunityIds: string[]
+  suppressedScenarioOpportunityIds: string[]
+  suppressedScenarioOpportunityReasons: string[]
+  admittedScenarioOpportunityFamilyCounts: string
+  suppressedScenarioOpportunityFamilyCounts: string
+  scenarioOpportunityAdmissionSummary: string
   verifiedCityOpportunitiesCount: number
   scenarioBackedVerifiedCityOpportunitiesCount: number
   step2PrimarySourceOpportunitiesCount: number
@@ -9621,6 +9628,34 @@ export function SandboxConciergePage() {
     selectedVibeLabel,
     surpriseContrastOpportunityRepairEntries,
   ])
+  const scenarioOpportunityDirectionBackingAdmissions = useMemo(
+    () =>
+      scenarioBackedVerifiedCityOpportunities.map((opportunity) => {
+        const directionBacking = resolveContractEntryArtifactDirectionBacking({
+          selection: opportunity.selection,
+          directionCards,
+          allDirectionCards,
+        })
+        return {
+          opportunity,
+          directionBacking,
+          admitted: directionBacking.status === 'backed',
+          reason: directionBacking.reason,
+        }
+      }),
+    [allDirectionCards, directionCards, scenarioBackedVerifiedCityOpportunities],
+  )
+  const admittedScenarioBackedVerifiedCityOpportunities = useMemo(
+    () =>
+      scenarioOpportunityDirectionBackingAdmissions
+        .filter((entry) => entry.admitted)
+        .map((entry) => entry.opportunity),
+    [scenarioOpportunityDirectionBackingAdmissions],
+  )
+  const suppressedScenarioBackedOpportunityAdmissions = useMemo(
+    () => scenarioOpportunityDirectionBackingAdmissions.filter((entry) => !entry.admitted),
+    [scenarioOpportunityDirectionBackingAdmissions],
+  )
   const devGreatStopFixtureDebugSource = plan?.generationTrace.retrievalDiagnostics.liveSource
   const debugDevGreatStopFixturesEnvRaw =
     devGreatStopFixtureDebugSource?.devGreatStopFixturesEnvRaw ?? devGreatStopFixturesEnvRaw
@@ -9680,7 +9715,7 @@ export function SandboxConciergePage() {
   const step2PrimarySourceOpportunities = useMemo<VerifiedCityOpportunity[]>(() => {
     if (isBuildWrapperActive) {
       const combined = [
-        ...scenarioBackedVerifiedCityOpportunities,
+        ...admittedScenarioBackedVerifiedCityOpportunities,
         ...verifiedCityOpportunities,
       ]
       const dedupedById = new Map<string, VerifiedCityOpportunity>()
@@ -9692,14 +9727,14 @@ export function SandboxConciergePage() {
       return [...dedupedById.values()]
     }
     // TODO(step2-integration): Scenario Builder output is the primary source of truth for supported families.
-    if (resolvedScenarioFamily && scenarioBackedVerifiedCityOpportunities.length > 0) {
-      return scenarioBackedVerifiedCityOpportunities
+    if (resolvedScenarioFamily && admittedScenarioBackedVerifiedCityOpportunities.length > 0) {
+      return admittedScenarioBackedVerifiedCityOpportunities
     }
     return verifiedCityOpportunities
   }, [
+    admittedScenarioBackedVerifiedCityOpportunities,
     isBuildWrapperActive,
     resolvedScenarioFamily,
-    scenarioBackedVerifiedCityOpportunities,
     verifiedCityOpportunities,
   ])
 
@@ -9739,7 +9774,7 @@ export function SandboxConciergePage() {
     )
   }, [step2PrimarySourceOpportunities])
   const shouldUseScenarioBackedArtifacts = Boolean(
-    resolvedScenarioFamily && scenarioBackedVerifiedCityOpportunities.length > 0,
+    resolvedScenarioFamily && admittedScenarioBackedVerifiedCityOpportunities.length > 0,
   )
   const surpriseScenarioArtifactSourceOpportunities = useMemo<VerifiedCityOpportunity[]>(() => {
     if (
@@ -9751,17 +9786,17 @@ export function SandboxConciergePage() {
       return []
     }
     return selectSurpriseScenarioBackedArtifactSourceOpportunities({
-      opportunities: scenarioBackedVerifiedCityOpportunities,
+      opportunities: admittedScenarioBackedVerifiedCityOpportunities,
       primaryFamily: resolvedScenarioFamily,
       contrastFamily: surpriseContrastScenarioFamily,
       maxCount: 4,
     })
   }, [
+    admittedScenarioBackedVerifiedCityOpportunities,
     isBuildWrapperActive,
     isCurateWrapperActive,
     isSurpriseWrapperActive,
     resolvedScenarioFamily,
-    scenarioBackedVerifiedCityOpportunities,
     shouldUseScenarioBackedArtifacts,
     surpriseContrastScenarioFamily,
   ])
@@ -9792,7 +9827,7 @@ export function SandboxConciergePage() {
             ? starterAwareStep2SourceOpportunities
             : isSurpriseWrapperActive
               ? surpriseScenarioArtifactSourceOpportunities
-              : scenarioBackedVerifiedCityOpportunities.slice(0, 4)
+              : admittedScenarioBackedVerifiedCityOpportunities.slice(0, 4)
       return sourceOpportunities
         .map(buildStep2CandidateRouteArtifact)
         .filter((artifact): artifact is ContractEntryArtifact => Boolean(artifact))
@@ -9821,7 +9856,7 @@ export function SandboxConciergePage() {
     selectedStarterPack,
     step2PrimarySourceOpportunities,
     starterAwareStep2SourceOpportunities,
-    scenarioBackedVerifiedCityOpportunities,
+    admittedScenarioBackedVerifiedCityOpportunities,
     shouldUseScenarioBackedArtifacts,
     surpriseScenarioArtifactSourceOpportunities,
     isSurpriseWrapperActive,
@@ -9847,8 +9882,8 @@ export function SandboxConciergePage() {
         .filter((artifact): artifact is ContractEntryArtifact => Boolean(artifact))
     }
     if (shouldUseScenarioBackedArtifacts) {
-      return scenarioBackedVerifiedCityOpportunities
-        .slice(0, Math.max(4, scenarioBackedVerifiedCityOpportunities.length))
+      return admittedScenarioBackedVerifiedCityOpportunities
+        .slice(0, Math.max(4, admittedScenarioBackedVerifiedCityOpportunities.length))
         .map(buildStep2CandidateRouteArtifact)
         .filter((artifact): artifact is ContractEntryArtifact => Boolean(artifact))
     }
@@ -9866,7 +9901,7 @@ export function SandboxConciergePage() {
     isCurateWrapperActive,
     persona,
     primaryVibe,
-    scenarioBackedVerifiedCityOpportunities,
+    admittedScenarioBackedVerifiedCityOpportunities,
     selectedStarterPack,
     shouldUseScenarioBackedArtifacts,
     starterAwareRankedStep2SourceOpportunities,
@@ -14958,7 +14993,7 @@ export function SandboxConciergePage() {
             ? starterAwareStep2SourceOpportunities
             : isSurpriseWrapperActive
               ? surpriseScenarioArtifactSourceOpportunities
-              : scenarioBackedVerifiedCityOpportunities.slice(0, 4)
+              : admittedScenarioBackedVerifiedCityOpportunities.slice(0, 4)
         : selectStep2ExcellentSurvivors({
             rankedCards:
               isCurateWrapperActive && selectedStarterPack
@@ -14993,6 +15028,38 @@ export function SandboxConciergePage() {
           flavor: opportunity.flavor,
         }),
       ),
+    )
+    const admittedScenarioOpportunityIds = admittedScenarioBackedVerifiedCityOpportunities.map(
+      (opportunity) => opportunity.id,
+    )
+    const suppressedScenarioOpportunityIds = suppressedScenarioBackedOpportunityAdmissions.map(
+      (entry) => entry.opportunity.id,
+    )
+    const suppressedScenarioOpportunityReasons = suppressedScenarioBackedOpportunityAdmissions.map(
+      (entry) => `${entry.opportunity.id}:${entry.reason}`,
+    )
+    const admittedScenarioOpportunityFamilyCounts = summarizeDiagnosticCounts(
+      admittedScenarioBackedVerifiedCityOpportunities.map((opportunity) =>
+        deriveScenarioFamilyHintFromOpportunity({
+          opportunityId: opportunity.id,
+          flavor: opportunity.flavor,
+        }),
+      ),
+    )
+    const suppressedScenarioOpportunityFamilyCounts = summarizeDiagnosticCounts(
+      suppressedScenarioBackedOpportunityAdmissions.map((entry) =>
+        deriveScenarioFamilyHintFromOpportunity({
+          opportunityId: entry.opportunity.id,
+          flavor: entry.opportunity.flavor,
+        }),
+      ),
+    )
+    const scenarioOpportunityAdmissionSummary = [
+      `admitted=${admittedScenarioBackedVerifiedCityOpportunities.length}`,
+      `suppressed=${suppressedScenarioBackedOpportunityAdmissions.length}`,
+    ].join(', ')
+    const suppressedScenarioOpportunityReasonById = new Map(
+      suppressedScenarioBackedOpportunityAdmissions.map((entry) => [entry.opportunity.id, entry.reason] as const),
     )
     const verifiedOpportunityCountsByFamily = summarizeDiagnosticCounts(
       [
@@ -15030,9 +15097,12 @@ export function SandboxConciergePage() {
                   opportunityId: opportunity.id,
                   flavor: opportunity.flavor,
                 }) ?? 'n/a'
-              const reason = opportunity.scenarioWindDownDebug?.finalRoleEligible === false
-                ? 'artifact_builder_null:windDown_not_role_eligible'
-                : 'artifact_builder_null:unknown'
+              const suppressionReason = suppressedScenarioOpportunityReasonById.get(opportunity.id)
+              const reason = suppressionReason
+                ? `scenario_opportunity_suppressed:${suppressionReason}`
+                : opportunity.scenarioWindDownDebug?.finalRoleEligible === false
+                  ? 'artifact_builder_null:windDown_not_role_eligible'
+                  : 'artifact_builder_null:unknown'
               const key = `${family}:${reason}`
               counts.set(key, (counts.get(key) ?? 0) + 1)
             })
@@ -15391,10 +15461,13 @@ export function SandboxConciergePage() {
             flavor: opportunity.flavor,
           }) ??
           'n/a'
+        const suppressionReason = suppressedScenarioOpportunityReasonById.get(opportunity.id)
         const nullReason =
-          opportunity.scenarioWindDownDebug?.finalRoleEligible === false
-            ? 'windDown_not_role_eligible'
-            : 'artifact_builder_null_unknown'
+          suppressionReason
+            ? `scenario_opportunity_suppressed:${suppressionReason}`
+            : opportunity.scenarioWindDownDebug?.finalRoleEligible === false
+              ? 'windDown_not_role_eligible'
+              : 'artifact_builder_null_unknown'
         return [
           `night=${nightId}`,
           `opportunity=${opportunity.id}`,
@@ -15417,11 +15490,14 @@ export function SandboxConciergePage() {
           flavor: opportunity.flavor,
         }) ??
         'n/a'
+      const suppressionReason = suppressedScenarioOpportunityReasonById.get(opportunity.id)
       const nullReason = artifactBuilt
         ? 'none'
-        : opportunity.scenarioWindDownDebug?.finalRoleEligible === false
-          ? 'windDown_not_role_eligible'
-          : 'artifact_builder_null_unknown'
+        : suppressionReason
+          ? `scenario_opportunity_suppressed:${suppressionReason}`
+          : opportunity.scenarioWindDownDebug?.finalRoleEligible === false
+            ? 'windDown_not_role_eligible'
+            : 'artifact_builder_null_unknown'
       return [
         `night=${nightId}`,
         `opportunity=${opportunity.id}`,
@@ -15858,6 +15934,12 @@ export function SandboxConciergePage() {
       directionBackedArtifactCount,
       directionBackedArtifactIds,
       visibleVsSuppressedDirectionBackingSummary,
+      admittedScenarioOpportunityIds,
+      suppressedScenarioOpportunityIds,
+      suppressedScenarioOpportunityReasons,
+      admittedScenarioOpportunityFamilyCounts,
+      suppressedScenarioOpportunityFamilyCounts,
+      scenarioOpportunityAdmissionSummary,
       verifiedCityOpportunitiesCount: verifiedCityOpportunities.length,
       scenarioBackedVerifiedCityOpportunitiesCount: scenarioBackedVerifiedCityOpportunities.length,
       step2PrimarySourceOpportunitiesCount: step2PrimarySourceOpportunities.length,
@@ -15927,6 +16009,7 @@ export function SandboxConciergePage() {
     }
   }, [
     allDirectionCards,
+    admittedScenarioBackedVerifiedCityOpportunities,
     candidateRouteArtifactByIdForDisplay,
     candidateRouteArtifactsForDisplay,
     curateDisplayFallbackRouteArtifacts.length,
@@ -15943,6 +16026,7 @@ export function SandboxConciergePage() {
     scenarioBuiltNights,
     scenarioCandidateBoard,
     scenarioBackedVerifiedCityOpportunities,
+    suppressedScenarioBackedOpportunityAdmissions,
     selectedStarterPack,
     selectedCandidateRouteArtifact,
     selectedDirectionId,
@@ -18699,6 +18783,30 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.visibleVsSuppressedDirectionBackingSummary:{' '}
               {surpriseTryAnotherDebug.visibleVsSuppressedDirectionBackingSummary}
+            </div>
+            <div>
+              surpriseTryAnother.admittedScenarioOpportunityIds:{' '}
+              {surpriseTryAnotherDebug.admittedScenarioOpportunityIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.suppressedScenarioOpportunityIds:{' '}
+              {surpriseTryAnotherDebug.suppressedScenarioOpportunityIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.suppressedScenarioOpportunityReasons:{' '}
+              {surpriseTryAnotherDebug.suppressedScenarioOpportunityReasons.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.admittedScenarioOpportunityFamilyCounts:{' '}
+              {surpriseTryAnotherDebug.admittedScenarioOpportunityFamilyCounts}
+            </div>
+            <div>
+              surpriseTryAnother.suppressedScenarioOpportunityFamilyCounts:{' '}
+              {surpriseTryAnotherDebug.suppressedScenarioOpportunityFamilyCounts}
+            </div>
+            <div>
+              surpriseTryAnother.scenarioOpportunityAdmissionSummary:{' '}
+              {surpriseTryAnotherDebug.scenarioOpportunityAdmissionSummary}
             </div>
             <div>
               surpriseTryAnother.verifiedCityOpportunitiesCount:{' '}

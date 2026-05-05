@@ -3,6 +3,7 @@ import type {
   CanonicalCandidateRouteArtifact,
   ContractEntryArtifact,
   ContractEntryArtifactDirectionBacking,
+  ContractEntryArtifactSelection,
   ContractEntryArtifactQualification,
 } from '../../../domain/artifacts/contractEntryArtifact'
 import type { RuntimeRouteArtifact } from '../../../domain/artifacts/runtimeRouteArtifact'
@@ -264,18 +265,14 @@ export function partitionContractEntryArtifactsByDirectionBacking<
   }
 }
 
-export function enrichContractEntryArtifactWithDirectionBacking<
-  TArtifact extends ContractEntryArtifact,
->(params: {
-  artifact: TArtifact
+export function resolveContractEntryArtifactDirectionBacking(params: {
+  selection: ContractEntryArtifactSelection
   directionCards: RealityDirectionCard[]
   allDirectionCards: RealityDirectionCard[]
-}): TArtifact & {
-  directionBacking: ContractEntryArtifactDirectionBacking
-} {
-  const { artifact, directionCards, allDirectionCards } = params
-  const selectionDirectionId = artifact.selection.directionId?.trim() || undefined
-  const selectionPocketId = artifact.selection.pocketId?.trim() || undefined
+}): ContractEntryArtifactDirectionBacking {
+  const { selection, directionCards, allDirectionCards } = params
+  const selectionDirectionId = selection.directionId?.trim() || undefined
+  const selectionPocketId = selection.pocketId?.trim() || undefined
   const findDirectionById = (directionId: string | undefined) => {
     if (!directionId) {
       return null
@@ -300,43 +297,54 @@ export function enrichContractEntryArtifactWithDirectionBacking<
   const directionById = findDirectionById(selectionDirectionId)
   if (directionById) {
     return {
-      ...artifact,
-      directionBacking: {
-        status: 'backed',
-        directionId: directionById.id,
-        pocketId: getDirectionBackingPocketKey(directionById),
-        source: 'selection_direction',
-        reason: 'matched_selection_direction',
-      },
+      status: 'backed',
+      directionId: directionById.id,
+      pocketId: getDirectionBackingPocketKey(directionById),
+      source: 'selection_direction',
+      reason: 'matched_selection_direction',
     }
   }
 
   const directionByPocket = findDirectionByPocket(selectionPocketId)
   if (directionByPocket) {
     return {
-      ...artifact,
-      directionBacking: {
-        status: 'backed',
-        directionId: directionByPocket.id,
-        pocketId: getDirectionBackingPocketKey(directionByPocket),
-        source: 'selection_pocket',
-        reason: 'matched_selection_pocket',
-      },
+      status: 'backed',
+      directionId: directionByPocket.id,
+      pocketId: getDirectionBackingPocketKey(directionByPocket),
+      source: 'selection_pocket',
+      reason: 'matched_selection_pocket',
     }
   }
 
   return {
+    status: 'unbacked',
+    ...(selectionDirectionId ? { directionId: selectionDirectionId } : {}),
+    ...(selectionPocketId ? { pocketId: selectionPocketId } : {}),
+    source: 'none',
+    reason: selectionDirectionId
+      ? 'selection_direction_unmatched'
+      : selectionPocketId
+        ? 'selection_pocket_unmatched'
+        : 'selection_missing_direction_and_pocket',
+  }
+}
+
+export function enrichContractEntryArtifactWithDirectionBacking<
+  TArtifact extends ContractEntryArtifact,
+>(params: {
+  artifact: TArtifact
+  directionCards: RealityDirectionCard[]
+  allDirectionCards: RealityDirectionCard[]
+}): TArtifact & {
+  directionBacking: ContractEntryArtifactDirectionBacking
+} {
+  const { artifact, directionCards, allDirectionCards } = params
+  return {
     ...artifact,
-    directionBacking: {
-      status: 'unbacked',
-      ...(selectionDirectionId ? { directionId: selectionDirectionId } : {}),
-      ...(selectionPocketId ? { pocketId: selectionPocketId } : {}),
-      source: 'none',
-      reason: selectionDirectionId
-        ? 'selection_direction_unmatched'
-        : selectionPocketId
-          ? 'selection_pocket_unmatched'
-          : 'selection_missing_direction_and_pocket',
-    },
+    directionBacking: resolveContractEntryArtifactDirectionBacking({
+      selection: artifact.selection,
+      directionCards,
+      allDirectionCards,
+    }),
   }
 }
