@@ -795,6 +795,17 @@ interface Step2RerollOwnershipTrace {
   anyOverrideReason: string | null
 }
 
+interface SelectedDirectionGeneratePlanTrace {
+  requestedDirectionId: string | null
+  requestedArtifactId: string | null
+  activeDirectionId: string | null
+  activeCandidateArtifactId: string | null
+  requestMode: 'surprise' | 'curate' | 'build'
+  caughtDriftError: boolean
+  driftErrorMessage: string | null
+  driftFailureDirectionId: string | null
+}
+
 interface SurpriseTryAnotherDebug {
   currentSelectedArtifactId: string | null
   currentSelectedDirectionId: string | null
@@ -805,6 +816,11 @@ interface SurpriseTryAnotherDebug {
   currentSourceOpportunityId: string | null
   currentScenarioFamilyHint: string | null
   currentPocketId: string | null
+  selectedDirectionCoherenceCurrent: string[]
+  selectedDirectionCoherenceRouteProjection: string[]
+  selectedDirectionCoherencePlanState: string[]
+  selectedDirectionCoherenceWarningState: string[]
+  selectedDirectionCoherenceGeneratePlanTrace: string[]
   resolvedScenarioFamiliesConsidered: string
   surprisePrimaryScenarioFamily: string
   surpriseContrastScenarioFamily: string
@@ -8753,6 +8769,8 @@ export function SandboxConciergePage() {
   const [error, setError] = useState<string>()
   const [surpriseContractValidationFailedDirectionId, setSurpriseContractValidationFailedDirectionId] =
     useState<string | null>(null)
+  const [selectedDirectionGeneratePlanTrace, setSelectedDirectionGeneratePlanTrace] =
+    useState<SelectedDirectionGeneratePlanTrace | null>(null)
   const [showDebug] = useState(() => debugQueryEnabled || verticalDebugEnvEnabled)
   const [showDistrictPanel, setShowDistrictPanel] = useState(false)
   const [ecsState, setEcsState] = useState<ExplorationControlState>(DEFAULT_ECS_STATE)
@@ -11215,6 +11233,16 @@ export function SandboxConciergePage() {
       } else if (!activeDirectionId) {
         activeDirectionId = activeCandidateRouteArtifact?.selection.directionId ?? null
       }
+      setSelectedDirectionGeneratePlanTrace({
+        requestedDirectionId: normalizedDirectionOverride,
+        requestedArtifactId: normalizedSelectedRouteArtifactIdOverride,
+        activeDirectionId: activeDirectionId ?? null,
+        activeCandidateArtifactId: activeCandidateRouteArtifact?.id ?? null,
+        requestMode: isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build',
+        caughtDriftError: false,
+        driftErrorMessage: null,
+        driftFailureDirectionId: null,
+      })
       setStep2RerollTrace((current) =>
         current
           ? {
@@ -11599,6 +11627,18 @@ export function SandboxConciergePage() {
         setActiveRole('start')
         setNearbySummaryByRole({})
         autoDirectionSyncAttemptRef.current = null
+        setSelectedDirectionGeneratePlanTrace((current) =>
+          current
+            ? {
+                ...current,
+                activeDirectionId: activeDirectionContract.id,
+                activeCandidateArtifactId: activeCandidateRouteArtifact?.id ?? null,
+                caughtDriftError: false,
+                driftErrorMessage: null,
+                driftFailureDirectionId: null,
+              }
+            : current,
+        )
         setSurpriseContractValidationFailedDirectionId(null)
         setStep2RerollTrace((current) =>
           current
@@ -11651,6 +11691,20 @@ export function SandboxConciergePage() {
             .toLowerCase()
             .includes('route drifted from selected direction contract')
         ) {
+          setSelectedDirectionGeneratePlanTrace((current) => ({
+            requestedDirectionId: current?.requestedDirectionId ?? normalizedDirectionOverride,
+            requestedArtifactId:
+              current?.requestedArtifactId ?? normalizedSelectedRouteArtifactIdOverride,
+            activeDirectionId: activeDirectionId ?? current?.activeDirectionId ?? null,
+            activeCandidateArtifactId:
+              activeCandidateRouteArtifact?.id ?? current?.activeCandidateArtifactId ?? null,
+            requestMode:
+              current?.requestMode ??
+              (isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build'),
+            caughtDriftError: true,
+            driftErrorMessage: rawMessage || null,
+            driftFailureDirectionId: activeDirectionId,
+          }))
           setSurpriseContractValidationFailedDirectionId(activeDirectionId)
         }
         setError(toUserSafeGenerateError(nextError))
@@ -14957,6 +15011,65 @@ export function SandboxConciergePage() {
       routeTitle: currentSelectedArtifact?.routeTitle ?? null,
     })
     const currentPocketId = currentSelectedArtifact?.selection.pocketId ?? null
+    const selectedDirectionCoherenceCurrent = [
+      `selectedDirectionId=${selectedDirectionId ?? 'n/a'}`,
+      `selectedDirectionContractId=${selectedDirectionContractId ?? 'n/a'}`,
+      `selectedStep2CandidateArtifactId=${selectedStep2CandidateArtifactId ?? 'n/a'}`,
+      `selectedCandidateRouteArtifactId=${selectedCandidateRouteArtifact?.id ?? 'n/a'}`,
+      `selectedCandidateRouteArtifactDirectionId=${selectedCandidateRouteArtifact?.selection.directionId ?? 'n/a'}`,
+      `selectedCandidateRouteArtifactPocketId=${selectedCandidateRouteArtifact?.selection.pocketId ?? 'n/a'}`,
+      `selectedCandidateRouteArtifactDirectionBackingStatus=${selectedCandidateRouteArtifact?.directionBacking?.status ?? 'n/a'}`,
+      `selectedCandidateArtifactResolutionMode=${selectedCandidateArtifactResolution.mode}`,
+      `selectedCandidateArtifactResolutionCount=${String(selectedCandidateArtifactResolution.artifactCountForDirection)}`,
+    ]
+    const selectedRouteArtifactCandidateId =
+      selectedRouteArtifact?.source === 'candidate'
+        ? selectedRouteArtifact.candidateArtifactId ?? 'n/a'
+        : 'n/a'
+    const selectedRouteArtifactDirectionId =
+      selectedRouteArtifact?.directionId ?? 'n/a'
+    const selectedRouteArtifactRouteTitle =
+      selectedRouteArtifact?.routeTitle ?? 'n/a'
+    const selectedDirectionCoherenceRouteProjection = [
+      `selectedRouteArtifactSource=${selectedRouteArtifact?.source ?? 'n/a'}`,
+      `selectedRouteArtifactDirectionId=${selectedRouteArtifactDirectionId}`,
+      `selectedRouteArtifactCandidateArtifactId=${selectedRouteArtifactCandidateId}`,
+      `selectedRouteArtifactRouteTitle=${selectedRouteArtifactRouteTitle}`,
+    ]
+    const canonicalSelectedCandidateRouteArtifactId =
+      canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ?? 'n/a'
+    const finalRouteSelectedDirectionId = finalRoute?.selectedDirectionId ?? 'n/a'
+    const planSelectedDirectionContractId = plan?.selectedDirectionContract.id ?? 'n/a'
+    const planSelectedCandidateRouteArtifactId = plan?.selectedCandidateRouteArtifactId ?? 'n/a'
+    const selectedDirectionCoherencePlanState = [
+      `canonicalRouteArtifactSelectedDirectionId=${canonicalRouteArtifact?.selectedDirectionId ?? 'n/a'}`,
+      `canonicalRouteArtifactSelectedCandidateRouteArtifactId=${canonicalSelectedCandidateRouteArtifactId}`,
+      `finalRouteSelectedDirectionId=${finalRouteSelectedDirectionId}`,
+      `planSelectedDirectionContractId=${planSelectedDirectionContractId}`,
+      `planSelectedCandidateRouteArtifactId=${planSelectedCandidateRouteArtifactId}`,
+      `resolvedSelectedDirectionContextId=${resolvedSelectedDirectionContext?.selectedDirectionId ?? 'n/a'}`,
+    ]
+    const warningVisible = selectedCandidatePreviewValidationFailed
+    const selectedDirectionCoherenceWarningState = [
+      `surpriseContractValidationFailedDirectionId=${surpriseContractValidationFailedDirectionId ?? 'n/a'}`,
+      `selectedCandidatePreviewValidationFailed=${String(selectedCandidatePreviewValidationFailed)}`,
+      `directionSyncMismatch=${String(directionSyncMismatch)}`,
+      `selectedDirectionNeedsRegeneration=${String(selectedCandidatePreviewValidationFailed)}`,
+      `warningVisible=${String(warningVisible)}`,
+      `generationDriftReason=${generationDriftReason ?? 'none'}`,
+    ]
+    const selectedDirectionCoherenceGeneratePlanTrace = [
+      `requestedDirectionId=${selectedDirectionGeneratePlanTrace?.requestedDirectionId ?? 'n/a'}`,
+      `requestedArtifactId=${selectedDirectionGeneratePlanTrace?.requestedArtifactId ?? 'n/a'}`,
+      `activeDirectionId=${selectedDirectionGeneratePlanTrace?.activeDirectionId ?? 'n/a'}`,
+      `activeCandidateArtifactId=${selectedDirectionGeneratePlanTrace?.activeCandidateArtifactId ?? 'n/a'}`,
+      `requestMode=${selectedDirectionGeneratePlanTrace?.requestMode ?? 'n/a'}`,
+      `caughtDriftError=${String(selectedDirectionGeneratePlanTrace?.caughtDriftError ?? false)}`,
+      `driftErrorMessage=${selectedDirectionGeneratePlanTrace?.driftErrorMessage ?? 'none'}`,
+      `driftFailureDirectionId=${selectedDirectionGeneratePlanTrace?.driftFailureDirectionId ?? 'n/a'}`,
+      `step2RerollTraceRequestedDirectionId=${step2RerollTrace?.generatePlan_directionId ?? 'n/a'}`,
+      `step2RerollTraceRequestedArtifactId=${step2RerollTrace?.generatePlan_artifactIdOverride ?? 'n/a'}`,
+    ]
     const resolvedScenarioFamiliesConsidered = [
       resolvedScenarioFamily,
       isSurpriseWrapperActive ? surpriseContrastScenarioFamily : null,
@@ -15849,6 +15962,11 @@ export function SandboxConciergePage() {
       currentSourceOpportunityId,
       currentScenarioFamilyHint,
       currentPocketId,
+      selectedDirectionCoherenceCurrent,
+      selectedDirectionCoherenceRouteProjection,
+      selectedDirectionCoherencePlanState,
+      selectedDirectionCoherenceWarningState,
+      selectedDirectionCoherenceGeneratePlanTrace,
       resolvedScenarioFamiliesConsidered,
       surprisePrimaryScenarioFamily,
       surpriseContrastScenarioFamily: surpriseContrastScenarioFamilyDebug,
@@ -16027,11 +16145,23 @@ export function SandboxConciergePage() {
     scenarioCandidateBoard,
     scenarioBackedVerifiedCityOpportunities,
     suppressedScenarioBackedOpportunityAdmissions,
+    canonicalRouteArtifact,
+    directionSyncMismatch,
+    finalRoute,
+    generationDriftReason,
+    plan,
+    resolvedSelectedDirectionContext,
     selectedStarterPack,
+    selectedCandidateArtifactResolution,
     selectedCandidateRouteArtifact,
+    selectedCandidatePreviewValidationFailed,
+    selectedDirectionContractId,
+    selectedDirectionGeneratePlanTrace,
+    selectedRouteArtifact,
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
     shouldUseScenarioBackedArtifacts,
+    surpriseContractValidationFailedDirectionId,
     surpriseContrastOpportunityRepairEntries,
     surpriseScenarioArtifactSourceOpportunities,
     suppressedDirectionUnbackedArtifacts,
@@ -18489,6 +18619,29 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.currentPocketId:{' '}
               {surpriseTryAnotherDebug.currentPocketId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseTryAnother.selectedDirectionCoherenceCurrent:{' '}
+              {surpriseTryAnotherDebug.selectedDirectionCoherenceCurrent.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.selectedDirectionCoherenceRouteProjection:{' '}
+              {surpriseTryAnotherDebug.selectedDirectionCoherenceRouteProjection.join(' || ') ||
+                'none'}
+            </div>
+            <div>
+              surpriseTryAnother.selectedDirectionCoherencePlanState:{' '}
+              {surpriseTryAnotherDebug.selectedDirectionCoherencePlanState.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.selectedDirectionCoherenceWarningState:{' '}
+              {surpriseTryAnotherDebug.selectedDirectionCoherenceWarningState.join(' || ') ||
+                'none'}
+            </div>
+            <div>
+              surpriseTryAnother.selectedDirectionCoherenceGeneratePlanTrace:{' '}
+              {surpriseTryAnotherDebug.selectedDirectionCoherenceGeneratePlanTrace.join(' || ') ||
+                'none'}
             </div>
             <div>
               surpriseTryAnother.resolvedScenarioFamiliesConsidered:{' '}
