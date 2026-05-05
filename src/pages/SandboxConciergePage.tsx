@@ -6504,6 +6504,7 @@ function validateDirectionRouteContract(params: {
   itinerary: Itinerary
   buildability: DirectionContractBuildability
   mode?: 'surprise' | 'curate' | 'build'
+  previewScenarioFamily?: string
 }): DirectionContractValidationResult {
   return validateDirectionRouteContractEngine(params)
 }
@@ -11605,6 +11606,7 @@ export function SandboxConciergePage() {
             expectedDirectionIdentity,
             selectedDirectionContextForValidation: activeDirectionContextForValidation,
             selectedDirectionContractForValidation: activeDirectionContractForValidation,
+            previewScenarioFamily: activeCandidateOpportunity?.scenarioNight?.scenarioFamily,
             selectedDirectionId: activeDirectionContract.id,
             city: districtLocationQuery,
             persona,
@@ -12606,6 +12608,7 @@ export function SandboxConciergePage() {
                       params.selectedDirectionContextForValidation,
                     selectedDirectionContractForValidation:
                       params.selectedDirectionContractForValidation,
+                    previewScenarioFamily: params.previewScenarioFamily,
                     selectedDirectionId: params.selectedDirectionId,
                     city: params.city,
                     persona: params.persona,

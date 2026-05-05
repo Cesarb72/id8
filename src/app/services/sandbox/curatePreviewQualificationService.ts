@@ -129,6 +129,7 @@ export interface CuratePreviewQualificationAttemptDependencies<
     expectedDirectionIdentity: DirectionIdentityMode
     selectedDirectionContextForValidation: ResolvedDirectionContext
     selectedDirectionContractForValidation: DirectionPlanningSelection
+    previewScenarioFamily?: string
     selectedDirectionId: string
     city: string
     persona: PersonaMode
@@ -328,6 +329,7 @@ export async function runCuratePreviewQualificationAttempt<
       selectedDirectionContextForValidation: params.activeDirectionContextForValidation,
       selectedDirectionContractForValidation:
         params.activeDirectionContractForValidation,
+      previewScenarioFamily: params.activeCandidateOpportunity?.scenarioNight?.scenarioFamily,
       selectedDirectionId: params.activeDirectionContract.id,
       city: params.districtLocationQuery,
       persona: params.persona,

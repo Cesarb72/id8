@@ -666,6 +666,7 @@ export function validateDirectionRouteContract(params: {
   itinerary: Itinerary
   buildability: DirectionContractBuildability
   mode?: 'surprise' | 'curate' | 'build'
+  previewScenarioFamily?: string
 }): DirectionContractValidationResult {
   // Canonical coordination validator: checks route adherence against planning lineage.
   // It should remain structural; meaning/buildability policy should be delegated by engine ownership.
@@ -705,6 +706,36 @@ export function validateDirectionRouteContract(params: {
   }
   const identityMismatch = observedDirectionIdentity !== expectedDirectionIdentity
   if (identityMismatch) {
+    const culturedSocialIdentityTolerance =
+      expectedDirectionIdentity === 'exploratory' &&
+      observedDirectionIdentity === 'social' &&
+      Boolean(params.previewScenarioFamily?.endsWith('_cultured'))
+    if (culturedSocialIdentityTolerance) {
+      return {
+        valid: true,
+        validatorMode,
+        generationDriftReason: 'cultured_social_identity_tolerance',
+        expectedDirectionIdentity,
+        observedDirectionIdentity,
+        contractBuildabilityStatus: buildability.contractBuildabilityStatus,
+        missingRoleForContract: buildability.missingRoleForContract,
+        candidatePoolSufficiencyByRole: buildability.candidatePoolSufficiencyByRole,
+        fallbackApplied: true,
+        greatStopQuality,
+        thinPoolRelaxationTrace: {
+          triggered: true,
+          expectedDirectionIdentity,
+          observedDirectionIdentity,
+          contractBuildabilityStatus: buildability.contractBuildabilityStatus,
+          missingRoleForContract: buildability.missingRoleForContract,
+          candidatePoolSufficiencyByRole: buildability.candidatePoolSufficiencyByRole,
+          relaxationReason: 'cultured_social_identity_tolerance',
+          relaxedRule:
+            'exploratory_expected_identity_accepts_social_observed_identity_for_cultured_scenario_family',
+          validationOutcome: 'accepted_with_relaxation',
+        },
+      }
+    }
     if (buildability.contractBuildabilityStatus === 'thin') {
       return {
         valid: true,

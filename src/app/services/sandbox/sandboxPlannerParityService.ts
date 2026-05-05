@@ -147,6 +147,7 @@ export interface RunPostPlannerCommitParityStagesDependencies {
     itinerary: Itinerary
     buildability: DirectionContractBuildability
     mode?: 'surprise' | 'curate' | 'build'
+    previewScenarioFamily?: string
   }): DirectionContractValidationResult
   resolveRouteCopy(params: { canonicalItinerary: Itinerary }): {
     routeHeadline: string
@@ -160,6 +161,7 @@ export interface RunPostPlannerCommitParityStagesParams {
   expectedDirectionIdentity: DirectionIdentityMode
   selectedDirectionContextForValidation: ResolvedDirectionContext
   selectedDirectionContractForValidation: DirectionPlanningSelection
+  previewScenarioFamily?: string
   selectedDirectionId: string
   city: string
   persona: PersonaMode
@@ -206,6 +208,7 @@ export async function runPostPlannerCommitParityStages(
     itinerary: canonicalItinerary,
     buildability: contractBuildability,
     mode: params.result.intentProfile.mode,
+    previewScenarioFamily: params.previewScenarioFamily,
   })
   if (!directionValidation.valid) {
     throw new PostPlannerCommitParityValidationError({
