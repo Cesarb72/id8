@@ -14951,11 +14951,11 @@ export function SandboxConciergePage() {
       if (left.roleOverlapCount !== right.roleOverlapCount) {
         return left.roleOverlapCount - right.roleOverlapCount
       }
-      if (left.sameWindDown !== right.sameWindDown) {
-        return Number(left.sameWindDown) - Number(right.sameWindDown)
-      }
       if (left.sameHighlight !== right.sameHighlight) {
         return Number(left.sameHighlight) - Number(right.sameHighlight)
+      }
+      if (left.sameWindDown !== right.sameWindDown) {
+        return Number(left.sameWindDown) - Number(right.sameWindDown)
       }
       if (left.sameStart !== right.sameStart) {
         return Number(left.sameStart) - Number(right.sameStart)
@@ -14987,12 +14987,30 @@ export function SandboxConciergePage() {
       uniqueByFingerprint.push(candidate)
     }
     if (uniqueByFingerprint.length > 0 && scoreOnlyTopCandidate) {
+      const topCandidate = uniqueByFingerprint[0]
+      const orderingAdjustments: string[] = []
+      if (topCandidate && topCandidate.artifact.id !== scoreOnlyTopCandidate.artifact.id) {
+        if (
+          topCandidate.score === scoreOnlyTopCandidate.score &&
+          topCandidate.roleOverlapCount < scoreOnlyTopCandidate.roleOverlapCount
+        ) {
+          orderingAdjustments.push('lower_overlap_preferred')
+        }
+        if (
+          topCandidate.score === scoreOnlyTopCandidate.score &&
+          topCandidate.roleOverlapCount === scoreOnlyTopCandidate.roleOverlapCount &&
+          topCandidate.sameHighlight !== scoreOnlyTopCandidate.sameHighlight &&
+          topCandidate.sameHighlight === false
+        ) {
+          orderingAdjustments.push('highlight_difference_preferred')
+        }
+      }
       uniqueByFingerprint[0] = {
-        ...uniqueByFingerprint[0],
+        ...topCandidate,
         orderingReason:
-          uniqueByFingerprint[0].artifact.id !== scoreOnlyTopCandidate.artifact.id
-            ? `${uniqueByFingerprint[0].orderingReason}|lower_overlap_preferred`
-            : uniqueByFingerprint[0].orderingReason,
+          orderingAdjustments.length > 0
+            ? `${topCandidate.orderingReason}|${orderingAdjustments.join('|')}`
+            : topCandidate.orderingReason,
       }
     }
     return uniqueByFingerprint
