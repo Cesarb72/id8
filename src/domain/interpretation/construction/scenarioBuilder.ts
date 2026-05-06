@@ -92,6 +92,11 @@ export type BuiltScenarioNight = {
   complete: boolean
   missingStopTypes?: StopType[]
   evaluation?: BuiltScenarioNightEvaluation
+  selectionDebug?: {
+    highlightDiversityApplied: boolean
+    selectedScenarioNightHighlightNames: string[]
+    highlightDiversityViabilityBand: number
+  }
 }
 
 type BuilderOptions = {
@@ -110,6 +115,15 @@ type CandidateNight = {
   districtPlausibility: number
   roleDiscipline: number
 }
+
+type DistinctNightSelectionResult = {
+  selected: CandidateNight[]
+  highlightDiversityApplied: boolean
+}
+
+// Only treat an alternate highlight as viable when the underlying night score remains
+// within a narrow band of the best remaining candidate for that selection slot.
+const HIGHLIGHT_DIVERSITY_VIABILITY_BAND = 0.035
 
 function getHighlightStopName(night: CandidateNight): string {
   const highlight = night.stops[Math.min(2, night.stops.length - 1)]
@@ -890,14 +904,18 @@ function sharedVenueCount(left: CandidateNight, right: CandidateNight): number {
 function selectDistinctNights(
   candidates: CandidateNight[],
   targetCount: number,
-): CandidateNight[] {
+): DistinctNightSelectionResult {
   if (candidates.length <= targetCount) {
-    return candidates
+    return {
+      selected: candidates,
+      highlightDiversityApplied: false,
+    }
   }
   const sorted = candidates
     .slice()
     .sort((left, right) => right.score - left.score || getHighlightStopName(left).localeCompare(getHighlightStopName(right)))
   const selected: CandidateNight[] = []
+  let highlightDiversityApplied = false
   if (sorted.length > 0) {
     selected.push(sorted[0])
   }
@@ -932,7 +950,32 @@ function selectDistinctNights(
       })
     const next = scoredRemaining.find((entry) => !entry.blockedAsNearDuplicate)
     if (next) {
-      selected.push(next.candidate)
+      const selectedHighlightKeys = new Set(
+        selected
+          .map((night) => normalizeToken(getHighlightStopName(night)))
+          .filter(Boolean),
+      )
+      const nextHighlightKey = normalizeToken(getHighlightStopName(next.candidate))
+      const uniqueHighlightAlternative = scoredRemaining.find((entry) => {
+        if (entry.blockedAsNearDuplicate) {
+          return false
+        }
+        const candidateHighlightKey = normalizeToken(getHighlightStopName(entry.candidate))
+        if (!candidateHighlightKey || selectedHighlightKeys.has(candidateHighlightKey)) {
+          return false
+        }
+        return next.candidate.score - entry.candidate.score <= HIGHLIGHT_DIVERSITY_VIABILITY_BAND
+      })
+      if (
+        nextHighlightKey &&
+        selectedHighlightKeys.has(nextHighlightKey) &&
+        uniqueHighlightAlternative
+      ) {
+        selected.push(uniqueHighlightAlternative.candidate)
+        highlightDiversityApplied = true
+      } else {
+        selected.push(next.candidate)
+      }
       continue
     }
     if (selected.length >= 2) {
@@ -940,7 +983,10 @@ function selectDistinctNights(
     }
     selected.push(scoredRemaining[0].candidate)
   }
-  return selected.slice(0, targetCount)
+  return {
+    selected: selected.slice(0, targetCount),
+    highlightDiversityApplied,
+  }
 }
 
 function ensureHiddenGemVariant(
@@ -1216,8 +1262,10 @@ export function buildScenarioNightsFromCandidateBoard(
         ? minNights
         : Math.max(1, rankedCandidates.length)
 
-  let selected = selectDistinctNights(rankedCandidates, desiredCount)
+  const distinctSelection = selectDistinctNights(rankedCandidates, desiredCount)
+  let selected = distinctSelection.selected
   selected = ensureHiddenGemVariant(selected, rankedCandidates)
+  const selectedScenarioNightHighlightNames = selected.map((night) => getHighlightStopName(night))
 
   return selected.map((night, index) => {
     const stopsWithContract = withPreviewContract(board.scenarioFamily, night.stops)
@@ -1246,6 +1294,11 @@ export function buildScenarioNightsFromCandidateBoard(
       whyThisWorks: getWhyThisWorks(evaluatedStops),
       complete: true,
       evaluation,
+      selectionDebug: {
+        highlightDiversityApplied: distinctSelection.highlightDiversityApplied,
+        selectedScenarioNightHighlightNames,
+        highlightDiversityViabilityBand: HIGHLIGHT_DIVERSITY_VIABILITY_BAND,
+      },
     }
   })
 }
