@@ -2474,6 +2474,8 @@ function buildCurateVisibleCardModelFromArtifact(params: {
 
 function buildSelectedRouteArtifactProjection(params: {
   effectiveCurateSelectedArtifact: ContractEntryArtifact | null
+  explicitSelectedCandidateArtifactId: string | null
+  candidatePreviewAuthorityActive: boolean
   selectedRouteDirectionId: string | null
   isCurateWrapperActive: boolean
   selectedCuratePreviewCommitability: CuratePreviewCommitabilityState | null
@@ -2493,6 +2495,8 @@ function buildSelectedRouteArtifactProjection(params: {
 }): SelectedRouteArtifact<CanonicalRouteArtifact> | null {
   const {
     effectiveCurateSelectedArtifact,
+    explicitSelectedCandidateArtifactId,
+    candidatePreviewAuthorityActive,
     selectedRouteDirectionId,
     isCurateWrapperActive,
     selectedCuratePreviewCommitability,
@@ -2517,7 +2521,10 @@ function buildSelectedRouteArtifactProjection(params: {
   if (
     approvedCuratePreviewPayload &&
     selectedRouteDirectionId &&
-    approvedCuratePreviewPayload.selectedDirectionId === selectedRouteDirectionId
+    approvedCuratePreviewPayload.selectedDirectionId === selectedRouteDirectionId &&
+    (!candidatePreviewAuthorityActive ||
+      approvedCuratePreviewPayload.planSnapshot.selectedCandidateRouteArtifactId ===
+        explicitSelectedCandidateArtifactId)
   ) {
     const approvedFinalRoute = approvedCuratePreviewPayload.finalRoute
     const approvedPlanSnapshot = approvedCuratePreviewPayload.planSnapshot
@@ -2553,9 +2560,9 @@ function buildSelectedRouteArtifactProjection(params: {
     }
   }
   const committedArtifactMatchesSelection =
-    !effectiveCurateSelectedArtifact ||
+    !candidatePreviewAuthorityActive ||
     canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ===
-      effectiveCurateSelectedArtifact.id
+      explicitSelectedCandidateArtifactId
   if (
     canonicalRouteArtifact &&
     selectedRouteDirectionId &&
@@ -14583,6 +14590,12 @@ export function SandboxConciergePage() {
   const selectedRouteArtifact = useMemo<SelectedRouteArtifact<CanonicalRouteArtifact> | null>(() => {
     const effectiveCurateSelectedArtifact =
       explicitQualifiedCurateSelectedArtifact ?? selectedCandidateRouteArtifact
+    const explicitSelectedCandidateArtifactId =
+      selectedStep2CandidateArtifactId &&
+      selectedCandidateRouteArtifact?.id === selectedStep2CandidateArtifactId
+        ? selectedStep2CandidateArtifactId
+        : null
+    const candidatePreviewAuthorityActive = Boolean(explicitSelectedCandidateArtifactId)
     const selectedRouteDirectionId =
       effectiveCurateSelectedArtifact?.selection.directionId ??
       selectedDirectionContractId ??
@@ -14590,6 +14603,8 @@ export function SandboxConciergePage() {
       null
     return buildSelectedRouteArtifactProjection({
       effectiveCurateSelectedArtifact,
+      explicitSelectedCandidateArtifactId,
+      candidatePreviewAuthorityActive,
       selectedRouteDirectionId,
       isCurateWrapperActive,
       selectedCuratePreviewCommitability,
@@ -14616,6 +14631,7 @@ export function SandboxConciergePage() {
     selectedCandidateRouteArtifact,
     selectedCuratePreviewCommitability,
     selectedDirectionContractId,
+    selectedStep2CandidateArtifactId,
   ])
   const selectedRouteSummaryArtifact = useMemo<SelectedRouteSummaryArtifact | null>(() => {
     if (!selectedRouteArtifact) {
