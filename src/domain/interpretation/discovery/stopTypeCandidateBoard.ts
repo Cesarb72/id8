@@ -1571,6 +1571,7 @@ export async function buildStopTypeCandidateBoardFromIntent(
     city: input.city,
     persona,
     vibe,
+    scenarioFamilyOverride: scenarioFamily,
     scoredVenues,
   })
 }

@@ -19112,6 +19112,10 @@ export function SandboxConciergePage() {
               {surpriseTryAnotherDebug.surpriseContrastScenarioFamily}
             </div>
             <div>
+              surpriseTryAnother.surpriseCrossPersonaScenarioFamily:{' '}
+              {surpriseTryAnotherDebug.surpriseCrossPersonaScenarioFamily}
+            </div>
+            <div>
               surpriseTryAnother.scenarioFamiliesGenerated:{' '}
               {surpriseTryAnotherDebug.scenarioFamiliesGenerated}
             </div>
@@ -19166,6 +19170,18 @@ export function SandboxConciergePage() {
             <div>
               surpriseTryAnother.contrastMappedOpportunityIds:{' '}
               {surpriseTryAnotherDebug.contrastMappedOpportunityIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.crossPersonaScenarioOpportunityIds:{' '}
+              {surpriseTryAnotherDebug.crossPersonaScenarioOpportunityIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.crossPersonaAdmittedOpportunityIds:{' '}
+              {surpriseTryAnotherDebug.crossPersonaAdmittedOpportunityIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseTryAnother.crossPersonaSuppressedOpportunityIds:{' '}
+              {surpriseTryAnotherDebug.crossPersonaSuppressedOpportunityIds.join(', ') || 'none'}
             </div>
             <div>
               surpriseTryAnother.contrastReachedArtifactBuilderCount:{' '}
