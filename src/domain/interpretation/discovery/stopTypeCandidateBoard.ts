@@ -129,6 +129,7 @@ type BuildStopTypeCandidateBoardInput = {
   city: string
   persona: string
   vibe: string
+  scenarioFamilyOverride?: ScenarioFamily
   scoredVenues: ScoredVenue[]
 }
 
@@ -136,6 +137,7 @@ type BuildStopTypeCandidateBoardFromIntentInput = {
   city: string
   persona: PersonaMode | string
   vibe: VibeAnchor | string
+  scenarioFamilyOverride?: ScenarioFamily
   distanceMode?: DistanceMode
   budget?: BudgetPreference
   sourceMode?: SourceMode
@@ -1315,11 +1317,13 @@ function asRecordByStopType(
 export function buildStopTypeCandidateBoard(
   input: BuildStopTypeCandidateBoardInput,
 ): StopTypeCandidateBoard | null {
-  const scenarioFamily = resolveScenarioFamily({
-    city: input.city,
-    persona: input.persona,
-    vibe: input.vibe,
-  })
+  const scenarioFamily =
+    input.scenarioFamilyOverride ??
+    resolveScenarioFamily({
+      city: input.city,
+      persona: input.persona,
+      vibe: input.vibe,
+    })
   if (!scenarioFamily) {
     return null
   }
@@ -1533,11 +1537,13 @@ export async function buildStopTypeCandidateBoardFromIntent(
   if (!persona || !vibe) {
     return null
   }
-  const scenarioFamily = resolveScenarioFamily({
-    city: input.city,
-    persona,
-    vibe,
-  })
+  const scenarioFamily =
+    input.scenarioFamilyOverride ??
+    resolveScenarioFamily({
+      city: input.city,
+      persona,
+      vibe,
+    })
   if (!scenarioFamily) {
     return null
   }
