@@ -884,6 +884,7 @@ interface SurpriseTryAnotherDebug {
   resolvedScenarioFamiliesConsidered: string
   surprisePrimaryScenarioFamily: string
   surpriseContrastScenarioFamily: string
+  surpriseCrossPersonaScenarioFamily: string
   scenarioFamiliesGenerated: string
   scenarioBoardCandidateCountsByFamily: string
   scenarioBuiltNightCountsByFamily: string
@@ -956,6 +957,9 @@ interface SurpriseTryAnotherDebug {
   visibleVsSuppressedDirectionBackingSummary: string
   admittedScenarioOpportunityIds: string[]
   suppressedScenarioOpportunityIds: string[]
+  crossPersonaScenarioOpportunityIds: string[]
+  crossPersonaAdmittedOpportunityIds: string[]
+  crossPersonaSuppressedOpportunityIds: string[]
   suppressedScenarioOpportunityReasons: string[]
   admittedScenarioOpportunityFamilyCounts: string
   suppressedScenarioOpportunityFamilyCounts: string
@@ -1258,13 +1262,20 @@ function selectSurpriseScenarioBackedArtifactSourceOpportunities(params: {
   opportunities: VerifiedCityOpportunity[]
   primaryFamily: ScenarioFamily | null
   contrastFamily: ScenarioFamily | null
+  crossPersonaFamily?: ScenarioFamily | null
   maxCount?: number
 }): VerifiedCityOpportunity[] {
-  const { opportunities, primaryFamily, contrastFamily, maxCount = 4 } = params
+  const {
+    opportunities,
+    primaryFamily,
+    contrastFamily,
+    crossPersonaFamily = null,
+    maxCount = 4,
+  } = params
   if (maxCount <= 0 || opportunities.length === 0) {
     return []
   }
-  if (!contrastFamily) {
+  if (!contrastFamily && !crossPersonaFamily) {
     return opportunities.slice(0, maxCount)
   }
 
@@ -1280,7 +1291,10 @@ function selectSurpriseScenarioBackedArtifactSourceOpportunities(params: {
   const contrastOpportunities = opportunities.filter(
     (opportunity) => getOpportunityFamily(opportunity) === contrastFamily,
   )
-  if (contrastOpportunities.length === 0) {
+  const crossPersonaOpportunities = opportunities.filter(
+    (opportunity) => getOpportunityFamily(opportunity) === crossPersonaFamily,
+  )
+  if (contrastOpportunities.length === 0 && crossPersonaOpportunities.length === 0) {
     return opportunities.slice(0, maxCount)
   }
 
@@ -1296,9 +1310,18 @@ function selectSurpriseScenarioBackedArtifactSourceOpportunities(params: {
   const preferredContrastOpportunity =
     contrastOpportunities.find((opportunity) => opportunity.scenarioWindDownDebug?.finalRoleEligible) ??
     contrastOpportunities[0]
+  const preferredCrossPersonaOpportunity =
+    crossPersonaOpportunities.find(
+      (opportunity) => opportunity.scenarioWindDownDebug?.finalRoleEligible,
+    ) ?? crossPersonaOpportunities[0]
+  const reservedSlots =
+    (preferredContrastOpportunity ? 1 : 0) + (preferredCrossPersonaOpportunity ? 1 : 0)
 
-  primaryOpportunities.slice(0, Math.max(0, maxCount - 1)).forEach(pushOpportunity)
+  primaryOpportunities
+    .slice(0, Math.max(0, maxCount - reservedSlots))
+    .forEach(pushOpportunity)
   pushOpportunity(preferredContrastOpportunity)
+  pushOpportunity(preferredCrossPersonaOpportunity)
   opportunities.forEach(pushOpportunity)
   return selected
 }
@@ -1605,6 +1628,26 @@ function getDeterministicContrastScenarioFamily(
     family_cultured: 'family_lively',
   }
   return contrastByPrimaryFamily[primaryFamily] ?? null
+}
+
+function getDeterministicCrossPersonaScenarioFamily(
+  primaryFamily: ScenarioFamily | null,
+): ScenarioFamily | null {
+  if (!primaryFamily) {
+    return null
+  }
+  const crossPersonaByPrimaryFamily: Record<ScenarioFamily, ScenarioFamily> = {
+    romantic_cozy: 'friends_cozy',
+    romantic_lively: 'friends_lively',
+    romantic_cultured: 'friends_cultured',
+    friends_cozy: 'romantic_cozy',
+    friends_lively: 'romantic_lively',
+    friends_cultured: 'romantic_cultured',
+    family_cozy: 'friends_cozy',
+    family_lively: 'friends_lively',
+    family_cultured: 'friends_cultured',
+  }
+  return crossPersonaByPrimaryFamily[primaryFamily] ?? null
 }
 
 function getScenarioFamilyVibeAnchor(family: ScenarioFamily | null): VibeAnchor | null {
@@ -8893,6 +8936,11 @@ export function SandboxConciergePage() {
   const [scenarioContrastCandidateBoard, setScenarioContrastCandidateBoard] =
     useState<StopTypeCandidateBoard | null>(null)
   const [scenarioContrastBuiltNights, setScenarioContrastBuiltNights] = useState<BuiltScenarioNight[]>([])
+  const [scenarioCrossPersonaCandidateBoard, setScenarioCrossPersonaCandidateBoard] =
+    useState<StopTypeCandidateBoard | null>(null)
+  const [scenarioCrossPersonaBuiltNights, setScenarioCrossPersonaBuiltNights] = useState<
+    BuiltScenarioNight[]
+  >([])
   const [districtPreviewLoading, setDistrictPreviewLoading] = useState(false)
   const [districtPreviewError, setDistrictPreviewError] = useState<string>()
   const [stageFingerprintsByScenario, setStageFingerprintsByScenario] = useState<
@@ -8945,6 +8993,13 @@ export function SandboxConciergePage() {
     () =>
       isSurpriseWrapperActive
         ? getDeterministicContrastScenarioFamily(resolvedScenarioFamily)
+        : null,
+    [isSurpriseWrapperActive, resolvedScenarioFamily],
+  )
+  const surpriseCrossPersonaScenarioFamily = useMemo(
+    () =>
+      isSurpriseWrapperActive
+        ? getDeterministicCrossPersonaScenarioFamily(resolvedScenarioFamily)
         : null,
     [isSurpriseWrapperActive, resolvedScenarioFamily],
   )
@@ -9091,6 +9146,8 @@ export function SandboxConciergePage() {
         setScenarioBuiltNights([])
         setScenarioContrastCandidateBoard(null)
         setScenarioContrastBuiltNights([])
+        setScenarioCrossPersonaCandidateBoard(null)
+        setScenarioCrossPersonaBuiltNights([])
         return
       }
       try {
@@ -9108,11 +9165,15 @@ export function SandboxConciergePage() {
           setScenarioBuiltNights([])
           setScenarioContrastCandidateBoard(null)
           setScenarioContrastBuiltNights([])
+          setScenarioCrossPersonaCandidateBoard(null)
+          setScenarioCrossPersonaBuiltNights([])
           return
         }
         const builtNights = buildScenarioNightsFromCandidateBoard(board)
         let contrastBoard: StopTypeCandidateBoard | null = null
         let contrastBuiltNights: BuiltScenarioNight[] = []
+        let crossPersonaBoard: StopTypeCandidateBoard | null = null
+        let crossPersonaBuiltNights: BuiltScenarioNight[] = []
         if (
           isSurpriseWrapperActive &&
           surpriseContrastScenarioFamily &&
@@ -9134,10 +9195,40 @@ export function SandboxConciergePage() {
             }
           }
         }
+        if (
+          isSurpriseWrapperActive &&
+          surpriseCrossPersonaScenarioFamily &&
+          surpriseCrossPersonaScenarioFamily !== resolvedScenarioFamily &&
+          surpriseCrossPersonaScenarioFamily !== surpriseContrastScenarioFamily
+        ) {
+          try {
+            crossPersonaBoard = await buildStopTypeCandidateBoardFromIntent({
+              city: districtLocationQuery,
+              persona,
+              vibe: primaryVibe,
+              scenarioFamilyOverride: surpriseCrossPersonaScenarioFamily,
+              sourceMode: 'curated',
+            })
+            if (cancelled) {
+              return
+            }
+            if (crossPersonaBoard) {
+              crossPersonaBuiltNights = buildScenarioNightsFromCandidateBoard(crossPersonaBoard)
+            }
+          } catch {
+            if (cancelled) {
+              return
+            }
+            crossPersonaBoard = null
+            crossPersonaBuiltNights = []
+          }
+        }
         setScenarioCandidateBoard(board)
         setScenarioBuiltNights(builtNights)
         setScenarioContrastCandidateBoard(contrastBoard)
         setScenarioContrastBuiltNights(contrastBuiltNights)
+        setScenarioCrossPersonaCandidateBoard(crossPersonaBoard)
+        setScenarioCrossPersonaBuiltNights(crossPersonaBuiltNights)
       } catch {
         if (cancelled) {
           return
@@ -9146,6 +9237,8 @@ export function SandboxConciergePage() {
         setScenarioBuiltNights([])
         setScenarioContrastCandidateBoard(null)
         setScenarioContrastBuiltNights([])
+        setScenarioCrossPersonaCandidateBoard(null)
+        setScenarioCrossPersonaBuiltNights([])
       }
     }
     void loadScenarioBuilderArtifacts()
@@ -9157,6 +9250,7 @@ export function SandboxConciergePage() {
     isSurpriseWrapperActive,
     persona,
     primaryVibe,
+    surpriseCrossPersonaScenarioFamily,
     resolvedScenarioFamily,
     surpriseContrastScenarioFamily,
   ])
@@ -9673,6 +9767,71 @@ export function SandboxConciergePage() {
       surpriseContrastScenarioFamily,
     ],
   )
+  const surpriseCrossPersonaOpportunityRepairEntries = useMemo(
+    () => {
+      if (
+        !isSurpriseWrapperActive ||
+        !scenarioCrossPersonaCandidateBoard ||
+        scenarioCrossPersonaBuiltNights.length === 0
+      ) {
+        return [] as Array<{
+          opportunity: VerifiedCityOpportunity
+          sourceOpportunitySelection: string
+          scenarioSelectionContext: string
+          matchedDistrictId: string | null
+          matchedDirectionId: string | null
+          fallbackSelectionCandidate: string | null
+          selectionRepairApplied: boolean
+          repairedSelectionDirectionId: string | null
+          repairedSelectionPocketId: string | null
+          selectionRepairReason: string | null
+          selectionRepairResolverTrace: string
+        }>
+      }
+      const crossPersonaVibeLabel =
+        getScenarioFamilyVibeLabel(surpriseCrossPersonaScenarioFamily) ?? selectedVibeLabel
+      return scenarioCrossPersonaBuiltNights
+        .map((night) =>
+          mapBuiltScenarioNightToVerifiedOpportunity({
+            night,
+            districtDiscoveryCards,
+            directionCards: allDirectionCards,
+            personaLabel: selectedPersonaLabel,
+            vibeLabel: crossPersonaVibeLabel,
+            expandedProjection: isBuildWrapperActive,
+            contractConstraints: canonicalContractConstraints,
+          }),
+        )
+        .filter((entry): entry is VerifiedCityOpportunity => Boolean(entry))
+        .map((opportunity) =>
+          repairSurpriseContrastWindDownOpportunity({
+            opportunity,
+            contractConstraints: canonicalContractConstraints,
+          }).opportunity,
+        )
+        .map((opportunity) =>
+          repairSurpriseContrastSelectionContext({
+            opportunity,
+            directionCards,
+            allDirectionCards,
+            districtDiscoveryCards,
+          }),
+        )
+    },
+    [
+      directionCards,
+      allDirectionCards,
+      canonicalContractConstraints,
+      districtDiscoveryCards,
+      isBuildWrapperActive,
+      isSurpriseWrapperActive,
+      scenarioCrossPersonaBuiltNights,
+      scenarioCrossPersonaCandidateBoard,
+      selectedPersonaLabel,
+      selectedVibeLabel,
+      surpriseCrossPersonaScenarioFamily,
+    ],
+  )
   const scenarioBackedVerifiedCityOpportunities = useMemo<VerifiedCityOpportunity[]>(() => {
     if (!resolvedScenarioFamily || !scenarioCandidateBoard) {
       return []
@@ -9690,12 +9849,16 @@ export function SandboxConciergePage() {
         }),
       )
       .filter((entry): entry is VerifiedCityOpportunity => Boolean(entry))
-    if (surpriseContrastOpportunityRepairEntries.length === 0) {
+    if (
+      surpriseContrastOpportunityRepairEntries.length === 0 &&
+      surpriseCrossPersonaOpportunityRepairEntries.length === 0
+    ) {
       return primaryOpportunities
     }
     return [
       ...primaryOpportunities,
       ...surpriseContrastOpportunityRepairEntries.map((entry) => entry.opportunity),
+      ...surpriseCrossPersonaOpportunityRepairEntries.map((entry) => entry.opportunity),
     ]
   }, [
     allDirectionCards,
@@ -9708,6 +9871,7 @@ export function SandboxConciergePage() {
     selectedPersonaLabel,
     selectedVibeLabel,
     surpriseContrastOpportunityRepairEntries,
+    surpriseCrossPersonaOpportunityRepairEntries,
   ])
   const scenarioOpportunityDirectionBackingAdmissions = useMemo(
     () =>
@@ -9870,6 +10034,7 @@ export function SandboxConciergePage() {
       opportunities: admittedScenarioBackedVerifiedCityOpportunities,
       primaryFamily: resolvedScenarioFamily,
       contrastFamily: surpriseContrastScenarioFamily,
+      crossPersonaFamily: surpriseCrossPersonaScenarioFamily,
       maxCount: 4,
     })
   }, [
@@ -9879,6 +10044,7 @@ export function SandboxConciergePage() {
     isSurpriseWrapperActive,
     resolvedScenarioFamily,
     shouldUseScenarioBackedArtifacts,
+    surpriseCrossPersonaScenarioFamily,
     surpriseContrastScenarioFamily,
   ])
   const buildStep2CandidateRouteArtifact = useCallback(
@@ -15226,10 +15392,12 @@ export function SandboxConciergePage() {
     const scenarioFamilyBoardsForDiagnostics = [
       scenarioCandidateBoard,
       isSurpriseWrapperActive ? scenarioContrastCandidateBoard : null,
+      isSurpriseWrapperActive ? scenarioCrossPersonaCandidateBoard : null,
     ].filter((board): board is StopTypeCandidateBoard => Boolean(board))
     const scenarioFamilyNightsForDiagnostics = [
       ...scenarioBuiltNights,
       ...(isSurpriseWrapperActive ? scenarioContrastBuiltNights : []),
+      ...(isSurpriseWrapperActive ? scenarioCrossPersonaBuiltNights : []),
     ]
     const currentSelectedArtifact =
       selectedCandidateRouteArtifact ??
@@ -15327,12 +15495,15 @@ export function SandboxConciergePage() {
     const resolvedScenarioFamiliesConsidered = [
       resolvedScenarioFamily,
       isSurpriseWrapperActive ? surpriseContrastScenarioFamily : null,
+      isSurpriseWrapperActive ? surpriseCrossPersonaScenarioFamily : null,
     ]
       .filter((value): value is string => Boolean(value))
       .join(', ') || 'n/a'
     const surprisePrimaryScenarioFamily = resolvedScenarioFamily ?? 'n/a'
     const surpriseContrastScenarioFamilyDebug =
       isSurpriseWrapperActive ? surpriseContrastScenarioFamily ?? 'n/a' : 'n/a'
+    const surpriseCrossPersonaScenarioFamilyDebug =
+      isSurpriseWrapperActive ? surpriseCrossPersonaScenarioFamily ?? 'n/a' : 'n/a'
     const scenarioFamiliesGenerated = summarizeDiagnosticCounts(
       scenarioFamilyNightsForDiagnostics.map((night) => night.scenarioFamily),
     )
@@ -15399,9 +15570,27 @@ export function SandboxConciergePage() {
     const admittedScenarioOpportunityIds = admittedScenarioBackedVerifiedCityOpportunities.map(
       (opportunity) => opportunity.id,
     )
+    const crossPersonaScenarioOpportunityIds = scenarioBackedVerifiedCityOpportunities
+      .filter(
+        (opportunity) =>
+          opportunity.scenarioNight?.scenarioFamily === surpriseCrossPersonaScenarioFamily,
+      )
+      .map((opportunity) => opportunity.id)
     const suppressedScenarioOpportunityIds = suppressedScenarioBackedOpportunityAdmissions.map(
       (entry) => entry.opportunity.id,
     )
+    const crossPersonaAdmittedOpportunityIds = admittedScenarioBackedVerifiedCityOpportunities
+      .filter(
+        (opportunity) =>
+          opportunity.scenarioNight?.scenarioFamily === surpriseCrossPersonaScenarioFamily,
+      )
+      .map((opportunity) => opportunity.id)
+    const crossPersonaSuppressedOpportunityIds = suppressedScenarioBackedOpportunityAdmissions
+      .filter(
+        (entry) =>
+          entry.opportunity.scenarioNight?.scenarioFamily === surpriseCrossPersonaScenarioFamily,
+      )
+      .map((entry) => entry.opportunity.id)
     const suppressedScenarioOpportunityReasons = suppressedScenarioBackedOpportunityAdmissions.map(
       (entry) => `${entry.opportunity.id}:${entry.reason}`,
     )
@@ -16224,6 +16413,7 @@ export function SandboxConciergePage() {
       resolvedScenarioFamiliesConsidered,
       surprisePrimaryScenarioFamily,
       surpriseContrastScenarioFamily: surpriseContrastScenarioFamilyDebug,
+      surpriseCrossPersonaScenarioFamily: surpriseCrossPersonaScenarioFamilyDebug,
       scenarioFamiliesGenerated,
       scenarioBoardCandidateCountsByFamily,
       scenarioBuiltNightCountsByFamily,
@@ -16308,6 +16498,9 @@ export function SandboxConciergePage() {
       visibleVsSuppressedDirectionBackingSummary,
       admittedScenarioOpportunityIds,
       suppressedScenarioOpportunityIds,
+      crossPersonaScenarioOpportunityIds,
+      crossPersonaAdmittedOpportunityIds,
+      crossPersonaSuppressedOpportunityIds,
       suppressedScenarioOpportunityReasons,
       admittedScenarioOpportunityFamilyCounts,
       suppressedScenarioOpportunityFamilyCounts,
@@ -16393,6 +16586,8 @@ export function SandboxConciergePage() {
     persona,
     primaryVibe,
     resolvedScenarioFamily,
+    scenarioCrossPersonaBuiltNights,
+    scenarioCrossPersonaCandidateBoard,
     scenarioContrastBuiltNights,
     scenarioContrastCandidateBoard,
     scenarioBuiltNights,
@@ -16416,6 +16611,8 @@ export function SandboxConciergePage() {
     selectedStep2CandidateArtifactId,
     shouldUseScenarioBackedArtifacts,
     surpriseContractValidationFailedDirectionId,
+    surpriseCrossPersonaOpportunityRepairEntries,
+    surpriseCrossPersonaScenarioFamily,
     surpriseContrastOpportunityRepairEntries,
     surpriseScenarioArtifactSourceOpportunities,
     suppressedDirectionUnbackedArtifacts,
