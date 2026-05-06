@@ -14849,6 +14849,11 @@ export function SandboxConciergePage() {
     }
     const currentArtifactId = selectedCandidateRouteArtifact?.id ?? selectedStep2CandidateArtifactId ?? null
     const currentSelectedStorySpine = selectedCandidateRouteArtifact?.storySpine ?? null
+    const currentScenarioFamilyHintForReroll = deriveScenarioFamilyHintFromArtifactIdentity({
+      artifactId: selectedCandidateRouteArtifact?.id ?? null,
+      sourceOpportunityId: selectedCandidateRouteArtifact?.sourceOpportunityId ?? null,
+      routeTitle: selectedCandidateRouteArtifact?.routeTitle ?? null,
+    })
     const candidates = candidateRouteArtifactsForDisplay
       .map((candidateArtifact) => {
         if (candidateArtifact.id === currentArtifactId) {
@@ -14910,11 +14915,22 @@ export function SandboxConciergePage() {
         if (!structurallyDifferent) {
           return null
         }
+        const candidateScenarioFamilyHint = deriveScenarioFamilyHintFromArtifactIdentity({
+          artifactId: candidateArtifact.id,
+          sourceOpportunityId: candidateArtifact.sourceOpportunityId,
+          routeTitle: candidateArtifact.routeTitle,
+        })
+        const crossFamily =
+          Boolean(currentScenarioFamilyHintForReroll) &&
+          Boolean(candidateScenarioFamilyHint) &&
+          candidateScenarioFamilyHint !== currentScenarioFamilyHintForReroll
         return {
           artifact: candidateArtifact,
           direction: candidateDirection,
           score: visibleDifferenceScore + variationBoost,
           fingerprint,
+          candidateScenarioFamilyHint,
+          crossFamily,
           ...overlap,
           sameDirection: candidateDirection.id === currentDirectionId,
           orderingReason:
@@ -14933,6 +14949,8 @@ export function SandboxConciergePage() {
           direction: (typeof directionCards)[number]
           score: number
           fingerprint: string
+          candidateScenarioFamilyHint: string | null
+          crossFamily: boolean
           sameStart: boolean
           sameHighlight: boolean
           sameWindDown: boolean
@@ -14954,6 +14972,9 @@ export function SandboxConciergePage() {
       if (left.sameHighlight !== right.sameHighlight) {
         return Number(left.sameHighlight) - Number(right.sameHighlight)
       }
+      if (left.crossFamily !== right.crossFamily) {
+        return Number(right.crossFamily) - Number(left.crossFamily)
+      }
       if (left.sameWindDown !== right.sameWindDown) {
         return Number(left.sameWindDown) - Number(right.sameWindDown)
       }
@@ -14971,6 +14992,8 @@ export function SandboxConciergePage() {
       direction: (typeof directionCards)[number]
       score: number
       fingerprint: string
+      candidateScenarioFamilyHint: string | null
+      crossFamily: boolean
       sameStart: boolean
       sameHighlight: boolean
       sameWindDown: boolean
@@ -15003,6 +15026,15 @@ export function SandboxConciergePage() {
           topCandidate.sameHighlight === false
         ) {
           orderingAdjustments.push('highlight_difference_preferred')
+        }
+        if (
+          topCandidate.score === scoreOnlyTopCandidate.score &&
+          topCandidate.roleOverlapCount === scoreOnlyTopCandidate.roleOverlapCount &&
+          topCandidate.sameHighlight === scoreOnlyTopCandidate.sameHighlight &&
+          topCandidate.crossFamily !== scoreOnlyTopCandidate.crossFamily &&
+          topCandidate.crossFamily
+        ) {
+          orderingAdjustments.push('cross_family_preferred')
         }
       }
       uniqueByFingerprint[0] = {
