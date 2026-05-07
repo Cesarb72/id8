@@ -54,6 +54,11 @@ import {
   type DirectionCoreRole,
 } from '../domain/bearings/assessDirectionContractBuildability'
 import { saveLockedLiveArtifactSession } from '../app/services/live/liveSessionHandoff'
+import {
+  buildPlanPreviewV01FromSelectedRouteArtifacts,
+  comparePlanPreviewV01ToRenderedPreview,
+  comparePlanPreviewV01ToSelectedRouteArtifact,
+} from '../app/preview/planPreview'
 import { assembleSandboxDirectionWorld } from '../app/services/sandbox/sandboxDirectionOrchestrator'
 import {
   attachFinalRouteParityToContractEntryArtifact,
@@ -14654,6 +14659,74 @@ export function SandboxConciergePage() {
       scenarioEvaluationNotes: selectedRouteArtifact.scenarioEvaluationNotes,
     }
   }, [selectedRouteArtifact])
+  const previewRenderSource = useMemo(() => {
+    if (selectedRouteArtifact?.source === 'candidate') {
+      return 'selectedRouteArtifact.candidateRouteArtifact'
+    }
+    if (selectedRouteArtifact?.source === 'committed') {
+      return 'selectedRouteArtifact.canonicalRouteArtifact'
+    }
+    return selectedRouteSummaryArtifact ? 'selectedRouteSummaryArtifact' : null
+  }, [selectedRouteArtifact, selectedRouteSummaryArtifact])
+  const previewRenderedArtifactId = useMemo(() => {
+    if (selectedRouteArtifact?.source === 'candidate') {
+      return selectedRouteArtifact.candidateArtifactId ?? null
+    }
+    if (selectedRouteArtifact?.source === 'committed') {
+      return canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ?? null
+    }
+    return null
+  }, [canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId, selectedRouteArtifact])
+  const activePlanPreview = useMemo(
+    () =>
+      buildPlanPreviewV01FromSelectedRouteArtifacts({
+        selectedRouteArtifact,
+        selectedRouteSummaryArtifact,
+        committedCandidateArtifactId:
+          canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ?? null,
+      }),
+    [
+      canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId,
+      selectedRouteArtifact,
+      selectedRouteSummaryArtifact,
+    ],
+  )
+  const activePlanPreviewSelectedRouteArtifactComparison = useMemo(
+    () =>
+      comparePlanPreviewV01ToSelectedRouteArtifact({
+        activePlanPreview,
+        selectedRouteArtifact,
+        committedCandidateArtifactId:
+          canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ?? null,
+      }),
+    [
+      activePlanPreview,
+      canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId,
+      selectedRouteArtifact,
+    ],
+  )
+  const activePlanPreviewRenderedPreviewComparison = useMemo(
+    () =>
+      comparePlanPreviewV01ToRenderedPreview({
+        activePlanPreview,
+        previewRenderedArtifactId,
+        previewDirectionId,
+      }),
+    [activePlanPreview, previewDirectionId, previewRenderedArtifactId],
+  )
+  const activePlanPreviewMatchesSelectedRouteArtifact =
+    activePlanPreviewSelectedRouteArtifactComparison.matches
+  const activePlanPreviewMatchesRenderedPreview =
+    activePlanPreviewRenderedPreviewComparison.matches
+  const activePlanPreviewDivergenceReason =
+    activePlanPreviewMatchesSelectedRouteArtifact === false
+      ? `selectedRouteArtifact:${activePlanPreviewSelectedRouteArtifactComparison.reason ?? 'unknown'}`
+      : activePlanPreviewMatchesRenderedPreview === false
+        ? `renderedPreview:${activePlanPreviewRenderedPreviewComparison.reason ?? 'unknown'}`
+        : activePlanPreviewMatchesRenderedPreview == null &&
+            activePlanPreviewRenderedPreviewComparison.reason
+          ? `renderedPreview:${activePlanPreviewRenderedPreviewComparison.reason}`
+          : null
   const visibleCardArtifactParityRows = useMemo<VisibleCardArtifactParityRow[]>(() => {
     const finalRouteForParity = canonicalRouteArtifact?.finalRoute ?? null
     const visibleCardModelByArtifactId = new Map(
@@ -14921,20 +14994,6 @@ export function SandboxConciergePage() {
           canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId !==
             selectedCandidateRouteArtifact.id,
       )
-      const previewRenderSource =
-        selectedRouteArtifact?.source === 'candidate'
-          ? 'selectedRouteArtifact.candidateRouteArtifact'
-          : selectedRouteArtifact?.source === 'committed'
-            ? 'selectedRouteArtifact.canonicalRouteArtifact'
-            : selectedRouteSummaryArtifact
-              ? 'selectedRouteSummaryArtifact'
-              : null
-      const previewRenderedArtifactId =
-        selectedRouteArtifact?.source === 'candidate'
-          ? selectedRouteArtifact.candidateArtifactId ?? null
-          : selectedRouteArtifact?.source === 'committed'
-            ? canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ?? null
-            : null
       const next: Step2RerollOwnershipTrace = {
         ...current,
         selectedDirectionId_afterSelect: selectedDirectionId ?? null,
@@ -14970,6 +15029,8 @@ export function SandboxConciergePage() {
     canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId,
     committedPreviewStopByRole,
     currentVisibleProofLines,
+    previewRenderSource,
+    previewRenderedArtifactId,
     previewDirectionId,
     selectedCandidateRouteArtifact,
     selectedDirectionId,
@@ -18612,6 +18673,47 @@ export function SandboxConciergePage() {
             <div>directionSyncMismatch: {String(directionSyncMismatch)}</div>
             <div>previewDirectionId: {previewDirectionId ?? 'n/a'}</div>
             <div>finalRouteDirectionId: {finalRouteDirectionId ?? 'n/a'}</div>
+            <div>activePlanPreview.id: {activePlanPreview?.id ?? 'n/a'}</div>
+            <div>activePlanPreview.source: {activePlanPreview?.source ?? 'n/a'}</div>
+            <div>
+              activePlanPreview.sourceCandidateArtifactId:{' '}
+              {activePlanPreview?.sourceCandidateArtifactId ?? 'n/a'}
+            </div>
+            <div>
+              activePlanPreview.storySpine.start:{' '}
+              {activePlanPreview?.storySpine.start ?? 'n/a'}
+            </div>
+            <div>
+              activePlanPreview.storySpine.highlight:{' '}
+              {activePlanPreview?.storySpine.highlight ?? 'n/a'}
+            </div>
+            <div>
+              activePlanPreview.storySpine.windDown:{' '}
+              {activePlanPreview?.storySpine.windDown ?? 'n/a'}
+            </div>
+            <div>selectedRouteArtifact.source: {selectedRouteArtifact?.source ?? 'n/a'}</div>
+            <div>
+              selectedRouteArtifact.candidateArtifactId:{' '}
+              {selectedRouteArtifact?.candidateArtifactId ?? 'n/a'}
+            </div>
+            <div>previewRenderSource: {previewRenderSource ?? 'n/a'}</div>
+            <div>previewRenderedArtifactId: {previewRenderedArtifactId ?? 'n/a'}</div>
+            <div>
+              activePlanPreviewMatchesSelectedRouteArtifact:{' '}
+              {activePlanPreviewMatchesSelectedRouteArtifact == null
+                ? 'n/a'
+                : String(activePlanPreviewMatchesSelectedRouteArtifact)}
+            </div>
+            <div>
+              activePlanPreviewMatchesRenderedPreview:{' '}
+              {activePlanPreviewMatchesRenderedPreview == null
+                ? 'n/a'
+                : String(activePlanPreviewMatchesRenderedPreview)}
+            </div>
+            <div>
+              activePlanPreviewDivergenceReason:{' '}
+              {activePlanPreviewDivergenceReason ?? 'none'}
+            </div>
             <div>interpretationBundlePresent: {String(interpretationBundlePresent)}</div>
             <div>interpretationBundleSource: {interpretationBundleSource}</div>
             <div>interpretationBundleSummary: {interpretationBundleSummary}</div>
