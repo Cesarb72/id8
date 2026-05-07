@@ -14659,6 +14659,8 @@ export function SandboxConciergePage() {
       scenarioEvaluationNotes: selectedRouteArtifact.scenarioEvaluationNotes,
     }
   }, [selectedRouteArtifact])
+  const preview = selectedRouteSummaryArtifact?.preview ?? null
+  const previewDirectionId = preview?.directionId ?? null
   const previewRenderSource = useMemo(() => {
     if (selectedRouteArtifact?.source === 'candidate') {
       return 'selectedRouteArtifact.candidateRouteArtifact'
@@ -14889,8 +14891,6 @@ export function SandboxConciergePage() {
     surpriseContractValidationFailedArtifactId,
     surpriseContractValidationFailedDirectionId,
   ])
-  const preview = selectedRouteSummaryArtifact?.preview ?? null
-  const previewDirectionId = preview?.directionId ?? null
   const finalRouteDirectionId = canonicalRouteArtifact?.selectedDirectionId ?? null
   const selectedDirectionContextId = resolvedSelectedDirectionContext?.selectedDirectionId ?? null
   const directionSyncMismatch = Boolean(
