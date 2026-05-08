@@ -37,6 +37,9 @@ export interface PlanPreviewV01 {
   renderModelSource: 'selected_route_artifact' | 'selected_route_summary_artifact'
   sourceCandidateArtifactId: string | null
   selectedDirectionId: string | null
+  routeTitle: string | null
+  flavorLine: string | null
+  routeSummary: string | null
   storySpine: PlanPreviewV01StorySpine
   stops: PlanPreviewV01Stop[]
   backingSummary: string | null
@@ -178,6 +181,9 @@ export function buildPlanPreviewV01FromSelectedRouteArtifacts(params: {
       renderModelSource: 'selected_route_summary_artifact',
       sourceCandidateArtifactId: null,
       selectedDirectionId,
+      routeTitle: selectedRouteSummaryArtifact?.routeTitle ?? null,
+      flavorLine: selectedRouteSummaryArtifact?.flavorLine ?? null,
+      routeSummary: selectedRouteSummaryArtifact?.routeSummary ?? null,
       storySpine,
       stops,
       backingSummary: null,
@@ -211,6 +217,9 @@ export function buildPlanPreviewV01FromSelectedRouteArtifacts(params: {
     renderModelSource: 'selected_route_artifact',
     sourceCandidateArtifactId,
     selectedDirectionId: selectedRouteArtifact.directionId ?? null,
+    routeTitle: selectedRouteArtifact.routeTitle ?? null,
+    flavorLine: selectedRouteArtifact.flavorLine ?? null,
+    routeSummary: selectedRouteArtifact.routeSummary ?? null,
     storySpine,
     stops,
     backingSummary: summarizeDirectionBacking(selectedRouteArtifact.candidateRouteArtifact),

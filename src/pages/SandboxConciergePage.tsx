@@ -16709,8 +16709,20 @@ export function SandboxConciergePage() {
     : selectedDirectionTitle
       ? selectedDirectionTitle
       : "Tonight's route"
+  const activePlanPreviewHeaderTitle =
+    activePlanPreview?.routeTitle?.trim() || previewHeaderTitle
   const previewCandidateLeadLine =
     selectedRouteSummaryArtifact?.flavorLine?.trim() || 'A complete, ready-to-run night.'
+  const activePlanPreviewCandidateLeadLine =
+    activePlanPreview?.flavorLine?.trim() || previewCandidateLeadLine
+  const activePlanPreviewNarrativeSummary =
+    activePlanPreview?.routeSummary?.trim() || previewNarrativeSummary
+  const activePlanPreviewStartLabel =
+    activePlanPreview?.storySpine.start?.trim() || previewStartLabel
+  const activePlanPreviewHighlightLabel =
+    activePlanPreview?.storySpine.highlight?.trim() || previewHighlightLabel
+  const activePlanPreviewWindDownLabel =
+    activePlanPreview?.storySpine.windDown?.trim() || previewWindDownLabel
   const previewTraitLine =
     selectedRouteSummaryArtifact?.traits && selectedRouteSummaryArtifact.traits.length > 0
       ? `Route character: ${selectedRouteSummaryArtifact.traits.join(', ')}.`
@@ -16728,6 +16740,7 @@ export function SandboxConciergePage() {
       (value): value is string => Boolean(value && value.trim()),
     ),
   ).slice(0, 2)
+  const planPreviewHeaderRenderActive = Boolean(activePlanPreview)
   const previewStructureReason =
     resolvedContractConstraints.peakCountModel === 'distributed'
       ? 'Start, highlight, and wind-down stay coordinated even with a distributed peak model.'
@@ -18675,6 +18688,7 @@ export function SandboxConciergePage() {
             <div>finalRouteDirectionId: {finalRouteDirectionId ?? 'n/a'}</div>
             <div>activePlanPreview.id: {activePlanPreview?.id ?? 'n/a'}</div>
             <div>activePlanPreview.source: {activePlanPreview?.source ?? 'n/a'}</div>
+            <div>planPreviewHeaderRenderActive: {String(planPreviewHeaderRenderActive)}</div>
             <div>
               activePlanPreview.sourceCandidateArtifactId:{' '}
               {activePlanPreview?.sourceCandidateArtifactId ?? 'n/a'}
@@ -20460,21 +20474,21 @@ export function SandboxConciergePage() {
           <p className="preview-bridge-subline">{previewBridgeSubline}</p>
           <article className="night-preview-card">
             <div className="night-preview-content compact-top">
-              <h3>{previewHeaderTitle}</h3>
+              <h3>{activePlanPreviewHeaderTitle}</h3>
               <p className="night-preview-commit">
-                {previewCandidateLeadLine}
+                {activePlanPreviewCandidateLeadLine}
               </p>
               {previewHeaderDistinctionLines.map((line) => (
                 <p key={`preview_header_distinction_${line}`} className="preview-header-subline">
                   {line}
                 </p>
               ))}
-              <p className="night-preview-mainline">{previewNarrativeSummary}</p>
+              <p className="night-preview-mainline">{activePlanPreviewNarrativeSummary}</p>
               <div className="plan-update-lists">
                 <div>
                   <p className="plan-update-list-title">Start</p>
                   <ul className="plan-update-list">
-                    <li>{previewStartLabel}</li>
+                    <li>{activePlanPreviewStartLabel}</li>
                   </ul>
                 </div>
                 <div>
@@ -20483,13 +20497,13 @@ export function SandboxConciergePage() {
                     <p className="preview-header-subline">{previewHighlightProvenanceLine}</p>
                   )}
                   <ul className="plan-update-list">
-                    <li>{previewHighlightLabel}</li>
+                    <li>{activePlanPreviewHighlightLabel}</li>
                   </ul>
                 </div>
                 <div>
                   <p className="plan-update-list-title">Wind-down</p>
                   <ul className="plan-update-list">
-                    <li>{previewWindDownLabel}</li>
+                    <li>{activePlanPreviewWindDownLabel}</li>
                   </ul>
                 </div>
               </div>
