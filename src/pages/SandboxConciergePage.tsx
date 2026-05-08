@@ -16845,13 +16845,19 @@ export function SandboxConciergePage() {
     }
     return 'Movement remains easy across nearby areas.'
   }, [resolvedContractConstraints.movementTolerance])
+  const activePlanPreviewSpatialStartLabel =
+    activePlanPreview?.storySpine.start?.trim() || previewStartLabel
+  const activePlanPreviewSpatialHighlightLabel =
+    activePlanPreview?.storySpine.highlight?.trim() || previewHighlightLabel
+  const activePlanPreviewSpatialWindDownLabel =
+    activePlanPreview?.storySpine.windDown?.trim() || previewWindDownLabel
   const previewSpatialStops = useMemo(
     () => [
       {
         key: 'start',
         roleLabel: 'Start',
         hint: 'near center',
-        venue: previewStartLabel,
+        venue: activePlanPreviewSpatialStartLabel,
         left: '16%',
         top: '62%',
         highlighted: false,
@@ -16860,7 +16866,7 @@ export function SandboxConciergePage() {
         key: 'highlight',
         roleLabel: 'Highlight',
         hint: 'central cluster',
-        venue: previewHighlightLabel,
+        venue: activePlanPreviewSpatialHighlightLabel,
         left: '50%',
         top: '30%',
         highlighted: true,
@@ -16869,14 +16875,19 @@ export function SandboxConciergePage() {
         key: 'windDown',
         roleLabel: 'Wind-down',
         hint: 'slightly quieter edge',
-        venue: previewWindDownLabel,
+        venue: activePlanPreviewSpatialWindDownLabel,
         left: '82%',
         top: '58%',
         highlighted: false,
       },
     ],
-    [previewHighlightLabel, previewStartLabel, previewWindDownLabel],
+    [
+      activePlanPreviewSpatialHighlightLabel,
+      activePlanPreviewSpatialStartLabel,
+      activePlanPreviewSpatialWindDownLabel,
+    ],
   )
+  const planPreviewRouteDiagramRenderActive = Boolean(activePlanPreview)
   const previewBridgeLine = 'Generated route summary'
   const previewBridgeSubline =
     previewHighlightProvenanceLine ??
@@ -18689,6 +18700,10 @@ export function SandboxConciergePage() {
             <div>activePlanPreview.id: {activePlanPreview?.id ?? 'n/a'}</div>
             <div>activePlanPreview.source: {activePlanPreview?.source ?? 'n/a'}</div>
             <div>planPreviewHeaderRenderActive: {String(planPreviewHeaderRenderActive)}</div>
+            <div>
+              planPreviewRouteDiagramRenderActive:{' '}
+              {String(planPreviewRouteDiagramRenderActive)}
+            </div>
             <div>
               activePlanPreview.sourceCandidateArtifactId:{' '}
               {activePlanPreview?.sourceCandidateArtifactId ?? 'n/a'}
