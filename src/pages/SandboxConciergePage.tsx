@@ -17563,6 +17563,35 @@ export function SandboxConciergePage() {
       selectedRouteSummaryArtifact?.source,
     ],
   )
+  const planPreviewShowcaseCards = useMemo(() => {
+    const fallbackCardByRole = new Map(
+      surprisePreviewVenueCards.map((card) => [card.role, card] as const),
+    )
+    return PREVIEW_ADJUSTABLE_ROLES.map((role) => {
+      const activeStop = activePlanPreview?.stops.find((stop) => stop.role === role)
+      const fallbackCard = fallbackCardByRole.get(role)
+      if (!activeStop && !fallbackCard) {
+        return null
+      }
+      return {
+        role,
+        roleLabel: getPreviewRoleLabel(role),
+        venueName: activeStop?.name?.trim() || fallbackCard?.venueName || '',
+        mediaUrl: activeStop?.mediaUrl?.trim() || fallbackCard?.mediaUrl || '',
+        mediaAlt: activeStop?.mediaAlt?.trim() || fallbackCard?.mediaAlt || '',
+        venueType: activeStop?.venueType?.trim() || fallbackCard?.venueType || '',
+        areaName: activeStop?.areaName?.trim() || fallbackCard?.areaName || '',
+        fitSummary: activeStop?.fitSummary?.trim() || fallbackCard?.fitSummary || '',
+        knownFor: activeStop?.knownFor?.trim() || fallbackCard?.knownFor || '',
+        areaFitSummary: activeStop?.areaFitSummary?.trim() || fallbackCard?.areaFitSummary || '',
+      }
+    }).filter((card): card is NonNullable<typeof card> => Boolean(card))
+  }, [activePlanPreview?.stops, surprisePreviewVenueCards])
+  const planPreviewShowcaseCardsRenderActive = Boolean(activePlanPreview)
+  const planPreviewShowcaseCardCount = planPreviewShowcaseCards.length
+  const planPreviewShowcaseCardsWithMediaCount = planPreviewShowcaseCards.filter((card) =>
+    Boolean(card.mediaUrl?.trim()),
+  ).length
   const activeSwapCandidatePrefilterDebug = swapCandidatePrefilterDebugByRole[activeRole]
   const appliedSwapNoteByRole = useMemo(() => {
     if (!appliedSwapRole) {
@@ -18716,6 +18745,14 @@ export function SandboxConciergePage() {
             </div>
             <div>
               activePlanPreviewStopSourceSummary: {activePlanPreviewStopSourceSummary}
+            </div>
+            <div>
+              planPreviewShowcaseCardsRenderActive:{' '}
+              {String(planPreviewShowcaseCardsRenderActive)}
+            </div>
+            <div>planPreviewShowcaseCardCount: {planPreviewShowcaseCardCount}</div>
+            <div>
+              planPreviewShowcaseCardsWithMediaCount: {planPreviewShowcaseCardsWithMediaCount}
             </div>
             <div>
               planPreviewRouteDiagramRenderActive:{' '}
@@ -20539,11 +20576,11 @@ export function SandboxConciergePage() {
                   </ul>
                 </div>
               </div>
-              {surprisePreviewVenueCards.length > 0 && (
+              {planPreviewShowcaseCards.length > 0 && (
                 <section className="surprise-stop-showcase" aria-label="Stops in tonight's route">
                   <p className="surprise-stop-showcase-title">Tonight&apos;s stops</p>
                   <div className="surprise-stop-showcase-grid">
-                    {surprisePreviewVenueCards.map((card) => (
+                    {planPreviewShowcaseCards.map((card) => (
                       <PreviewVenueCard
                         key={`surprise_stop_${card.role}`}
                         role={card.role}
