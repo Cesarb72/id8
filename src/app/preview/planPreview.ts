@@ -6,7 +6,12 @@ import type {
   SelectedRouteSummaryArtifact,
 } from '../../domain/artifacts/selectedRouteArtifact'
 
-export type PlanPreviewV01Source = 'candidate' | 'direction_fallback' | 'committed'
+export type PlanPreviewV01Source =
+  | 'candidate_artifact'
+  | 'direction_fallback'
+  | 'generated_route'
+  | 'committed_plan'
+  | 'live_plan'
 
 export type PlanPreviewV01Provenance =
   | 'candidate_artifact'
@@ -104,13 +109,13 @@ function resolvePlanPreviewSource(
 ): Pick<PlanPreviewV01, 'source' | 'provenance'> {
   if (selectedRouteArtifact.source === 'committed') {
     return {
-      source: 'committed',
+      source: 'generated_route',
       provenance: 'generated_runtime_route',
     }
   }
   if (selectedRouteArtifact.candidateRouteArtifact) {
     return {
-      source: 'candidate',
+      source: 'candidate_artifact',
       provenance: 'candidate_artifact',
     }
   }
