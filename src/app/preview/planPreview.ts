@@ -1,10 +1,12 @@
 import type { ContractEntryArtifact } from '../../domain/artifacts/contractEntryArtifact'
+import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../../domain/artifacts/runtimeRouteArtifact'
 import type {
   DirectionPreviewModel,
   DirectionPreviewStop,
   SelectedRouteArtifact,
   SelectedRouteSummaryArtifact,
 } from '../../domain/artifacts/selectedRouteArtifact'
+import type { ItineraryStop } from '../../domain/types/itinerary'
 
 export type PlanPreviewV01Source =
   | 'candidate_artifact'
@@ -27,6 +29,16 @@ export interface PlanPreviewV01StorySpine {
 export interface PlanPreviewV01Stop {
   role: DirectionPreviewStop['role']
   name: string
+  venueId?: string
+  stopId?: string
+  source: 'story_spine' | 'final_route' | 'fallback'
+  fitSummary?: string
+  knownFor?: string
+  areaName?: string
+  venueType?: string
+  areaFitSummary?: string
+  mediaUrl?: string
+  mediaAlt?: string
 }
 
 export interface PlanPreviewV01 {
@@ -77,10 +89,156 @@ function readStops(params: {
   routeSummaryArtifact: SelectedRouteSummaryArtifact | null
 }): PlanPreviewV01Stop[] {
   const previewStops = params.routeArtifact?.preview.stops ?? params.routeSummaryArtifact?.preview.stops
-  return (previewStops ?? []).map((stop) => ({
-    role: stop.role,
-    name: stop.name,
-  }))
+  const runtimeContext = readRuntimeStopContext(params.routeArtifact)
+  const fallbackStopFields = readFallbackStopFields({
+    routeArtifact: params.routeArtifact,
+    routeSummaryArtifact: params.routeSummaryArtifact,
+  })
+  return (previewStops ?? []).map((stop) => {
+    const runtimeStop = runtimeContext.byRole.get(stop.role)
+    const itineraryStop = runtimeContext.itineraryStopByRole.get(stop.role)
+    const fallbackFields = fallbackStopFields[stop.role]
+    const stopName = stop.name.trim()
+    const runtimeFitSummary = normalizePreviewString(
+      runtimeStop?.subtitle || itineraryStop?.subtitle,
+    )
+    const runtimeAreaName = normalizePreviewString(
+      runtimeStop?.neighborhood || itineraryStop?.neighborhood,
+    )
+    const runtimeVenueType = deriveRuntimeVenueTypeLabel(itineraryStop)
+    const runtimeMediaUrl = normalizePreviewString(runtimeStop?.imageUrl || itineraryStop?.imageUrl)
+    const runtimeMediaAlt =
+      normalizePreviewString(runtimeStop?.displayName || stopName) && runtimeMediaUrl
+        ? `${normalizePreviewString(runtimeStop?.displayName || stopName)} preview`
+        : undefined
+    const hasRuntimeEnrichment = Boolean(
+      runtimeStop?.venueId ||
+        runtimeStop?.sourceStopId ||
+        itineraryStop?.id ||
+        runtimeFitSummary ||
+        runtimeAreaName ||
+        runtimeVenueType ||
+        runtimeMediaUrl ||
+        runtimeMediaAlt,
+    )
+    const stopSource =
+      hasRuntimeEnrichment
+        ? 'final_route'
+        : params.routeArtifact
+          ? 'story_spine'
+          : 'fallback'
+    return {
+      role: stop.role,
+      name: stopName,
+      venueId: runtimeStop?.venueId,
+      stopId: runtimeStop?.sourceStopId ?? itineraryStop?.id,
+      source: stopSource,
+      fitSummary: runtimeFitSummary ?? fallbackFields.fitSummary,
+      knownFor: fallbackFields.knownFor,
+      areaName: runtimeAreaName ?? fallbackFields.areaName,
+      venueType: runtimeVenueType ?? fallbackFields.venueType,
+      areaFitSummary: fallbackFields.areaFitSummary,
+      mediaUrl: runtimeMediaUrl,
+      mediaAlt: runtimeMediaAlt,
+    }
+  })
+}
+
+function normalizePreviewString(value: string | undefined | null): string | undefined {
+  const normalized = value?.trim().replace(/\s+/g, ' ')
+  return normalized ? normalized : undefined
+}
+
+function deriveRuntimeVenueTypeLabel(stop: ItineraryStop | undefined): string | undefined {
+  if (!stop) {
+    return undefined
+  }
+  const category = normalizePreviewString(stop.category)
+  const subcategory = normalizePreviewString(stop.subcategory)
+  if (category && subcategory && subcategory.toLowerCase() !== category.toLowerCase()) {
+    return `${category} (${subcategory})`
+  }
+  return category ?? subcategory
+}
+
+function readRuntimeStopContext(
+  routeArtifact: SelectedRouteArtifact<unknown> | null,
+): {
+  byRole: Map<DirectionPreviewStop['role'], RuntimeRouteStop>
+  itineraryStopByRole: Map<DirectionPreviewStop['role'], ItineraryStop>
+} {
+  const canonicalRouteArtifact = routeArtifact?.canonicalRouteArtifact as
+    | {
+        finalRoute?: RuntimeRouteArtifact
+        itinerary?: { stops?: ItineraryStop[] }
+      }
+    | undefined
+  const runtimeStops = canonicalRouteArtifact?.finalRoute?.stops ?? []
+  const itineraryStops = canonicalRouteArtifact?.itinerary?.stops ?? []
+  return {
+    byRole: new Map(
+      runtimeStops
+        .filter((stop): stop is RuntimeRouteStop => Boolean(stop))
+        .map((stop) => [stop.role, stop] as const),
+    ),
+    itineraryStopByRole: new Map(
+      itineraryStops
+        .filter((stop): stop is ItineraryStop => Boolean(stop))
+        .map((stop) => [stop.role, stop] as const),
+    ),
+  }
+}
+
+function readFallbackStopFields(params: {
+  routeArtifact: SelectedRouteArtifact<unknown> | null
+  routeSummaryArtifact: SelectedRouteSummaryArtifact | null
+}): Partial<
+  Record<
+    DirectionPreviewStop['role'],
+    Pick<
+      PlanPreviewV01Stop,
+      'fitSummary' | 'knownFor' | 'areaName' | 'venueType' | 'areaFitSummary'
+    >
+  >
+> {
+  const artifact = params.routeArtifact
+  const summaryArtifact = params.routeSummaryArtifact
+  const summary = artifact ?? summaryArtifact
+  if (!summary) {
+    return {}
+  }
+
+  const defaultFitSummary =
+    normalizePreviewString(summary.routeSummary) ?? normalizePreviewString(summary.whyChooseLine)
+  const highlightKnownFor = normalizePreviewString(summary.authorityLine)
+  const areaName =
+    normalizePreviewString(summary.districtAnchorLine) ?? normalizePreviewString(summary.districtLine)
+  const areaFitSummary =
+    normalizePreviewString(summary.whyTonightProofLine) ??
+    normalizePreviewString(summary.happeningsLine) ??
+    normalizePreviewString(summary.authorityLine)
+
+  const previewStops = summary.preview.stops
+  return previewStops.reduce<
+    Partial<
+      Record<
+        DirectionPreviewStop['role'],
+        Pick<
+          PlanPreviewV01Stop,
+          'fitSummary' | 'knownFor' | 'areaName' | 'venueType' | 'areaFitSummary'
+        >
+      >
+    >
+  >((accumulator, stop) => {
+    accumulator[stop.role] = {
+      fitSummary: defaultFitSummary,
+      knownFor: stop.role === 'highlight' ? highlightKnownFor : undefined,
+      areaName,
+      venueType: undefined,
+      areaFitSummary,
+    }
+    return accumulator
+  }, {})
 }
 
 function readWhyThisWorksLines(params: {

@@ -16806,6 +16806,16 @@ export function SandboxConciergePage() {
     return selected.slice(0, 2)
   }, [previewWhyCandidates])
   const planPreviewWhyThisWorksRenderActive = Boolean(activePlanPreview)
+  const activePlanPreviewStopCount = activePlanPreview?.stops.length ?? 0
+  const activePlanPreviewStopsHaveVenueIds =
+    activePlanPreviewStopCount > 0 &&
+    activePlanPreview.stops.every((stop) => Boolean(stop.venueId?.trim()))
+  const activePlanPreviewStopsHaveMedia =
+    activePlanPreviewStopCount > 0 &&
+    activePlanPreview.stops.some((stop) => Boolean(stop.mediaUrl?.trim()))
+  const activePlanPreviewStopSourceSummary = summarizeDiagnosticCounts(
+    activePlanPreview?.stops.map((stop) => stop.source) ?? [],
+  )
   const activeDistrictDiscoveryCard = useMemo(() => {
     if (activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID) {
       return null
@@ -18695,6 +18705,17 @@ export function SandboxConciergePage() {
             <div>
               planPreviewWhyThisWorksRenderActive:{' '}
               {String(planPreviewWhyThisWorksRenderActive)}
+            </div>
+            <div>activePlanPreviewStopCount: {activePlanPreviewStopCount}</div>
+            <div>
+              activePlanPreviewStopsHaveVenueIds:{' '}
+              {String(activePlanPreviewStopsHaveVenueIds)}
+            </div>
+            <div>
+              activePlanPreviewStopsHaveMedia: {String(activePlanPreviewStopsHaveMedia)}
+            </div>
+            <div>
+              activePlanPreviewStopSourceSummary: {activePlanPreviewStopSourceSummary}
             </div>
             <div>
               planPreviewRouteDiagramRenderActive:{' '}
