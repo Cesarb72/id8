@@ -16751,14 +16751,11 @@ export function SandboxConciergePage() {
       : resolvedContractConstraints.movementTolerance === 'moderate'
         ? 'Short moves maintain momentum without rush.'
         : 'Manageable moves preserve momentum without rush.'
+  const activePlanPreviewWhyThisWorksSourceLines = activePlanPreview?.whyThisWorks ?? []
   const previewWhyCandidates = dedupeStringIds(
     [
-      selectedRouteSummaryArtifact?.whyChooseLine,
-      selectedRouteSummaryArtifact?.whyTonightProofLine,
-      ...(selectedRouteSummaryArtifact?.scenarioEvaluationNotes ?? []).slice(0, 1),
+      ...activePlanPreviewWhyThisWorksSourceLines,
       previewTraitLine,
-      selectedRouteSummaryArtifact?.authorityLine,
-      selectedRouteSummaryArtifact?.happeningsLine,
       previewStructureReason,
       previewMovementReason,
       selectedDirection?.debugMeta?.directionDistrictSupportSummary,
@@ -16807,13 +16804,8 @@ export function SandboxConciergePage() {
       }
     }
     return selected.slice(0, 2)
-  }, [
-    previewMovementReason,
-    previewStructureReason,
-    previewWhyCandidates,
-    resolvedContractConstraints.movementTolerance,
-    resolvedContractConstraints.peakCountModel,
-  ])
+  }, [previewWhyCandidates])
+  const planPreviewWhyThisWorksRenderActive = Boolean(activePlanPreview)
   const activeDistrictDiscoveryCard = useMemo(() => {
     if (activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID) {
       return null
@@ -18700,6 +18692,10 @@ export function SandboxConciergePage() {
             <div>activePlanPreview.id: {activePlanPreview?.id ?? 'n/a'}</div>
             <div>activePlanPreview.source: {activePlanPreview?.source ?? 'n/a'}</div>
             <div>planPreviewHeaderRenderActive: {String(planPreviewHeaderRenderActive)}</div>
+            <div>
+              planPreviewWhyThisWorksRenderActive:{' '}
+              {String(planPreviewWhyThisWorksRenderActive)}
+            </div>
             <div>
               planPreviewRouteDiagramRenderActive:{' '}
               {String(planPreviewRouteDiagramRenderActive)}

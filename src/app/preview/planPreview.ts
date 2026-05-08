@@ -40,6 +40,7 @@ export interface PlanPreviewV01 {
   routeTitle: string | null
   flavorLine: string | null
   routeSummary: string | null
+  whyThisWorks: string[]
   storySpine: PlanPreviewV01StorySpine
   stops: PlanPreviewV01Stop[]
   backingSummary: string | null
@@ -80,6 +81,26 @@ function readStops(params: {
     role: stop.role,
     name: stop.name,
   }))
+}
+
+function readWhyThisWorksLines(params: {
+  routeArtifact: SelectedRouteArtifact<unknown> | null
+  routeSummaryArtifact: SelectedRouteSummaryArtifact | null
+}): string[] {
+  const artifact = params.routeArtifact
+  const summaryArtifact = params.routeSummaryArtifact
+  return [
+    artifact?.whyChooseLine,
+    artifact?.whyTonightProofLine,
+    ...(artifact?.scenarioEvaluationNotes ?? []).slice(0, 1),
+    artifact?.authorityLine,
+    artifact?.happeningsLine,
+    summaryArtifact?.whyChooseLine,
+    summaryArtifact?.whyTonightProofLine,
+    ...(summaryArtifact?.scenarioEvaluationNotes ?? []).slice(0, 1),
+    summaryArtifact?.authorityLine,
+    summaryArtifact?.happeningsLine,
+  ].filter((value): value is string => Boolean(value && value.trim()))
 }
 
 function summarizeDirectionBacking(artifact: ContractEntryArtifact | undefined): string | null {
@@ -184,6 +205,10 @@ export function buildPlanPreviewV01FromSelectedRouteArtifacts(params: {
       routeTitle: selectedRouteSummaryArtifact?.routeTitle ?? null,
       flavorLine: selectedRouteSummaryArtifact?.flavorLine ?? null,
       routeSummary: selectedRouteSummaryArtifact?.routeSummary ?? null,
+      whyThisWorks: readWhyThisWorksLines({
+        routeArtifact: null,
+        routeSummaryArtifact: selectedRouteSummaryArtifact,
+      }),
       storySpine,
       stops,
       backingSummary: null,
@@ -220,6 +245,10 @@ export function buildPlanPreviewV01FromSelectedRouteArtifacts(params: {
     routeTitle: selectedRouteArtifact.routeTitle ?? null,
     flavorLine: selectedRouteArtifact.flavorLine ?? null,
     routeSummary: selectedRouteArtifact.routeSummary ?? null,
+    whyThisWorks: readWhyThisWorksLines({
+      routeArtifact: selectedRouteArtifact,
+      routeSummaryArtifact: selectedRouteSummaryArtifact,
+    }),
     storySpine,
     stops,
     backingSummary: summarizeDirectionBacking(selectedRouteArtifact.candidateRouteArtifact),
