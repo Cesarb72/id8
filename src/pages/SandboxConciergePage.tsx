@@ -17389,16 +17389,26 @@ export function SandboxConciergePage() {
   const activeStopNarrativeSource = activeStopInlineDetail?.stopNarrativeSource ?? 'n/a'
   const activeStopFlavorSummary = activeStopInlineDetail?.stopFlavorSummary ?? 'n/a'
   const activeStopTransitionSummary = activeStopInlineDetail?.stopTransitionSummary ?? 'n/a'
+  const activePlanPreviewStopNameByRole = useMemo(
+    () =>
+      new Map(
+        (activePlanPreview?.stops ?? [])
+          .filter((stop) => stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown')
+          .map((stop) => [stop.role, stop.name.trim()] as const),
+      ),
+    [activePlanPreview?.stops],
+  )
   const previewAdjustStops = useMemo(
     () =>
       PREVIEW_ADJUSTABLE_ROLES.map((role) => {
         const detail = inlineDetailsByRole[role]
         const selectedName =
-          role === 'start'
+          activePlanPreviewStopNameByRole.get(role) ??
+          (role === 'start'
             ? previewStartLabel
             : role === 'highlight'
               ? previewHighlightLabel
-              : previewWindDownLabel
+              : previewWindDownLabel)
         return {
           role,
           roleLabel: getPreviewRoleLabel(role),
@@ -17408,8 +17418,15 @@ export function SandboxConciergePage() {
           alternatives: detail?.alternatives ?? [],
         }
       }),
-    [inlineDetailsByRole, previewHighlightLabel, previewStartLabel, previewWindDownLabel],
+    [
+      activePlanPreviewStopNameByRole,
+      inlineDetailsByRole,
+      previewHighlightLabel,
+      previewStartLabel,
+      previewWindDownLabel,
+    ],
   )
+  const planPreviewMiniSpineSelectedLabelsRenderActive = Boolean(activePlanPreview)
   const previewStopByRole = useMemo(
     () =>
       new Map(
@@ -18753,6 +18770,10 @@ export function SandboxConciergePage() {
             <div>planPreviewShowcaseCardCount: {planPreviewShowcaseCardCount}</div>
             <div>
               planPreviewShowcaseCardsWithMediaCount: {planPreviewShowcaseCardsWithMediaCount}
+            </div>
+            <div>
+              planPreviewMiniSpineSelectedLabelsRenderActive:{' '}
+              {String(planPreviewMiniSpineSelectedLabelsRenderActive)}
             </div>
             <div>
               planPreviewRouteDiagramRenderActive:{' '}
