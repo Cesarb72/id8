@@ -16960,6 +16960,7 @@ export function SandboxConciergePage() {
       activePlanPreview?.source === 'direction_fallback' &&
       !surpriseAutoGenerationSettled,
   )
+  const surpriseGeneratingNoticeRenderActive = surpriseDirectionFallbackPreviewSuppressed
   const renderSharedPlanPreview = Boolean(
     !hasRevealed &&
       preview &&
@@ -18759,6 +18760,9 @@ export function SandboxConciergePage() {
             <div>
               surpriseDirectionFallbackPreviewSuppressed:{' '}
               {String(surpriseDirectionFallbackPreviewSuppressed)}
+            </div>
+            <div>
+              surpriseGeneratingNoticeRenderActive: {String(surpriseGeneratingNoticeRenderActive)}
             </div>
             <div>planPreviewHeaderRenderActive: {String(planPreviewHeaderRenderActive)}</div>
             <div>
@@ -20569,6 +20573,19 @@ export function SandboxConciergePage() {
             selectionEnabled={!isCurateWrapperActive}
           />
         </>
+      )}
+
+      {surpriseGeneratingNoticeRenderActive && (
+        <section
+          className="preview-notice draft-feedback"
+          aria-live="polite"
+          aria-label="Generating your surprise route"
+        >
+          <p className="preview-notice-title">Building your surprise night...</p>
+          <p className="preview-notice-copy">
+            Checking nearby options and assembling real PlanPreviews.
+          </p>
+        </section>
       )}
 
       {renderSharedPlanPreview && (
