@@ -16954,8 +16954,17 @@ export function SandboxConciergePage() {
   const renderCurateDirectionDetailSection = Boolean(
     !isCurateWrapperActive && showStep2SecondarySurfaces && showCurateDiscoveryPhase,
   )
+  const surpriseDirectionFallbackPreviewSuppressed = Boolean(
+    isSurpriseWrapperActive &&
+      !hasRevealed &&
+      activePlanPreview?.source === 'direction_fallback' &&
+      !surpriseAutoGenerationSettled,
+  )
   const renderSharedPlanPreview = Boolean(
-    !hasRevealed && preview && (!isModeWrapperActive || sharedFlowPhase === 'contract_preview'),
+    !hasRevealed &&
+      preview &&
+      !surpriseDirectionFallbackPreviewSuppressed &&
+      (!isModeWrapperActive || sharedFlowPhase === 'contract_preview'),
   )
   const renderCommittedReveal = Boolean(
     sharedFlowPhase === 'route_refinement' || sharedFlowPhase === 'live_plan',
@@ -18747,6 +18756,10 @@ export function SandboxConciergePage() {
             <div>finalRouteDirectionId: {finalRouteDirectionId ?? 'n/a'}</div>
             <div>activePlanPreview.id: {activePlanPreview?.id ?? 'n/a'}</div>
             <div>activePlanPreview.source: {activePlanPreview?.source ?? 'n/a'}</div>
+            <div>
+              surpriseDirectionFallbackPreviewSuppressed:{' '}
+              {String(surpriseDirectionFallbackPreviewSuppressed)}
+            </div>
             <div>planPreviewHeaderRenderActive: {String(planPreviewHeaderRenderActive)}</div>
             <div>
               planPreviewWhyThisWorksRenderActive:{' '}
