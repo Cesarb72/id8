@@ -10239,81 +10239,6 @@ export function SandboxConciergePage() {
       verifiedCityOpportunityById,
     ],
   )
-  const activeDistrictLabel = useMemo(() => {
-    if (activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID) {
-      return null
-    }
-    return (
-      districtDiscoveryCards.find((district) => district.id === activeDistrictPocketId)?.name ?? null
-    )
-  }, [activeDistrictPocketId, districtDiscoveryCards])
-
-  const directionContextLine = useMemo(() => {
-    if (!activeDistrictLabel || directionView.mode === 'all') {
-      return 'Flexible mode - using multiple strong nearby areas'
-    }
-    return `Building from ${activeDistrictLabel}`
-  }, [activeDistrictLabel, directionView.mode])
-  const directionCountLine = useMemo(() => {
-    if (directionView.mode === 'all') {
-      return 'Showing strongest routes across nearby areas'
-    }
-    if (visibleDirectionCardsForSelection.length === 1) {
-      return '1 strong route matches this area'
-    }
-    return `${visibleDirectionCardsForSelection.length} routes match this area`
-  }, [directionView.mode, visibleDirectionCardsForSelection.length])
-
-  const directionIdentityById = useMemo(
-    () =>
-      new Map(
-        visibleDirectionCardsForSelection.map((entry) => [entry.id, buildDirectionIdentity(entry)] as const),
-      ),
-    [visibleDirectionCardsForSelection],
-  )
-  const directionSetKey = useMemo(
-    () =>
-      `${persona}|${primaryVibe}|${visibleDirectionCardsForSelection.map((entry) => entry.id).join('|')}`,
-    [persona, primaryVibe, visibleDirectionCardsForSelection],
-  )
-  const selectedDirection = useMemo(
-    () =>
-      selectedDirectionId
-        ? visibleDirectionCardsForSelection.find((entry) => entry.id === selectedDirectionId) ??
-          allDirectionCards.find((entry) => entry.id === selectedDirectionId)
-        : undefined,
-    [allDirectionCards, selectedDirectionId, visibleDirectionCardsForSelection],
-  )
-  const resolveDirectionForArtifactPocketId = useCallback(
-    (artifactPocketId: string | null | undefined) => {
-      return resolveDirectionCardByPocketId(artifactPocketId, directionCards, allDirectionCards)
-    },
-    [allDirectionCards, directionCards],
-  )
-  const resolveDirectionForCandidateArtifactWithTrace = useCallback(
-    (
-      artifact: CanonicalCandidateRouteArtifact,
-      options?: {
-        allowPocketFallbackOnUnmatchedDirectionId?: boolean
-      },
-    ) => {
-      return resolveDirectionCardForArtifactWithTrace({
-        directionCards,
-        allDirectionCards,
-        directionId: artifact.selection.directionId,
-        pocketId: artifact.selection.pocketId,
-        allowPocketFallbackOnUnmatchedDirectionId:
-          options?.allowPocketFallbackOnUnmatchedDirectionId,
-      })
-    },
-    [allDirectionCards, directionCards],
-  )
-  const resolveDirectionForCandidateArtifact = useCallback(
-    (artifact: CanonicalCandidateRouteArtifact) => {
-      return resolveDirectionForCandidateArtifactWithTrace(artifact).direction
-    },
-    [resolveDirectionForCandidateArtifactWithTrace],
-  )
   const buildAnchorMatchedCandidateArtifacts = useMemo(
     () => {
       if (!isBuildWrapperActive || !selectedBuildAnchor) {
@@ -10773,6 +10698,81 @@ export function SandboxConciergePage() {
   const surpriseHiddenNonActionableDirectionCount = isSurpriseWrapperActive
     ? surpriseSuppressedNonActionableDirectionIds.length
     : 0
+  const activeDistrictLabel = useMemo(() => {
+    if (activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID) {
+      return null
+    }
+    return (
+      districtDiscoveryCards.find((district) => district.id === activeDistrictPocketId)?.name ?? null
+    )
+  }, [activeDistrictPocketId, districtDiscoveryCards])
+
+  const directionContextLine = useMemo(() => {
+    if (!activeDistrictLabel || directionView.mode === 'all') {
+      return 'Flexible mode - using multiple strong nearby areas'
+    }
+    return `Building from ${activeDistrictLabel}`
+  }, [activeDistrictLabel, directionView.mode])
+  const directionCountLine = useMemo(() => {
+    if (directionView.mode === 'all') {
+      return 'Showing strongest routes across nearby areas'
+    }
+    if (visibleDirectionCardsForSelection.length === 1) {
+      return '1 strong route matches this area'
+    }
+    return `${visibleDirectionCardsForSelection.length} routes match this area`
+  }, [directionView.mode, visibleDirectionCardsForSelection.length])
+
+  const directionIdentityById = useMemo(
+    () =>
+      new Map(
+        visibleDirectionCardsForSelection.map((entry) => [entry.id, buildDirectionIdentity(entry)] as const),
+      ),
+    [visibleDirectionCardsForSelection],
+  )
+  const directionSetKey = useMemo(
+    () =>
+      `${persona}|${primaryVibe}|${visibleDirectionCardsForSelection.map((entry) => entry.id).join('|')}`,
+    [persona, primaryVibe, visibleDirectionCardsForSelection],
+  )
+  const selectedDirection = useMemo(
+    () =>
+      selectedDirectionId
+        ? visibleDirectionCardsForSelection.find((entry) => entry.id === selectedDirectionId) ??
+          allDirectionCards.find((entry) => entry.id === selectedDirectionId)
+        : undefined,
+    [allDirectionCards, selectedDirectionId, visibleDirectionCardsForSelection],
+  )
+  const resolveDirectionForArtifactPocketId = useCallback(
+    (artifactPocketId: string | null | undefined) => {
+      return resolveDirectionCardByPocketId(artifactPocketId, directionCards, allDirectionCards)
+    },
+    [allDirectionCards, directionCards],
+  )
+  const resolveDirectionForCandidateArtifactWithTrace = useCallback(
+    (
+      artifact: CanonicalCandidateRouteArtifact,
+      options?: {
+        allowPocketFallbackOnUnmatchedDirectionId?: boolean
+      },
+    ) => {
+      return resolveDirectionCardForArtifactWithTrace({
+        directionCards,
+        allDirectionCards,
+        directionId: artifact.selection.directionId,
+        pocketId: artifact.selection.pocketId,
+        allowPocketFallbackOnUnmatchedDirectionId:
+          options?.allowPocketFallbackOnUnmatchedDirectionId,
+      })
+    },
+    [allDirectionCards, directionCards],
+  )
+  const resolveDirectionForCandidateArtifact = useCallback(
+    (artifact: CanonicalCandidateRouteArtifact) => {
+      return resolveDirectionForCandidateArtifactWithTrace(artifact).direction
+    },
+    [resolveDirectionForCandidateArtifactWithTrace],
+  )
   const artifactResolutionSources = useMemo(
     () =>
       selectArtifactResolutionSources({
