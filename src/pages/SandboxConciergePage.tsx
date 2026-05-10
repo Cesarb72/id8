@@ -8887,6 +8887,9 @@ export function SandboxConciergePage() {
     useState<string | null>(null)
   const [surpriseContractValidationFailedArtifactId, setSurpriseContractValidationFailedArtifactId] =
     useState<string | null>(null)
+  const [surpriseGenerationFailedArtifactIds, setSurpriseGenerationFailedArtifactIds] = useState<
+    string[]
+  >([])
   const [selectedDirectionGeneratePlanTrace, setSelectedDirectionGeneratePlanTrace] =
     useState<SelectedDirectionGeneratePlanTrace | null>(null)
   const [showDebug] = useState(() => debugQueryEnabled || verticalDebugEnvEnabled)
@@ -12080,6 +12083,13 @@ export function SandboxConciergePage() {
           }))
           setSurpriseContractValidationFailedDirectionId(activeDirectionId)
           setSurpriseContractValidationFailedArtifactId(activeCandidateRouteArtifact?.id ?? null)
+          if (activeCandidateRouteArtifact?.id) {
+            setSurpriseGenerationFailedArtifactIds((current) =>
+              current.includes(activeCandidateRouteArtifact.id)
+                ? current
+                : [...current, activeCandidateRouteArtifact.id],
+            )
+          }
         }
         setError(toUserSafeGenerateError(nextError))
         return false
@@ -15376,6 +15386,30 @@ export function SandboxConciergePage() {
     resolveDirectionForCandidateArtifact,
     surpriseVariationByDirectionId,
   ])
+  const surpriseRerollSuppressedFailedArtifactIds = useMemo(
+    () =>
+      isSurpriseWrapperActive
+        ? step2TryAnotherAlternates
+            .map((entry) => entry.artifact.id)
+            .filter((artifactId) => surpriseGenerationFailedArtifactIds.includes(artifactId))
+        : [],
+    [isSurpriseWrapperActive, step2TryAnotherAlternates, surpriseGenerationFailedArtifactIds],
+  )
+  const step2TryAnotherAlternatesGenerationSafe = useMemo(
+    () =>
+      isSurpriseWrapperActive
+        ? step2TryAnotherAlternates.filter(
+            (entry) => !surpriseGenerationFailedArtifactIds.includes(entry.artifact.id),
+          )
+        : step2TryAnotherAlternates,
+    [isSurpriseWrapperActive, step2TryAnotherAlternates, surpriseGenerationFailedArtifactIds],
+  )
+  const surpriseRerollGenerationSafeCount = isSurpriseWrapperActive
+    ? step2TryAnotherAlternatesGenerationSafe.length
+    : 0
+  const surpriseRerollKnownFailureCount = isSurpriseWrapperActive
+    ? surpriseGenerationFailedArtifactIds.length
+    : 0
   const handleTryAnotherDirection = useCallback(() => {
     if (loading) {
       return
@@ -15419,6 +15453,10 @@ export function SandboxConciergePage() {
     const fallbackAlternates =
       candidateRouteArtifactsForDisplay
         .filter((artifact) => artifact.id !== currentArtifactId)
+        .filter(
+          (artifact) =>
+            !isSurpriseWrapperActive || !surpriseGenerationFailedArtifactIds.includes(artifact.id),
+        )
         .map((artifact) => {
           const direction = resolveDirectionForCandidateArtifactWithTrace(artifact, {
             allowPocketFallbackOnUnmatchedDirectionId: isSurpriseWrapperActive,
@@ -15459,7 +15497,9 @@ export function SandboxConciergePage() {
           } => Boolean(entry),
         )
     const candidatesToTry =
-      step2TryAnotherAlternates.length > 0 ? step2TryAnotherAlternates : fallbackAlternates
+      step2TryAnotherAlternatesGenerationSafe.length > 0
+        ? step2TryAnotherAlternatesGenerationSafe
+        : fallbackAlternates
     if (candidatesToTry.length === 0) {
       setStep2RerollTrace((current) =>
         current?.clickId === clickId
@@ -15518,11 +15558,12 @@ export function SandboxConciergePage() {
   }, [
     candidateRouteArtifactsForDisplay,
     directionCards,
-    step2TryAnotherAlternates,
+    step2TryAnotherAlternatesGenerationSafe,
     handleSelectDirection,
     loading,
     isSurpriseWrapperActive,
     resolveDirectionForCandidateArtifactWithTrace,
+    surpriseGenerationFailedArtifactIds,
     surpriseContractValidationFailedArtifactId,
     surpriseContractValidationFailedDirectionId,
     selectedCandidateRouteArtifact?.id,
@@ -20091,6 +20132,20 @@ export function SandboxConciergePage() {
             <div>
               reconciliationSkippedForArtifactSelection:{' '}
               {String(reconciliationSkippedForArtifactSelection)}
+            </div>
+            <div>
+              surpriseGenerationFailedArtifactIds:{' '}
+              {surpriseGenerationFailedArtifactIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseRerollSuppressedFailedArtifactIds:{' '}
+              {surpriseRerollSuppressedFailedArtifactIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseRerollGenerationSafeCount: {surpriseRerollGenerationSafeCount}
+            </div>
+            <div>
+              surpriseRerollKnownFailureCount: {surpriseRerollKnownFailureCount}
             </div>
             <div>
               surpriseActionableDirectionIds:{' '}
