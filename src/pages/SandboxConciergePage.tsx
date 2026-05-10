@@ -8959,6 +8959,7 @@ export function SandboxConciergePage() {
     Record<string, StageOverlapFingerprint>
   >({})
   const [debugExpandedByKey, setDebugExpandedByKey] = useState<Record<string, boolean>>({})
+  const [surpriseRetryTriggeredCount, setSurpriseRetryTriggeredCount] = useState(0)
   useEffect(() => {
     curatePreviewCommitabilityByArtifactIdRef.current = curatePreviewCommitabilityByArtifactId
   }, [curatePreviewCommitabilityByArtifactId])
@@ -16960,7 +16961,14 @@ export function SandboxConciergePage() {
       activePlanPreview?.source === 'direction_fallback' &&
       !surpriseAutoGenerationSettled,
   )
-  const surpriseGeneratingNoticeRenderActive = surpriseDirectionFallbackPreviewSuppressed
+  const surpriseGenerationFailureRecoveryVisible = Boolean(
+    surpriseDirectionFallbackPreviewSuppressed && !loading && error,
+  )
+  const surpriseRetryAvailable = Boolean(
+    isSurpriseWrapperActive && !loading && selectedDirectionId && selectedCandidateRouteArtifact,
+  )
+  const surpriseGeneratingNoticeRenderActive =
+    surpriseDirectionFallbackPreviewSuppressed && !surpriseGenerationFailureRecoveryVisible
   const renderSharedPlanPreview = Boolean(
     !hasRevealed &&
       preview &&
@@ -17047,6 +17055,21 @@ export function SandboxConciergePage() {
     selectedBuildAnchor,
     selectedCandidateRouteArtifact,
   ])
+  const handleRetrySurpriseGeneration = useCallback(() => {
+    if (loading) {
+      return
+    }
+    setError(undefined)
+    setSurpriseContractValidationFailedDirectionId(null)
+    setSurpriseContractValidationFailedArtifactId(null)
+    setGenerationContractDebug(null)
+    surpriseAutoGenerateAttemptRef.current = null
+    setSurpriseRetryTriggeredCount((current) => current + 1)
+    if (!selectedDirectionId || !selectedCandidateRouteArtifact) {
+      return
+    }
+    void generatePlan(selectedDirectionId, selectedCandidateRouteArtifact.id)
+  }, [generatePlan, loading, selectedCandidateRouteArtifact, selectedDirectionId])
   const debugViewModel = useMemo(() => {
     const rolePoolCountsSummary = rolePoolVenueIdsByRole
       ? `start:${rolePoolVenueIdsByRole.start.length}/highlight:${rolePoolVenueIdsByRole.highlight.length}/windDown:${rolePoolVenueIdsByRole.windDown.length}`
@@ -19983,6 +20006,12 @@ export function SandboxConciergePage() {
             <div>render.sharedPlanPreview: {String(renderSharedPlanPreview)}</div>
             <div>render.committedReveal: {String(renderCommittedReveal)}</div>
             <div>
+              surpriseGenerationFailureRecoveryVisible:{' '}
+              {String(surpriseGenerationFailureRecoveryVisible)}
+            </div>
+            <div>surpriseRetryAvailable: {String(surpriseRetryAvailable)}</div>
+            <div>surpriseRetryTriggeredCount: {surpriseRetryTriggeredCount}</div>
+            <div>
               render.compareRoutesAction: {String(showReturnToCurateDiscoveryAction)}
             </div>
             <div>
@@ -20575,6 +20604,31 @@ export function SandboxConciergePage() {
         </>
       )}
 
+      {surpriseGenerationFailureRecoveryVisible && (
+        <section
+          className="preview-notice draft-feedback"
+          aria-live="polite"
+          aria-label="Surprise generation recovery"
+        >
+          <p className="preview-notice-title">We couldn&apos;t build that surprise plan.</p>
+          <p className="preview-notice-copy">
+            {surpriseRetryAvailable
+              ? "Try again and I'll roll a fresh option."
+              : 'Still preparing options.'}
+          </p>
+          <div className="action-row draft-actions">
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={handleRetrySurpriseGeneration}
+              disabled={!surpriseRetryAvailable}
+            >
+              Retry Surprise
+            </button>
+          </div>
+        </section>
+      )}
+
       {surpriseGeneratingNoticeRenderActive && (
         <section
           className="preview-notice draft-feedback"
@@ -20859,7 +20913,7 @@ export function SandboxConciergePage() {
         </section>
       )}
 
-      {error && (
+      {error && !surpriseGenerationFailureRecoveryVisible && (
         <div className="preview-notice draft-feedback">
           <p className="preview-notice-title">Could not generate</p>
           <p className="preview-notice-copy">{error}</p>
