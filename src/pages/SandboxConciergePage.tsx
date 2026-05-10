@@ -10905,6 +10905,21 @@ export function SandboxConciergePage() {
       selectedStep2CandidateArtifactId,
     ],
   )
+  const rerollArtifactAuthoritativeSelectionActive = Boolean(
+    isSurpriseWrapperActive && selectedStep2CandidateArtifactId && selectedCandidateRouteArtifact,
+  )
+  const artifactAuthoritativeDirectionId = rerollArtifactAuthoritativeSelectionActive
+    ? selectedCandidateRouteArtifact?.selection.directionId ?? null
+    : null
+  const selectedDirectionHiddenButArtifactResolved = Boolean(
+    artifactAuthoritativeDirectionId && !directionIdentityById.has(artifactAuthoritativeDirectionId),
+  )
+  const reconciliationSkippedForArtifactSelection = Boolean(
+    rerollArtifactAuthoritativeSelectionActive &&
+      (selectedDirectionHiddenButArtifactResolved ||
+        visibleDirectionCardsForSelection.length === 0 ||
+        directionSetKey.length === 0),
+  )
   const explicitQualifiedCurateSelectedArtifact = useMemo(() => {
     if (!isCurateWrapperActive || !selectedStep2CandidateArtifactId) {
       return null
@@ -13103,7 +13118,10 @@ export function SandboxConciergePage() {
   }, [activeDistrictPocketId, districtDiscoveryCards])
 
   useEffect(() => {
-    if (visibleDirectionCardsForSelection.length === 0 || directionSetKey.length === 0) {
+    if (
+      (visibleDirectionCardsForSelection.length === 0 || directionSetKey.length === 0) &&
+      !rerollArtifactAuthoritativeSelectionActive
+    ) {
       surpriseAutoGenerateAttemptRef.current = null
       buildValidationAttemptRef.current = null
       curatePreviewCommitabilityAttemptRef.current = {}
@@ -13136,16 +13154,25 @@ export function SandboxConciergePage() {
       ? candidateRouteArtifactByIdForDisplay.get(selectedStep2CandidateArtifactId) ?? null
       : null
     const curateAuthoritativeDirectionId = curateSelectedArtifact?.selection.directionId ?? null
+    const selectedDirectionIsArtifactAuthoritative = Boolean(
+      selectedDirectionId &&
+        artifactAuthoritativeDirectionId &&
+        selectedDirectionId === artifactAuthoritativeDirectionId,
+    )
     const selectedStillExists = Boolean(
       selectedDirectionId &&
         (directionIdentityById.has(selectedDirectionId) ||
+          selectedDirectionIsArtifactAuthoritative ||
           (Boolean(curateAuthoritativeDirectionId) &&
             selectedDirectionId === curateAuthoritativeDirectionId)),
     )
 
-    let nextSelectedDirectionId = curateAuthoritativeDirectionId ?? selectedDirectionId
+    let nextSelectedDirectionId =
+      curateAuthoritativeDirectionId ?? artifactAuthoritativeDirectionId ?? selectedDirectionId
     if (curateAuthoritativeDirectionId) {
       nextSelectedDirectionId = curateAuthoritativeDirectionId
+    } else if (artifactAuthoritativeDirectionId) {
+      nextSelectedDirectionId = artifactAuthoritativeDirectionId
     } else if (!selectedStillExists) {
       nextSelectedDirectionId = firstCandidateId
     } else if (personaOrVibeChanged && selectedDirectionId) {
@@ -13184,9 +13211,13 @@ export function SandboxConciergePage() {
     directionIdentityById,
     directionSetKey,
     isCurateWrapperActive,
+    isSurpriseWrapperActive,
     persona,
     primaryVibe,
+    rerollArtifactAuthoritativeSelectionActive,
+    artifactAuthoritativeDirectionId,
     selectedDirectionId,
+    selectedCandidateRouteArtifact,
     selectedStep2CandidateArtifactId,
     updateFinalRoute,
     userSelectedDirection,
@@ -20046,6 +20077,21 @@ export function SandboxConciergePage() {
             </div>
             <div>surpriseRetryAvailable: {String(surpriseRetryAvailable)}</div>
             <div>surpriseRetryTriggeredCount: {surpriseRetryTriggeredCount}</div>
+            <div>
+              rerollArtifactAuthoritativeSelectionActive:{' '}
+              {String(rerollArtifactAuthoritativeSelectionActive)}
+            </div>
+            <div>
+              artifactAuthoritativeDirectionId: {artifactAuthoritativeDirectionId ?? 'n/a'}
+            </div>
+            <div>
+              selectedDirectionHiddenButArtifactResolved:{' '}
+              {String(selectedDirectionHiddenButArtifactResolved)}
+            </div>
+            <div>
+              reconciliationSkippedForArtifactSelection:{' '}
+              {String(reconciliationSkippedForArtifactSelection)}
+            </div>
             <div>
               surpriseActionableDirectionIds:{' '}
               {[...surpriseActionableDirectionIds].join(', ') || 'none'}
