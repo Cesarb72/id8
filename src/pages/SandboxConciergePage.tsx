@@ -10258,30 +10258,31 @@ export function SandboxConciergePage() {
     if (directionView.mode === 'all') {
       return 'Showing strongest routes across nearby areas'
     }
-    if (directionCards.length === 1) {
+    if (visibleDirectionCardsForSelection.length === 1) {
       return '1 strong route matches this area'
     }
-    return `${directionCards.length} routes match this area`
-  }, [directionCards.length, directionView.mode])
+    return `${visibleDirectionCardsForSelection.length} routes match this area`
+  }, [directionView.mode, visibleDirectionCardsForSelection.length])
 
   const directionIdentityById = useMemo(
     () =>
       new Map(
-        directionCards.map((entry) => [entry.id, buildDirectionIdentity(entry)] as const),
+        visibleDirectionCardsForSelection.map((entry) => [entry.id, buildDirectionIdentity(entry)] as const),
       ),
-    [directionCards],
+    [visibleDirectionCardsForSelection],
   )
   const directionSetKey = useMemo(
-    () => `${persona}|${primaryVibe}|${directionCards.map((entry) => entry.id).join('|')}`,
-    [directionCards, persona, primaryVibe],
+    () =>
+      `${persona}|${primaryVibe}|${visibleDirectionCardsForSelection.map((entry) => entry.id).join('|')}`,
+    [persona, primaryVibe, visibleDirectionCardsForSelection],
   )
   const selectedDirection = useMemo(
     () =>
       selectedDirectionId
-        ? directionCards.find((entry) => entry.id === selectedDirectionId) ??
+        ? visibleDirectionCardsForSelection.find((entry) => entry.id === selectedDirectionId) ??
           allDirectionCards.find((entry) => entry.id === selectedDirectionId)
         : undefined,
-    [allDirectionCards, directionCards, selectedDirectionId],
+    [allDirectionCards, selectedDirectionId, visibleDirectionCardsForSelection],
   )
   const resolveDirectionForArtifactPocketId = useCallback(
     (artifactPocketId: string | null | undefined) => {
@@ -10741,6 +10742,37 @@ export function SandboxConciergePage() {
     () => buildArtifactByIdIndex(candidateRouteArtifactsForDisplay),
     [candidateRouteArtifactsForDisplay],
   )
+  const surpriseActionableDirectionIds = useMemo(
+    () =>
+      new Set(
+        [...candidateRouteArtifactsByDirectionIdForDisplay.entries()]
+          .filter(([, artifacts]) => artifacts.length === 1)
+          .map(([directionId]) => directionId),
+      ),
+    [candidateRouteArtifactsByDirectionIdForDisplay],
+  )
+  const surpriseSuppressedNonActionableDirectionIds = useMemo(
+    () =>
+      isSurpriseWrapperActive
+        ? directionCards
+            .map((entry) => entry.id)
+            .filter((directionId) => !surpriseActionableDirectionIds.has(directionId))
+        : [],
+    [directionCards, isSurpriseWrapperActive, surpriseActionableDirectionIds],
+  )
+  const visibleDirectionCardsForSelection = useMemo(
+    () =>
+      isSurpriseWrapperActive
+        ? directionCards.filter((entry) => surpriseActionableDirectionIds.has(entry.id))
+        : directionCards,
+    [directionCards, isSurpriseWrapperActive, surpriseActionableDirectionIds],
+  )
+  const surpriseVisibleActionableDirectionCount = isSurpriseWrapperActive
+    ? visibleDirectionCardsForSelection.length
+    : 0
+  const surpriseHiddenNonActionableDirectionCount = isSurpriseWrapperActive
+    ? surpriseSuppressedNonActionableDirectionIds.length
+    : 0
   const artifactResolutionSources = useMemo(
     () =>
       selectArtifactResolutionSources({
@@ -12305,16 +12337,16 @@ export function SandboxConciergePage() {
 
   const handlePreviewShape = useCallback(
     (intent: PreviewShapeIntent) => {
-      if (directionCards.length === 0) {
+      if (visibleDirectionCardsForSelection.length === 0) {
         return
       }
-      const baseline = selectedDirection ?? directionCards[0]
+      const baseline = selectedDirection ?? visibleDirectionCardsForSelection[0]
       const action = PREVIEW_SHAPE_ACTIONS.find((entry) => entry.intent === intent)
       if (!baseline || !action) {
         return
       }
 
-      const ranked = directionCards
+      const ranked = visibleDirectionCardsForSelection
         .map((entry) => ({
           entry,
           score: scorePreviewShapeCandidate(entry, intent, baseline),
@@ -12341,7 +12373,7 @@ export function SandboxConciergePage() {
       }
       setPreviewFeedback(action.stableFeedback)
     },
-    [directionCards, handleSelectDirection, selectedDirection],
+    [handleSelectDirection, selectedDirection, visibleDirectionCardsForSelection],
   )
   const handlePreviewAdjustRoleToggle = useCallback(
     async (role: PreviewAdjustableRole) => {
@@ -13071,7 +13103,7 @@ export function SandboxConciergePage() {
   }, [activeDistrictPocketId, districtDiscoveryCards])
 
   useEffect(() => {
-    if (directionCards.length === 0 || directionSetKey.length === 0) {
+    if (visibleDirectionCardsForSelection.length === 0 || directionSetKey.length === 0) {
       surpriseAutoGenerateAttemptRef.current = null
       buildValidationAttemptRef.current = null
       curatePreviewCommitabilityAttemptRef.current = {}
@@ -13099,7 +13131,7 @@ export function SandboxConciergePage() {
         (previousPersonaVibe.persona !== persona || previousPersonaVibe.vibe !== primaryVibe),
     )
     const previousIdentityById = previousDirectionIdentityRef.current
-    const firstCandidateId = directionCards[0]?.id ?? null
+    const firstCandidateId = visibleDirectionCardsForSelection[0]?.id ?? null
     const curateSelectedArtifact = isCurateWrapperActive && selectedStep2CandidateArtifactId
       ? candidateRouteArtifactByIdForDisplay.get(selectedStep2CandidateArtifactId) ?? null
       : null
@@ -13149,7 +13181,6 @@ export function SandboxConciergePage() {
     previousPersonaVibeRef.current = { persona, vibe: primaryVibe }
   }, [
     candidateRouteArtifactByIdForDisplay,
-    directionCards,
     directionIdentityById,
     directionSetKey,
     isCurateWrapperActive,
@@ -13159,6 +13190,7 @@ export function SandboxConciergePage() {
     selectedStep2CandidateArtifactId,
     updateFinalRoute,
     userSelectedDirection,
+    visibleDirectionCardsForSelection,
   ])
 
   useEffect(() => {
@@ -16953,7 +16985,10 @@ export function SandboxConciergePage() {
       showStep2SecondarySurfaces,
   )
   const renderCurateDirectionDetailSection = Boolean(
-    !isCurateWrapperActive && showStep2SecondarySurfaces && showCurateDiscoveryPhase,
+    !isCurateWrapperActive &&
+      showStep2SecondarySurfaces &&
+      showCurateDiscoveryPhase &&
+      (!isSurpriseWrapperActive || visibleDirectionCardsForSelection.length > 0),
   )
   const surpriseDirectionFallbackPreviewSuppressed = Boolean(
     isSurpriseWrapperActive &&
@@ -20012,6 +20047,20 @@ export function SandboxConciergePage() {
             <div>surpriseRetryAvailable: {String(surpriseRetryAvailable)}</div>
             <div>surpriseRetryTriggeredCount: {surpriseRetryTriggeredCount}</div>
             <div>
+              surpriseActionableDirectionIds:{' '}
+              {[...surpriseActionableDirectionIds].join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseSuppressedNonActionableDirectionIds:{' '}
+              {surpriseSuppressedNonActionableDirectionIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseVisibleActionableDirectionCount: {surpriseVisibleActionableDirectionCount}
+            </div>
+            <div>
+              surpriseHiddenNonActionableDirectionCount: {surpriseHiddenNonActionableDirectionCount}
+            </div>
+            <div>
               render.compareRoutesAction: {String(showReturnToCurateDiscoveryAction)}
             </div>
             <div>
@@ -20594,7 +20643,7 @@ export function SandboxConciergePage() {
             onSelectDirection={handleSelectDirection}
             onGenerate={generatePlan}
             loading={loading}
-            directionCards={directionCards}
+            directionCards={visibleDirectionCardsForSelection}
             showDebugMeta={showDebug && verticalDebugEnabled}
             allowFallbackCards={false}
             showGenerateAction={false}
@@ -20643,7 +20692,11 @@ export function SandboxConciergePage() {
       )}
 
       {renderSharedPlanPreview && (
-        <section className={`plan-preview${directionCards.length === 1 ? ' is-single-direction' : ''}`}>
+        <section
+          className={`plan-preview${
+            visibleDirectionCardsForSelection.length === 1 ? ' is-single-direction' : ''
+          }`}
+        >
           <p className="preview-bridge-line">{previewBridgeLine}</p>
           <p className="preview-bridge-subline">{previewBridgeSubline}</p>
           <article className="night-preview-card">
@@ -20748,7 +20801,7 @@ export function SandboxConciergePage() {
                         activePreviewShapeIntent === action.intent ? ' selected' : ''
                       }`}
                       onClick={() => handlePreviewShape(action.intent)}
-                      disabled={loading || directionCards.length === 0}
+                      disabled={loading || visibleDirectionCardsForSelection.length === 0}
                     >
                       {action.label}
                     </button>
