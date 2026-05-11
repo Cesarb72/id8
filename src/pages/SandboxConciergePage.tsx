@@ -983,6 +983,9 @@ interface SurpriseTryAnotherDebug {
   surpriseArtifactSafetyKnownSafeCount: number
   surpriseArtifactSafetyKnownFailedCount: number
   surpriseRerollUnknownArtifactCount: number
+  surpriseRerollUnknownPreferred: boolean
+  surpriseRerollKnownSafeFallbackUsed: boolean
+  surpriseRerollUnknownCandidateIds: string[]
   scenarioBackedFamilyCounts: string
   step2PrimarySourceFamilyCounts: string
   step2CandidateArtifactFamilyCounts: string
@@ -15434,6 +15437,44 @@ export function SandboxConciergePage() {
         : step2TryAnotherAlternates,
     [isSurpriseWrapperActive, step2TryAnotherAlternates, surpriseGenerationFailedArtifactIds],
   )
+  const surpriseRerollUnknownCandidateIds = useMemo(
+    () =>
+      isSurpriseWrapperActive
+        ? step2TryAnotherAlternatesGenerationSafe
+            .filter((entry) => !surpriseArtifactSafetyByArtifactId[entry.artifact.id])
+            .map((entry) => entry.artifact.id)
+        : [],
+    [
+      isSurpriseWrapperActive,
+      step2TryAnotherAlternatesGenerationSafe,
+      surpriseArtifactSafetyByArtifactId,
+    ],
+  )
+  const step2TryAnotherAlternatesGenerationSafeOrdered = useMemo(
+    () => {
+      if (!isSurpriseWrapperActive) {
+        return step2TryAnotherAlternatesGenerationSafe
+      }
+      const unknownArtifacts = step2TryAnotherAlternatesGenerationSafe.filter(
+        (entry) => !surpriseArtifactSafetyByArtifactId[entry.artifact.id],
+      )
+      const knownSafeArtifacts = step2TryAnotherAlternatesGenerationSafe.filter(
+        (entry) => surpriseArtifactSafetyByArtifactId[entry.artifact.id] === 'known_safe',
+      )
+      return [...unknownArtifacts, ...knownSafeArtifacts]
+    },
+    [
+      isSurpriseWrapperActive,
+      step2TryAnotherAlternatesGenerationSafe,
+      surpriseArtifactSafetyByArtifactId,
+    ],
+  )
+  const surpriseRerollUnknownPreferred =
+    isSurpriseWrapperActive && surpriseRerollUnknownCandidateIds.length > 0
+  const surpriseRerollKnownSafeFallbackUsed =
+    isSurpriseWrapperActive &&
+    surpriseRerollUnknownCandidateIds.length === 0 &&
+    step2TryAnotherAlternatesGenerationSafeOrdered.length > 0
   const surpriseRerollGenerationSafeCount = isSurpriseWrapperActive
     ? step2TryAnotherAlternatesGenerationSafe.length
     : 0
@@ -15527,8 +15568,8 @@ export function SandboxConciergePage() {
           } => Boolean(entry),
         )
     const candidatesToTry =
-      step2TryAnotherAlternatesGenerationSafe.length > 0
-        ? step2TryAnotherAlternatesGenerationSafe
+      step2TryAnotherAlternatesGenerationSafeOrdered.length > 0
+        ? step2TryAnotherAlternatesGenerationSafeOrdered
         : fallbackAlternates
     if (candidatesToTry.length === 0) {
       setStep2RerollTrace((current) =>
@@ -15588,7 +15629,7 @@ export function SandboxConciergePage() {
   }, [
     candidateRouteArtifactsForDisplay,
     directionCards,
-    step2TryAnotherAlternatesGenerationSafe,
+    step2TryAnotherAlternatesGenerationSafeOrdered,
     handleSelectDirection,
     loading,
     isSurpriseWrapperActive,
@@ -16747,6 +16788,9 @@ export function SandboxConciergePage() {
       surpriseArtifactSafetyKnownSafeCount,
       surpriseArtifactSafetyKnownFailedCount,
       surpriseRerollUnknownArtifactCount,
+      surpriseRerollUnknownPreferred,
+      surpriseRerollKnownSafeFallbackUsed,
+      surpriseRerollUnknownCandidateIds,
       scenarioBackedFamilyCounts: scenarioBackedFamilies,
       step2PrimarySourceFamilyCounts: step2PrimaryFamilies,
       step2CandidateArtifactFamilyCounts: step2CandidateFamilies,
@@ -16851,6 +16895,9 @@ export function SandboxConciergePage() {
     surpriseArtifactSafetyByArtifactId,
     surpriseArtifactSafetyKnownFailedIds,
     surpriseArtifactSafetyKnownSafeIds,
+    surpriseRerollKnownSafeFallbackUsed,
+    surpriseRerollUnknownCandidateIds,
+    surpriseRerollUnknownPreferred,
     surpriseScenarioArtifactSourceOpportunities,
     suppressedDirectionUnbackedArtifacts,
     starterAwareStep2SourceOpportunities,
@@ -20215,6 +20262,18 @@ export function SandboxConciergePage() {
             <div>
               surpriseRerollUnknownArtifactCount:{' '}
               {surpriseTryAnotherDebug.surpriseRerollUnknownArtifactCount}
+            </div>
+            <div>
+              surpriseRerollUnknownPreferred:{' '}
+              {String(surpriseTryAnotherDebug.surpriseRerollUnknownPreferred)}
+            </div>
+            <div>
+              surpriseRerollKnownSafeFallbackUsed:{' '}
+              {String(surpriseTryAnotherDebug.surpriseRerollKnownSafeFallbackUsed)}
+            </div>
+            <div>
+              surpriseRerollUnknownCandidateIds:{' '}
+              {surpriseTryAnotherDebug.surpriseRerollUnknownCandidateIds.join(', ') || 'none'}
             </div>
             <div>
               surpriseRerollSuppressedFailedArtifactIds:{' '}
