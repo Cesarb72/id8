@@ -11779,7 +11779,7 @@ export function SandboxConciergePage() {
               curateCommitSemantics: isCurateWrapperActive
                 ? 'approved_route_hard_commit'
                 : undefined,
-              starterPack: selectedStarterPack ?? undefined,
+              starterPack: isCurateWrapperActive ? selectedStarterPack ?? undefined : undefined,
               experienceContract: canonicalExperienceContract,
               contractConstraints: canonicalContractConstraints,
               canonicalInterpretationBundle,
