@@ -977,6 +977,12 @@ interface SurpriseTryAnotherDebug {
   curateDisplayFallbackRouteArtifactsCount: number
   candidateRouteArtifactsForDisplayCount: number
   step2TryAnotherAlternatesCount: number
+  surpriseArtifactSafetyKnownSafeIds: string[]
+  surpriseArtifactSafetyKnownFailedIds: string[]
+  surpriseArtifactSafetyUnknownCount: number
+  surpriseArtifactSafetyKnownSafeCount: number
+  surpriseArtifactSafetyKnownFailedCount: number
+  surpriseRerollUnknownArtifactCount: number
   scenarioBackedFamilyCounts: string
   step2PrimarySourceFamilyCounts: string
   step2CandidateArtifactFamilyCounts: string
@@ -1012,6 +1018,8 @@ interface SurpriseTryAnotherDebug {
   generationTriggered: boolean
   fallbackReason: string | null
 }
+
+type SurpriseArtifactSafetyState = 'unknown' | 'known_failed' | 'known_safe'
 
 function isDiagnosticPreferredWindDownCategory(
   category: BuiltScenarioStop['venueCategory'],
@@ -8887,9 +8895,9 @@ export function SandboxConciergePage() {
     useState<string | null>(null)
   const [surpriseContractValidationFailedArtifactId, setSurpriseContractValidationFailedArtifactId] =
     useState<string | null>(null)
-  const [surpriseGenerationFailedArtifactIds, setSurpriseGenerationFailedArtifactIds] = useState<
-    string[]
-  >([])
+  const [surpriseArtifactSafetyByArtifactId, setSurpriseArtifactSafetyByArtifactId] = useState<
+    Record<string, SurpriseArtifactSafetyState>
+  >({})
   const [selectedDirectionGeneratePlanTrace, setSelectedDirectionGeneratePlanTrace] =
     useState<SelectedDirectionGeneratePlanTrace | null>(null)
   const [showDebug] = useState(() => debugQueryEnabled || verticalDebugEnvEnabled)
@@ -11992,6 +12000,12 @@ export function SandboxConciergePage() {
         )
         setSurpriseContractValidationFailedDirectionId(null)
         setSurpriseContractValidationFailedArtifactId(null)
+        if (isSurpriseWrapperActive && activeCandidateRouteArtifact?.id) {
+          setSurpriseArtifactSafetyByArtifactId((current) => ({
+            ...current,
+            [activeCandidateRouteArtifact.id]: 'known_safe',
+          }))
+        }
         setStep2RerollTrace((current) =>
           current
             ? {
@@ -12084,11 +12098,10 @@ export function SandboxConciergePage() {
           setSurpriseContractValidationFailedDirectionId(activeDirectionId)
           setSurpriseContractValidationFailedArtifactId(activeCandidateRouteArtifact?.id ?? null)
           if (activeCandidateRouteArtifact?.id) {
-            setSurpriseGenerationFailedArtifactIds((current) =>
-              current.includes(activeCandidateRouteArtifact.id)
-                ? current
-                : [...current, activeCandidateRouteArtifact.id],
-            )
+            setSurpriseArtifactSafetyByArtifactId((current) => ({
+              ...current,
+              [activeCandidateRouteArtifact.id]: 'known_failed',
+            }))
           }
         }
         setError(toUserSafeGenerateError(nextError))
@@ -15386,6 +15399,23 @@ export function SandboxConciergePage() {
     resolveDirectionForCandidateArtifact,
     surpriseVariationByDirectionId,
   ])
+  const surpriseArtifactSafetyKnownFailedIds = useMemo(
+    () =>
+      Object.entries(surpriseArtifactSafetyByArtifactId)
+        .filter(([, state]) => state === 'known_failed')
+        .map(([artifactId]) => artifactId)
+        .sort((left, right) => left.localeCompare(right)),
+    [surpriseArtifactSafetyByArtifactId],
+  )
+  const surpriseArtifactSafetyKnownSafeIds = useMemo(
+    () =>
+      Object.entries(surpriseArtifactSafetyByArtifactId)
+        .filter(([, state]) => state === 'known_safe')
+        .map(([artifactId]) => artifactId)
+        .sort((left, right) => left.localeCompare(right)),
+    [surpriseArtifactSafetyByArtifactId],
+  )
+  const surpriseGenerationFailedArtifactIds = surpriseArtifactSafetyKnownFailedIds
   const surpriseRerollSuppressedFailedArtifactIds = useMemo(
     () =>
       isSurpriseWrapperActive
@@ -15931,6 +15961,22 @@ export function SandboxConciergePage() {
     })
     const alternateArtifactIds = step2TryAnotherAlternates.map((entry) => entry.artifact.id)
     const alternateDirectionIds = step2TryAnotherAlternates.map((entry) => entry.direction.id)
+    const surpriseArtifactSafetyUnknownCount = isSurpriseWrapperActive
+      ? candidateRouteArtifactsForDisplay.filter(
+          (artifact) => !surpriseArtifactSafetyByArtifactId[artifact.id],
+        ).length
+      : 0
+    const surpriseArtifactSafetyKnownSafeCount = isSurpriseWrapperActive
+      ? surpriseArtifactSafetyKnownSafeIds.length
+      : 0
+    const surpriseArtifactSafetyKnownFailedCount = isSurpriseWrapperActive
+      ? surpriseArtifactSafetyKnownFailedIds.length
+      : 0
+    const surpriseRerollUnknownArtifactCount = isSurpriseWrapperActive
+      ? step2TryAnotherAlternates.filter(
+          (entry) => !surpriseArtifactSafetyByArtifactId[entry.artifact.id],
+        ).length
+      : 0
     const hiddenRerollCountsByFamily = summarizeDiagnosticCounts(
       step2TryAnotherAlternates.map((entry) =>
         deriveScenarioFamilyHintFromArtifactIdentity({
@@ -16695,6 +16741,12 @@ export function SandboxConciergePage() {
       curateDisplayFallbackRouteArtifactsCount: curateDisplayFallbackRouteArtifacts.length,
       candidateRouteArtifactsForDisplayCount: candidateRouteArtifactsForDisplay.length,
       step2TryAnotherAlternatesCount: step2TryAnotherAlternates.length,
+      surpriseArtifactSafetyKnownSafeIds,
+      surpriseArtifactSafetyKnownFailedIds,
+      surpriseArtifactSafetyUnknownCount,
+      surpriseArtifactSafetyKnownSafeCount,
+      surpriseArtifactSafetyKnownFailedCount,
+      surpriseRerollUnknownArtifactCount,
       scenarioBackedFamilyCounts: scenarioBackedFamilies,
       step2PrimarySourceFamilyCounts: step2PrimaryFamilies,
       step2CandidateArtifactFamilyCounts: step2CandidateFamilies,
@@ -16796,6 +16848,9 @@ export function SandboxConciergePage() {
     surpriseCrossPersonaOpportunityRepairEntries,
     surpriseCrossPersonaScenarioFamily,
     surpriseContrastOpportunityRepairEntries,
+    surpriseArtifactSafetyByArtifactId,
+    surpriseArtifactSafetyKnownFailedIds,
+    surpriseArtifactSafetyKnownSafeIds,
     surpriseScenarioArtifactSourceOpportunities,
     suppressedDirectionUnbackedArtifacts,
     starterAwareStep2SourceOpportunities,
@@ -20136,6 +20191,30 @@ export function SandboxConciergePage() {
             <div>
               surpriseGenerationFailedArtifactIds:{' '}
               {surpriseGenerationFailedArtifactIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseArtifactSafetyKnownSafeIds:{' '}
+              {surpriseTryAnotherDebug.surpriseArtifactSafetyKnownSafeIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseArtifactSafetyKnownFailedIds:{' '}
+              {surpriseTryAnotherDebug.surpriseArtifactSafetyKnownFailedIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseArtifactSafetyUnknownCount:{' '}
+              {surpriseTryAnotherDebug.surpriseArtifactSafetyUnknownCount}
+            </div>
+            <div>
+              surpriseArtifactSafetyKnownSafeCount:{' '}
+              {surpriseTryAnotherDebug.surpriseArtifactSafetyKnownSafeCount}
+            </div>
+            <div>
+              surpriseArtifactSafetyKnownFailedCount:{' '}
+              {surpriseTryAnotherDebug.surpriseArtifactSafetyKnownFailedCount}
+            </div>
+            <div>
+              surpriseRerollUnknownArtifactCount:{' '}
+              {surpriseTryAnotherDebug.surpriseRerollUnknownArtifactCount}
             </div>
             <div>
               surpriseRerollSuppressedFailedArtifactIds:{' '}
