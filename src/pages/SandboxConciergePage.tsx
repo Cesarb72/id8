@@ -1006,6 +1006,16 @@ interface SurpriseTryAnotherDebug {
   visibleArtifactUniqueStarts: string[]
   visibleArtifactUniqueHighlights: string[]
   visibleArtifactUniqueWindDowns: string[]
+  displayArtifactHighlightDiagnostics: string[]
+  generationSafeRerollHighlightDiagnostics: string[]
+  orderedGenerationSafeRerollHighlightDiagnostics: string[]
+  surpriseKnownSafeHighlightNames: string[]
+  surpriseKnownFailedHighlightNames: string[]
+  surpriseUnknownHighlightNames: string[]
+  surpriseDiscoveryPreferencesIncludeHighlight: boolean | null
+  surpriseDiscoveryPreferenceHighlightName: string | null
+  surpriseDiscoveryPreferenceHighlightId: string | null
+  surpriseDiscoveryPreferenceSourceArtifactId: string | null
   scenarioBackedVisibleSliceCount: number | null
   scenarioBackedSliceCap: number | null
   artifactBuilderNullDropCount: number | null
@@ -1869,6 +1879,41 @@ function summarizeUniqueRoleValues(
     count: byNormalized.size,
     values: [...byNormalized.values()],
   }
+}
+
+function formatSurpriseHighlightDiagnosticRow(params: {
+  artifactId: string
+  highlight: string | null | undefined
+  safetyState: SurpriseArtifactSafetyState
+  family?: string | null
+  directionId?: string | null
+  sameHighlight?: boolean | null
+  score?: number | null
+  roleOverlapCount?: number | null
+  orderingReason?: string | null
+}): string {
+  const {
+    artifactId,
+    highlight,
+    safetyState,
+    family = null,
+    directionId = null,
+    sameHighlight = null,
+    score = null,
+    roleOverlapCount = null,
+    orderingReason = null,
+  } = params
+  return [
+    `artifactId=${artifactId}`,
+    `highlight=${highlight?.trim() || 'n/a'}`,
+    `safetyState=${safetyState}`,
+    `family=${family ?? 'n/a'}`,
+    `directionId=${directionId ?? 'n/a'}`,
+    `sameHighlight=${sameHighlight == null ? 'n/a' : String(sameHighlight)}`,
+    `score=${score == null ? 'n/a' : score.toFixed(3)}`,
+    `roleOverlapCount=${roleOverlapCount == null ? 'n/a' : String(roleOverlapCount)}`,
+    `orderingReason=${orderingReason ?? 'n/a'}`,
+  ].join('|')
 }
 
 function computeStorySpineRoleOverlap(params: {
@@ -16013,6 +16058,8 @@ export function SandboxConciergePage() {
     const surpriseArtifactSafetyKnownFailedCount = isSurpriseWrapperActive
       ? surpriseArtifactSafetyKnownFailedIds.length
       : 0
+    const getSurpriseSafetyState = (artifactId: string): SurpriseArtifactSafetyState =>
+      surpriseArtifactSafetyByArtifactId[artifactId] ?? 'unknown'
     const surpriseRerollUnknownArtifactCount = isSurpriseWrapperActive
       ? step2TryAnotherAlternates.filter(
           (entry) => !surpriseArtifactSafetyByArtifactId[entry.artifact.id],
@@ -16037,6 +16084,101 @@ export function SandboxConciergePage() {
         return family && currentScenarioFamilyHint && family !== currentScenarioFamilyHint
       })
       .map((entry) => entry.artifact.id)
+    const displayArtifactHighlightDiagnostics = candidateRouteArtifactsForDisplay.map((artifact) =>
+      formatSurpriseHighlightDiagnosticRow({
+        artifactId: artifact.id,
+        highlight: artifact.storySpine.highlight,
+        safetyState: getSurpriseSafetyState(artifact.id),
+        family:
+          deriveScenarioFamilyHintFromArtifactIdentity({
+            artifactId: artifact.id,
+            sourceOpportunityId: artifact.sourceOpportunityId,
+            routeTitle: artifact.routeTitle,
+          }) ?? 'n/a',
+        directionId: artifact.selection.directionId ?? 'n/a',
+      }),
+    )
+    const generationSafeRerollHighlightDiagnostics = step2TryAnotherAlternatesGenerationSafe.map(
+      (entry) =>
+        formatSurpriseHighlightDiagnosticRow({
+          artifactId: entry.artifact.id,
+          highlight: entry.artifact.storySpine.highlight,
+          safetyState: getSurpriseSafetyState(entry.artifact.id),
+          family:
+            deriveScenarioFamilyHintFromArtifactIdentity({
+              artifactId: entry.artifact.id,
+              sourceOpportunityId: entry.artifact.sourceOpportunityId,
+              routeTitle: entry.artifact.routeTitle,
+            }) ?? 'n/a',
+          directionId: entry.direction.id,
+          sameHighlight: entry.sameHighlight,
+          score: entry.score,
+          roleOverlapCount: entry.roleOverlapCount,
+          orderingReason: entry.orderingReason,
+        }),
+    )
+    const orderedGenerationSafeRerollHighlightDiagnostics =
+      step2TryAnotherAlternatesGenerationSafeOrdered.map((entry) =>
+        formatSurpriseHighlightDiagnosticRow({
+          artifactId: entry.artifact.id,
+          highlight: entry.artifact.storySpine.highlight,
+          safetyState: getSurpriseSafetyState(entry.artifact.id),
+          family:
+            deriveScenarioFamilyHintFromArtifactIdentity({
+              artifactId: entry.artifact.id,
+              sourceOpportunityId: entry.artifact.sourceOpportunityId,
+              routeTitle: entry.artifact.routeTitle,
+            }) ?? 'n/a',
+          directionId: entry.direction.id,
+          sameHighlight: entry.sameHighlight,
+          score: entry.score,
+          roleOverlapCount: entry.roleOverlapCount,
+          orderingReason: entry.orderingReason,
+        }),
+      )
+    const surpriseKnownSafeHighlightNames = candidateRouteArtifactsForDisplay
+      .filter((artifact) => getSurpriseSafetyState(artifact.id) === 'known_safe')
+      .map((artifact) => `${artifact.id}:${artifact.storySpine.highlight}`)
+    const surpriseKnownFailedHighlightNames = candidateRouteArtifactsForDisplay
+      .filter((artifact) => getSurpriseSafetyState(artifact.id) === 'known_failed')
+      .map((artifact) => `${artifact.id}:${artifact.storySpine.highlight}`)
+    const surpriseUnknownHighlightNames = candidateRouteArtifactsForDisplay
+      .filter((artifact) => getSurpriseSafetyState(artifact.id) === 'unknown')
+      .map((artifact) => `${artifact.id}:${artifact.storySpine.highlight}`)
+    const currentSelectedArtifactOpportunity = currentSelectedArtifact
+      ? verifiedCityOpportunityById.get(currentSelectedArtifact.sourceOpportunityId)
+      : undefined
+    const surpriseDiscoveryPreferences = currentSelectedArtifact
+      ? buildSelectedArtifactDiscoveryPreferences({
+          artifact: currentSelectedArtifact,
+          opportunity: currentSelectedArtifactOpportunity,
+        })
+      : undefined
+    const surpriseDiscoveryPreferenceHighlightId =
+      surpriseDiscoveryPreferences?.find((entry) => entry.role === 'highlight')?.venueId ?? null
+    const surpriseDiscoveryPreferenceHighlightOption = findOpportunityStopOptionByName(
+      currentSelectedArtifactOpportunity,
+      'highlight',
+      currentSelectedArtifact?.storySpine.highlight,
+    )
+    const surpriseDiscoveryPreferencesIncludeHighlight =
+      isSurpriseWrapperActive && currentSelectedArtifact
+        ? Boolean(surpriseDiscoveryPreferenceHighlightId)
+        : null
+    const surpriseDiscoveryPreferenceHighlightName =
+      surpriseDiscoveryPreferenceHighlightOption?.name ??
+      (surpriseDiscoveryPreferenceHighlightId &&
+      surpriseDiscoveryPreferenceHighlightId === currentSelectedArtifact?.anchorVenueId
+        ? currentSelectedArtifact.anchorName
+        : null) ??
+      currentSelectedArtifactOpportunity?.scenarioNight?.stops.find(
+        (stop) => stop.venueId === surpriseDiscoveryPreferenceHighlightId,
+      )?.name ??
+      currentSelectedArtifactOpportunity?.highlightAlternates?.find(
+        (stop) => stop.venueId === surpriseDiscoveryPreferenceHighlightId,
+      )?.name ??
+      currentSelectedArtifactOpportunity?.anchor.name ??
+      null
     const contrastGenerated =
       isSurpriseWrapperActive &&
       Boolean(scenarioContrastCandidateBoard) &&
@@ -16819,6 +16961,17 @@ export function SandboxConciergePage() {
       visibleArtifactUniqueStarts: visibleArtifactStarts.values,
       visibleArtifactUniqueHighlights: visibleArtifactHighlights.values,
       visibleArtifactUniqueWindDowns: visibleArtifactWindDowns.values,
+      displayArtifactHighlightDiagnostics,
+      generationSafeRerollHighlightDiagnostics,
+      orderedGenerationSafeRerollHighlightDiagnostics,
+      surpriseKnownSafeHighlightNames,
+      surpriseKnownFailedHighlightNames,
+      surpriseUnknownHighlightNames,
+      surpriseDiscoveryPreferencesIncludeHighlight,
+      surpriseDiscoveryPreferenceHighlightName,
+      surpriseDiscoveryPreferenceHighlightId,
+      surpriseDiscoveryPreferenceSourceArtifactId:
+        isSurpriseWrapperActive && currentSelectedArtifact ? currentSelectedArtifact.id : null,
       scenarioBackedVisibleSliceCount:
         shouldUseScenarioBackedArtifacts && !isBuildWrapperActive && !(isCurateWrapperActive && selectedStarterPack)
           ? activeStep2ArtifactSourceOpportunities.length
@@ -16907,6 +17060,9 @@ export function SandboxConciergePage() {
     step2PrimarySourceOpportunities,
     step2RerollTrace,
     step2TryAnotherAlternates,
+    step2TryAnotherAlternatesGenerationSafe,
+    step2TryAnotherAlternatesGenerationSafeOrdered,
+    verifiedCityOpportunityById,
     verifiedCityOpportunities,
     activeScenarioContract,
   ])
@@ -20274,6 +20430,51 @@ export function SandboxConciergePage() {
             <div>
               surpriseRerollUnknownCandidateIds:{' '}
               {surpriseTryAnotherDebug.surpriseRerollUnknownCandidateIds.join(', ') || 'none'}
+            </div>
+            <div>
+              surpriseDisplayArtifactHighlights:{' '}
+              {surpriseTryAnotherDebug.displayArtifactHighlightDiagnostics.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseGenerationSafeRerollHighlights:{' '}
+              {surpriseTryAnotherDebug.generationSafeRerollHighlightDiagnostics.join(' || ') ||
+                'none'}
+            </div>
+            <div>
+              surpriseOrderedGenerationSafeRerollHighlights:{' '}
+              {surpriseTryAnotherDebug.orderedGenerationSafeRerollHighlightDiagnostics.join(
+                ' || ',
+              ) || 'none'}
+            </div>
+            <div>
+              surpriseKnownSafeHighlightNames:{' '}
+              {surpriseTryAnotherDebug.surpriseKnownSafeHighlightNames.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseKnownFailedHighlightNames:{' '}
+              {surpriseTryAnotherDebug.surpriseKnownFailedHighlightNames.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseUnknownHighlightNames:{' '}
+              {surpriseTryAnotherDebug.surpriseUnknownHighlightNames.join(' || ') || 'none'}
+            </div>
+            <div>
+              surpriseDiscoveryPreferencesIncludeHighlight:{' '}
+              {surpriseTryAnotherDebug.surpriseDiscoveryPreferencesIncludeHighlight == null
+                ? 'n/a'
+                : String(surpriseTryAnotherDebug.surpriseDiscoveryPreferencesIncludeHighlight)}
+            </div>
+            <div>
+              surpriseDiscoveryPreferenceHighlightName:{' '}
+              {surpriseTryAnotherDebug.surpriseDiscoveryPreferenceHighlightName ?? 'n/a'}
+            </div>
+            <div>
+              surpriseDiscoveryPreferenceHighlightId:{' '}
+              {surpriseTryAnotherDebug.surpriseDiscoveryPreferenceHighlightId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseDiscoveryPreferenceSourceArtifactId:{' '}
+              {surpriseTryAnotherDebug.surpriseDiscoveryPreferenceSourceArtifactId ?? 'n/a'}
             </div>
             <div>
               surpriseRerollSuppressedFailedArtifactIds:{' '}
