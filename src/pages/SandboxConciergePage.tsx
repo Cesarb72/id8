@@ -1283,7 +1283,7 @@ function selectSurpriseScenarioBackedArtifactSourceOpportunities(params: {
     primaryFamily,
     contrastFamily,
     crossPersonaFamily = null,
-    maxCount = 4,
+    maxCount = 5,
   } = params
   if (maxCount <= 0 || opportunities.length === 0) {
     return []
@@ -10059,7 +10059,7 @@ export function SandboxConciergePage() {
       primaryFamily: resolvedScenarioFamily,
       contrastFamily: surpriseContrastScenarioFamily,
       crossPersonaFamily: surpriseCrossPersonaScenarioFamily,
-      maxCount: 4,
+      maxCount: 5,
     })
   }, [
     admittedScenarioBackedVerifiedCityOpportunities,
@@ -16781,7 +16781,7 @@ export function SandboxConciergePage() {
           : null,
       scenarioBackedSliceCap:
         shouldUseScenarioBackedArtifacts && !isBuildWrapperActive && !(isCurateWrapperActive && selectedStarterPack)
-          ? 4
+          ? 5
           : null,
       artifactBuilderNullDropCount:
         activeStep2ArtifactSourceOpportunities.length - step2CandidateRouteArtifacts.length,
