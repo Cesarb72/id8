@@ -985,6 +985,9 @@ interface SurpriseTryAnotherDebug {
   surpriseRerollUnknownArtifactCount: number
   surpriseRerollUnknownPreferred: boolean
   surpriseRerollKnownSafeFallbackUsed: boolean
+  surpriseRerollHighlightDifferentPreferred: boolean
+  surpriseRerollHighlightDifferentCandidateIds: string[]
+  surpriseRerollSameHighlightFallbackUsed: boolean
   surpriseRerollUnknownCandidateIds: string[]
   scenarioBackedFamilyCounts: string
   step2PrimarySourceFamilyCounts: string
@@ -15514,11 +15517,44 @@ export function SandboxConciergePage() {
       surpriseArtifactSafetyByArtifactId,
     ],
   )
+  const surpriseRerollHighlightDifferentCandidateIds = useMemo(
+    () =>
+      isSurpriseWrapperActive
+        ? step2TryAnotherAlternatesGenerationSafeOrdered
+            .filter((entry) => entry.sameHighlight === false)
+            .map((entry) => entry.artifact.id)
+        : [],
+    [isSurpriseWrapperActive, step2TryAnotherAlternatesGenerationSafeOrdered],
+  )
+  const step2TryAnotherAlternatesGenerationSafeHighlightPreferred = useMemo(
+    () => {
+      if (!isSurpriseWrapperActive) {
+        return step2TryAnotherAlternatesGenerationSafeOrdered
+      }
+      const highlightDifferentCandidates = step2TryAnotherAlternatesGenerationSafeOrdered.filter(
+        (entry) => entry.sameHighlight === false,
+      )
+      if (highlightDifferentCandidates.length === 0) {
+        return step2TryAnotherAlternatesGenerationSafeOrdered
+      }
+      const sameHighlightCandidates = step2TryAnotherAlternatesGenerationSafeOrdered.filter(
+        (entry) => entry.sameHighlight !== false,
+      )
+      return [...highlightDifferentCandidates, ...sameHighlightCandidates]
+    },
+    [isSurpriseWrapperActive, step2TryAnotherAlternatesGenerationSafeOrdered],
+  )
   const surpriseRerollUnknownPreferred =
     isSurpriseWrapperActive && surpriseRerollUnknownCandidateIds.length > 0
   const surpriseRerollKnownSafeFallbackUsed =
     isSurpriseWrapperActive &&
     surpriseRerollUnknownCandidateIds.length === 0 &&
+    step2TryAnotherAlternatesGenerationSafeOrdered.length > 0
+  const surpriseRerollHighlightDifferentPreferred =
+    isSurpriseWrapperActive && surpriseRerollHighlightDifferentCandidateIds.length > 0
+  const surpriseRerollSameHighlightFallbackUsed =
+    isSurpriseWrapperActive &&
+    surpriseRerollHighlightDifferentCandidateIds.length === 0 &&
     step2TryAnotherAlternatesGenerationSafeOrdered.length > 0
   const surpriseRerollGenerationSafeCount = isSurpriseWrapperActive
     ? step2TryAnotherAlternatesGenerationSafe.length
@@ -15613,8 +15649,8 @@ export function SandboxConciergePage() {
           } => Boolean(entry),
         )
     const candidatesToTry =
-      step2TryAnotherAlternatesGenerationSafeOrdered.length > 0
-        ? step2TryAnotherAlternatesGenerationSafeOrdered
+      step2TryAnotherAlternatesGenerationSafeHighlightPreferred.length > 0
+        ? step2TryAnotherAlternatesGenerationSafeHighlightPreferred
         : fallbackAlternates
     if (candidatesToTry.length === 0) {
       setStep2RerollTrace((current) =>
@@ -15674,7 +15710,7 @@ export function SandboxConciergePage() {
   }, [
     candidateRouteArtifactsForDisplay,
     directionCards,
-    step2TryAnotherAlternatesGenerationSafeOrdered,
+    step2TryAnotherAlternatesGenerationSafeHighlightPreferred,
     handleSelectDirection,
     loading,
     isSurpriseWrapperActive,
@@ -16932,6 +16968,9 @@ export function SandboxConciergePage() {
       surpriseRerollUnknownArtifactCount,
       surpriseRerollUnknownPreferred,
       surpriseRerollKnownSafeFallbackUsed,
+      surpriseRerollHighlightDifferentPreferred,
+      surpriseRerollHighlightDifferentCandidateIds,
+      surpriseRerollSameHighlightFallbackUsed,
       surpriseRerollUnknownCandidateIds,
       scenarioBackedFamilyCounts: scenarioBackedFamilies,
       step2PrimarySourceFamilyCounts: step2PrimaryFamilies,
@@ -17048,7 +17087,10 @@ export function SandboxConciergePage() {
     surpriseArtifactSafetyByArtifactId,
     surpriseArtifactSafetyKnownFailedIds,
     surpriseArtifactSafetyKnownSafeIds,
+    surpriseRerollHighlightDifferentCandidateIds,
+    surpriseRerollHighlightDifferentPreferred,
     surpriseRerollKnownSafeFallbackUsed,
+    surpriseRerollSameHighlightFallbackUsed,
     surpriseRerollUnknownCandidateIds,
     surpriseRerollUnknownPreferred,
     surpriseScenarioArtifactSourceOpportunities,
@@ -20426,6 +20468,19 @@ export function SandboxConciergePage() {
             <div>
               surpriseRerollKnownSafeFallbackUsed:{' '}
               {String(surpriseTryAnotherDebug.surpriseRerollKnownSafeFallbackUsed)}
+            </div>
+            <div>
+              surpriseRerollHighlightDifferentPreferred:{' '}
+              {String(surpriseTryAnotherDebug.surpriseRerollHighlightDifferentPreferred)}
+            </div>
+            <div>
+              surpriseRerollHighlightDifferentCandidateIds:{' '}
+              {surpriseTryAnotherDebug.surpriseRerollHighlightDifferentCandidateIds.join(', ') ||
+                'none'}
+            </div>
+            <div>
+              surpriseRerollSameHighlightFallbackUsed:{' '}
+              {String(surpriseTryAnotherDebug.surpriseRerollSameHighlightFallbackUsed)}
             </div>
             <div>
               surpriseRerollUnknownCandidateIds:{' '}
