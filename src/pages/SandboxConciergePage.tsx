@@ -1010,6 +1010,9 @@ interface SurpriseTryAnotherDebug {
   surpriseAnyOverrideReason: string | null
   surpriseReconciliationSkippedForArtifactSelection: boolean | null
   surpriseRerollArtifactAuthoritativeSelectionActive: boolean | null
+  surpriseCommittedOverrideBlockedForStaleRoute: boolean | null
+  surpriseCommittedRouteBodyMatchesSelectedArtifact: boolean | null
+  surpriseCandidatePreviewAuthorityWonAfterReroll: boolean | null
   scenarioBackedFamilyCounts: string
   step2PrimarySourceFamilyCounts: string
   step2CandidateArtifactFamilyCounts: string
@@ -2573,6 +2576,7 @@ function buildSelectedRouteArtifactProjection(params: {
   explicitSelectedCandidateArtifactId: string | null
   candidatePreviewAuthorityActive: boolean
   selectedRouteDirectionId: string | null
+  isSurpriseWrapperActive: boolean
   isCurateWrapperActive: boolean
   selectedCuratePreviewCommitability: CuratePreviewCommitabilityState | null
   canonicalRouteArtifact: CanonicalRouteArtifact | null
@@ -2594,6 +2598,7 @@ function buildSelectedRouteArtifactProjection(params: {
     explicitSelectedCandidateArtifactId,
     candidatePreviewAuthorityActive,
     selectedRouteDirectionId,
+    isSurpriseWrapperActive,
     isCurateWrapperActive,
     selectedCuratePreviewCommitability,
     canonicalRouteArtifact,
@@ -2659,11 +2664,26 @@ function buildSelectedRouteArtifactProjection(params: {
     !candidatePreviewAuthorityActive ||
     canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ===
       explicitSelectedCandidateArtifactId
+  const explicitSurpriseRerollCandidateSelectionActive = Boolean(
+    isSurpriseWrapperActive &&
+      candidatePreviewAuthorityActive &&
+      effectiveCurateSelectedArtifact &&
+      explicitSelectedCandidateArtifactId &&
+      effectiveCurateSelectedArtifact.id === explicitSelectedCandidateArtifactId,
+  )
+  const committedRouteBodyMatchesSelectedArtifact =
+    explicitSurpriseRerollCandidateSelectionActive && canonicalRouteArtifact
+      ? getArtifactStorySpineRouteBodyMatch(
+          effectiveCurateSelectedArtifact,
+          canonicalRouteArtifact.finalRoute,
+        ) === true
+      : true
   if (
     canonicalRouteArtifact &&
     selectedRouteDirectionId &&
     canonicalRouteArtifact.selectedDirectionId === selectedRouteDirectionId &&
-    committedArtifactMatchesSelection
+    committedArtifactMatchesSelection &&
+    committedRouteBodyMatchesSelectedArtifact
   ) {
     const committedHighlightStop =
       canonicalRouteArtifact.finalRoute.stops.find((stop) => stop.role === 'highlight') ?? null
@@ -3234,6 +3254,22 @@ function getArtifactStoryRoleMatch(params: {
     normalizeCurateAuditStopName(artifact.storySpine[role]) ===
     normalizeCurateAuditStopName(finalStop.displayName)
   )
+}
+
+function getArtifactStorySpineRouteBodyMatch(
+  artifact: ContractEntryArtifact | null | undefined,
+  finalRoute?: RuntimeRouteArtifact | null,
+): boolean | null {
+  if (!artifact || !finalRoute) {
+    return null
+  }
+  const roles: Array<Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>> = [
+    'start',
+    'highlight',
+    'windDown',
+  ]
+  const roleMatches = roles.map((role) => getArtifactStoryRoleMatch({ artifact, finalRoute, role }))
+  return roleMatches.every((match) => match === true)
 }
 
 function normalizeStarterAuditToken(value: string | undefined): string {
@@ -14781,6 +14817,7 @@ export function SandboxConciergePage() {
       explicitSelectedCandidateArtifactId,
       candidatePreviewAuthorityActive,
       selectedRouteDirectionId,
+      isSurpriseWrapperActive,
       isCurateWrapperActive,
       selectedCuratePreviewCommitability,
       canonicalRouteArtifact,
@@ -14797,6 +14834,7 @@ export function SandboxConciergePage() {
     city,
     isBuildWrapperActive,
     isCurateWrapperActive,
+    isSurpriseWrapperActive,
     selectedCandidateArtifactResolution.artifactCountForDirection,
     selectedCandidateArtifactResolution.mode,
     selectedDirectionId,
@@ -16355,6 +16393,24 @@ export function SandboxConciergePage() {
     const surpriseRerollArtifactAuthoritativeSelectionActive = isSurpriseWrapperActive
       ? rerollArtifactAuthoritativeSelectionActive
       : null
+    const surpriseCommittedRouteBodyMatchesSelectedArtifact = isSurpriseWrapperActive
+      ? getArtifactStorySpineRouteBodyMatch(
+          selectedCandidateRouteArtifact,
+          canonicalRouteArtifact?.finalRoute,
+        )
+      : null
+    const surpriseCommittedOverrideBlockedForStaleRoute =
+      isSurpriseWrapperActive &&
+      rerollArtifactAuthoritativeSelectionActive &&
+      surpriseCommittedRouteBodyMatchesSelectedArtifact === false
+        ? true
+        : null
+    const surpriseCandidatePreviewAuthorityWonAfterReroll =
+      isSurpriseWrapperActive &&
+      rerollArtifactAuthoritativeSelectionActive &&
+      surpriseCommittedOverrideBlockedForStaleRoute === true
+        ? selectedRouteArtifact?.source === 'candidate'
+        : null
     const contrastGenerated =
       isSurpriseWrapperActive &&
       Boolean(scenarioContrastCandidateBoard) &&
@@ -17133,6 +17189,9 @@ export function SandboxConciergePage() {
       surpriseAnyOverrideReason,
       surpriseReconciliationSkippedForArtifactSelection,
       surpriseRerollArtifactAuthoritativeSelectionActive,
+      surpriseCommittedOverrideBlockedForStaleRoute,
+      surpriseCommittedRouteBodyMatchesSelectedArtifact,
+      surpriseCandidatePreviewAuthorityWonAfterReroll,
       scenarioBackedFamilyCounts: scenarioBackedFamilies,
       step2PrimarySourceFamilyCounts: step2PrimaryFamilies,
       step2CandidateArtifactFamilyCounts: step2CandidateFamilies,
@@ -20857,6 +20916,30 @@ export function SandboxConciergePage() {
                 ? 'n/a'
                 : String(
                     surpriseTryAnotherDebug.surpriseRerollArtifactAuthoritativeSelectionActive,
+                  )}
+            </div>
+            <div>
+              surpriseCommittedOverrideBlockedForStaleRoute:{' '}
+              {surpriseTryAnotherDebug.surpriseCommittedOverrideBlockedForStaleRoute == null
+                ? 'n/a'
+                : String(
+                    surpriseTryAnotherDebug.surpriseCommittedOverrideBlockedForStaleRoute,
+                  )}
+            </div>
+            <div>
+              surpriseCommittedRouteBodyMatchesSelectedArtifact:{' '}
+              {surpriseTryAnotherDebug.surpriseCommittedRouteBodyMatchesSelectedArtifact == null
+                ? 'n/a'
+                : String(
+                    surpriseTryAnotherDebug.surpriseCommittedRouteBodyMatchesSelectedArtifact,
+                  )}
+            </div>
+            <div>
+              surpriseCandidatePreviewAuthorityWonAfterReroll:{' '}
+              {surpriseTryAnotherDebug.surpriseCandidatePreviewAuthorityWonAfterReroll == null
+                ? 'n/a'
+                : String(
+                    surpriseTryAnotherDebug.surpriseCandidatePreviewAuthorityWonAfterReroll,
                   )}
             </div>
             <div>
