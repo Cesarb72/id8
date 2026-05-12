@@ -989,6 +989,27 @@ interface SurpriseTryAnotherDebug {
   surpriseRerollHighlightDifferentCandidateIds: string[]
   surpriseRerollSameHighlightFallbackUsed: boolean
   surpriseRerollUnknownCandidateIds: string[]
+  surpriseHighlightPreferredFirstArtifactId: string | null
+  surpriseHighlightPreferredFirstHighlight: string | null
+  surpriseHighlightPreferredFirstSameHighlight: boolean | null
+  surpriseHighlightPreferredPoolCount: number
+  surpriseRerollTraceNextArtifactIdSelected: string | null
+  surpriseRerollTraceNextDirectionIdSelected: string | null
+  surpriseRerollTraceSelectedArtifactIdAfterSelect: string | null
+  surpriseRerollTraceSelectedDirectionIdAfterSelect: string | null
+  surpriseResolvedSelectedCandidateArtifactId: string | null
+  surpriseResolvedSelectedCandidateHighlight: string | null
+  surpriseResolvedSelectedCandidateDirectionId: string | null
+  surpriseSelectedRouteArtifactCandidateArtifactId: string | null
+  surpriseSelectedRouteArtifactHighlight: string | null
+  surpriseActivePlanPreviewSource: string | null
+  surpriseActivePlanPreviewCandidateArtifactId: string | null
+  surpriseActivePlanPreviewHighlight: string | null
+  surpriseStaleCommittedMatchUsed: boolean | null
+  surpriseCommittedArtifactPreferred: boolean | null
+  surpriseAnyOverrideReason: string | null
+  surpriseReconciliationSkippedForArtifactSelection: boolean | null
+  surpriseRerollArtifactAuthoritativeSelectionActive: boolean | null
   scenarioBackedFamilyCounts: string
   step2PrimarySourceFamilyCounts: string
   step2CandidateArtifactFamilyCounts: string
@@ -16271,6 +16292,69 @@ export function SandboxConciergePage() {
         ? normalizeCurateAuditStopName(surpriseSelectedRerollArtifactHighlight) ===
           normalizeCurateAuditStopName(surpriseCommittedFinalRouteHighlight)
         : null
+    const surpriseHighlightPreferredFirstCandidate = isSurpriseWrapperActive
+      ? step2TryAnotherAlternatesGenerationSafeHighlightPreferred[0] ?? null
+      : null
+    const surpriseHighlightPreferredFirstArtifactId =
+      surpriseHighlightPreferredFirstCandidate?.artifact.id ?? null
+    const surpriseHighlightPreferredFirstHighlight =
+      surpriseHighlightPreferredFirstCandidate?.artifact.storySpine.highlight ?? null
+    const surpriseHighlightPreferredFirstSameHighlight =
+      surpriseHighlightPreferredFirstCandidate?.sameHighlight ?? null
+    const surpriseHighlightPreferredPoolCount = isSurpriseWrapperActive
+      ? step2TryAnotherAlternatesGenerationSafeHighlightPreferred.length
+      : 0
+    const surpriseRerollTraceNextArtifactIdSelected = isSurpriseWrapperActive
+      ? step2RerollTrace?.nextArtifactId_selected ?? null
+      : null
+    const surpriseRerollTraceNextDirectionIdSelected = isSurpriseWrapperActive
+      ? step2RerollTrace?.nextDirectionId_selected ?? null
+      : null
+    const surpriseRerollTraceSelectedArtifactIdAfterSelect = isSurpriseWrapperActive
+      ? step2RerollTrace?.selectedStep2CandidateArtifactId_afterSelect ?? null
+      : null
+    const surpriseRerollTraceSelectedDirectionIdAfterSelect = isSurpriseWrapperActive
+      ? step2RerollTrace?.selectedDirectionId_afterSelect ?? null
+      : null
+    const surpriseResolvedSelectedCandidateArtifactId = isSurpriseWrapperActive
+      ? selectedCandidateRouteArtifact?.id ?? null
+      : null
+    const surpriseResolvedSelectedCandidateHighlight = isSurpriseWrapperActive
+      ? selectedCandidateRouteArtifact?.storySpine.highlight ?? null
+      : null
+    const surpriseResolvedSelectedCandidateDirectionId = isSurpriseWrapperActive
+      ? selectedCandidateRouteArtifact?.selection.directionId ?? null
+      : null
+    const surpriseSelectedRouteArtifactCandidateArtifactId = isSurpriseWrapperActive
+      ? selectedRouteArtifact?.source === 'candidate'
+        ? selectedRouteArtifact.candidateArtifactId ?? null
+        : canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ?? null
+      : null
+    const surpriseSelectedRouteArtifactHighlight = isSurpriseWrapperActive
+      ? selectedRouteArtifact?.activeHighlight.activeName ?? null
+      : null
+    const surpriseActivePlanPreviewSource = isSurpriseWrapperActive ? previewRenderSource : null
+    const surpriseActivePlanPreviewCandidateArtifactId = isSurpriseWrapperActive
+      ? activePlanPreview?.sourceCandidateArtifactId ?? null
+      : null
+    const surpriseActivePlanPreviewHighlight = isSurpriseWrapperActive
+      ? activePlanPreview?.storySpine.highlight ?? null
+      : null
+    const surpriseStaleCommittedMatchUsed = isSurpriseWrapperActive
+      ? step2RerollTrace?.staleCommittedMatchUsed ?? null
+      : null
+    const surpriseCommittedArtifactPreferred = isSurpriseWrapperActive
+      ? step2RerollTrace?.committedArtifactPreferred ?? null
+      : null
+    const surpriseAnyOverrideReason = isSurpriseWrapperActive
+      ? step2RerollTrace?.anyOverrideReason ?? null
+      : null
+    const surpriseReconciliationSkippedForArtifactSelection = isSurpriseWrapperActive
+      ? reconciliationSkippedForArtifactSelection
+      : null
+    const surpriseRerollArtifactAuthoritativeSelectionActive = isSurpriseWrapperActive
+      ? rerollArtifactAuthoritativeSelectionActive
+      : null
     const contrastGenerated =
       isSurpriseWrapperActive &&
       Boolean(scenarioContrastCandidateBoard) &&
@@ -17028,6 +17112,27 @@ export function SandboxConciergePage() {
       surpriseRerollHighlightDifferentCandidateIds,
       surpriseRerollSameHighlightFallbackUsed,
       surpriseRerollUnknownCandidateIds,
+      surpriseHighlightPreferredFirstArtifactId,
+      surpriseHighlightPreferredFirstHighlight,
+      surpriseHighlightPreferredFirstSameHighlight,
+      surpriseHighlightPreferredPoolCount,
+      surpriseRerollTraceNextArtifactIdSelected,
+      surpriseRerollTraceNextDirectionIdSelected,
+      surpriseRerollTraceSelectedArtifactIdAfterSelect,
+      surpriseRerollTraceSelectedDirectionIdAfterSelect,
+      surpriseResolvedSelectedCandidateArtifactId,
+      surpriseResolvedSelectedCandidateHighlight,
+      surpriseResolvedSelectedCandidateDirectionId,
+      surpriseSelectedRouteArtifactCandidateArtifactId,
+      surpriseSelectedRouteArtifactHighlight,
+      surpriseActivePlanPreviewSource,
+      surpriseActivePlanPreviewCandidateArtifactId,
+      surpriseActivePlanPreviewHighlight,
+      surpriseStaleCommittedMatchUsed,
+      surpriseCommittedArtifactPreferred,
+      surpriseAnyOverrideReason,
+      surpriseReconciliationSkippedForArtifactSelection,
+      surpriseRerollArtifactAuthoritativeSelectionActive,
       scenarioBackedFamilyCounts: scenarioBackedFamilies,
       step2PrimarySourceFamilyCounts: step2PrimaryFamilies,
       step2CandidateArtifactFamilyCounts: step2CandidateFamilies,
@@ -17147,6 +17252,10 @@ export function SandboxConciergePage() {
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
     shouldUseScenarioBackedArtifacts,
+    previewRenderSource,
+    activePlanPreview,
+    reconciliationSkippedForArtifactSelection,
+    rerollArtifactAuthoritativeSelectionActive,
     surpriseContractValidationFailedDirectionId,
     surpriseCrossPersonaOpportunityRepairEntries,
     surpriseCrossPersonaScenarioFamily,
@@ -17170,6 +17279,7 @@ export function SandboxConciergePage() {
     step2RerollTrace,
     step2TryAnotherAlternates,
     step2TryAnotherAlternatesGenerationSafe,
+    step2TryAnotherAlternatesGenerationSafeHighlightPreferred,
     step2TryAnotherAlternatesGenerationSafeOrdered,
     verifiedCityOpportunityById,
     verifiedCityOpportunities,
@@ -20550,6 +20660,24 @@ export function SandboxConciergePage() {
               {String(surpriseTryAnotherDebug.surpriseRerollSameHighlightFallbackUsed)}
             </div>
             <div>
+              surpriseHighlightPreferredFirstArtifactId:{' '}
+              {surpriseTryAnotherDebug.surpriseHighlightPreferredFirstArtifactId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseHighlightPreferredFirstHighlight:{' '}
+              {surpriseTryAnotherDebug.surpriseHighlightPreferredFirstHighlight ?? 'n/a'}
+            </div>
+            <div>
+              surpriseHighlightPreferredFirstSameHighlight:{' '}
+              {surpriseTryAnotherDebug.surpriseHighlightPreferredFirstSameHighlight == null
+                ? 'n/a'
+                : String(surpriseTryAnotherDebug.surpriseHighlightPreferredFirstSameHighlight)}
+            </div>
+            <div>
+              surpriseHighlightPreferredPoolCount:{' '}
+              {surpriseTryAnotherDebug.surpriseHighlightPreferredPoolCount}
+            </div>
+            <div>
               surpriseRerollUnknownCandidateIds:{' '}
               {surpriseTryAnotherDebug.surpriseRerollUnknownCandidateIds.join(', ') || 'none'}
             </div>
@@ -20623,12 +20751,32 @@ export function SandboxConciergePage() {
               {surpriseTryAnotherDebug.surpriseSelectedRouteArtifactSource ?? 'n/a'}
             </div>
             <div>
+              surpriseSelectedRouteArtifactCandidateArtifactId:{' '}
+              {surpriseTryAnotherDebug.surpriseSelectedRouteArtifactCandidateArtifactId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseSelectedRouteArtifactHighlight:{' '}
+              {surpriseTryAnotherDebug.surpriseSelectedRouteArtifactHighlight ?? 'n/a'}
+            </div>
+            <div>
               surpriseRenderedPlanPreviewSourceCandidateArtifactId:{' '}
               {surpriseTryAnotherDebug.surpriseRenderedPlanPreviewSourceCandidateArtifactId ?? 'n/a'}
             </div>
             <div>
               surpriseRenderedPlanPreviewHighlight:{' '}
               {surpriseTryAnotherDebug.surpriseRenderedPlanPreviewHighlight ?? 'n/a'}
+            </div>
+            <div>
+              surpriseActivePlanPreviewSource:{' '}
+              {surpriseTryAnotherDebug.surpriseActivePlanPreviewSource ?? 'n/a'}
+            </div>
+            <div>
+              surpriseActivePlanPreviewCandidateArtifactId:{' '}
+              {surpriseTryAnotherDebug.surpriseActivePlanPreviewCandidateArtifactId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseActivePlanPreviewHighlight:{' '}
+              {surpriseTryAnotherDebug.surpriseActivePlanPreviewHighlight ?? 'n/a'}
             </div>
             <div>
               surpriseCommittedFinalRouteHighlight:{' '}
@@ -20649,6 +20797,66 @@ export function SandboxConciergePage() {
                 ? 'n/a'
                 : String(
                     surpriseTryAnotherDebug.surpriseSelectedArtifactHighlightMatchesFinalRouteHighlight,
+                  )}
+            </div>
+            <div>
+              surpriseRerollTraceNextArtifactIdSelected:{' '}
+              {surpriseTryAnotherDebug.surpriseRerollTraceNextArtifactIdSelected ?? 'n/a'}
+            </div>
+            <div>
+              surpriseRerollTraceNextDirectionIdSelected:{' '}
+              {surpriseTryAnotherDebug.surpriseRerollTraceNextDirectionIdSelected ?? 'n/a'}
+            </div>
+            <div>
+              surpriseRerollTraceSelectedArtifactIdAfterSelect:{' '}
+              {surpriseTryAnotherDebug.surpriseRerollTraceSelectedArtifactIdAfterSelect ?? 'n/a'}
+            </div>
+            <div>
+              surpriseRerollTraceSelectedDirectionIdAfterSelect:{' '}
+              {surpriseTryAnotherDebug.surpriseRerollTraceSelectedDirectionIdAfterSelect ?? 'n/a'}
+            </div>
+            <div>
+              surpriseResolvedSelectedCandidateArtifactId:{' '}
+              {surpriseTryAnotherDebug.surpriseResolvedSelectedCandidateArtifactId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseResolvedSelectedCandidateHighlight:{' '}
+              {surpriseTryAnotherDebug.surpriseResolvedSelectedCandidateHighlight ?? 'n/a'}
+            </div>
+            <div>
+              surpriseResolvedSelectedCandidateDirectionId:{' '}
+              {surpriseTryAnotherDebug.surpriseResolvedSelectedCandidateDirectionId ?? 'n/a'}
+            </div>
+            <div>
+              surpriseStaleCommittedMatchUsed:{' '}
+              {surpriseTryAnotherDebug.surpriseStaleCommittedMatchUsed == null
+                ? 'n/a'
+                : String(surpriseTryAnotherDebug.surpriseStaleCommittedMatchUsed)}
+            </div>
+            <div>
+              surpriseCommittedArtifactPreferred:{' '}
+              {surpriseTryAnotherDebug.surpriseCommittedArtifactPreferred == null
+                ? 'n/a'
+                : String(surpriseTryAnotherDebug.surpriseCommittedArtifactPreferred)}
+            </div>
+            <div>
+              surpriseAnyOverrideReason:{' '}
+              {surpriseTryAnotherDebug.surpriseAnyOverrideReason ?? 'n/a'}
+            </div>
+            <div>
+              surpriseReconciliationSkippedForArtifactSelection:{' '}
+              {surpriseTryAnotherDebug.surpriseReconciliationSkippedForArtifactSelection == null
+                ? 'n/a'
+                : String(
+                    surpriseTryAnotherDebug.surpriseReconciliationSkippedForArtifactSelection,
+                  )}
+            </div>
+            <div>
+              surpriseRerollArtifactAuthoritativeSelectionActive:{' '}
+              {surpriseTryAnotherDebug.surpriseRerollArtifactAuthoritativeSelectionActive == null
+                ? 'n/a'
+                : String(
+                    surpriseTryAnotherDebug.surpriseRerollArtifactAuthoritativeSelectionActive,
                   )}
             </div>
             <div>
