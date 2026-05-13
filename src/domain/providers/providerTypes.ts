@@ -1,5 +1,5 @@
 import type { HoursPeriod } from '../types/hours'
-import type { SourceMode } from '../types/sourceMode'
+import type { EngineSourceMode } from '../types/sourceMode'
 
 export interface ProviderVenueLocation {
   latitude: number
@@ -39,9 +39,8 @@ export interface ProviderVenue {
   websiteUri?: string
   utcOffsetMinutes?: number
   location?: ProviderVenueLocation
-  sourceMode: Extract<SourceMode, 'live'>
+  sourceMode: Extract<EngineSourceMode, 'live'>
   rawPayloadAvailable: false
   fetchedAt: number
   completenessHints: ProviderVenueCompletenessHints
 }
-

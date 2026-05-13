@@ -5,6 +5,7 @@ import type {
 import { applyExperienceContractToAggregation } from './taste/applyExperienceContractToOpportunityAggregation'
 import { applyScenarioContractToAggregation } from './taste/applyScenarioContractToOpportunityAggregation'
 import type { ExperienceContract as InterpretationExperienceContract } from './contracts/experienceContract'
+import type { EngineSourceMode } from '../types/sourceMode'
 import {
   deriveStep2AuthoritySignals,
   type Step2AuthoritySignals,
@@ -51,6 +52,7 @@ export interface BuildLiveDistrictVerifiedCityOpportunityParams {
   personaLabel: string
   vibeLabel: string
   roleProjectionDepth: number
+  sourceMode: Extract<EngineSourceMode, 'curated' | 'live'>
   secondaryDistricts?: string[]
 }
 
@@ -87,6 +89,7 @@ export function buildLiveDistrictVerifiedCityOpportunity(
     personaLabel,
     vibeLabel,
     roleProjectionDepth,
+    sourceMode,
     secondaryDistricts,
   } = params
   const representativeDirection = directionCards.slice().sort((left, right) => {
@@ -180,6 +183,7 @@ export function buildLiveDistrictVerifiedCityOpportunity(
   })
   const card: VerifiedCityOpportunity = {
     id: `step2_city_opportunity_${district.id}`,
+    sourceMode,
     flavor: getVerifiedOpportunityFlavor(
       aggregation,
       representativeDirection?.card.title ?? 'Intent-matched',

@@ -1,4 +1,9 @@
+// Retrieval/provider activation mode. This governs whether Field may attempt live fetches.
 export type SourceMode = 'curated' | 'live' | 'hybrid'
+
+// Engine supply source mode. This travels with provider-seeded or opportunity-shaped inputs
+// so downstream engines never infer supply lineage from venue shape or provider metadata.
+export type EngineSourceMode = 'curated' | 'live' | 'bootstrap'
 
 export type VenueSourceOrigin = 'curated' | 'live'
 

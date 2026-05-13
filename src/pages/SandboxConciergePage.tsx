@@ -9771,6 +9771,7 @@ export function SandboxConciergePage() {
           personaLabel: selectedPersonaLabel,
           vibeLabel: selectedVibeLabel,
           roleProjectionDepth: isBuildWrapperActive ? 6 : 2,
+          sourceMode: 'curated',
           secondaryDistricts,
         })
       })

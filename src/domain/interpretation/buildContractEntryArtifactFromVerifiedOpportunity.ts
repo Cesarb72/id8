@@ -2,6 +2,7 @@ import type {
   CanonicalCandidateRouteArtifact,
   ContractEntryArtifact,
 } from '../artifacts/contractEntryArtifact'
+import type { EngineSourceMode } from '../types/sourceMode'
 import type { BuiltScenarioStopPosition } from './construction/scenarioBuilder'
 
 export interface VerifiedOpportunityArtifactBuilderEcsState {
@@ -32,6 +33,7 @@ interface VerifiedOpportunityArtifactBuilderWindDownDebug {
 
 export interface VerifiedOpportunityArtifactBuilderInput {
   id: string
+  sourceMode: EngineSourceMode
   flavor: string
   anchor: {
     venueId: string
@@ -93,6 +95,7 @@ export function buildContractEntryArtifactFromVerifiedOpportunity(params: {
     return {
       id: opportunity.id,
       sourceOpportunityId: opportunity.id,
+      sourceMode: opportunity.sourceMode,
       anchorVenueId: opportunity.anchor.venueId,
       anchorRole: 'highlight',
       anchorName: opportunity.anchor.name,
@@ -120,6 +123,7 @@ export function buildContractEntryArtifactFromVerifiedOpportunity(params: {
   return {
     id: opportunity.id,
     sourceOpportunityId: opportunity.id,
+    sourceMode: opportunity.sourceMode,
     anchorVenueId: opportunity.anchor.venueId,
     anchorRole: 'highlight',
     anchorName: opportunity.anchor.name,

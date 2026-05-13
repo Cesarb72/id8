@@ -1,6 +1,7 @@
 import type { BuiltScenarioNight } from '../interpretation/construction/scenarioBuilder'
 import type { DirectionContractBuildability } from '../bearings/assessDirectionContractBuildability'
 import type { UserStopRole } from '../types/itinerary'
+import type { EngineSourceMode } from '../types/sourceMode'
 
 /**
  * ARC BOUNDARY: interpretation-owned candidate route artifact.
@@ -32,6 +33,7 @@ export interface ContractEntryArtifactDirectionBacking {
 export interface ContractEntryArtifactLineage {
   artifactId: string
   sourceOpportunityId: string
+  sourceMode?: EngineSourceMode
   anchorVenueId: string
   anchorRole?: Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
   directionId?: string
@@ -55,6 +57,7 @@ export interface ContractEntryArtifactQualification<
 export interface ContractEntryArtifact {
   id: string
   sourceOpportunityId: string
+  sourceMode?: EngineSourceMode
   anchorVenueId: string
   anchorRole?: Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
   anchorName: string
@@ -81,6 +84,7 @@ export function buildContractEntryArtifactLineage(
   return {
     artifactId: artifact.id,
     sourceOpportunityId: artifact.sourceOpportunityId,
+    ...(artifact.sourceMode ? { sourceMode: artifact.sourceMode } : {}),
     anchorVenueId: artifact.anchorVenueId,
     ...(artifact.anchorRole ? { anchorRole: artifact.anchorRole } : {}),
     ...(artifact.selection.directionId ? { directionId: artifact.selection.directionId } : {}),

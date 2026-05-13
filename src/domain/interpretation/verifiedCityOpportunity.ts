@@ -1,5 +1,6 @@
 import { curatedVenues } from '../../data/venues'
 import type { ContractConstraints } from '../types/intent'
+import type { EngineSourceMode } from '../types/sourceMode'
 import { dedupeStringIds } from '../utils/dedupeStringIds'
 import type { BuiltScenarioNight, BuiltScenarioStop, BuiltScenarioStopPosition } from './construction/scenarioBuilder'
 import { devGreatStopFixtureVenueIds } from '../sources/devGreatStopFixtures'
@@ -56,6 +57,7 @@ export type BuiltScenarioNightPreviewModel = {
 
 export type VerifiedCityOpportunity = {
   id: string
+  sourceMode: EngineSourceMode
   flavor: string
   anchor: {
     venueId: string
@@ -243,6 +245,7 @@ export function mapBuiltScenarioNightToVerifiedOpportunity(params: {
 
   return {
     id: `step2_scenario_${night.id}`,
+    sourceMode: 'bootstrap',
     flavor: night.flavorLine,
     anchor: {
       venueId: highlightStop.venueId,
