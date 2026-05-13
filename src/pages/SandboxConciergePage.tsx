@@ -10438,6 +10438,11 @@ export function SandboxConciergePage() {
       step2CandidateRouteArtifacts,
     ],
   )
+  const buildNoAnchorValidDirectionsActive = Boolean(
+    isBuildWrapperActive &&
+      selectedBuildAnchor &&
+      buildAnchorMatchedCandidateArtifacts.length === 0,
+  )
   const directionBackedDisplayArtifactsPartition = useMemo(
     () => partitionContractEntryArtifactsByDirectionBacking(curateDisplayArtifactsBeforeDedupe),
     [curateDisplayArtifactsBeforeDedupe],
@@ -10865,6 +10870,73 @@ export function SandboxConciergePage() {
       `${persona}|${primaryVibe}|${visibleDirectionCardsForSelection.map((entry) => entry.id).join('|')}`,
     [persona, primaryVibe, visibleDirectionCardsForSelection],
   )
+  const buildDirectionCardIds = useMemo(
+    () => (isBuildWrapperActive ? directionCards.map((entry) => entry.id) : []),
+    [directionCards, isBuildWrapperActive],
+  )
+  const buildVisibleDirectionCardIds = useMemo(
+    () => (isBuildWrapperActive ? visibleDirectionCardsForSelection.map((entry) => entry.id) : []),
+    [isBuildWrapperActive, visibleDirectionCardsForSelection],
+  )
+  const buildAnchorAllowedDirectionIds = useMemo(
+    () =>
+      isBuildWrapperActive
+        ? [
+            ...new Set(
+              buildAnchorMatchedCandidateArtifacts
+                .map((artifact) => artifact.selection.directionId)
+                .filter((value): value is string => Boolean(value)),
+            ),
+          ]
+        : [],
+    [buildAnchorMatchedCandidateArtifacts, isBuildWrapperActive],
+  )
+  const buildDirectionCardCount = buildDirectionCardIds.length
+  const buildVisibleDirectionCardCount = buildVisibleDirectionCardIds.length
+  const buildDirectionSetKey = isBuildWrapperActive ? directionSetKey : 'n/a'
+  const buildGeneralReconciliationSuppressedForNoAnchorValidRoutes =
+    buildNoAnchorValidDirectionsActive
+  const buildSelectedDirectionId = isBuildWrapperActive ? selectedDirectionId ?? null : null
+  const buildSelectedStep2CandidateArtifactId = isBuildWrapperActive
+    ? selectedStep2CandidateArtifactId ?? null
+    : null
+  const buildSelectedDirectionInVisibleCards = Boolean(
+    isBuildWrapperActive &&
+      selectedDirectionId &&
+      buildVisibleDirectionCardIds.includes(selectedDirectionId),
+  )
+  const buildAnchorMatchedCandidateArtifactCount = isBuildWrapperActive
+    ? buildAnchorMatchedCandidateArtifacts.length
+    : 0
+  const buildAnchorAllowedDirectionCount = buildAnchorAllowedDirectionIds.length
+  const buildAnchorCurrentDirectionAllowed = Boolean(
+    isBuildWrapperActive &&
+      selectedDirectionId &&
+      buildAnchorAllowedDirectionIds.includes(selectedDirectionId),
+  )
+  const buildSelectedDirectionAnchorValid = buildAnchorCurrentDirectionAllowed
+  const buildGeneralFirstVisibleDirectionId = isBuildWrapperActive
+    ? visibleDirectionCardsForSelection[0]?.id ?? null
+    : null
+  const buildAnchorFirstAllowedDirectionId = isBuildWrapperActive
+    ? buildAnchorAllowedDirectionIds[0] ?? null
+    : null
+  const buildAnchorWouldForceDirectionId =
+    isBuildWrapperActive &&
+    selectedBuildAnchor &&
+    buildAnchorAllowedDirectionCount > 0 &&
+    !buildAnchorCurrentDirectionAllowed
+      ? buildAnchorFirstAllowedDirectionId
+      : null
+  const buildGeneralAndAnchorFirstDirectionMatch = Boolean(
+    isBuildWrapperActive &&
+      buildGeneralFirstVisibleDirectionId &&
+      buildAnchorFirstAllowedDirectionId &&
+      buildGeneralFirstVisibleDirectionId === buildAnchorFirstAllowedDirectionId,
+  )
+  const buildDirectionChurnSignature = isBuildWrapperActive
+    ? `${directionSetKey}::selected=${selectedDirectionId ?? 'n/a'}::anchorAllowed=${buildAnchorAllowedDirectionIds.join(',') || 'none'}`
+    : 'n/a'
   const selectedDirection = useMemo(
     () =>
       selectedDirectionId
@@ -13261,8 +13333,9 @@ export function SandboxConciergePage() {
 
   useEffect(() => {
     if (
-      (visibleDirectionCardsForSelection.length === 0 || directionSetKey.length === 0) &&
-      !rerollArtifactAuthoritativeSelectionActive
+      buildNoAnchorValidDirectionsActive ||
+      ((visibleDirectionCardsForSelection.length === 0 || directionSetKey.length === 0) &&
+        !rerollArtifactAuthoritativeSelectionActive)
     ) {
       surpriseAutoGenerateAttemptRef.current = null
       buildValidationAttemptRef.current = null
@@ -13350,6 +13423,7 @@ export function SandboxConciergePage() {
     previousPersonaVibeRef.current = { persona, vibe: primaryVibe }
   }, [
     candidateRouteArtifactByIdForDisplay,
+    buildNoAnchorValidDirectionsActive,
     directionIdentityById,
     directionSetKey,
     isCurateWrapperActive,
@@ -18701,6 +18775,58 @@ export function SandboxConciergePage() {
                 tasteBridgeDirectionDiversificationApplied:{' '}
                 {selectedTasteBridgeDirectionDiversificationApplied}
               </div>
+              <div>buildDirectionCardCount: {buildDirectionCardCount}</div>
+              <div>buildDirectionCardIds: {buildDirectionCardIds.join(',') || 'n/a'}</div>
+              <div>buildVisibleDirectionCardCount: {buildVisibleDirectionCardCount}</div>
+              <div>
+                buildVisibleDirectionCardIds: {buildVisibleDirectionCardIds.join(',') || 'n/a'}
+              </div>
+              <div>buildDirectionSetKey: {buildDirectionSetKey}</div>
+              <div>
+                buildGeneralReconciliationSuppressedForNoAnchorValidRoutes:{' '}
+                {String(buildGeneralReconciliationSuppressedForNoAnchorValidRoutes)}
+              </div>
+              <div>buildSelectedDirectionId: {buildSelectedDirectionId ?? 'n/a'}</div>
+              <div>
+                buildSelectedStep2CandidateArtifactId:{' '}
+                {buildSelectedStep2CandidateArtifactId ?? 'n/a'}
+              </div>
+              <div>
+                buildSelectedDirectionInVisibleCards:{' '}
+                {String(buildSelectedDirectionInVisibleCards)}
+              </div>
+              <div>
+                buildSelectedDirectionAnchorValid: {String(buildSelectedDirectionAnchorValid)}
+              </div>
+              <div>
+                buildAnchorMatchedCandidateArtifactCount:{' '}
+                {buildAnchorMatchedCandidateArtifactCount}
+              </div>
+              <div>
+                buildAnchorAllowedDirectionIds:{' '}
+                {buildAnchorAllowedDirectionIds.join(',') || 'n/a'}
+              </div>
+              <div>buildAnchorAllowedDirectionCount: {buildAnchorAllowedDirectionCount}</div>
+              <div>
+                buildAnchorCurrentDirectionAllowed:{' '}
+                {String(buildAnchorCurrentDirectionAllowed)}
+              </div>
+              <div>
+                buildAnchorWouldForceDirectionId: {buildAnchorWouldForceDirectionId ?? 'n/a'}
+              </div>
+              <div>
+                buildGeneralFirstVisibleDirectionId:{' '}
+                {buildGeneralFirstVisibleDirectionId ?? 'n/a'}
+              </div>
+              <div>
+                buildAnchorFirstAllowedDirectionId:{' '}
+                {buildAnchorFirstAllowedDirectionId ?? 'n/a'}
+              </div>
+              <div>
+                buildGeneralAndAnchorFirstDirectionMatch:{' '}
+                {String(buildGeneralAndAnchorFirstDirectionMatch)}
+              </div>
+              <div>buildDirectionChurnSignature: {buildDirectionChurnSignature}</div>
               <div>droppedPocketIds: {selectedDroppedPocketIds}</div>
               <div>directionDistrictSupportSummary: {selectedDirectionDistrictSupportSummary}</div>
               <div>directionNarrativeSummary: {selectedDirectionNarrativeSummary}</div>
