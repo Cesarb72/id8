@@ -14693,6 +14693,231 @@ export function SandboxConciergePage() {
       tasteCurationDebug?.rolePoolVenueIdsCombined ??
       [],
   )
+  const buildAnchorVenueId = isBuildWrapperActive ? selectedBuildAnchor?.venueId ?? null : null
+  const buildAnchorName = isBuildWrapperActive ? selectedBuildAnchor?.name ?? null : null
+  const buildAnchorCategory = isBuildWrapperActive ? selectedBuildAnchor?.category ?? null : null
+  const buildAnchorNeighborhood = isBuildWrapperActive
+    ? selectedBuildAnchor?.neighborhood ?? null
+    : null
+  const buildAnchorSourceOpportunities = useMemo(
+    () =>
+      !isBuildWrapperActive || !selectedBuildAnchor?.venueId
+        ? []
+        : step2PrimarySourceOpportunities.filter((opportunity) => {
+            const anchorVenueId = selectedBuildAnchor.venueId
+            return (
+              opportunity.anchor.venueId === anchorVenueId ||
+              opportunity.starts.some((entry) => entry.venueId === anchorVenueId) ||
+              opportunity.closes.some((entry) => entry.venueId === anchorVenueId) ||
+              opportunity.highlightAlternates?.some((entry) => entry.venueId === anchorVenueId)
+            )
+          }),
+    [isBuildWrapperActive, selectedBuildAnchor?.venueId, step2PrimarySourceOpportunities],
+  )
+  const buildAnchorSourceOpportunityIds = useMemo(
+    () => buildAnchorSourceOpportunities.map((opportunity) => opportunity.id),
+    [buildAnchorSourceOpportunities],
+  )
+  const buildAnchorSourceOpportunityRoleSummary = useMemo(() => {
+    if (!isBuildWrapperActive || !selectedBuildAnchor?.venueId) {
+      return 'n/a'
+    }
+    const anchorVenueId = selectedBuildAnchor.venueId
+    let anchorCount = 0
+    let startCount = 0
+    let highlightAlternateCount = 0
+    let windDownCount = 0
+    buildAnchorSourceOpportunities.forEach((opportunity) => {
+      if (opportunity.anchor.venueId === anchorVenueId) {
+        anchorCount += 1
+      }
+      if (opportunity.starts.some((entry) => entry.venueId === anchorVenueId)) {
+        startCount += 1
+      }
+      if (opportunity.highlightAlternates?.some((entry) => entry.venueId === anchorVenueId)) {
+        highlightAlternateCount += 1
+      }
+      if (opportunity.closes.some((entry) => entry.venueId === anchorVenueId)) {
+        windDownCount += 1
+      }
+    })
+    return `anchor:${anchorCount} | start:${startCount} | highlightAlternate:${highlightAlternateCount} | windDown:${windDownCount}`
+  }, [buildAnchorSourceOpportunities, isBuildWrapperActive, selectedBuildAnchor?.venueId])
+  const buildAnchorCandidateArtifacts = useMemo(
+    () =>
+      !isBuildWrapperActive || !selectedBuildAnchor?.venueId
+        ? []
+        : step2CandidateRouteArtifacts.filter((artifact) => artifact.anchorVenueId === selectedBuildAnchor.venueId),
+    [isBuildWrapperActive, selectedBuildAnchor?.venueId, step2CandidateRouteArtifacts],
+  )
+  const buildAnchorCandidateArtifactIds = useMemo(
+    () => buildAnchorCandidateArtifacts.map((artifact) => artifact.id),
+    [buildAnchorCandidateArtifacts],
+  )
+  const buildAnchorCandidateArtifactRoleSummary = useMemo(() => {
+    if (!isBuildWrapperActive || !selectedBuildAnchor?.venueId) {
+      return 'n/a'
+    }
+    const counts = {
+      start: 0,
+      highlight: 0,
+      windDown: 0,
+      none: 0,
+    }
+    buildAnchorCandidateArtifacts.forEach((artifact) => {
+      const anchorRole = artifact.anchorRole
+      if (anchorRole === 'start' || anchorRole === 'highlight' || anchorRole === 'windDown') {
+        counts[anchorRole] += 1
+      } else {
+        counts.none += 1
+      }
+    })
+    return `start:${counts.start} | highlight:${counts.highlight} | windDown:${counts.windDown} | none:${counts.none}`
+  }, [buildAnchorCandidateArtifacts, isBuildWrapperActive, selectedBuildAnchor?.venueId])
+  const buildAnchorMatchedCandidateArtifactIds = useMemo(
+    () => buildAnchorMatchedCandidateArtifacts.map((artifact) => artifact.id),
+    [buildAnchorMatchedCandidateArtifacts],
+  )
+  const buildAnchorMatchedCandidateArtifactRoleSummary = useMemo(() => {
+    if (!isBuildWrapperActive || !selectedBuildAnchor?.venueId) {
+      return 'n/a'
+    }
+    const counts = {
+      start: 0,
+      highlight: 0,
+      windDown: 0,
+      none: 0,
+    }
+    buildAnchorMatchedCandidateArtifacts.forEach((artifact) => {
+      const anchorRole = artifact.anchorRole
+      if (anchorRole === 'start' || anchorRole === 'highlight' || anchorRole === 'windDown') {
+        counts[anchorRole] += 1
+      } else {
+        counts.none += 1
+      }
+    })
+    return `start:${counts.start} | highlight:${counts.highlight} | windDown:${counts.windDown} | none:${counts.none}`
+  }, [buildAnchorMatchedCandidateArtifacts, isBuildWrapperActive, selectedBuildAnchor?.venueId])
+  const buildAnchorSuppressedAdmissions = useMemo(
+    () =>
+      !isBuildWrapperActive || !selectedBuildAnchor?.venueId
+        ? []
+        : suppressedScenarioBackedOpportunityAdmissions.filter((entry) => {
+            const anchorVenueId = selectedBuildAnchor.venueId
+            const opportunity = entry.opportunity
+            return (
+              opportunity.anchor.venueId === anchorVenueId ||
+              opportunity.starts.some((stop) => stop.venueId === anchorVenueId) ||
+              opportunity.closes.some((stop) => stop.venueId === anchorVenueId) ||
+              opportunity.highlightAlternates?.some((stop) => stop.venueId === anchorVenueId)
+            )
+          }),
+    [
+      isBuildWrapperActive,
+      selectedBuildAnchor?.venueId,
+      suppressedScenarioBackedOpportunityAdmissions,
+    ],
+  )
+  const buildAnchorSuppressedOpportunityIds = useMemo(
+    () => buildAnchorSuppressedAdmissions.map((entry) => entry.opportunity.id),
+    [buildAnchorSuppressedAdmissions],
+  )
+  const buildAnchorSuppressedReasons = useMemo(
+    () =>
+      buildAnchorSuppressedAdmissions.map((entry) => `${entry.opportunity.id}:${entry.reason ?? 'unknown'}`),
+    [buildAnchorSuppressedAdmissions],
+  )
+  const buildAnchorArtifactDropReasons = useMemo(() => {
+    if (!isBuildWrapperActive || !selectedBuildAnchor?.venueId) {
+      return [] as string[]
+    }
+    if (buildAnchorSourceOpportunities.length === 0) {
+      return ['no_source_opportunity_contains_anchor']
+    }
+    const candidateSourceOpportunityIds = new Set(
+      step2CandidateRouteArtifacts.map((artifact) => artifact.sourceOpportunityId),
+    )
+    const missingArtifactSourceOpportunityIds = buildAnchorSourceOpportunities
+      .map((opportunity) => opportunity.id)
+      .filter((opportunityId) => !candidateSourceOpportunityIds.has(opportunityId))
+    if (missingArtifactSourceOpportunityIds.length > 0) {
+      return missingArtifactSourceOpportunityIds.map(
+        (opportunityId) => `${opportunityId}:artifact_builder_returned_null_or_backing_suppressed`,
+      )
+    }
+    if (buildAnchorCandidateArtifacts.length === 0) {
+      return ['source_opportunities_include_anchor_but_candidate_artifacts_do_not_claim_anchor']
+    }
+    if (buildAnchorMatchedCandidateArtifacts.length === 0) {
+      return ['candidate_artifacts_include_anchor_but_display_match_count_is_zero']
+    }
+    return [] as string[]
+  }, [
+    buildAnchorCandidateArtifacts.length,
+    buildAnchorMatchedCandidateArtifacts.length,
+    buildAnchorSourceOpportunities,
+    isBuildWrapperActive,
+    selectedBuildAnchor?.venueId,
+    step2CandidateRouteArtifacts,
+  ])
+  const buildAnchorInStartPool = Boolean(
+    isBuildWrapperActive && selectedBuildAnchor?.venueId && rolePoolVenueIdsByRole?.start.includes(selectedBuildAnchor.venueId),
+  )
+  const buildAnchorInHighlightPool = Boolean(
+    isBuildWrapperActive &&
+      selectedBuildAnchor?.venueId &&
+      rolePoolVenueIdsByRole?.highlight.includes(selectedBuildAnchor.venueId),
+  )
+  const buildAnchorInWindDownPool = Boolean(
+    isBuildWrapperActive &&
+      selectedBuildAnchor?.venueId &&
+      rolePoolVenueIdsByRole?.windDown.includes(selectedBuildAnchor.venueId),
+  )
+  const buildAnchorRolePoolSummary =
+    !isBuildWrapperActive || !selectedBuildAnchor?.venueId
+      ? 'n/a'
+      : `start:${String(buildAnchorInStartPool)} | highlight:${String(buildAnchorInHighlightPool)} | windDown:${String(buildAnchorInWindDownPool)}`
+  const buildAnchorStaticSupplyAvailable = Boolean(
+    isBuildWrapperActive && buildAnchorSourceOpportunities.length > 0,
+  )
+  const buildAnchorStaticPoolCanSatisfyBuild = Boolean(
+    isBuildWrapperActive &&
+      selectedBuildAnchor?.venueId &&
+      buildAnchorMatchedCandidateArtifacts.length > 0 &&
+      buildAnchorAllowedDirectionIds.length > 0,
+  )
+  const buildAnchorStaticSupplyReason =
+    !isBuildWrapperActive || !selectedBuildAnchor?.venueId
+      ? 'n/a'
+      : buildAnchorSourceOpportunities.length === 0
+        ? 'static_source_opportunities_do_not_include_anchor'
+        : buildAnchorCandidateArtifacts.length === 0
+          ? 'anchor_present_in_source_opportunities_but_no_candidate_artifact_claims_anchor'
+          : buildAnchorMatchedCandidateArtifacts.length === 0
+            ? 'anchor_candidate_artifacts_exist_but_none_reach_display_match_set'
+            : buildAnchorAllowedDirectionIds.length === 0
+              ? 'anchor_matched_artifacts_exist_but_no_allowed_directions_remain'
+              : 'static_source_can_supply_anchor_centered_build'
+  const buildAnchorNeedsProviderIngress = Boolean(
+    isBuildWrapperActive &&
+      selectedBuildAnchor?.venueId &&
+      !buildAnchorStaticPoolCanSatisfyBuild &&
+      buildAnchorSourceOpportunities.length === 0,
+  )
+  const buildAnchorProviderIngressReason =
+    !isBuildWrapperActive || !selectedBuildAnchor?.venueId
+      ? 'n/a'
+      : buildAnchorNeedsProviderIngress
+        ? 'static_local_supply_has_no_anchor_centered_opportunities'
+        : buildAnchorStaticPoolCanSatisfyBuild
+          ? 'static_local_supply_already_sufficient'
+          : 'static_supply_exists_but_admission_or_candidate_projection_is_blocking_anchor_routes'
+  const buildAnchorProviderIngressWouldNeed =
+    !isBuildWrapperActive || !selectedBuildAnchor?.venueId
+      ? 'n/a'
+      : buildAnchorNeedsProviderIngress
+        ? 'nearby venues | place details | hours/open status | anchor-adjacent candidates | events/happenings if applicable'
+        : 'none'
   const contractInfluenceSummary =
     plan?.generationTrace.contractInfluenceSummary ??
     'retrieval:none|highlight:none|windDown:none'
@@ -18781,6 +19006,10 @@ export function SandboxConciergePage() {
               <div>
                 buildVisibleDirectionCardIds: {buildVisibleDirectionCardIds.join(',') || 'n/a'}
               </div>
+              <div>buildAnchorVenueId: {buildAnchorVenueId ?? 'n/a'}</div>
+              <div>buildAnchorName: {buildAnchorName ?? 'n/a'}</div>
+              <div>buildAnchorCategory: {buildAnchorCategory ?? 'n/a'}</div>
+              <div>buildAnchorNeighborhood: {buildAnchorNeighborhood ?? 'n/a'}</div>
               <div>buildDirectionSetKey: {buildDirectionSetKey}</div>
               <div>
                 buildGeneralReconciliationSuppressedForNoAnchorValidRoutes:{' '}
@@ -18801,6 +19030,34 @@ export function SandboxConciergePage() {
               <div>
                 buildAnchorMatchedCandidateArtifactCount:{' '}
                 {buildAnchorMatchedCandidateArtifactCount}
+              </div>
+              <div>buildPrimarySourceOpportunityCount: {step2PrimarySourceOpportunities.length}</div>
+              <div>
+                buildAnchorSourceOpportunityIds: {buildAnchorSourceOpportunityIds.join(',') || 'n/a'}
+              </div>
+              <div>buildAnchorSourceOpportunityCount: {buildAnchorSourceOpportunityIds.length}</div>
+              <div>
+                buildAnchorSourceOpportunityRoleSummary: {buildAnchorSourceOpportunityRoleSummary}
+              </div>
+              <div>buildStep2CandidateArtifactCount: {step2CandidateRouteArtifacts.length}</div>
+              <div>
+                buildAnchorCandidateArtifactIds: {buildAnchorCandidateArtifactIds.join(',') || 'n/a'}
+              </div>
+              <div>buildAnchorCandidateArtifactCount: {buildAnchorCandidateArtifactIds.length}</div>
+              <div>
+                buildAnchorCandidateArtifactRoleSummary: {buildAnchorCandidateArtifactRoleSummary}
+              </div>
+              <div>
+                buildCandidateRouteArtifactsForDisplayCount:{' '}
+                {candidateRouteArtifactsForDisplay.length}
+              </div>
+              <div>
+                buildAnchorMatchedCandidateArtifactIds:{' '}
+                {buildAnchorMatchedCandidateArtifactIds.join(',') || 'n/a'}
+              </div>
+              <div>
+                buildAnchorMatchedCandidateArtifactRoleSummary:{' '}
+                {buildAnchorMatchedCandidateArtifactRoleSummary}
               </div>
               <div>
                 buildAnchorAllowedDirectionIds:{' '}
@@ -18827,6 +19084,34 @@ export function SandboxConciergePage() {
                 {String(buildGeneralAndAnchorFirstDirectionMatch)}
               </div>
               <div>buildDirectionChurnSignature: {buildDirectionChurnSignature}</div>
+              <div>buildAnchorInStartPool: {String(buildAnchorInStartPool)}</div>
+              <div>buildAnchorInHighlightPool: {String(buildAnchorInHighlightPool)}</div>
+              <div>buildAnchorInWindDownPool: {String(buildAnchorInWindDownPool)}</div>
+              <div>buildAnchorRolePoolSummary: {buildAnchorRolePoolSummary}</div>
+              <div>
+                buildAnchorSuppressedOpportunityIds:{' '}
+                {buildAnchorSuppressedOpportunityIds.join(',') || 'n/a'}
+              </div>
+              <div>
+                buildAnchorSuppressedReasons: {buildAnchorSuppressedReasons.join(' | ') || 'n/a'}
+              </div>
+              <div>
+                buildAnchorArtifactDropReasons:{' '}
+                {buildAnchorArtifactDropReasons.join(' | ') || 'n/a'}
+              </div>
+              <div>
+                buildAnchorStaticSupplyAvailable: {String(buildAnchorStaticSupplyAvailable)}
+              </div>
+              <div>buildAnchorStaticSupplyReason: {buildAnchorStaticSupplyReason}</div>
+              <div>
+                buildAnchorStaticPoolCanSatisfyBuild:{' '}
+                {String(buildAnchorStaticPoolCanSatisfyBuild)}
+              </div>
+              <div>buildAnchorNeedsProviderIngress: {String(buildAnchorNeedsProviderIngress)}</div>
+              <div>buildAnchorProviderIngressReason: {buildAnchorProviderIngressReason}</div>
+              <div>
+                buildAnchorProviderIngressWouldNeed: {buildAnchorProviderIngressWouldNeed}
+              </div>
               <div>droppedPocketIds: {selectedDroppedPocketIds}</div>
               <div>directionDistrictSupportSummary: {selectedDirectionDistrictSupportSummary}</div>
               <div>directionNarrativeSummary: {selectedDirectionNarrativeSummary}</div>
