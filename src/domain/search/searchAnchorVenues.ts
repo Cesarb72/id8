@@ -1,14 +1,6 @@
-import { normalizeRawPlace } from '../normalize/normalizeRawPlace'
-import {
-  getGooglePlacesConfig,
-  hasGooglePlacesConfig,
-  isDevOrSandboxCloseoutFlow,
-} from '../sources/getSourceMode'
+import { searchAnchorPlaces } from '../providers/ProviderAdapter'
+import { isDevOrSandboxCloseoutFlow } from '../sources/getSourceMode'
 import { curatedVenues } from '../../data/venues'
-import {
-  mapLivePlaceToRawPlace,
-  type GooglePlaceRecord,
-} from '../sources/mapLivePlaceToRawPlace'
 import type { LivePlaceKind } from '../sources/buildLiveQueryPlan'
 import type { Venue } from '../types/venue'
 
@@ -109,85 +101,6 @@ function buildAnchorQueryTerms(query: string, chip?: AnchorSearchChip): string[]
   return unique(chipHint ? [...terms, chipHint] : terms)
 }
 
-function mapGooglePlaceToVenue(
-  place: GooglePlaceRecord,
-  rank: number,
-  query: string,
-  city: string,
-  neighborhood?: string,
-  chip?: AnchorSearchChip,
-): Venue | undefined {
-  const requestedKind = mapChipToRequestedKind(chip)
-  const queryTerms = buildAnchorQueryTerms(query, chip)
-  const rawPlace = mapLivePlaceToRawPlace(place, {
-    city,
-    neighborhood,
-    requestedKind,
-    queryLabel: 'anchor-search',
-    queryTerms,
-    rank,
-  })
-  if (!rawPlace) {
-    return undefined
-  }
-
-  const anchorName = rawPlace.name.trim()
-  return normalizeRawPlace({
-    ...rawPlace,
-    driveMinutes: neighborhood ? 10 : 12,
-    shortDescription:
-      place.editorialSummary?.text?.trim() ??
-      `${anchorName} was selected as a user-led plan anchor.`,
-    narrativeFlavor: `${anchorName} is the chosen anchor for a user-led outing.`,
-  })
-}
-
-async function searchGooglePlaces(
-  query: string,
-  city: string,
-  neighborhood?: string,
-  chip?: AnchorSearchChip,
-): Promise<AnchorSearchResult[]> {
-  const config = getGooglePlacesConfig()
-  if (!config.apiKey) {
-    return []
-  }
-
-  const response = await fetch(config.endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': config.apiKey,
-      'X-Goog-FieldMask': googleFieldMask,
-    },
-    body: JSON.stringify({
-      textQuery: buildTextQuery(query, city, neighborhood, chip),
-      pageSize: Math.min(config.pageSize, 6),
-      languageCode: config.languageCode,
-      regionCode: config.regionCode,
-      rankPreference: 'RELEVANCE',
-    }),
-  })
-
-  if (!response.ok) {
-    throw new Error(`Anchor search failed (${response.status})`)
-  }
-
-  const payload = (await response.json()) as { places?: GooglePlaceRecord[] }
-  return (payload.places ?? [])
-    .map((place, index) => {
-      const venue = mapGooglePlaceToVenue(place, index, query, city, neighborhood, chip)
-      if (!venue) {
-        return undefined
-      }
-      return {
-        venue,
-        subtitle: place.shortFormattedAddress ?? place.formattedAddress ?? venue.neighborhood,
-      }
-    })
-    .filter((value): value is AnchorSearchResult => Boolean(value))
-}
-
 function scoreFallbackVenue(
   venue: Venue,
   query: string,
@@ -253,19 +166,18 @@ export async function searchAnchorVenues(input: {
     return searchFallbackVenues(trimmedQuery, input.city, input.neighborhood, input.chip)
   }
 
-  if (!hasGooglePlacesConfig()) {
-    return searchFallbackVenues(trimmedQuery, input.city, input.neighborhood, input.chip)
-  }
-
   try {
-    const googleResults = await searchGooglePlaces(
-      trimmedQuery,
-      input.city,
-      input.neighborhood,
-      input.chip,
-    )
-    if (googleResults.length > 0) {
-      return googleResults
+    const googleResults = await searchAnchorPlaces({
+      city: input.city,
+      fieldMask: googleFieldMask,
+      neighborhood: input.neighborhood,
+      pageSize: 6,
+      queryTerms: buildAnchorQueryTerms(trimmedQuery, input.chip),
+      requestedKind: mapChipToRequestedKind(input.chip),
+      textQuery: buildTextQuery(trimmedQuery, input.city, input.neighborhood, input.chip),
+    })
+    if (googleResults.results.length > 0) {
+      return googleResults.results
     }
   } catch (error) {
     void error

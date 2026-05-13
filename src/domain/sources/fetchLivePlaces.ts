@@ -1,10 +1,10 @@
 import { getTimeWindowSignal } from '../retrieval/getTimeWindowSignal'
 import { normalizeVenue } from '../normalize/normalizeVenue'
+import { searchPlaces } from '../providers/ProviderAdapter'
 import { buildLiveQueryPlan, type LivePlaceKind } from './buildLiveQueryPlan'
-import { getGooglePlacesConfig, isDevOrSandboxCloseoutFlow } from './getSourceMode'
+import { getGooglePlacesConfig } from './getSourceMode'
 import {
   mapLivePlaceToRawPlaceWithDiagnostics,
-  type GooglePlaceRecord,
   type MapLivePlaceDropReason,
 } from './mapLivePlaceToRawPlace'
 import type { IntentProfile } from '../types/intent'
@@ -12,10 +12,6 @@ import type { QualityGateStatus } from '../types/normalization'
 import type { RawPlace } from '../types/rawPlace'
 import type { StarterPack } from '../types/starterPack'
 import type { Venue } from '../types/venue'
-
-interface GooglePlacesTextSearchResponse {
-  places?: GooglePlaceRecord[]
-}
 
 interface QueryCenter {
   id: 'core' | 'north' | 'south' | 'east' | 'west'
@@ -184,48 +180,6 @@ function deriveQueryCenters(city: string, maxCenters: number, offsetM: number): 
   return allCenters.slice(0, Math.max(1, Math.min(5, maxCenters)))
 }
 
-async function runQueryPlanInBatches(
-  queryPlan: Array<{
-    kind: LivePlaceKind
-    textQuery: string
-    center: QueryCenter
-    radiusM: number
-  }>,
-): Promise<
-  Array<
-    PromiseSettledResult<{
-      query: (typeof queryPlan)[number]
-      places: GooglePlaceRecord[]
-    }>
-  >
-> {
-  const settled: Array<
-    PromiseSettledResult<{
-      query: (typeof queryPlan)[number]
-      places: GooglePlaceRecord[]
-    }>
-  > = []
-  const batchSize = 6
-
-  for (let index = 0; index < queryPlan.length; index += batchSize) {
-    const batch = queryPlan.slice(index, index + batchSize)
-    const batchSettled = await Promise.allSettled(
-      batch.map(async (query) => ({
-        query,
-        places: await queryGooglePlacesTextSearch({
-          kind: query.kind,
-          textQuery: query.textQuery,
-          center: query.center,
-          radiusM: query.radiusM,
-        }),
-      })),
-    )
-    settled.push(...batchSettled)
-  }
-
-  return settled
-}
-
 function countByGateStatus(venues: Venue[], status: QualityGateStatus): number {
   return venues.filter((venue) => venue.source.qualityGateStatus === status).length
 }
@@ -244,54 +198,6 @@ function incrementBucket(counter: Record<string, number>, key: string): void {
 
 function formatLocationLabel(intent: IntentProfile): string {
   return intent.neighborhood ? `${intent.neighborhood}, ${intent.city}` : intent.city
-}
-
-async function queryGooglePlacesTextSearch(
-  query: {
-    kind: LivePlaceKind
-    textQuery: string
-    center: QueryCenter
-    radiusM: number
-  },
-): Promise<GooglePlaceRecord[]> {
-  const config = getGooglePlacesConfig()
-  if (!config.apiKey) {
-    throw new Error('Missing VITE_GOOGLE_PLACES_API_KEY.')
-  }
-
-  const response = await fetch(config.endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': config.apiKey,
-      'X-Goog-FieldMask': googleFieldMask,
-    },
-    body: JSON.stringify({
-      textQuery: query.textQuery,
-      pageSize: config.pageSize,
-      languageCode: config.languageCode,
-      regionCode: config.regionCode,
-      rankPreference: 'RELEVANCE',
-      locationBias: {
-        circle: {
-          center: {
-            latitude: query.center.lat,
-            longitude: query.center.lng,
-          },
-          radius: query.radiusM,
-        },
-      },
-    }),
-  })
-
-  if (!response.ok) {
-    throw new Error(`${query.kind} query failed (${response.status})`)
-  }
-
-  const payload = (await response.json()) as GooglePlacesTextSearchResponse
-  return (payload.places ?? []).filter(
-    (place) => place.businessStatus !== 'CLOSED_PERMANENTLY',
-  )
 }
 
 function gateStatusRank(status: QualityGateStatus): number {
@@ -415,128 +321,115 @@ export async function fetchLivePlaces(
   const roleIntentQueryNotes = [...new Set(baseQueryPlan.flatMap((entry) => entry.notes))]
   const requestedKindsForPlan = [...new Set(baseQueryPlan.map((entry) => entry.kind))]
 
-  if (isDevOrSandboxCloseoutFlow()) {
-    return {
-      venues: [],
-      diagnostics: {
-        attempted: false,
-        provider: 'google-places',
-        queryLocationLabel,
-        queryCentersCount: queryCenters.length,
-        queryCentersUsed: queryCenters,
-        queryRadiusM: config.queryRadiusM,
-        requestedKinds: requestedKindsForPlan,
-        queryCount: 0,
-        liveQueryTemplatesUsed: queryTemplatesUsed,
-        liveQueryLabelsUsed: queryLabelsUsed,
-        liveCandidatesByQuery: [],
-        liveRoleIntentQueryNotes: roleIntentQueryNotes,
-        fetchedCount: 0,
-        rawFetchedCount: 0,
-        mappedCount: 0,
-        mappedDroppedCount: 0,
-        mappedDropReasons: emptyMapDropReasons(),
-        normalizedCount: 0,
-        dedupedByPlaceIdCount: 0,
-        normalizationDroppedCount: 0,
-        normalizationDropReasons: {},
-        acceptedCount: 0,
-        acceptanceDroppedCount: 0,
-        acceptanceDropReasons: {},
-        approvedCount: 0,
-        demotedCount: 0,
-        suppressedCount: 0,
-        usableCount: 0,
-        partialFailure: false,
-        success: false,
-        failureReason: 'Live adapter disabled in dev/sandbox closeout flow.',
-        failureCategory: 'disabled_dev_closeout',
-        errors: [],
-      },
-    }
-  }
-
-  if (!config.apiKey) {
-    return {
-      venues: [],
-      diagnostics: {
-        attempted: false,
-        provider: 'google-places',
-        queryLocationLabel,
-        queryCentersCount: queryCenters.length,
-        queryCentersUsed: queryCenters,
-        queryRadiusM: config.queryRadiusM,
-        requestedKinds: requestedKindsForPlan,
-        queryCount: 0,
-        liveQueryTemplatesUsed: queryTemplatesUsed,
-        liveQueryLabelsUsed: queryLabelsUsed,
-        liveCandidatesByQuery: [],
-        liveRoleIntentQueryNotes: roleIntentQueryNotes,
-        fetchedCount: 0,
-        rawFetchedCount: 0,
-        mappedCount: 0,
-        mappedDroppedCount: 0,
-        mappedDropReasons: emptyMapDropReasons(),
-        normalizedCount: 0,
-        dedupedByPlaceIdCount: 0,
-        normalizationDroppedCount: 0,
-        normalizationDropReasons: {},
-        acceptedCount: 0,
-        acceptanceDroppedCount: 0,
-        acceptanceDropReasons: {},
-        approvedCount: 0,
-        demotedCount: 0,
-        suppressedCount: 0,
-        usableCount: 0,
-        partialFailure: false,
-        success: false,
-        failureReason: 'Live adapter disabled because the Google Places API key is missing.',
-        failureCategory: 'missing_api_key',
-        errors: [],
-      },
-    }
-  }
-
-  const settled = await runQueryPlanInBatches(queryPlan)
-
-  const errors: string[] = []
-  let fetchedCount = 0
-  const rawPlaces: RawPlace[] = []
-  const fetchedCountByQuery = new Map<string, number>()
-  const mappedDropReasons = emptyMapDropReasons()
-  let mappedDroppedCount = 0
-
-  for (const result of settled) {
-    if (result.status === 'rejected') {
-      errors.push(result.reason instanceof Error ? result.reason.message : 'Unknown live source failure')
-      continue
-    }
-
-    const { query, places } = result.value
-    fetchedCount += places.length
-    fetchedCountByQuery.set(query.label, places.length)
-    places.forEach((place, index) => {
+  const providerResults = await searchPlaces({
+    callPurpose: 'retrieval_supply',
+    mapPlace: (place, { index, query }) => {
       const mapped = mapLivePlaceToRawPlaceWithDiagnostics(place, {
         city: intent.city,
         neighborhood: intent.neighborhood,
         requestedKind: query.kind,
-        queryLabel: query.label,
+        queryLabel: query.queryLabel,
         queryTerms: query.queryTerms,
         rank: index,
       })
-      if (mapped.rawPlace) {
-        rawPlaces.push(mapped.rawPlace)
-      } else if (mapped.dropReason) {
-        mappedDroppedCount += 1
-        mappedDropReasons[mapped.dropReason] = (mappedDropReasons[mapped.dropReason] ?? 0) + 1
+      return {
+        dropReason: mapped.dropReason,
+        queryLabel: query.queryLabel,
+        rawPlace: mapped.rawPlace,
       }
-    })
+    },
+    queries: queryPlan.map((query) => ({
+      fieldMask: googleFieldMask,
+      locationBias: {
+        circle: {
+          center: {
+            latitude: query.center.lat,
+            longitude: query.center.lng,
+          },
+          radius: query.radiusM,
+        },
+      },
+      pageSize: config.pageSize,
+      queryLabel: query.label,
+      rankPreference: 'RELEVANCE',
+      textQuery: query.textQuery,
+      ...query,
+    })),
+  })
+
+  if (providerResults.diagnostics.blockedByEnv) {
+    return {
+      venues: [],
+      diagnostics: {
+        attempted: false,
+        provider: 'google-places',
+        queryLocationLabel,
+        queryCentersCount: queryCenters.length,
+        queryCentersUsed: queryCenters,
+        queryRadiusM: config.queryRadiusM,
+        requestedKinds: requestedKindsForPlan,
+        queryCount: 0,
+        liveQueryTemplatesUsed: queryTemplatesUsed,
+        liveQueryLabelsUsed: queryLabelsUsed,
+        liveCandidatesByQuery: [],
+        liveRoleIntentQueryNotes: roleIntentQueryNotes,
+        fetchedCount: 0,
+        rawFetchedCount: 0,
+        mappedCount: 0,
+        mappedDroppedCount: 0,
+        mappedDropReasons: emptyMapDropReasons(),
+        normalizedCount: 0,
+        dedupedByPlaceIdCount: 0,
+        normalizationDroppedCount: 0,
+        normalizationDropReasons: {},
+        acceptedCount: 0,
+        acceptanceDroppedCount: 0,
+        acceptanceDropReasons: {},
+        approvedCount: 0,
+        demotedCount: 0,
+        suppressedCount: 0,
+        usableCount: 0,
+        partialFailure: false,
+        success: false,
+        failureReason: providerResults.diagnostics.failureReason,
+        failureCategory: providerResults.diagnostics.keyPresent
+          ? 'disabled_dev_closeout'
+          : 'missing_api_key',
+        errors: [],
+      },
+    }
+  }
+
+  const errors = providerResults.errors
+  let fetchedCount = 0
+  const rawPlaces: RawPlace[] = []
+  const mappedCountByQuery = new Map<string, number>()
+  const fetchedCountByQuery = new Map<string, number>()
+  const mappedDropReasons = emptyMapDropReasons()
+  let mappedDroppedCount = 0
+
+  providerResults.queryCounts.forEach(({ queryLabel, resultCount }) => {
+    fetchedCount += resultCount
+    fetchedCountByQuery.set(queryLabel, resultCount)
+  })
+
+  for (const result of providerResults.results) {
+    if (result.rawPlace) {
+      rawPlaces.push(result.rawPlace)
+      mappedCountByQuery.set(
+        result.queryLabel,
+        (mappedCountByQuery.get(result.queryLabel) ?? 0) + 1,
+      )
+    } else if (result.dropReason) {
+      mappedDroppedCount += 1
+      mappedDropReasons[result.dropReason] = (mappedDropReasons[result.dropReason] ?? 0) + 1
+    }
   }
 
   const normalized = normalizeRawPlaces(rawPlaces, intent)
   const deduped = dedupeByPlaceId(normalized.venues)
   const venues = deduped.venues
-  const successfulQueries = settled.filter((entry) => entry.status === 'fulfilled').length
+  const successfulQueries = providerResults.queryCounts.length
   const liveCandidatesByQuery: LiveCandidatesByQueryDiagnostics[] = queryPlan.map((query) => {
     const mapped = rawPlaces.filter((rawPlace) => rawPlace.sourceQueryLabel === query.label)
     const normalizedForQuery = normalized.venues.filter(
@@ -547,7 +440,7 @@ export async function fetchLivePlaces(
       template: query.template,
       roleHint: query.roleHint,
       fetchedCount: fetchedCountByQuery.get(query.label) ?? 0,
-      mappedCount: mapped.length,
+      mappedCount: mappedCountByQuery.get(query.label) ?? mapped.length,
       normalizedCount: normalizedForQuery.length,
       approvedCount: countByGateStatus(normalizedForQuery, 'approved'),
       demotedCount: countByGateStatus(normalizedForQuery, 'demoted'),

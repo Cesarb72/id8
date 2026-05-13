@@ -1,9 +1,5 @@
 import type { UserStopRole } from '../types/itinerary'
-import {
-  getGooglePlacesConfig,
-  hasGooglePlacesConfig,
-  isDevOrSandboxCloseoutFlow,
-} from '../sources/getSourceMode'
+import { getNearbyPlaces } from '../providers/ProviderAdapter'
 
 export interface NearbyPlaceSource {
   normalizedFromRawType: 'raw-place'
@@ -42,10 +38,6 @@ interface GoogleNearbyPlaceRecord {
     latitude?: number
     longitude?: number
   }
-}
-
-interface GoogleNearbySearchResponse {
-  places?: GoogleNearbyPlaceRecord[]
 }
 
 interface NearbyFetchQueryDiagnostic {
@@ -189,39 +181,6 @@ function buildNearbyPlaceRecord(params: {
 export async function fetchNearbyPlacesForWaypoint(
   waypoint: NearbyWaypointInput,
 ): Promise<NearbyFetchDiagnostic> {
-  const config = getGooglePlacesConfig()
-  const keyPresent = Boolean(config.apiKey)
-  const requestPath = config.endpoint
-  if (isDevOrSandboxCloseoutFlow()) {
-    return {
-      places: [],
-      reason: 'dev-closeout-offline-mode',
-      requestPath,
-      keyPresent,
-      role: waypoint.role,
-      waypointName: waypoint.name,
-      queryDiagnostics: [],
-      rawResultCount: 0,
-      parsedCount: 0,
-    }
-  }
-  if (!hasGooglePlacesConfig() || !keyPresent) {
-    return {
-      places: [],
-      reason: 'missing-api-key',
-      requestPath,
-      keyPresent,
-      role: waypoint.role,
-      waypointName: waypoint.name,
-      queryDiagnostics: [],
-      rawResultCount: 0,
-      parsedCount: 0,
-    }
-  }
-
-  const nearbyQueries = NEARBY_QUERIES_BY_ROLE[waypoint.role] ?? NEARBY_QUERIES_BY_ROLE.highlight
-  const nearbyRadius = NEARBY_RADIUS_BY_ROLE[waypoint.role] ?? 850
-  const nearbyLimit = NEARBY_LIMIT_BY_ROLE[waypoint.role] ?? 4
   const fieldMask = [
     'places.id',
     'places.displayName',
@@ -229,94 +188,67 @@ export async function fetchNearbyPlacesForWaypoint(
     'places.types',
     'places.location',
   ].join(',')
+  const nearbyQueries = NEARBY_QUERIES_BY_ROLE[waypoint.role] ?? NEARBY_QUERIES_BY_ROLE.highlight
+  const nearbyRadius = NEARBY_RADIUS_BY_ROLE[waypoint.role] ?? 850
+  const nearbyLimit = NEARBY_LIMIT_BY_ROLE[waypoint.role] ?? 4
+  const providerResults = await getNearbyPlaces({
+    fieldMask,
+    limit: 6,
+    queries: nearbyQueries.map((queryText) => ({
+      queryLabel: `nearby-${waypoint.role}-${normalizeType(queryText)}`,
+      radiusM: nearbyRadius,
+      textQuery: `${queryText} near ${waypoint.name}, San Jose`,
+      waypointCoordinates: waypoint.coordinates,
+    })),
+  })
+  const { diagnostics } = providerResults
+  const requestPath = diagnostics.requestPath
+  const keyPresent = diagnostics.keyPresent
 
-  const settled = await Promise.allSettled(
-    nearbyQueries.map(async (queryText) => {
-      const response = await fetch(config.endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': config.apiKey!,
-          'X-Goog-FieldMask': fieldMask,
-        },
-        body: JSON.stringify({
-          textQuery: `${queryText} near ${waypoint.name}, San Jose`,
-          pageSize: 6,
-          languageCode: config.languageCode,
-          regionCode: config.regionCode,
-          rankPreference: 'DISTANCE',
-          locationBias: {
-            circle: {
-              center: {
-                latitude: waypoint.coordinates[1],
-                longitude: waypoint.coordinates[0],
-              },
-              radius: nearbyRadius,
-            },
-          },
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error(`Nearby query failed (${response.status})`)
-      }
-
-      const payload = (await response.json()) as GoogleNearbySearchResponse
-      return payload.places ?? []
-    }),
-  )
+  if (diagnostics.blockedByEnv) {
+    return {
+      places: [],
+      reason: keyPresent ? 'dev-closeout-offline-mode' : 'missing-api-key',
+      requestPath,
+      keyPresent,
+      role: waypoint.role,
+      waypointName: waypoint.name,
+      queryDiagnostics: [],
+      rawResultCount: 0,
+      parsedCount: 0,
+    }
+  }
 
   const byId = new Map<string, NearbyPlaceRecord>()
-  let requestErrorCount = 0
-  let rawResultCount = 0
-  const queryDiagnostics: NearbyFetchQueryDiagnostic[] = []
+  const rawResultCount = diagnostics.resultCount
+  const queryDiagnostics: NearbyFetchQueryDiagnostic[] = nearbyQueries.map((queryText, index) => ({
+    queryText,
+    status: providerResults.errors[index] ? 'error' : 'ok',
+    responseCount: providerResults.queryCounts[index]?.resultCount ?? 0,
+    error: providerResults.errors[index],
+  }))
 
-  for (let index = 0; index < settled.length; index += 1) {
-    const result = settled[index]
-    const queryText = nearbyQueries[index] ?? 'unknown'
-    if (result.status !== 'fulfilled') {
-      requestErrorCount += 1
-      queryDiagnostics.push({
-        queryText,
-        status: 'error',
-        responseCount: 0,
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-      })
+  for (const place of providerResults.results) {
+    if (byId.has(place.providerRecordId)) {
       continue
     }
-    queryDiagnostics.push({
-      queryText,
-      status: 'ok',
-      responseCount: result.value.length,
-    })
-    rawResultCount += result.value.length
-    for (const place of result.value) {
-      const id = place.id?.trim()
-      const name = place.displayName?.text?.trim()
-      const latitude = place.location?.latitude
-      const longitude = place.location?.longitude
-      if (!id || !name || typeof latitude !== 'number' || typeof longitude !== 'number') {
-        continue
-      }
-      if (byId.has(id)) {
-        continue
-      }
-      const coordinates: [number, number] = [longitude, latitude]
-      const minutesAway = estimateMinutesAway(
-        computeDistanceMeters(waypoint.coordinates, coordinates),
-      )
-      byId.set(
-        id,
-        buildNearbyPlaceRecord({
-          providerRecordId: id,
-          name,
-          category: classifyNearbyCategory(place),
-          minutesAway,
-          coordinates,
-          role: waypoint.role,
+    const minutesAway = estimateMinutesAway(
+      computeDistanceMeters(waypoint.coordinates, place.coordinates),
+    )
+    byId.set(
+      place.providerRecordId,
+      buildNearbyPlaceRecord({
+        providerRecordId: place.providerRecordId,
+        name: place.name,
+        category: classifyNearbyCategory({
+          primaryType: place.primaryType,
+          types: place.types,
         }),
-      )
-    }
+        minutesAway,
+        coordinates: place.coordinates,
+        role: waypoint.role,
+      }),
+    )
   }
 
   const places = Array.from(byId.values()).slice(0, nearbyLimit)
@@ -324,7 +256,7 @@ export async function fetchNearbyPlacesForWaypoint(
   const reason: NearbyFetchDiagnostic['reason'] =
     parsedCount > 0
       ? 'ok'
-      : requestErrorCount > 0
+      : providerResults.errors.length > 0
         ? 'request-error'
         : rawResultCount === 0
           ? 'zero-results'
