@@ -3,7 +3,7 @@ import type { HoursPeriod } from '../types/hours'
 import type { RawPlace } from '../types/rawPlace'
 import type { VenueCategory } from '../types/venue'
 
-export interface GooglePlaceRecord {
+interface GooglePlaceRecord {
   id?: string
   displayName?: {
     text?: string

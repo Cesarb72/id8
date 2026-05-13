@@ -1,17 +1,74 @@
 import { normalizeRawPlace } from '../normalize/normalizeRawPlace'
+import type { ProviderVenue } from './providerTypes'
 import {
   getGooglePlacesConfig,
   hasGooglePlacesConfig,
   isDevOrSandboxCloseoutFlow,
 } from '../sources/getSourceMode'
-import {
-  mapLivePlaceToRawPlace,
-  type GooglePlaceRecord,
-} from '../sources/mapLivePlaceToRawPlace'
+import { mapLivePlaceToRawPlace } from '../sources/mapLivePlaceToRawPlace'
 import type { LivePlaceKind } from '../sources/buildLiveQueryPlan'
-import type { RawPlace } from '../types/rawPlace'
 import type { SourceMode } from '../types/sourceMode'
 import type { Venue } from '../types/venue'
+
+interface GooglePlaceRecord {
+  id?: string
+  displayName?: {
+    text?: string
+  }
+  primaryType?: string
+  types?: string[]
+  formattedAddress?: string
+  shortFormattedAddress?: string
+  addressComponents?: Array<{
+    longText?: string
+    shortText?: string
+    types?: string[]
+  }>
+  editorialSummary?: {
+    text?: string
+  }
+  businessStatus?: string
+  currentOpeningHours?: {
+    openNow?: boolean
+    weekdayDescriptions?: string[]
+    periods?: Array<{
+      open?: {
+        day?: number
+        hour?: number
+        minute?: number
+      }
+      close?: {
+        day?: number
+        hour?: number
+        minute?: number
+      }
+    }>
+  }
+  regularOpeningHours?: {
+    weekdayDescriptions?: string[]
+    periods?: Array<{
+      open?: {
+        day?: number
+        hour?: number
+        minute?: number
+      }
+      close?: {
+        day?: number
+        hour?: number
+        minute?: number
+      }
+    }>
+  }
+  priceLevel?: string
+  rating?: number
+  userRatingCount?: number
+  websiteUri?: string
+  utcOffsetMinutes?: number
+  location?: {
+    latitude?: number
+    longitude?: number
+  }
+}
 
 export type ProviderCallPurpose =
   | 'anchor_search'
@@ -34,8 +91,6 @@ export interface ProviderAdapterDiagnostics {
   requestPath: string
   sourceMode?: SourceMode
 }
-
-export interface ProviderPlaceRecord extends GooglePlaceRecord {}
 
 export interface ProviderTextSearchQuery {
   queryLabel: string
@@ -107,7 +162,7 @@ async function queryGoogleTextSearch(
   endpoint: string,
   languageCode: string,
   regionCode: string,
-): Promise<ProviderPlaceRecord[]> {
+): Promise<GooglePlaceRecord[]> {
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -129,16 +184,155 @@ async function queryGoogleTextSearch(
     throw new Error(`${query.queryLabel} query failed (${response.status})`)
   }
 
-  const payload = (await response.json()) as { places?: ProviderPlaceRecord[] }
+  const payload = (await response.json()) as { places?: GooglePlaceRecord[] }
   return (payload.places ?? []).filter(
     (place) => place.businessStatus !== 'CLOSED_PERMANENTLY',
   )
 }
 
+function mapGooglePlaceRecordToProviderVenue(
+  place: GooglePlaceRecord,
+  fetchedAt: number,
+): ProviderVenue | undefined {
+  const providerRecordId = place.id?.trim()
+  const displayName = place.displayName?.text?.trim()
+  if (!providerRecordId || !displayName) {
+    return undefined
+  }
+
+  const currentPeriods = place.currentOpeningHours?.periods?.map((period) => ({
+    close:
+      period.close?.day === undefined ||
+      period.close.hour === undefined ||
+      period.close.minute === undefined
+        ? undefined
+        : {
+            day: period.close.day,
+            hour: period.close.hour,
+            minute: period.close.minute,
+          },
+    open:
+      period.open?.day === undefined ||
+      period.open.hour === undefined ||
+      period.open.minute === undefined
+        ? undefined
+        : {
+            day: period.open.day,
+            hour: period.open.hour,
+            minute: period.open.minute,
+          },
+  }))
+  const regularPeriods = place.regularOpeningHours?.periods?.map((period) => ({
+    close:
+      period.close?.day === undefined ||
+      period.close.hour === undefined ||
+      period.close.minute === undefined
+        ? undefined
+        : {
+            day: period.close.day,
+            hour: period.close.hour,
+            minute: period.close.minute,
+          },
+    open:
+      period.open?.day === undefined ||
+      period.open.hour === undefined ||
+      period.open.minute === undefined
+        ? undefined
+        : {
+            day: period.open.day,
+            hour: period.open.hour,
+            minute: period.open.minute,
+          },
+  }))
+  const location =
+    typeof place.location?.latitude === 'number' &&
+    typeof place.location?.longitude === 'number'
+      ? {
+          latitude: place.location.latitude,
+          longitude: place.location.longitude,
+        }
+      : undefined
+
+  return {
+    businessStatus: place.businessStatus,
+    completenessHints: {
+      hasAddress: Boolean(place.formattedAddress?.trim()),
+      hasHours:
+        Boolean(place.currentOpeningHours?.weekdayDescriptions?.length) ||
+        Boolean(place.regularOpeningHours?.weekdayDescriptions?.length),
+      hasLocation: Boolean(location),
+      hasPrimaryType: Boolean(place.primaryType?.trim()),
+      hasRating: typeof place.rating === 'number',
+    },
+    currentOpeningHours: {
+      openNow: place.currentOpeningHours?.openNow,
+      periods: currentPeriods,
+      weekdayDescriptions: place.currentOpeningHours?.weekdayDescriptions,
+    },
+    displayName,
+    editorialSummary: place.editorialSummary?.text?.trim(),
+    fetchedAt,
+    formattedAddress: place.formattedAddress,
+    location,
+    primaryType: place.primaryType,
+    provider: 'google_places',
+    providerRecordId,
+    rating: place.rating,
+    rawPayloadAvailable: false,
+    regularOpeningHours: {
+      periods: regularPeriods,
+      weekdayDescriptions: place.regularOpeningHours?.weekdayDescriptions,
+    },
+    shortFormattedAddress: place.shortFormattedAddress,
+    sourceMode: 'live',
+    types: place.types,
+    userRatingCount: place.userRatingCount,
+    utcOffsetMinutes: place.utcOffsetMinutes,
+    websiteUri: place.websiteUri,
+  }
+}
+
+function mapProviderVenueToGooglePlaceRecord(place: ProviderVenue): GooglePlaceRecord {
+  return {
+    businessStatus: place.businessStatus,
+    currentOpeningHours: place.currentOpeningHours
+      ? {
+          openNow: place.currentOpeningHours.openNow,
+          periods: place.currentOpeningHours.periods,
+          weekdayDescriptions: place.currentOpeningHours.weekdayDescriptions,
+        }
+      : undefined,
+    displayName: {
+      text: place.displayName,
+    },
+    editorialSummary: place.editorialSummary
+      ? {
+          text: place.editorialSummary,
+        }
+      : undefined,
+    formattedAddress: place.formattedAddress,
+    id: place.providerRecordId,
+    location: place.location,
+    primaryType: place.primaryType,
+    rating: place.rating,
+    regularOpeningHours: place.regularOpeningHours
+      ? {
+          periods: place.regularOpeningHours.periods,
+          weekdayDescriptions: place.regularOpeningHours.weekdayDescriptions,
+        }
+      : undefined,
+    shortFormattedAddress: place.shortFormattedAddress,
+    types: place.types,
+    userRatingCount: place.userRatingCount,
+    utcOffsetMinutes: place.utcOffsetMinutes,
+    websiteUri: place.websiteUri,
+  }
+}
+
 export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(input: {
   callPurpose: ProviderCallPurpose
   mapPlace: (
-    place: ProviderPlaceRecord,
+    place: ProviderVenue,
     context: { index: number; query: TQuery },
   ) => T | undefined
   queries: TQuery[]
@@ -194,6 +388,7 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
   const queryCounts: Array<{ queryLabel: string; resultCount: number }> = []
   const results: T[] = []
   let resultCount = 0
+  const fetchedAt = Date.now()
 
   for (const settledResult of settled) {
     if (settledResult.status === 'rejected') {
@@ -212,7 +407,11 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
     })
     resultCount += places.length
     places.forEach((place, index) => {
-      const mapped = input.mapPlace(place, { index, query })
+      const providerVenue = mapGooglePlaceRecordToProviderVenue(place, fetchedAt)
+      if (!providerVenue) {
+        return
+      }
+      const mapped = input.mapPlace(providerVenue, { index, query })
       if (mapped) {
         results.push(mapped)
       }
@@ -256,7 +455,7 @@ export async function searchAnchorPlaces(input: {
   return searchPlaces({
     callPurpose: 'anchor_search',
     mapPlace: (place, { index }) => {
-      const rawPlace = mapLivePlaceToRawPlace(place, {
+      const rawPlace = mapLivePlaceToRawPlace(mapProviderVenueToGooglePlaceRecord(place), {
         city: input.city,
         neighborhood: input.neighborhood,
         requestedKind: input.requestedKind,
@@ -274,7 +473,7 @@ export async function searchAnchorPlaces(input: {
           ...rawPlace,
           driveMinutes: input.neighborhood ? 10 : 12,
           shortDescription:
-            place.editorialSummary?.text?.trim() ??
+            place.editorialSummary ??
             `${anchorName} was selected as a user-led plan anchor.`,
           narrativeFlavor: `${anchorName} is the chosen anchor for a user-led outing.`,
         }),
@@ -311,18 +510,16 @@ export async function getNearbyPlaces(input: {
   return searchPlaces({
     callPurpose: 'waypoint_nearby',
     mapPlace: (place) => {
-      const providerRecordId = place.id?.trim()
-      const name = place.displayName?.text?.trim()
       const latitude = place.location?.latitude
       const longitude = place.location?.longitude
-      if (!providerRecordId || !name || typeof latitude !== 'number' || typeof longitude !== 'number') {
+      if (typeof latitude !== 'number' || typeof longitude !== 'number') {
         return undefined
       }
       return {
         coordinates: [longitude, latitude],
-        name,
+        name: place.displayName,
         primaryType: place.primaryType,
-        providerRecordId,
+        providerRecordId: place.providerRecordId,
         types: place.types ?? [],
       }
     },
