@@ -482,7 +482,7 @@ export async function buildProviderSourceOpportunity(
   }
 
   const providerSearch = await searchPlaces<BuildProviderMappedVenue, ProviderTextSearchQuery>({
-    callPurpose: 'waypoint_nearby',
+    callPurpose: 'build_anchor_nearby',
     mapPlace: (providerVenue) => ({
       providerVenue,
       venue: mapProviderVenueToVenue({
@@ -669,7 +669,7 @@ export const buildProviderSourceOpportunityConfig = {
   fieldMask: DEFAULT_FIELD_MASK,
   maxProviderRequestsPerAttempt: 1,
   pageSize: DEFAULT_NEARBY_PAGE_SIZE,
-  purpose: 'waypoint_nearby' as const,
+  purpose: 'build_anchor_nearby' as const,
   radiusM: DEFAULT_NEARBY_RADIUS_M,
   queryLabel: DEFAULT_QUERY_LABEL,
 }

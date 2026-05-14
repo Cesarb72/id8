@@ -3,6 +3,7 @@ import type { SourceMode } from '../types/sourceMode'
 export type ProviderCallPurpose =
   | 'anchor_search'
   | 'retrieval_supply'
+  | 'build_anchor_nearby'
   | 'waypoint_nearby'
   | 'details_lookup'
 
@@ -112,6 +113,7 @@ export function summarizeProviderCallLedger(
   const byPurpose: Record<ProviderCallPurpose, number> = {
     anchor_search: 0,
     retrieval_supply: 0,
+    build_anchor_nearby: 0,
     waypoint_nearby: 0,
     details_lookup: 0,
   }
