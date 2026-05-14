@@ -1,6 +1,7 @@
 import type { LiveDataProvider } from '../types/sourceMode'
 import type { Venue } from '../types/venue'
 import type { ProviderVenue } from './providerTypes'
+import { providerCanonicalVenueSeeds } from './providerCanonicalVenueSeeds'
 
 export type ProviderCanonicalMatchMethod =
   | 'provider_id'
@@ -56,6 +57,36 @@ function buildUnresolvedMapping(
   }
 }
 
+function resolveSeededCanonicalVenueId(params: {
+  providerVenue: ProviderVenue
+  staticVenues: Venue[]
+  matchedAt?: number
+}): ProviderCanonicalVenueMapping | undefined {
+  const { matchedAt, providerVenue, staticVenues } = params
+  const seed = providerCanonicalVenueSeeds.find(
+    (entry) =>
+      entry.provider === 'google-places' &&
+      entry.providerRecordId === providerVenue.providerRecordId,
+  )
+  if (!seed) {
+    return undefined
+  }
+
+  const seededVenue = staticVenues.find((venue) => venue.id === seed.canonicalVenueId)
+  if (!seededVenue) {
+    return buildUnresolvedMapping(providerVenue)
+  }
+
+  return {
+    provider: seed.provider,
+    providerRecordId: seed.providerRecordId,
+    canonicalVenueId: seed.canonicalVenueId,
+    matchMethod: seed.matchMethod,
+    confidence: seed.confidence,
+    matchedAt,
+  }
+}
+
 export function buildProviderCanonicalVenueKey(params: {
   provider: Extract<LiveDataProvider, 'google-places'>
   providerRecordId: string
@@ -75,6 +106,15 @@ export function resolveCanonicalVenueIdForProviderVenue(params: {
   matchedAt?: number
 }): ProviderCanonicalVenueMapping {
   const { providerVenue, staticVenues, matchedAt } = params
+
+  const seededMatch = resolveSeededCanonicalVenueId({
+    matchedAt,
+    providerVenue,
+    staticVenues,
+  })
+  if (seededMatch) {
+    return seededMatch
+  }
 
   const providerIdMatches = staticVenues.filter(
     (venue) =>
