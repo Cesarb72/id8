@@ -69,6 +69,23 @@ export interface BuildProviderRoleCandidateCounts {
   windDown: number
 }
 
+export interface BuildProviderNearbyCandidateReviewSummary {
+  providerRecordId: string
+  displayName: string
+  primaryType: string | null
+  normalizedCategory: Venue['category'] | null
+  formattedAddress: string | null
+  neighborhood: string | null
+  canonicalVenueId: string | null
+  canonicalMatchMethod: ProviderCanonicalVenueMapping['matchMethod']
+  canonicalConfidence: number
+  completenessStatus: ProviderCompletenessGateResult['status']
+  completenessFailureReason?: string
+  equivalenceStatus: SupplyEquivalenceResult['status']
+  equivalenceBlockingReasons: SupplyEquivalenceResult['blockingReasons']
+  suppressionReasons: string[]
+}
+
 export interface BuildProviderSourceOpportunityDiagnostics {
   buildProviderSupplyEnabled: boolean
   buildProviderAnchorCanonicalVenueId: string | null
@@ -80,6 +97,7 @@ export interface BuildProviderSourceOpportunityDiagnostics {
   buildProviderSupplyBlockedReason: BuildProviderSupplyBlockedReason | null
   buildProviderTraceBillableCallCount: number
   suppressionReasons: string[]
+  nearbyCandidateReviews: BuildProviderNearbyCandidateReviewSummary[]
   canonicalMappings: ProviderCanonicalVenueMapping[]
   completeness: ProviderCompletenessGateResult[]
   equivalence: SupplyEquivalenceResult[]
@@ -356,6 +374,7 @@ function buildBaseDiagnostics(params: {
     buildProviderSupplyBlockedReason: params.blockedReason ?? null,
     buildProviderTraceBillableCallCount: params.trace?.billableCallCount ?? 0,
     suppressionReasons: [],
+    nearbyCandidateReviews: [],
     canonicalMappings: [],
     completeness: [],
     equivalence: [],
@@ -535,6 +554,7 @@ export async function buildProviderSourceOpportunity(
 
   const requestedAt = Date.now()
   const suppressionReasons: string[] = []
+  const nearbyCandidateReviews: BuildProviderNearbyCandidateReviewSummary[] = []
   const admittedNearbyCandidates: Venue[] = []
   const canonicalMappings: ProviderCanonicalVenueMapping[] = []
   const completeness: ProviderCompletenessGateResult[] = []
@@ -569,32 +589,58 @@ export async function buildProviderSourceOpportunity(
     )
     equivalence.push(equivalenceResult)
 
+    const candidateSuppressionReasons: string[] = []
+
     if (candidate.providerVenue.providerRecordId === anchorProviderRecordId) {
+      candidateSuppressionReasons.push('anchor_self_match')
       suppressionReasons.push(
         `${candidate.providerVenue.providerRecordId}:anchor_self_match`,
       )
-      continue
-    }
-
-    if (completenessResult.status !== 'passed') {
+    } else if (completenessResult.status !== 'passed') {
+      candidateSuppressionReasons.push(
+        completenessResult.failureReason ?? completenessResult.status,
+      )
       suppressionReasons.push(
         `${candidate.providerVenue.providerRecordId}:${completenessResult.failureReason ?? completenessResult.status}`,
       )
-      continue
-    }
-
-    if (equivalenceResult.status !== 'equivalent') {
+    } else if (equivalenceResult.status !== 'equivalent') {
       const equivalenceReason =
         equivalenceResult.blockingReasons[0] ??
         equivalenceResult.warnings[0] ??
         equivalenceResult.status
+      candidateSuppressionReasons.push(
+        ...(
+          equivalenceResult.blockingReasons.length > 0
+            ? equivalenceResult.blockingReasons
+            : [equivalenceReason]
+        ),
+      )
       suppressionReasons.push(
         `${candidate.providerVenue.providerRecordId}:${equivalenceReason}`,
       )
-      continue
+    } else {
+      admittedNearbyCandidates.push(candidate.venue)
     }
 
-    admittedNearbyCandidates.push(candidate.venue)
+    nearbyCandidateReviews.push({
+      providerRecordId: candidate.providerVenue.providerRecordId,
+      displayName: candidate.providerVenue.displayName,
+      primaryType: candidate.providerVenue.primaryType?.trim() || null,
+      normalizedCategory: candidate.venue.category ?? null,
+      formattedAddress:
+        candidate.providerVenue.formattedAddress?.trim() ||
+        candidate.venue.source.formattedAddress?.trim() ||
+        null,
+      neighborhood: candidate.venue.neighborhood?.trim() || null,
+      canonicalVenueId: canonicalMapping.canonicalVenueId,
+      canonicalMatchMethod: canonicalMapping.matchMethod,
+      canonicalConfidence: canonicalMapping.confidence,
+      completenessStatus: completenessResult.status,
+      completenessFailureReason: completenessResult.failureReason,
+      equivalenceStatus: equivalenceResult.status,
+      equivalenceBlockingReasons: equivalenceResult.blockingReasons,
+      suppressionReasons: candidateSuppressionReasons,
+    })
   }
 
   const roleCandidates = deriveRoleCandidates(admittedNearbyCandidates)
@@ -606,6 +652,7 @@ export async function buildProviderSourceOpportunity(
     buildProviderRoleCandidateCounts: roleCandidateCounts,
     buildProviderTraceBillableCallCount: trace.billableCallCount,
     suppressionReasons,
+    nearbyCandidateReviews,
     canonicalMappings,
     completeness,
     equivalence,

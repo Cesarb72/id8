@@ -4,6 +4,7 @@ import { mapLivePlaceToRawPlace } from '../sources/mapLivePlaceToRawPlace'
 import { getGooglePlacesConfig } from '../sources/getSourceMode'
 import type { Venue } from '../types/venue'
 import type {
+  BuildProviderNearbyCandidateReviewSummary,
   BuildProviderSourceOpportunityDiagnostics,
   BuildProviderSourceOpportunityResult,
 } from './buildProviderSourceOpportunity'
@@ -139,6 +140,7 @@ export interface BuildProviderSupplyDryRunReport {
   anchorEquivalenceSummary: BuildProviderSupplyDryRunEquivalenceSummary | null
   suppressionReasons: string[]
   nearbySuppressionReasons: string[]
+  nearbyCandidateReviewSummaries: BuildProviderNearbyCandidateReviewSummary[]
   nearbyCanonicalMappingSummaries: BuildProviderSupplyDryRunCanonicalMappingSummary[]
   nearbyCompletenessSummaries: BuildProviderSupplyDryRunCompletenessSummary[]
   nearbyEquivalenceSummaries: BuildProviderSupplyDryRunEquivalenceSummary[]
@@ -178,6 +180,7 @@ function buildBaseReport(requestedAt: number): BuildProviderSupplyDryRunReport {
     anchorEquivalenceSummary: null,
     suppressionReasons: [],
     nearbySuppressionReasons: [],
+    nearbyCandidateReviewSummaries: [],
     nearbyCanonicalMappingSummaries: [],
     nearbyCompletenessSummaries: [],
     nearbyEquivalenceSummaries: [],
@@ -414,6 +417,7 @@ function buildReportFromNearbyResult(params: {
     anchorEquivalenceSummary: summarizeEquivalence(params.anchorEquivalence),
     suppressionReasons: nearbyDiagnostics.suppressionReasons,
     nearbySuppressionReasons: nearbyDiagnostics.suppressionReasons,
+    nearbyCandidateReviewSummaries: nearbyDiagnostics.nearbyCandidateReviews,
     nearbyCanonicalMappingSummaries: summarizeCanonicalMappings(
       nearbyDiagnostics.canonicalMappings,
     ),
