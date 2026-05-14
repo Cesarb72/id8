@@ -1,4 +1,12 @@
 import { normalizeRawPlace } from '../normalize/normalizeRawPlace'
+import {
+  createBlockedProviderTrace,
+  createProviderCallTrace,
+  summarizeProviderCallLedger,
+  type ProviderCallLedger,
+  type ProviderCallPurpose,
+  type ProviderCallTrace,
+} from './providerCallTrace'
 import type { ProviderVenue } from './providerTypes'
 import {
   getGooglePlacesConfig,
@@ -70,12 +78,6 @@ interface GooglePlaceRecord {
   }
 }
 
-export type ProviderCallPurpose =
-  | 'anchor_search'
-  | 'retrieval_supply'
-  | 'waypoint_nearby'
-  | 'details_lookup'
-
 export interface ProviderAdapterDiagnostics {
   attempted: boolean
   blockedByEnv: boolean
@@ -90,6 +92,8 @@ export interface ProviderAdapterDiagnostics {
   keyPresent: boolean
   requestPath: string
   sourceMode?: SourceMode
+  trace?: ProviderCallTrace
+  ledger?: ProviderCallLedger
 }
 
 export interface ProviderTextSearchQuery {
@@ -139,6 +143,12 @@ function buildBlockedDiagnostics(
   failureReason: string,
   sourceMode?: SourceMode,
 ): ProviderAdapterDiagnostics {
+  const trace = createBlockedProviderTrace({
+    purpose: callPurpose,
+    blockedReason: failureReason,
+    fallbackUsed: true,
+    sourceMode,
+  })
   return {
     attempted: false,
     blockedByEnv: true,
@@ -153,6 +163,8 @@ function buildBlockedDiagnostics(
     keyPresent,
     requestPath,
     sourceMode,
+    trace,
+    ledger: summarizeProviderCallLedger([trace]),
   }
 }
 
@@ -338,6 +350,7 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
   queries: TQuery[]
   sourceMode?: SourceMode
 }): Promise<ProviderTextSearchResult<T>> {
+  const requestedAt = Date.now()
   const config = getGooglePlacesConfig()
   const keyPresent = hasGooglePlacesConfig() && Boolean(config.apiKey)
 
@@ -418,6 +431,28 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
     })
   }
 
+  const trace = createProviderCallTrace({
+    purpose: input.callPurpose,
+    status:
+      errors.length > 0 && results.length === 0
+        ? 'failed'
+        : 'succeeded',
+    attempted: true,
+    blockedByEnv: false,
+    fallbackUsed: false,
+    queryCount: input.queries.length,
+    resultCount,
+    mappedCount: results.length,
+    suppressedCount: Math.max(0, resultCount - results.length),
+    billableCallCount: queryCounts.length,
+    requestedAt,
+    failureReason:
+      results.length === 0 && errors.length > 0
+        ? errors[0]
+        : undefined,
+    sourceMode: input.sourceMode,
+  })
+
   return {
     diagnostics: {
       attempted: true,
@@ -436,6 +471,8 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
       keyPresent,
       requestPath: config.endpoint,
       sourceMode: input.sourceMode,
+      trace,
+      ledger: summarizeProviderCallLedger([trace]),
     },
     errors,
     queryCounts,
