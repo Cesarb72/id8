@@ -1,26 +1,26 @@
-import { curatedVenues } from '../../data/venues'
 import type {
   ProviderCallLedger,
   ProviderCallTrace,
-} from './providerCallTrace'
+} from './providerCallTrace.ts'
 import {
   resolveCanonicalVenueIdForProviderVenue,
   type ProviderCanonicalVenueMapping,
-} from './providerCanonicalVenueMapping'
+} from './providerCanonicalVenueMapping.ts'
 import {
   evaluateProviderVenueCompleteness,
   type ProviderCompletenessGateResult,
-} from './providerCompletenessGate'
+} from './providerCompletenessGate.ts'
 import {
   evaluateSupplyEquivalence,
   type SupplyEquivalenceResult,
-} from './supplyEquivalence'
+} from './supplyEquivalence.ts'
 import {
   searchPlaces,
   type ProviderAdapterDiagnostics,
   type ProviderTextSearchQuery,
-} from './ProviderAdapter'
-import type { ProviderVenue } from './providerTypes'
+} from './ProviderAdapter.ts'
+import type { ProviderVenue } from './providerTypes.ts'
+import type { Venue } from '../types/venue.ts'
 
 export interface ProviderDryRunResultEntry {
   providerRecordId: string
@@ -121,6 +121,11 @@ function buildQuery(query: string): ProviderTextSearchQuery {
   }
 }
 
+async function loadCuratedVenues(): Promise<Venue[]> {
+  const venueModule = await import('../../data/venues.ts')
+  return venueModule.curatedVenues
+}
+
 export async function runProviderDryRunHarness(
   options?: ProviderDryRunHarnessOptions,
 ): Promise<ProviderDryRunReport> {
@@ -139,6 +144,25 @@ export async function runProviderDryRunHarness(
 
   const trace = getRequiredTrace(providerSearch.diagnostics)
   const ledger = getRequiredLedger(providerSearch.diagnostics)
+
+  if (providerSearch.results.length === 0) {
+    return {
+      runId: buildRunId(requestedAt),
+      query,
+      requestedAt,
+      provider: 'google-places',
+      purpose: 'anchor_search',
+      blocked: providerSearch.diagnostics.blockedByEnv,
+      failureReason: providerSearch.diagnostics.failureReason,
+      rawResultCount: providerSearch.diagnostics.resultCount,
+      providerVenueCount: 0,
+      trace,
+      ledger,
+      results: [],
+    }
+  }
+
+  const curatedVenues = await loadCuratedVenues()
 
   const results = providerSearch.results.map((providerVenue) => {
     const canonicalMapping = resolveCanonicalVenueIdForProviderVenue({

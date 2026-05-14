@@ -1,14 +1,25 @@
-import {
-  providerDryRunHarnessConfig,
-  runProviderDryRunHarness,
-} from '../src/domain/providers/providerDryRunHarness.ts'
+const DRY_RUN_ENV_FLAG = 'ID8_PROVIDER_DRY_RUN'
 
 async function main(): Promise<void> {
-  if (process.env[providerDryRunHarnessConfig.dryRunEnvFlag] !== '1') {
-    throw new Error(
-      `Provider dry run is disabled by default. Set ${providerDryRunHarnessConfig.dryRunEnvFlag}=1 to run the harness.`,
+  if (process.env[DRY_RUN_ENV_FLAG] !== '1') {
+    process.stderr.write(
+      `${JSON.stringify(
+        {
+          allowed: false,
+          reason: `Provider dry run is disabled by default. Set ${DRY_RUN_ENV_FLAG}=1 to run the harness.`,
+        },
+        null,
+        2,
+      )}\n`,
     )
+    process.exitCode = 1
+    return
   }
+
+  const {
+    providerDryRunHarnessConfig,
+    runProviderDryRunHarness,
+  } = await import('../src/domain/providers/providerDryRunHarness.ts')
 
   const report = await runProviderDryRunHarness({
     query: providerDryRunHarnessConfig.query,
