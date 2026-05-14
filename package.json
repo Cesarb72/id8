@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "provider:dry-run": "tsx scripts/run-provider-dry-run.ts"
+    "provider:dry-run": "tsx scripts/run-provider-dry-run.ts",
+    "provider:build-supply-dry-run": "tsx scripts/run-build-provider-supply-dry-run.ts"
   },
   "dependencies": {
     "mapbox-gl": "^3.20.0",
