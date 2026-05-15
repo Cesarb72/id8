@@ -1,5 +1,10 @@
+import type { HoursPeriod } from '../types/hours'
 import type { UserStopRole } from '../types/itinerary'
-import { getNearbyPlaces } from '../providers/ProviderAdapter'
+import {
+  searchPlaces,
+  type ProviderTextSearchQuery,
+} from '../providers/ProviderAdapter'
+import type { ProviderVenue } from '../providers/providerTypes'
 
 export interface NearbyPlaceSource {
   normalizedFromRawType: 'raw-place'
@@ -9,6 +14,12 @@ export interface NearbyPlaceSource {
   sourceQueryLabel: string
 }
 
+interface NearbyPlaceOpeningHours {
+  openNow?: boolean
+  periods?: HoursPeriod[]
+  weekdayDescriptions?: string[]
+}
+
 export interface NearbyPlaceRecord {
   id: string
   providerRecordId: string
@@ -16,6 +27,12 @@ export interface NearbyPlaceRecord {
   category: 'nightlife' | 'dessert' | 'cafe' | 'fallback'
   minutesAway: number
   coordinates: [number, number]
+  openNow?: boolean
+  hoursStatus: 'open' | 'closed' | 'unknown'
+  freshnessNote?: string
+  freshnessWarning?: string
+  currentOpeningHours?: NearbyPlaceOpeningHours
+  regularOpeningHours?: NearbyPlaceOpeningHours
   sourceOrigin: 'live'
   provider: 'google-places'
   normalizedFromRawType: 'raw-place'
@@ -34,10 +51,6 @@ interface GoogleNearbyPlaceRecord {
   displayName?: { text?: string }
   primaryType?: string
   types?: string[]
-  location?: {
-    latitude?: number
-    longitude?: number
-  }
 }
 
 interface NearbyFetchQueryDiagnostic {
@@ -63,6 +76,10 @@ export interface NearbyFetchDiagnostic {
   queryDiagnostics: NearbyFetchQueryDiagnostic[]
   rawResultCount: number
   parsedCount: number
+  nearbyFreshnessSuppressedCount: number
+  nearbyFreshnessUnknownCount: number
+  nearbyFreshnessOpenCount: number
+  nearbyFreshnessSuppressionReasons: string[]
 }
 
 const NEARBY_LIMIT_BY_ROLE: Record<UserStopRole, number> = {
@@ -152,6 +169,12 @@ function buildNearbyPlaceRecord(params: {
   category: NearbyPlaceRecord['category']
   minutesAway: number
   coordinates: [number, number]
+  openNow?: boolean
+  hoursStatus: NearbyPlaceRecord['hoursStatus']
+  freshnessNote?: string
+  freshnessWarning?: string
+  currentOpeningHours?: NearbyPlaceOpeningHours
+  regularOpeningHours?: NearbyPlaceOpeningHours
   role: UserStopRole
 }): NearbyPlaceRecord {
   const providerRecordId = params.providerRecordId.trim()
@@ -170,11 +193,162 @@ function buildNearbyPlaceRecord(params: {
     category: params.category,
     minutesAway: params.minutesAway,
     coordinates: params.coordinates,
+    openNow: params.openNow,
+    hoursStatus: params.hoursStatus,
+    freshnessNote: params.freshnessNote,
+    freshnessWarning: params.freshnessWarning,
+    currentOpeningHours: params.currentOpeningHours,
+    regularOpeningHours: params.regularOpeningHours,
     sourceOrigin: source.sourceOrigin,
     provider: source.provider,
     normalizedFromRawType: source.normalizedFromRawType,
     sourceQueryLabel: source.sourceQueryLabel,
     source,
+  }
+}
+
+type NearbyFreshnessEvaluation =
+  | {
+      status: 'open'
+      openNow?: boolean
+      note: string
+      warning?: string
+    }
+  | {
+      status: 'closed'
+      openNow?: boolean
+      suppressionReason: string
+    }
+  | {
+      status: 'unknown'
+      openNow?: boolean
+      note: string
+      warning: string
+    }
+
+function getMinutesSinceWeekStart(date: Date): number {
+  return date.getDay() * 1440 + date.getHours() * 60 + date.getMinutes()
+}
+
+function toWeekMinute(day: number, hour: number, minute: number): number {
+  return day * 1440 + hour * 60 + minute
+}
+
+function normalizePeriods(
+  periods: HoursPeriod[] | undefined,
+): Array<{ start: number; end: number }> {
+  if (!periods || periods.length === 0) {
+    return []
+  }
+
+  const normalized: Array<{ start: number; end: number }> = []
+  for (const period of periods) {
+    if (
+      period.open?.day === undefined ||
+      period.open.hour === undefined ||
+      period.open.minute === undefined
+    ) {
+      continue
+    }
+    const start = toWeekMinute(period.open.day, period.open.hour, period.open.minute)
+    const closeDay = period.close?.day
+    const closeHour = period.close?.hour
+    const closeMinute = period.close?.minute
+
+    if (
+      closeDay === undefined ||
+      closeHour === undefined ||
+      closeMinute === undefined
+    ) {
+      continue
+    }
+
+    let end = toWeekMinute(closeDay, closeHour, closeMinute)
+    if (end <= start) {
+      end += 7 * 1440
+    }
+    normalized.push({ start, end })
+  }
+  return normalized
+}
+
+function inferHoursStatusFromRegularPeriods(
+  periods: HoursPeriod[] | undefined,
+  now: Date,
+): 'open' | 'closed' | 'unknown' {
+  const normalizedPeriods = normalizePeriods(periods)
+  if (normalizedPeriods.length === 0) {
+    return 'unknown'
+  }
+
+  const currentMinute = getMinutesSinceWeekStart(now)
+  const weekMinutes = 7 * 1440
+  const comparableMinutes = [currentMinute, currentMinute + weekMinutes]
+  const isOpen = normalizedPeriods.some((period) =>
+    comparableMinutes.some((minute) => minute >= period.start && minute < period.end),
+  )
+
+  return isOpen ? 'open' : 'closed'
+}
+
+function toSafeOpeningHours(
+  openingHours:
+    | ProviderVenue['currentOpeningHours']
+    | ProviderVenue['regularOpeningHours']
+    | undefined,
+): NearbyPlaceOpeningHours | undefined {
+  if (!openingHours) {
+    return undefined
+  }
+  return {
+    openNow: openingHours.openNow,
+    periods: openingHours.periods,
+    weekdayDescriptions: openingHours.weekdayDescriptions,
+  }
+}
+
+function evaluateNearbyFreshness(
+  providerVenue: ProviderVenue,
+  now: Date,
+): NearbyFreshnessEvaluation {
+  const currentOpenNow = providerVenue.currentOpeningHours?.openNow
+  if (currentOpenNow === true) {
+    return {
+      status: 'open',
+      openNow: true,
+      note: 'Allowed because currentOpeningHours.openNow reported open.',
+    }
+  }
+  if (currentOpenNow === false) {
+    return {
+      status: 'closed',
+      openNow: false,
+      suppressionReason: 'Suppressed because currentOpeningHours.openNow reported closed.',
+    }
+  }
+
+  const inferredStatus = inferHoursStatusFromRegularPeriods(
+    providerVenue.regularOpeningHours?.periods,
+    now,
+  )
+  if (inferredStatus === 'open') {
+    return {
+      status: 'open',
+      note: 'Allowed because regularOpeningHours periods inferred open now.',
+      warning: 'Current open-now signal unavailable; using regular hours inference.',
+    }
+  }
+  if (inferredStatus === 'closed') {
+    return {
+      status: 'closed',
+      suppressionReason: 'Suppressed because regularOpeningHours periods inferred closed now.',
+    }
+  }
+
+  return {
+    status: 'unknown',
+    note: 'Allowed with unknown freshness because no clear open-now signal was available.',
+    warning: 'Hours unknown for this nearby candidate.',
   }
 }
 
@@ -186,19 +360,62 @@ export async function fetchNearbyPlacesForWaypoint(
     'places.displayName',
     'places.primaryType',
     'places.types',
+    'places.currentOpeningHours.openNow',
+    'places.currentOpeningHours.weekdayDescriptions',
+    'places.currentOpeningHours.periods',
+    'places.regularOpeningHours.weekdayDescriptions',
+    'places.regularOpeningHours.periods',
     'places.location',
   ].join(',')
   const nearbyQueries = NEARBY_QUERIES_BY_ROLE[waypoint.role] ?? NEARBY_QUERIES_BY_ROLE.highlight
   const nearbyRadius = NEARBY_RADIUS_BY_ROLE[waypoint.role] ?? 850
   const nearbyLimit = NEARBY_LIMIT_BY_ROLE[waypoint.role] ?? 4
-  const providerResults = await getNearbyPlaces({
-    fieldMask,
-    limit: 6,
+  const providerResults = await searchPlaces<
+    {
+      coordinates: [number, number]
+      currentOpeningHours?: NearbyPlaceOpeningHours
+      displayName: string
+      openNow?: boolean
+      primaryType?: string
+      providerRecordId: string
+      regularOpeningHours?: NearbyPlaceOpeningHours
+      types: string[]
+    },
+    ProviderTextSearchQuery
+  >({
+    callPurpose: 'waypoint_nearby',
+    mapPlace: (place) => {
+      const latitude = place.location?.latitude
+      const longitude = place.location?.longitude
+      if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+        return undefined
+      }
+      return {
+        coordinates: [longitude, latitude],
+        currentOpeningHours: toSafeOpeningHours(place.currentOpeningHours),
+        displayName: place.displayName,
+        openNow: place.currentOpeningHours?.openNow,
+        primaryType: place.primaryType,
+        providerRecordId: place.providerRecordId,
+        regularOpeningHours: toSafeOpeningHours(place.regularOpeningHours),
+        types: place.types ?? [],
+      }
+    },
     queries: nearbyQueries.map((queryText) => ({
+      fieldMask,
+      locationBias: {
+        circle: {
+          center: {
+            latitude: waypoint.coordinates[1],
+            longitude: waypoint.coordinates[0],
+          },
+          radius: nearbyRadius,
+        },
+      },
+      pageSize: 6,
       queryLabel: `nearby-${waypoint.role}-${normalizeType(queryText)}`,
-      radiusM: nearbyRadius,
+      rankPreference: 'DISTANCE',
       textQuery: `${queryText} near ${waypoint.name}, San Jose`,
-      waypointCoordinates: waypoint.coordinates,
     })),
   })
   const { diagnostics } = providerResults
@@ -216,11 +433,20 @@ export async function fetchNearbyPlacesForWaypoint(
       queryDiagnostics: [],
       rawResultCount: 0,
       parsedCount: 0,
+      nearbyFreshnessSuppressedCount: 0,
+      nearbyFreshnessUnknownCount: 0,
+      nearbyFreshnessOpenCount: 0,
+      nearbyFreshnessSuppressionReasons: [],
     }
   }
 
   const byId = new Map<string, NearbyPlaceRecord>()
   const rawResultCount = diagnostics.resultCount
+  let nearbyFreshnessSuppressedCount = 0
+  let nearbyFreshnessUnknownCount = 0
+  let nearbyFreshnessOpenCount = 0
+  const nearbyFreshnessSuppressionReasons: string[] = []
+  const now = new Date()
   const queryDiagnostics: NearbyFetchQueryDiagnostic[] = nearbyQueries.map((queryText, index) => ({
     queryText,
     status: providerResults.errors[index] ? 'error' : 'ok',
@@ -232,20 +458,65 @@ export async function fetchNearbyPlacesForWaypoint(
     if (byId.has(place.providerRecordId)) {
       continue
     }
+    const freshness = evaluateNearbyFreshness(
+      {
+        provider: 'google_places',
+        providerRecordId: place.providerRecordId,
+        displayName: place.displayName,
+        currentOpeningHours: place.currentOpeningHours,
+        fetchedAt: now.getTime(),
+        rawPayloadAvailable: false,
+        regularOpeningHours: place.regularOpeningHours,
+        sourceMode: 'live',
+        completenessHints: {
+          hasAddress: false,
+          hasHours: Boolean(
+            place.currentOpeningHours?.weekdayDescriptions?.length ||
+              place.regularOpeningHours?.weekdayDescriptions?.length,
+          ),
+          hasLocation: true,
+          hasPrimaryType: Boolean(place.primaryType),
+          hasRating: false,
+        },
+        location: {
+          latitude: place.coordinates[1],
+          longitude: place.coordinates[0],
+        },
+        primaryType: place.primaryType,
+        types: place.types,
+      },
+      now,
+    )
+    if (freshness.status === 'closed') {
+      nearbyFreshnessSuppressedCount += 1
+      nearbyFreshnessSuppressionReasons.push(freshness.suppressionReason)
+      continue
+    }
     const minutesAway = estimateMinutesAway(
       computeDistanceMeters(waypoint.coordinates, place.coordinates),
     )
+    if (freshness.status === 'open') {
+      nearbyFreshnessOpenCount += 1
+    } else {
+      nearbyFreshnessUnknownCount += 1
+    }
     byId.set(
       place.providerRecordId,
       buildNearbyPlaceRecord({
         providerRecordId: place.providerRecordId,
-        name: place.name,
+        name: place.displayName,
         category: classifyNearbyCategory({
           primaryType: place.primaryType,
           types: place.types,
         }),
         minutesAway,
         coordinates: place.coordinates,
+        openNow: freshness.openNow,
+        hoursStatus: freshness.status,
+        freshnessNote: freshness.note,
+        freshnessWarning: freshness.warning,
+        currentOpeningHours: place.currentOpeningHours,
+        regularOpeningHours: place.regularOpeningHours,
         role: waypoint.role,
       }),
     )
@@ -272,5 +543,9 @@ export async function fetchNearbyPlacesForWaypoint(
     queryDiagnostics,
     rawResultCount,
     parsedCount,
+    nearbyFreshnessSuppressedCount,
+    nearbyFreshnessUnknownCount,
+    nearbyFreshnessOpenCount,
+    nearbyFreshnessSuppressionReasons,
   }
 }
