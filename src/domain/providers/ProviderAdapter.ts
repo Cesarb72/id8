@@ -25,6 +25,13 @@ interface GooglePlaceRecord {
   }
   primaryType?: string
   types?: string[]
+  liveMusic?: boolean
+  servesBeer?: boolean
+  servesWine?: boolean
+  goodForGroups?: boolean
+  goodForChildren?: boolean
+  allowsDogs?: boolean
+  servesVegetarianFood?: boolean
   formattedAddress?: string
   shortFormattedAddress?: string
   addressComponents?: Array<{
@@ -281,10 +288,13 @@ function mapGooglePlaceRecordToProviderVenue(
       periods: currentPeriods,
       weekdayDescriptions: place.currentOpeningHours?.weekdayDescriptions,
     },
+    liveMusic: place.liveMusic,
     displayName,
     editorialSummary: place.editorialSummary?.text?.trim(),
     fetchedAt,
     formattedAddress: place.formattedAddress,
+    goodForChildren: place.goodForChildren,
+    goodForGroups: place.goodForGroups,
     location,
     primaryType: place.primaryType,
     provider: 'google_places',
@@ -295,6 +305,10 @@ function mapGooglePlaceRecordToProviderVenue(
       periods: regularPeriods,
       weekdayDescriptions: place.regularOpeningHours?.weekdayDescriptions,
     },
+    allowsDogs: place.allowsDogs,
+    servesBeer: place.servesBeer,
+    servesVegetarianFood: place.servesVegetarianFood,
+    servesWine: place.servesWine,
     shortFormattedAddress: place.shortFormattedAddress,
     sourceMode: 'live',
     types: place.types,
@@ -317,12 +331,15 @@ function mapProviderVenueToGooglePlaceRecord(place: ProviderVenue): GooglePlaceR
     displayName: {
       text: place.displayName,
     },
+    liveMusic: place.liveMusic,
     editorialSummary: place.editorialSummary
       ? {
           text: place.editorialSummary,
         }
       : undefined,
     formattedAddress: place.formattedAddress,
+    goodForChildren: place.goodForChildren,
+    goodForGroups: place.goodForGroups,
     id: place.providerRecordId,
     location: place.location,
     primaryType: place.primaryType,
@@ -333,6 +350,10 @@ function mapProviderVenueToGooglePlaceRecord(place: ProviderVenue): GooglePlaceR
           weekdayDescriptions: place.regularOpeningHours.weekdayDescriptions,
         }
       : undefined,
+    allowsDogs: place.allowsDogs,
+    servesBeer: place.servesBeer,
+    servesVegetarianFood: place.servesVegetarianFood,
+    servesWine: place.servesWine,
     shortFormattedAddress: place.shortFormattedAddress,
     types: place.types,
     userRatingCount: place.userRatingCount,

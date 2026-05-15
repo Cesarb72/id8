@@ -30,6 +30,13 @@ export interface ProviderVenue {
   shortFormattedAddress?: string
   primaryType?: string
   types?: string[]
+  liveMusic?: boolean
+  servesBeer?: boolean
+  servesWine?: boolean
+  goodForGroups?: boolean
+  goodForChildren?: boolean
+  allowsDogs?: boolean
+  servesVegetarianFood?: boolean
   editorialSummary?: string
   businessStatus?: string
   currentOpeningHours?: ProviderVenueOpeningHours

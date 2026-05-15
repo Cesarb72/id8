@@ -16,6 +16,13 @@ const googleFieldMask = [
   'places.displayName',
   'places.primaryType',
   'places.types',
+  'places.liveMusic',
+  'places.servesBeer',
+  'places.servesWine',
+  'places.goodForGroups',
+  'places.goodForChildren',
+  'places.allowsDogs',
+  'places.servesVegetarianFood',
   'places.formattedAddress',
   'places.shortFormattedAddress',
   'places.addressComponents',
@@ -33,10 +40,6 @@ const googleFieldMask = [
   'places.websiteUri',
   'places.location',
 ].join(',')
-
-function normalizeValue(value: string): string {
-  return value.trim().toLowerCase().replace(/[\s_]+/g, '-')
-}
 
 function normalizeCity(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/\./g, '')

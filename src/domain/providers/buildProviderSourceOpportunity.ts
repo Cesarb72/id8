@@ -35,6 +35,13 @@ const DEFAULT_FIELD_MASK = [
   'places.displayName',
   'places.primaryType',
   'places.types',
+  'places.liveMusic',
+  'places.servesBeer',
+  'places.servesWine',
+  'places.goodForGroups',
+  'places.goodForChildren',
+  'places.allowsDogs',
+  'places.servesVegetarianFood',
   'places.formattedAddress',
   'places.shortFormattedAddress',
   'places.editorialSummary',
@@ -226,6 +233,32 @@ function normalizeTag(value: string): string {
   return value.trim().toLowerCase().replace(/[\s_]+/g, '-')
 }
 
+function getProviderVenueAtmosphereTags(providerVenue: ProviderVenue): string[] {
+  const tags: string[] = []
+  if (providerVenue.liveMusic) {
+    tags.push('live-music')
+  }
+  if (providerVenue.servesBeer) {
+    tags.push('beer')
+  }
+  if (providerVenue.servesWine) {
+    tags.push('wine')
+  }
+  if (providerVenue.goodForGroups) {
+    tags.push('group')
+  }
+  if (providerVenue.goodForChildren) {
+    tags.push('family-friendly')
+  }
+  if (providerVenue.allowsDogs) {
+    tags.push('dog-friendly')
+  }
+  if (providerVenue.servesVegetarianFood) {
+    tags.push('vegetarian-friendly')
+  }
+  return tags
+}
+
 function inferNeighborhoodFromAddress(
   providerVenue: ProviderVenue,
   fallbackNeighborhood: string,
@@ -291,6 +324,7 @@ function mapProviderVenueToVenue(params: {
   const normalizedTypes = [providerVenue.primaryType, ...(providerVenue.types ?? [])]
     .filter((value): value is string => Boolean(value?.trim()))
     .map(normalizeTag)
+  const atmosphereTags = getProviderVenueAtmosphereTags(providerVenue)
   const neighborhood = inferNeighborhoodFromAddress(providerVenue, anchorVenue.neighborhood)
   const rawPlace: RawPlace = {
     rawType: 'place',
@@ -300,7 +334,7 @@ function mapProviderVenueToVenue(params: {
     neighborhood,
     driveMinutes: estimateDriveMinutes(anchorCoordinates, venueCoordinates),
     priceTier: '$$',
-    tags: normalizedTypes.slice(0, 6),
+    tags: [...new Set([...normalizedTypes, ...atmosphereTags])].slice(0, 12),
     shortDescription:
       providerVenue.editorialSummary ??
       `${providerVenue.displayName} surfaced as a nearby live provider candidate around ${anchorVenue.name}.`,
@@ -316,6 +350,7 @@ function mapProviderVenueToVenue(params: {
       .split(/\s+/)
       .map((part) => part.trim().toLowerCase())
       .filter((part) => part.length > 0),
+    familyFriendly: providerVenue.goodForChildren ? true : undefined,
     formattedAddress: providerVenue.formattedAddress,
     rating: providerVenue.rating,
     ratingCount: providerVenue.userRatingCount,

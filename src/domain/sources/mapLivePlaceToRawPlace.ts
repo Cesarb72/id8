@@ -10,6 +10,13 @@ interface GooglePlaceRecord {
   }
   primaryType?: string
   types?: string[]
+  liveMusic?: boolean
+  servesBeer?: boolean
+  servesWine?: boolean
+  goodForGroups?: boolean
+  goodForChildren?: boolean
+  allowsDogs?: boolean
+  servesVegetarianFood?: boolean
   formattedAddress?: string
   shortFormattedAddress?: string
   addressComponents?: Array<{
@@ -312,7 +319,34 @@ function inferSummaryKeywords(summary: string): string[] {
   return matches
 }
 
+function inferAtmosphereTags(place: GooglePlaceRecord): string[] {
+  const tags: string[] = []
+  if (place.liveMusic) {
+    tags.push('live-music')
+  }
+  if (place.servesBeer) {
+    tags.push('beer')
+  }
+  if (place.servesWine) {
+    tags.push('wine')
+  }
+  if (place.goodForGroups) {
+    tags.push('group')
+  }
+  if (place.goodForChildren) {
+    tags.push('family-friendly')
+  }
+  if (place.allowsDogs) {
+    tags.push('dog-friendly')
+  }
+  if (place.servesVegetarianFood) {
+    tags.push('vegetarian-friendly')
+  }
+  return tags
+}
+
 function inferTags(
+  place: GooglePlaceRecord,
   placeTypes: string[],
   summary: string,
   requestedKind: LivePlaceKind,
@@ -323,10 +357,13 @@ function inferTags(
   for (const tag of inferSummaryKeywords(summary)) {
     tags.add(tag)
   }
+  for (const tag of inferAtmosphereTags(place)) {
+    tags.add(tag)
+  }
   for (const tag of queryTerms) {
     tags.add(normalizeValue(tag))
   }
-  return [...tags].slice(0, 10)
+  return [...tags].slice(0, 16)
 }
 
 function inferIsChain(
@@ -503,7 +540,7 @@ export function mapLivePlaceToRawPlaceWithDiagnostics(
   const summary = place.editorialSummary?.text?.trim() ?? ''
   const neighborhood = inferNeighborhood(place, context.neighborhood)
   const city = inferCity(place, context.city)
-  const tags = inferTags(placeTypes, summary, context.requestedKind, context.queryTerms)
+  const tags = inferTags(place, placeTypes, summary, context.requestedKind, context.queryTerms)
   const ratingCount = place.userRatingCount ?? 0
   const isChain = inferIsChain(name, placeTypes, ratingCount, tags)
   const sourceConfidence = inferSourceConfidence(place, tags, neighborhood, context.requestedKind)
@@ -533,6 +570,7 @@ export function mapLivePlaceToRawPlaceWithDiagnostics(
       queryTerms: context.queryTerms,
       sourceConfidence,
       isChain,
+      familyFriendly: place.goodForChildren ? true : undefined,
       formattedAddress: place.formattedAddress,
       rating: place.rating,
       ratingCount,
