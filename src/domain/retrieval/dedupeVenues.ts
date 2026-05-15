@@ -2,6 +2,7 @@ import { computeHybridLiveLift } from './computeHybridLiveLift'
 import { classifyProviderAuthority } from './fieldPolicy'
 import type { LiveDedupeLossDiagnostics } from '../types/diagnostics'
 import type { Venue } from '../types/venue'
+import { resolveStaticCanonicalPrecedence } from '../providers/providerCanonicalVenueMapping'
 
 function normalizeValue(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ')
@@ -63,6 +64,16 @@ function pickPreferredVenue(
   if (left.source.sourceOrigin !== right.source.sourceOrigin) {
     const liveVenue = left.source.sourceOrigin === 'live' ? left : right
     const curatedVenue = left.source.sourceOrigin === 'curated' ? left : right
+    const precedence = resolveStaticCanonicalPrecedence({
+      curatedVenue,
+      liveVenue,
+    })
+    if (precedence.applies) {
+      return {
+        preferred: curatedVenue,
+        reason: `${precedence.precedenceReason} | ${precedence.collisionReason} | curated canonical venue kept over mapped live duplicate`,
+      }
+    }
     const liveLift = computeHybridLiveLift(liveVenue)
     const curatedScore =
       curatedVenue.source.qualityScore * 0.45 +

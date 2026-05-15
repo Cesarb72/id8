@@ -100,6 +100,65 @@ export function isCanonicalVenueResolved(
   return Boolean(mapping.canonicalVenueId) && mapping.matchMethod !== 'unresolved'
 }
 
+export interface StaticCanonicalPrecedenceResolution {
+  applies: boolean
+  canonicalVenueId?: string
+  providerRecordId?: string
+  matchMethod?: Extract<ProviderCanonicalMatchMethod, 'manual_seed' | 'provider_id'>
+  precedenceReason?: 'static_canonical_precedence'
+  collisionReason?: 'provider_identity_collision'
+}
+
+export function resolveStaticCanonicalPrecedence(params: {
+  curatedVenue: Venue
+  liveVenue: Venue
+}): StaticCanonicalPrecedenceResolution {
+  const { curatedVenue, liveVenue } = params
+  if (curatedVenue.source.sourceOrigin !== 'curated' || liveVenue.source.sourceOrigin !== 'live') {
+    return { applies: false }
+  }
+
+  const canonicalVenueId = curatedVenue.id.trim()
+  const providerRecordId = liveVenue.source.providerRecordId?.trim()
+  if (!canonicalVenueId || !providerRecordId) {
+    return { applies: false }
+  }
+
+  if (
+    curatedVenue.source.provider === 'google-places' &&
+    curatedVenue.source.providerRecordId?.trim() === providerRecordId
+  ) {
+    return {
+      applies: true,
+      canonicalVenueId,
+      providerRecordId,
+      matchMethod: 'provider_id',
+      precedenceReason: 'static_canonical_precedence',
+      collisionReason: 'provider_identity_collision',
+    }
+  }
+
+  const seededMatch = providerCanonicalVenueSeeds.find(
+    (entry) =>
+      entry.provider === 'google-places' &&
+      entry.providerRecordId === providerRecordId &&
+      entry.canonicalVenueId === canonicalVenueId,
+  )
+
+  if (!seededMatch) {
+    return { applies: false }
+  }
+
+  return {
+    applies: true,
+    canonicalVenueId,
+    providerRecordId,
+    matchMethod: seededMatch.matchMethod,
+    precedenceReason: 'static_canonical_precedence',
+    collisionReason: 'provider_identity_collision',
+  }
+}
+
 export function resolveCanonicalVenueIdForProviderVenue(params: {
   providerVenue: ProviderVenue
   staticVenues: Venue[]
