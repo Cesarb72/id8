@@ -120,6 +120,8 @@ export function mapVenueToTasteInput(venue: Venue): NormalizedVenueTasteInput {
     priceLevel: venue.priceTier,
     neighborhood: venue.neighborhood,
     liveSource: venue.source.sourceOrigin === 'live',
+    rating: venue.source.rating,
+    reviewCount: venue.source.reviewCount,
     sourceConfidence: venue.source.sourceConfidence,
     qualityScore: venue.source.qualityScore,
     signatureStrength: venue.signature.signatureScore,

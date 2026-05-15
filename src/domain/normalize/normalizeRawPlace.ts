@@ -124,6 +124,8 @@ export function normalizeRawPlace(raw: RawPlace, options: NormalizeRawPlaceOptio
       latitude: raw.latitude,
       longitude: raw.longitude,
       sourceQueryLabel: raw.sourceQueryLabel,
+      rating: raw.rating,
+      reviewCount: raw.ratingCount,
       sourceConfidence: Number(sourceConfidence.toFixed(2)),
       completenessScore: Number(completenessScore.toFixed(2)),
       qualityScore: 0,

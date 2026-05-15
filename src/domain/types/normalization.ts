@@ -65,6 +65,8 @@ export interface VenueSourceMetadata {
   latitude?: number
   longitude?: number
   sourceQueryLabel?: string
+  rating?: number
+  reviewCount?: number
   sourceConfidence: number
   completenessScore: number
   qualityScore: number
