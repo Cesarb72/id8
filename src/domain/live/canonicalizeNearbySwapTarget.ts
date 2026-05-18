@@ -1,4 +1,5 @@
 import type { NearbyPlaceRecord } from '../nearby/fetchNearbyPlacesForWaypoint'
+import { createLiveGoogleVenueId } from '../providers/admitLiveVenueIdentity'
 
 export type NearbySwapCategory = NearbyPlaceRecord['category']
 export type NearbySwapOptionContract = NearbyPlaceRecord
@@ -177,7 +178,7 @@ export function canonicalizeNearbySwapTarget(input: {
       code: 'invalid_source_normalized_type_mismatch',
     }
   }
-  if (canonicalId !== `live_google_${canonicalProviderRecordId}`) {
+  if (canonicalId !== createLiveGoogleVenueId(canonicalProviderRecordId)) {
     return {
       ok: false,
       code: 'invalid_identity_mismatch',

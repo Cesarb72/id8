@@ -1,5 +1,6 @@
 import type { HoursPeriod } from '../types/hours'
 import type { UserStopRole } from '../types/itinerary'
+import { createLiveGoogleVenueId } from '../providers/admitLiveVenueIdentity'
 import {
   searchPlaces,
   type ProviderTextSearchQuery,
@@ -187,7 +188,7 @@ function buildNearbyPlaceRecord(params: {
     sourceQueryLabel,
   }
   return {
-    id: `live_google_${providerRecordId}`,
+    id: createLiveGoogleVenueId(providerRecordId),
     providerRecordId,
     name: params.name.trim(),
     category: params.category,

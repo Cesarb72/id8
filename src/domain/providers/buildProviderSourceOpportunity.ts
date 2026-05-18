@@ -12,6 +12,10 @@ import {
   type ProviderCompletenessGateResult,
 } from './providerCompletenessGate'
 import {
+  admitLiveVenueIdentity,
+  type LiveVenueIdentityAdmissionResult,
+} from './admitLiveVenueIdentity'
+import {
   searchPlaces,
   type ProviderAdapterDiagnostics,
   type ProviderTextSearchQuery,
@@ -150,7 +154,7 @@ export interface BuildProviderSourceOpportunityInput {
 
 interface BuildProviderMappedVenue {
   providerVenue: ProviderVenue
-  venue: Venue
+  rawPlace: RawPlace
 }
 
 function getProcessEnvValue(key: string): string | undefined {
@@ -311,11 +315,11 @@ function buildNearbyQuery(params: {
   }
 }
 
-function mapProviderVenueToVenue(params: {
+function mapProviderVenueToRawPlace(params: {
   anchorCoordinates: [number, number]
   anchorVenue: Venue
   providerVenue: ProviderVenue
-}): Venue {
+}): RawPlace {
   const { anchorCoordinates, anchorVenue, providerVenue } = params
   const venueCoordinates: [number, number] = [
     providerVenue.location?.longitude ?? anchorCoordinates[0],
@@ -326,9 +330,9 @@ function mapProviderVenueToVenue(params: {
     .map(normalizeTag)
   const atmosphereTags = getProviderVenueAtmosphereTags(providerVenue)
   const neighborhood = inferNeighborhoodFromAddress(providerVenue, anchorVenue.neighborhood)
-  const rawPlace: RawPlace = {
+  return {
     rawType: 'place',
-    id: `live_google_${providerVenue.providerRecordId}`,
+    id: providerVenue.providerRecordId,
     name: providerVenue.displayName,
     city: anchorVenue.city,
     neighborhood,
@@ -364,8 +368,20 @@ function mapProviderVenueToVenue(params: {
     longitude: providerVenue.location?.longitude,
     placeTypes: normalizedTypes,
   }
+}
 
-  return normalizeRawPlace(rawPlace)
+function normalizeAdmittedProviderVenue(params: {
+  rawPlace: RawPlace
+  identity: LiveVenueIdentityAdmissionResult
+}): Venue {
+  const { rawPlace, identity } = params
+  if (!identity.venueId) {
+    throw new Error('Expected admitted live venue identity to include venueId.')
+  }
+  return normalizeRawPlace({
+    ...rawPlace,
+    id: identity.venueId,
+  })
 }
 
 function getRequiredTrace(diagnostics: ProviderAdapterDiagnostics): ProviderCallTrace {
@@ -539,7 +555,7 @@ export async function buildProviderSourceOpportunity(
     callPurpose: 'build_anchor_nearby',
     mapPlace: (providerVenue) => ({
       providerVenue,
-      venue: mapProviderVenueToVenue({
+      rawPlace: mapProviderVenueToRawPlace({
         anchorCoordinates,
         anchorVenue: input.anchorVenue,
         providerVenue,
@@ -606,9 +622,6 @@ export async function buildProviderSourceOpportunity(
     const completenessResult = evaluateProviderVenueCompleteness({
       providerVenue: candidate.providerVenue,
       canonicalMapping,
-      options: {
-        requireCanonicalIdentity: true,
-      },
     })
     completeness.push(completenessResult)
 
@@ -623,50 +636,59 @@ export async function buildProviderSourceOpportunity(
       },
     )
     equivalence.push(equivalenceResult)
+    const identityAdmission = admitLiveVenueIdentity({
+      providerVenue: candidate.providerVenue,
+      canonicalMapping,
+      completeness: completenessResult,
+      equivalence: equivalenceResult,
+      mode: 'product',
+      requestedAt,
+    })
 
     const candidateSuppressionReasons: string[] = []
+    const admittedVenue = identityAdmission.admitted
+      ? normalizeAdmittedProviderVenue({
+          rawPlace: candidate.rawPlace,
+          identity: identityAdmission,
+        })
+      : null
+    const normalizedCategory = admittedVenue
+      ? admittedVenue.category
+      : normalizeRawPlace(candidate.rawPlace).category
+    const normalizedNeighborhood = admittedVenue?.neighborhood ?? candidate.rawPlace.neighborhood
 
     if (candidate.providerVenue.providerRecordId === anchorProviderRecordId) {
       candidateSuppressionReasons.push('anchor_self_match')
       suppressionReasons.push(
         `${candidate.providerVenue.providerRecordId}:anchor_self_match`,
       )
-    } else if (completenessResult.status !== 'passed') {
-      candidateSuppressionReasons.push(
-        completenessResult.failureReason ?? completenessResult.status,
-      )
-      suppressionReasons.push(
-        `${candidate.providerVenue.providerRecordId}:${completenessResult.failureReason ?? completenessResult.status}`,
-      )
-    } else if (equivalenceResult.status !== 'equivalent') {
-      const equivalenceReason =
-        equivalenceResult.blockingReasons[0] ??
-        equivalenceResult.warnings[0] ??
-        equivalenceResult.status
+    } else if (!identityAdmission.admitted || !admittedVenue) {
+      const identityReason =
+        identityAdmission.blockingReasons[0] ??
+        identityAdmission.warnings[0] ??
+        identityAdmission.canonicalIdentityStatus
       candidateSuppressionReasons.push(
         ...(
-          equivalenceResult.blockingReasons.length > 0
-            ? equivalenceResult.blockingReasons
-            : [equivalenceReason]
+          identityAdmission.blockingReasons.length > 0
+            ? identityAdmission.blockingReasons
+            : [identityReason]
         ),
       )
-      suppressionReasons.push(
-        `${candidate.providerVenue.providerRecordId}:${equivalenceReason}`,
-      )
+      suppressionReasons.push(`${candidate.providerVenue.providerRecordId}:${identityReason}`)
     } else {
-      admittedNearbyCandidates.push(candidate.venue)
+      admittedNearbyCandidates.push(admittedVenue)
     }
 
     nearbyCandidateReviews.push({
       providerRecordId: candidate.providerVenue.providerRecordId,
       displayName: candidate.providerVenue.displayName,
       primaryType: candidate.providerVenue.primaryType?.trim() || null,
-      normalizedCategory: candidate.venue.category ?? null,
+      normalizedCategory: normalizedCategory ?? null,
       formattedAddress:
         candidate.providerVenue.formattedAddress?.trim() ||
-        candidate.venue.source.formattedAddress?.trim() ||
+        admittedVenue?.source.formattedAddress?.trim() ||
         null,
-      neighborhood: candidate.venue.neighborhood?.trim() || null,
+      neighborhood: normalizedNeighborhood?.trim() || null,
       canonicalVenueId: canonicalMapping.canonicalVenueId,
       canonicalMatchMethod: canonicalMapping.matchMethod,
       canonicalConfidence: canonicalMapping.confidence,

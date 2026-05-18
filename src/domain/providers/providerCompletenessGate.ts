@@ -151,7 +151,7 @@ export function evaluateProviderVenueCompleteness(params: {
       (providerVenue.completenessHints.hasPrimaryType ? 0.22 : 0) +
       (providerVenue.completenessHints.hasAddress ? 0.16 : 0) +
       (providerVenue.completenessHints.hasHours ? 0.12 : 0) +
-      (typeof providerVenue.rating === 'number' ? 0.06 : 0) +
+      // rating/reviewCount are Taste scoring inputs, not admission signals.
       (identityResolved ? Math.min(0.2, canonicalMapping?.confidence ?? 0) : 0),
   )
 

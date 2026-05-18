@@ -1,5 +1,6 @@
 import type { LivePlaceKind } from './buildLiveQueryPlan'
 import type { HoursPeriod } from '../types/hours'
+import { createLiveGoogleVenueId } from '../providers/admitLiveVenueIdentity'
 import type { RawPlace } from '../types/rawPlace'
 import type { VenueCategory } from '../types/venue'
 
@@ -548,7 +549,7 @@ export function mapLivePlaceToRawPlaceWithDiagnostics(
   return {
     rawPlace: {
       rawType: 'place',
-      id: `live_google_${placeId}`,
+      id: createLiveGoogleVenueId(placeId),
       name,
       city,
       neighborhood: neighborhood ?? context.city,

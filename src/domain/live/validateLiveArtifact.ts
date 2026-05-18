@@ -6,6 +6,9 @@ import type {
   RuntimeRouteStop,
 } from '../artifacts/runtimeRouteArtifact'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../types/itinerary'
+import {
+  getProviderRecordIdFromLiveGoogleVenueId,
+} from '../providers/admitLiveVenueIdentity'
 
 export type LiveArtifactRouteErrorCode =
   | 'invalid_payload_shape'
@@ -259,14 +262,8 @@ function describeLockedPayloadShapeIssues(payload: Record<string, unknown>): str
   return issues
 }
 
-const LIVE_GOOGLE_STOP_ID_PREFIX = 'live_google_'
-
 function getProviderRecordIdFromVenueId(venueId: string): string | undefined {
-  if (!venueId.startsWith(LIVE_GOOGLE_STOP_ID_PREFIX)) {
-    return undefined
-  }
-  const providerRecordId = venueId.slice(LIVE_GOOGLE_STOP_ID_PREFIX.length).trim()
-  return providerRecordId.length > 0 ? providerRecordId : undefined
+  return getProviderRecordIdFromLiveGoogleVenueId(venueId)
 }
 
 function sanitizeProviderRecordId(value: unknown, venueId: string): string | undefined {
