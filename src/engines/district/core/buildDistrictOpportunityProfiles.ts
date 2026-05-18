@@ -146,6 +146,10 @@ export async function buildDistrictOpportunityProfiles(
             geoDiversityDownsampledCount: 0,
             bootstrapCount: 0,
             selectedCount: 0,
+            admittedCount: 0,
+            blockedCount: 0,
+            blockedStatusCounts: {},
+            blockedEntities: [],
             notes: [
               location.meta.unresolvedReason ??
                 'Location query could not be resolved for district retrieval.',
@@ -197,12 +201,18 @@ export async function buildDistrictOpportunityProfiles(
         geoDiversityDownsampledCount: 0,
         bootstrapCount: 0,
         selectedCount: 0,
+        admittedCount: 0,
+        blockedCount: 0,
+        blockedStatusCounts: {},
+        blockedEntities: [],
         notes: [
           location.meta.unresolvedReason ??
             'Location query could not be resolved for district retrieval.',
         ],
       },
       entities: [],
+      admittedEntities: [],
+      blockedEntities: [],
       rawPockets: [],
       viablePockets: [],
       rejectedPockets: [],
@@ -336,6 +346,8 @@ export async function buildDistrictOpportunityProfiles(
     location,
     retrieval: entityFetch.retrieval,
     entities,
+    admittedEntities: entityFetch.admittedEntities,
+    blockedEntities: entityFetch.blockedEntities,
     rawPockets,
     viablePockets: viability.accepted,
     rejectedPockets: viability.rejected,

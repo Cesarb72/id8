@@ -1,6 +1,12 @@
 import type { Venue, VenueCategory } from '../../../domain/types/venue'
+import type { EngineSourceMode, VenueSourceOrigin } from '../../../domain/types/sourceMode'
 import { getPseudoCityCenter, normalizeCityKey } from '../location/pseudoCityCenter'
-import type { PlaceEntity } from '../types/districtTypes'
+import type {
+  DistrictAdmissionStatus,
+  DistrictCoordinateSource,
+  DistrictIdentityKind,
+  PlaceEntity,
+} from '../types/districtTypes'
 
 type NeighborhoodAnchor = {
   key: string
@@ -147,11 +153,6 @@ function hashString(value: string): number {
   return hash >>> 0
 }
 
-function hashToSignedUnit(value: string): number {
-  const fraction = hashString(value) / 4294967295
-  return fraction * 2 - 1
-}
-
 function hashToUnit(value: string): number {
   return hashString(value) / 4294967295
 }
@@ -212,7 +213,7 @@ function buildDynamicNeighborhoodAnchor(
   }
 }
 
-function buildLocation(venue: Venue): {
+function buildPseudoFixtureLocation(venue: Venue): {
   lat: number
   lng: number
   normalizedNeighborhoodKey: string
@@ -251,7 +252,24 @@ function buildLocation(venue: Venue): {
   }
 }
 
-export function normalizePlaceEntity(venue: Venue): PlaceEntity {
+export type NormalizePlaceEntityOptions = {
+  locationOverride?: {
+    lat: number
+    lng: number
+  }
+  coordinateSource?: DistrictCoordinateSource
+  sourceMode?: EngineSourceMode
+  sourceOrigin?: VenueSourceOrigin
+  admissionStatus?: DistrictAdmissionStatus
+  identityKind?: DistrictIdentityKind
+  canonicalVenueId?: string
+  providerRecordId?: string
+}
+
+export function normalizePlaceEntity(
+  venue: Venue,
+  options: NormalizePlaceEntityOptions = {},
+): PlaceEntity {
   const popularity =
     venue.uniquenessScore * 0.35 +
     venue.shareabilityScore * 0.25 +
@@ -261,7 +279,27 @@ export function normalizePlaceEntity(venue: Venue): PlaceEntity {
     venue.source.qualityScore * 0.45 +
     venue.source.sourceConfidence * 0.35 +
     venue.localSignals.repeatVisitorScore * 0.2
-  const location = buildLocation(venue)
+  const pseudoLocation = buildPseudoFixtureLocation(venue)
+  const location = options.locationOverride ?? {
+    lat: pseudoLocation.lat,
+    lng: pseudoLocation.lng,
+  }
+  const coordinateSource = options.coordinateSource ?? 'pseudo_fixture'
+  const sourceOrigin = options.sourceOrigin ?? venue.source.sourceOrigin
+  const sourceMode =
+    options.sourceMode ??
+    (venue.source.sourceOrigin === 'live'
+      ? 'live'
+      : venue.source.curatedSubtype === 'bootstrap-portable'
+        ? 'bootstrap'
+        : 'curated')
+  const admissionStatus = options.admissionStatus ?? 'admitted'
+  const identityKind =
+    options.identityKind ??
+    (venue.source.sourceOrigin === 'live' ? 'live_only' : 'canonical')
+  const providerRecordId = options.providerRecordId ?? venue.source.providerRecordId
+  const canonicalVenueId =
+    options.canonicalVenueId ?? (identityKind === 'canonical' ? venue.id : undefined)
 
   return {
     id: venue.id,
@@ -285,10 +323,24 @@ export function normalizePlaceEntity(venue: Venue): PlaceEntity {
       address: `${venue.neighborhood}, ${venue.city}`,
       neighborhood: venue.neighborhood,
       sublocality: venue.neighborhood,
-      pseudoGeo: {
-        normalizedNeighborhoodKey: location.normalizedNeighborhoodKey,
-        anchorKey: location.anchorKey,
-        jitterRadiusM: location.jitterRadiusM,
+      ...(coordinateSource === 'pseudo_fixture'
+        ? {
+            pseudoGeo: {
+              normalizedNeighborhoodKey: pseudoLocation.normalizedNeighborhoodKey,
+              anchorKey: pseudoLocation.anchorKey,
+              jitterRadiusM: pseudoLocation.jitterRadiusM,
+            },
+          }
+        : {}),
+      lineage: {
+        venueId: venue.id,
+        sourceOrigin,
+        sourceMode,
+        admissionStatus,
+        coordinateSource,
+        identityKind,
+        ...(canonicalVenueId ? { canonicalVenueId } : {}),
+        ...(providerRecordId ? { providerRecordId } : {}),
       },
     },
     signals: {

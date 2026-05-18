@@ -1,3 +1,19 @@
+import type { EngineSourceMode, VenueSourceOrigin } from '../../../domain/types/sourceMode'
+import type { QualityGateStatus } from '../../../domain/types/normalization'
+import type { DistrictTasteBridgeArtifact } from '../../../domain/interpretation/taste/districtTasteBridgeArtifact'
+
+export type DistrictAdmissionStatus =
+  | 'admitted'
+  | 'diagnostic_only'
+  | 'blocked_unresolved_identity'
+  | 'blocked_incomplete'
+  | 'blocked_low_confidence'
+  | 'blocked_missing_coordinates'
+
+export type DistrictCoordinateSource = 'real' | 'pseudo_fixture'
+
+export type DistrictIdentityKind = 'canonical' | 'live_only'
+
 export type PlaceEntity = {
   id: string
   name: string
@@ -18,6 +34,16 @@ export type PlaceEntity = {
       anchorKey: string
       jitterRadiusM: number
     }
+    lineage?: {
+      venueId: string
+      sourceOrigin: VenueSourceOrigin
+      sourceMode: EngineSourceMode
+      admissionStatus: DistrictAdmissionStatus
+      coordinateSource: DistrictCoordinateSource
+      identityKind: DistrictIdentityKind
+      canonicalVenueId?: string
+      providerRecordId?: string
+    }
   }
   signals?: {
     popularity?: number
@@ -25,6 +51,40 @@ export type PlaceEntity = {
     trust?: number
     openNow?: boolean
   }
+}
+
+export type DistrictAdmittedPlaceEntity = {
+  entity: PlaceEntity
+  lineage: {
+    venueId: string
+    sourceOrigin: VenueSourceOrigin
+    sourceMode: EngineSourceMode
+    identityKind: DistrictIdentityKind
+    canonicalVenueId?: string
+    providerRecordId?: string
+  }
+  admission: {
+    status: Extract<DistrictAdmissionStatus, 'admitted'>
+    coordinateSource: DistrictCoordinateSource
+    confidence: number
+    completenessScore: number
+  }
+}
+
+export type DistrictBlockedEntityDiagnostic = {
+  venueId: string
+  venueName: string
+  sourceOrigin: VenueSourceOrigin
+  sourceMode: EngineSourceMode
+  admissionStatus: Exclude<DistrictAdmissionStatus, 'admitted'>
+  identityKind: DistrictIdentityKind
+  canonicalVenueId?: string
+  providerRecordId?: string
+  confidence: number
+  completenessScore: number
+  qualityGateStatus: QualityGateStatus
+  reason: string
+  coordinateSource?: DistrictCoordinateSource
 }
 
 export type DistrictEngineContext = {
@@ -79,8 +139,6 @@ export function getDistrictFallbackPenalty(origin: PocketOrigin): number {
   }
   return 0
 }
-
-import type { DistrictTasteBridgeArtifact } from '../../../domain/interpretation/taste/districtTasteBridgeArtifact'
 
 export type BuildDistrictOpportunityProfilesInput = {
   locationQuery: string
@@ -154,11 +212,17 @@ export type DistrictEntityRetrievalDiagnostics = {
   geoDiversityDownsampledCount: number
   bootstrapCount: number
   selectedCount: number
+  admittedCount: number
+  blockedCount: number
+  blockedStatusCounts: Partial<Record<Exclude<DistrictAdmissionStatus, 'admitted'>, number>>
+  blockedEntities: DistrictBlockedEntityDiagnostic[]
   notes: string[]
 }
 
 export type FetchPlaceEntitiesResult = {
   entities: PlaceEntity[]
+  admittedEntities: DistrictAdmittedPlaceEntity[]
+  blockedEntities: DistrictBlockedEntityDiagnostic[]
   retrieval: DistrictEntityRetrievalDiagnostics
 }
 
@@ -474,6 +538,8 @@ export type BuildDistrictOpportunityProfilesResult = {
   location: ResolvedLocation
   retrieval: DistrictEntityRetrievalDiagnostics
   entities: PlaceEntity[]
+  admittedEntities: DistrictAdmittedPlaceEntity[]
+  blockedEntities: DistrictBlockedEntityDiagnostic[]
   rawPockets: RawPocket[]
   viablePockets: ViablePocket[]
   rejectedPockets: ViablePocket[]

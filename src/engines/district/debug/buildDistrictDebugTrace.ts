@@ -272,6 +272,7 @@ export function buildDistrictDebugTrace(
     pocketTraces,
     summary: [
       `Retrieval mode: ${input.retrieval.mode}. City: ${input.retrieval.city || 'unknown'}. Selected entities: ${input.retrieval.selectedCount}.`,
+      `District admission: admitted ${input.retrieval.admittedCount}, blocked ${input.retrieval.blockedCount}. Blocked statuses: ${formatReasonBuckets(input.retrieval.blockedStatusCounts)}.`,
       `Live attrition: raw ${input.retrieval.liveRawFetchedCount}, mapped ${input.retrieval.liveMappedCount}, normalized ${input.retrieval.liveNormalizedCount}, accepted ${input.retrieval.liveAcceptedCount}, suppressed ${input.retrieval.liveSuppressedCount}, bootstrap ${input.retrieval.bootstrapCount}.`,
       `Live drops: map ${input.retrieval.liveMappedDroppedCount} [${formatReasonBuckets(input.retrieval.liveMapDropReasons)}], normalize ${input.retrieval.liveNormalizationDroppedCount} [${formatReasonBuckets(input.retrieval.liveNormalizationDropReasons)}], suppression reasons [${formatReasonBuckets(input.retrieval.liveSuppressionReasons)}].`,
       `Geo spread: buckets ${input.retrieval.geoBucketCount}, dominant share ${input.retrieval.dominantAreaShare.toFixed(3)}, spread score ${input.retrieval.geoSpreadScore.toFixed(3)}, downsampled ${input.retrieval.geoDiversityDownsampledCount}.`,

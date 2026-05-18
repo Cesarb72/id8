@@ -6,7 +6,7 @@ import type {
   FetchPlaceEntitiesResult,
   PlaceEntity,
 } from '../types/districtTypes'
-import { normalizePlaceEntity } from './normalizePlaceEntity'
+import { admitDistrictEntities } from './admitDistrictEntities'
 
 const DEFAULT_MAX_ENTITIES = 120
 const MIN_MAX_ENTITIES = 20
@@ -34,6 +34,18 @@ function uniqueById(entities: PlaceEntity[]): PlaceEntity[] {
   }
 
   return deduped
+}
+
+function countBlockedStatuses(
+  blocked: FetchPlaceEntitiesResult['blockedEntities'],
+): FetchPlaceEntitiesResult['retrieval']['blockedStatusCounts'] {
+  return blocked.reduce<FetchPlaceEntitiesResult['retrieval']['blockedStatusCounts']>(
+    (counts, entry) => {
+      counts[entry.admissionStatus] = (counts[entry.admissionStatus] ?? 0) + 1
+      return counts
+    },
+    {},
+  )
 }
 
 export async function fetchPlaceEntities(
@@ -70,6 +82,10 @@ export async function fetchPlaceEntities(
     geoDiversityDownsampledCount: 0,
     bootstrapCount: 0,
     selectedCount: 0,
+    admittedCount: 0,
+    blockedCount: 0,
+    blockedStatusCounts: {},
+    blockedEntities: [],
     notes: hasCuratedCoverage
       ? ['Curated city inventory used for district entity retrieval.']
       : ['No curated coverage found for requested city.'],
@@ -100,12 +116,17 @@ export async function fetchPlaceEntities(
       geoDiversityDownsampledCount: hybrid.diagnostics.geoDiversityDownsampledCount,
       bootstrapCount: hybrid.diagnostics.bootstrapCount,
       selectedCount: hybrid.diagnostics.selectedCount,
+      admittedCount: 0,
+      blockedCount: 0,
+      blockedStatusCounts: {},
+      blockedEntities: [],
       notes: hybrid.diagnostics.notes,
     }
   }
 
   const seeded = sourceVenues
-  const normalized = uniqueById(seeded.map(normalizePlaceEntity))
+  const admission = admitDistrictEntities(seeded)
+  const normalized = uniqueById(admission.admitted.map((entry) => entry.entity))
   const maxEntities = clamp(
     input.maxEntities ?? DEFAULT_MAX_ENTITIES,
     MIN_MAX_ENTITIES,
@@ -132,12 +153,30 @@ export async function fetchPlaceEntities(
     inRadius.length >= 3
       ? inRadius.slice(0, maxEntities)
       : withDistance.slice(0, Math.min(maxEntities, withDistance.length))
+  const selectedEntityIds = new Set(selected.map((item) => item.entity.id))
+  const admittedEntities = admission.admitted.filter((entry) =>
+    selectedEntityIds.has(entry.entity.id),
+  )
+  const blockedStatusCounts = countBlockedStatuses(admission.blocked)
+  const retrievalNotes = [...retrieval.notes]
+  if (admission.blocked.length > 0) {
+    retrievalNotes.push(
+      `District admission blocked ${admission.blocked.length} live venues before clustering.`,
+    )
+  }
 
   return {
     entities: selected.map((item) => item.entity),
+    admittedEntities,
+    blockedEntities: admission.blocked,
     retrieval: {
       ...retrieval,
       selectedCount: selected.length,
+      admittedCount: admittedEntities.length,
+      blockedCount: admission.blocked.length,
+      blockedStatusCounts,
+      blockedEntities: admission.blocked,
+      notes: retrievalNotes,
     },
   }
 }
