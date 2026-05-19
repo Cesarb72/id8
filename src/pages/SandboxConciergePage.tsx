@@ -116,6 +116,11 @@ import {
 import { buildContractEntryArtifactFromVerifiedOpportunity } from '../domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity'
 import { buildLiveDistrictVerifiedCityOpportunity } from '../domain/interpretation/buildLiveDistrictVerifiedCityOpportunities'
 import {
+  adaptBuildProviderSourceOpportunityToVerifiedOpportunity,
+  isBuildProviderStep2IntegrationEnabled,
+} from '../domain/providers/adaptBuildProviderSourceOpportunityToVerifiedOpportunity'
+import type { BuildProviderSourceOpportunity } from '../domain/providers/buildProviderSourceOpportunity'
+import {
   mapBuiltScenarioNightToVerifiedOpportunity,
   type BuiltScenarioNightPreviewModel,
   type BuiltScenarioPreviewStop,
@@ -976,6 +981,12 @@ interface SurpriseTryAnotherDebug {
   step2CandidateRouteArtifactsCount: number
   curateDisplayFallbackRouteArtifactsCount: number
   candidateRouteArtifactsForDisplayCount: number
+  buildProviderIntegrationEnabled: boolean
+  buildProviderSourceOpportunityEmitted: boolean
+  buildProviderVerifiedOpportunityCount: number
+  buildProviderFallbackReason: string | null
+  buildStaticSourceOpportunityCount: number
+  buildLiveSourceOpportunityCount: number
   step2TryAnotherAlternatesCount: number
   surpriseArtifactSafetyKnownSafeIds: string[]
   surpriseArtifactSafetyKnownFailedIds: string[]
@@ -10153,6 +10164,41 @@ export function SandboxConciergePage() {
       new Map(step2PrimarySourceOpportunities.map((opportunity) => [opportunity.id, opportunity] as const)),
     [step2PrimarySourceOpportunities],
   )
+  const buildProviderIntegrationEnabled = isBuildProviderStep2IntegrationEnabled()
+  const shadowBuildProviderSourceOpportunity: BuildProviderSourceOpportunity | null = null
+  const shadowBuildProviderVerifiedOpportunity =
+    isBuildWrapperActive &&
+    buildProviderIntegrationEnabled &&
+    shadowBuildProviderSourceOpportunity
+      ? adaptBuildProviderSourceOpportunityToVerifiedOpportunity({
+          opportunity: shadowBuildProviderSourceOpportunity,
+        })
+      : null
+  const buildProviderSourceOpportunityEmitted = Boolean(
+    shadowBuildProviderSourceOpportunity,
+  )
+  const buildProviderVerifiedOpportunityCount =
+    shadowBuildProviderVerifiedOpportunity ? 1 : 0
+  const buildProviderFallbackReason =
+    !isBuildWrapperActive
+      ? null
+      : !buildProviderIntegrationEnabled
+        ? 'build_provider_step2_integration_disabled'
+        : !shadowBuildProviderSourceOpportunity
+          ? 'build_provider_shadow_not_attempted'
+          : !shadowBuildProviderVerifiedOpportunity
+            ? 'build_provider_verified_opportunity_adapter_returned_null'
+            : null
+  const buildStaticSourceOpportunityCount = isBuildWrapperActive
+    ? step2PrimarySourceOpportunities.filter(
+        (opportunity) => opportunity.sourceMode !== 'live',
+      ).length
+    : 0
+  const buildLiveSourceOpportunityCount = isBuildWrapperActive
+    ? step2PrimarySourceOpportunities.filter(
+        (opportunity) => opportunity.sourceMode === 'live',
+      ).length + buildProviderVerifiedOpportunityCount
+    : 0
 
   const scenarioPreviewModelByOpportunityId = useMemo(() => {
     // Boundary: for supported romantic flows, Step 3 should consume this engine-authored preview model directly.
@@ -17455,6 +17501,12 @@ export function SandboxConciergePage() {
       step2CandidateRouteArtifactsCount: step2CandidateRouteArtifacts.length,
       curateDisplayFallbackRouteArtifactsCount: curateDisplayFallbackRouteArtifacts.length,
       candidateRouteArtifactsForDisplayCount: candidateRouteArtifactsForDisplay.length,
+      buildProviderIntegrationEnabled,
+      buildProviderSourceOpportunityEmitted,
+      buildProviderVerifiedOpportunityCount,
+      buildProviderFallbackReason,
+      buildStaticSourceOpportunityCount,
+      buildLiveSourceOpportunityCount,
       step2TryAnotherAlternatesCount: step2TryAnotherAlternates.length,
       surpriseArtifactSafetyKnownSafeIds,
       surpriseArtifactSafetyKnownFailedIds,
@@ -17576,6 +17628,12 @@ export function SandboxConciergePage() {
   }, [
     allDirectionCards,
     admittedScenarioBackedVerifiedCityOpportunities,
+    buildLiveSourceOpportunityCount,
+    buildProviderFallbackReason,
+    buildProviderIntegrationEnabled,
+    buildProviderSourceOpportunityEmitted,
+    buildProviderVerifiedOpportunityCount,
+    buildStaticSourceOpportunityCount,
     candidateRouteArtifactByIdForDisplay,
     candidateRouteArtifactsForDisplay,
     curateDisplayFallbackRouteArtifacts.length,
