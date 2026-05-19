@@ -80,6 +80,40 @@ export interface BuildProviderRoleCandidateCounts {
   windDown: number
 }
 
+export type BuildProviderRoleFailureReason =
+  | 'warmup_below_threshold'
+  | 'peak_below_threshold'
+  | 'cooldown_below_threshold'
+  | 'energy_above_threshold'
+  | 'not_highlight_capable'
+  | 'quality_gate_not_approved'
+  | 'hours_suppressed'
+
+export interface BuildProviderRoleEligibilityDiagnostic {
+  eligible: boolean
+  failedReasons: BuildProviderRoleFailureReason[]
+}
+
+export interface BuildProviderRoleCandidateReviewSummary {
+  providerRecordId: string
+  displayName: string
+  normalizedCategory?: Venue['category']
+  primaryType?: string
+  tags: string[]
+  energyLevel?: number
+  highlightCapable?: boolean
+  roleAffinity?: {
+    warmup?: number
+    peak?: number
+    cooldown?: number
+  }
+  qualityGateStatus?: Venue['source']['qualityGateStatus']
+  hoursSuppressionApplied?: boolean
+  start: BuildProviderRoleEligibilityDiagnostic
+  highlight: BuildProviderRoleEligibilityDiagnostic
+  windDown: BuildProviderRoleEligibilityDiagnostic
+}
+
 export interface BuildProviderNearbyCandidateReviewSummary {
   providerRecordId: string
   displayName: string
@@ -109,6 +143,7 @@ export interface BuildProviderSourceOpportunityDiagnostics {
   buildProviderTraceBillableCallCount: number
   suppressionReasons: string[]
   nearbyCandidateReviews: BuildProviderNearbyCandidateReviewSummary[]
+  roleCandidateReviewSummaries: BuildProviderRoleCandidateReviewSummary[]
   canonicalMappings: ProviderCanonicalVenueMapping[]
   completeness: ProviderCompletenessGateResult[]
   equivalence: SupplyEquivalenceResult[]
@@ -155,6 +190,11 @@ export interface BuildProviderSourceOpportunityInput {
 interface BuildProviderMappedVenue {
   providerVenue: ProviderVenue
   rawPlace: RawPlace
+}
+
+interface AdmittedNearbyCandidateReview {
+  primaryType?: string
+  venue: Venue
 }
 
 function getProcessEnvValue(key: string): string | undefined {
@@ -426,6 +466,7 @@ function buildBaseDiagnostics(params: {
     buildProviderTraceBillableCallCount: params.trace?.billableCallCount ?? 0,
     suppressionReasons: [],
     nearbyCandidateReviews: [],
+    roleCandidateReviewSummaries: [],
     canonicalMappings: [],
     completeness: [],
     equivalence: [],
@@ -479,6 +520,96 @@ function deriveRoleCandidates(venues: Venue[]): {
     highlight: dedupeVenuesById(highlight),
     windDown: dedupeVenuesById(windDown),
   }
+}
+
+function buildRoleEligibilityDiagnostic(
+  failedReasons: BuildProviderRoleFailureReason[],
+): BuildProviderRoleEligibilityDiagnostic {
+  return {
+    eligible: failedReasons.length === 0,
+    failedReasons,
+  }
+}
+
+function evaluateStartRoleEligibility(
+  venue: Venue,
+): BuildProviderRoleEligibilityDiagnostic {
+  const failedReasons: BuildProviderRoleFailureReason[] = []
+  if (venue.roleAffinity.warmup < 0.6) {
+    failedReasons.push('warmup_below_threshold')
+  }
+  if (venue.energyLevel > 4) {
+    failedReasons.push('energy_above_threshold')
+  }
+  if (venue.source.qualityGateStatus !== 'approved') {
+    failedReasons.push('quality_gate_not_approved')
+  }
+  if (venue.source.hoursSuppressionApplied) {
+    failedReasons.push('hours_suppressed')
+  }
+  return buildRoleEligibilityDiagnostic(failedReasons)
+}
+
+function evaluateHighlightRoleEligibility(
+  venue: Venue,
+): BuildProviderRoleEligibilityDiagnostic {
+  const failedReasons: BuildProviderRoleFailureReason[] = []
+  if (!venue.highlightCapable) {
+    failedReasons.push('not_highlight_capable')
+  }
+  if (venue.roleAffinity.peak < 0.7) {
+    failedReasons.push('peak_below_threshold')
+  }
+  if (venue.source.qualityGateStatus !== 'approved') {
+    failedReasons.push('quality_gate_not_approved')
+  }
+  if (venue.source.hoursSuppressionApplied) {
+    failedReasons.push('hours_suppressed')
+  }
+  return buildRoleEligibilityDiagnostic(failedReasons)
+}
+
+function evaluateWindDownRoleEligibility(
+  venue: Venue,
+): BuildProviderRoleEligibilityDiagnostic {
+  const failedReasons: BuildProviderRoleFailureReason[] = []
+  if (venue.roleAffinity.cooldown < 0.58) {
+    failedReasons.push('cooldown_below_threshold')
+  }
+  if (venue.energyLevel > 4) {
+    failedReasons.push('energy_above_threshold')
+  }
+  if (venue.source.qualityGateStatus !== 'approved') {
+    failedReasons.push('quality_gate_not_approved')
+  }
+  if (venue.source.hoursSuppressionApplied) {
+    failedReasons.push('hours_suppressed')
+  }
+  return buildRoleEligibilityDiagnostic(failedReasons)
+}
+
+function buildRoleCandidateReviewSummaries(
+  admittedCandidates: AdmittedNearbyCandidateReview[],
+): BuildProviderRoleCandidateReviewSummary[] {
+  return admittedCandidates.map(({ primaryType, venue }) => ({
+    providerRecordId: venue.source.providerRecordId ?? venue.id,
+    displayName: venue.name,
+    normalizedCategory: venue.category,
+    primaryType,
+    tags: venue.tags,
+    energyLevel: venue.energyLevel,
+    highlightCapable: venue.highlightCapable,
+    roleAffinity: {
+      warmup: venue.roleAffinity.warmup,
+      peak: venue.roleAffinity.peak,
+      cooldown: venue.roleAffinity.cooldown,
+    },
+    qualityGateStatus: venue.source.qualityGateStatus,
+    hoursSuppressionApplied: venue.source.hoursSuppressionApplied,
+    start: evaluateStartRoleEligibility(venue),
+    highlight: evaluateHighlightRoleEligibility(venue),
+    windDown: evaluateWindDownRoleEligibility(venue),
+  }))
 }
 
 function buildRoleCounts(roleCandidates: {
@@ -607,6 +738,7 @@ export async function buildProviderSourceOpportunity(
   const suppressionReasons: string[] = []
   const nearbyCandidateReviews: BuildProviderNearbyCandidateReviewSummary[] = []
   const admittedNearbyCandidates: Venue[] = []
+  const admittedNearbyCandidateReviews: AdmittedNearbyCandidateReview[] = []
   const canonicalMappings: ProviderCanonicalVenueMapping[] = []
   const completeness: ProviderCompletenessGateResult[] = []
   const equivalence: SupplyEquivalenceResult[] = []
@@ -699,6 +831,10 @@ export async function buildProviderSourceOpportunity(
       suppressionReasons.push(`${candidate.providerVenue.providerRecordId}:${identityReason}`)
     } else {
       admittedNearbyCandidates.push(admittedVenue)
+      admittedNearbyCandidateReviews.push({
+        primaryType: candidate.providerVenue.primaryType?.trim() || undefined,
+        venue: admittedVenue,
+      })
     }
 
     nearbyCandidateReviews.push({
@@ -724,6 +860,9 @@ export async function buildProviderSourceOpportunity(
 
   const roleCandidates = deriveRoleCandidates(admittedNearbyCandidates)
   const roleCandidateCounts = buildRoleCounts(roleCandidates)
+  const roleCandidateReviewSummaries = buildRoleCandidateReviewSummaries(
+    admittedNearbyCandidateReviews,
+  )
   const diagnostics: BuildProviderSourceOpportunityDiagnostics = {
     ...baseDiagnostics,
     buildProviderNearbyVenueCount: admittedNearbyCandidates.length,
@@ -732,6 +871,7 @@ export async function buildProviderSourceOpportunity(
     buildProviderTraceBillableCallCount: trace.billableCallCount,
     suppressionReasons,
     nearbyCandidateReviews,
+    roleCandidateReviewSummaries,
     canonicalMappings,
     completeness,
     equivalence,

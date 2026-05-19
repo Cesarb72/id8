@@ -5,6 +5,7 @@ import { getGooglePlacesConfig } from '../sources/getSourceMode'
 import type { Venue } from '../types/venue'
 import type {
   BuildProviderNearbyCandidateReviewSummary,
+  BuildProviderRoleCandidateReviewSummary,
   BuildProviderSourceOpportunityDiagnostics,
   BuildProviderSourceOpportunityResult,
 } from './buildProviderSourceOpportunity'
@@ -140,6 +141,7 @@ export interface BuildProviderSupplyDryRunReport {
   suppressionReasons: string[]
   nearbySuppressionReasons: string[]
   nearbyCandidateReviewSummaries: BuildProviderNearbyCandidateReviewSummary[]
+  roleCandidateReviewSummaries: BuildProviderRoleCandidateReviewSummary[]
   nearbyCanonicalMappingSummaries: BuildProviderSupplyDryRunCanonicalMappingSummary[]
   nearbyCompletenessSummaries: BuildProviderSupplyDryRunCompletenessSummary[]
   nearbyEquivalenceSummaries: BuildProviderSupplyDryRunEquivalenceSummary[]
@@ -180,6 +182,7 @@ function buildBaseReport(requestedAt: number): BuildProviderSupplyDryRunReport {
     suppressionReasons: [],
     nearbySuppressionReasons: [],
     nearbyCandidateReviewSummaries: [],
+    roleCandidateReviewSummaries: [],
     nearbyCanonicalMappingSummaries: [],
     nearbyCompletenessSummaries: [],
     nearbyEquivalenceSummaries: [],
@@ -424,6 +427,7 @@ function buildReportFromNearbyResult(params: {
     suppressionReasons: nearbyDiagnostics.suppressionReasons,
     nearbySuppressionReasons: nearbyDiagnostics.suppressionReasons,
     nearbyCandidateReviewSummaries: nearbyDiagnostics.nearbyCandidateReviews,
+    roleCandidateReviewSummaries: nearbyDiagnostics.roleCandidateReviewSummaries,
     nearbyCanonicalMappingSummaries: summarizeCanonicalMappings(
       nearbyDiagnostics.canonicalMappings,
     ),
