@@ -985,11 +985,17 @@ interface SurpriseTryAnotherDebug {
   buildProviderSourceOpportunityAvailable: boolean
   buildProviderVerifiedOpportunityCount: number
   buildProviderVerifiedOpportunityId: string | null
+  buildProviderShadowArtifactCount: number
+  buildProviderShadowArtifactId: string | null
+  buildProviderShadowArtifactBuilt: boolean
+  buildProviderShadowArtifactFailureReason: string | null
   buildProviderFallbackReason: string | null
   buildStaticSourceOpportunityCount: number
   buildLiveSourceOpportunityCount: number
-  buildProviderWouldMergeCount: number
+  buildProviderArtifactWouldMergeCount: number
   buildProviderMergedIntoVisiblePool: boolean
+  buildStaticCandidateArtifactCount: number
+  buildLiveCandidateArtifactCount: number
   step2TryAnotherAlternatesCount: number
   surpriseArtifactSafetyKnownSafeIds: string[]
   surpriseArtifactSafetyKnownFailedIds: string[]
@@ -10184,16 +10190,6 @@ export function SandboxConciergePage() {
     shadowBuildProviderVerifiedOpportunity ? 1 : 0
   const buildProviderVerifiedOpportunityId =
     shadowBuildProviderVerifiedOpportunity?.id ?? null
-  const buildProviderFallbackReason =
-    !isBuildWrapperActive
-      ? null
-      : !buildProviderIntegrationEnabled
-        ? 'build_provider_step2_integration_disabled'
-        : !shadowBuildProviderSourceOpportunity
-          ? 'build_provider_source_opportunity_unavailable'
-          : !shadowBuildProviderVerifiedOpportunity
-            ? 'build_provider_verified_opportunity_adapter_returned_null'
-            : null
   const buildStaticSourceOpportunityCount = isBuildWrapperActive
     ? step2PrimarySourceOpportunities.filter(
         (opportunity) => opportunity.sourceMode !== 'live',
@@ -10204,8 +10200,6 @@ export function SandboxConciergePage() {
         (opportunity) => opportunity.sourceMode === 'live',
       ).length + buildProviderVerifiedOpportunityCount
     : 0
-  const buildProviderWouldMergeCount = buildProviderVerifiedOpportunityCount
-  const buildProviderMergedIntoVisiblePool = false
 
   const scenarioPreviewModelByOpportunityId = useMemo(() => {
     // Boundary: for supported romantic flows, Step 3 should consume this engine-authored preview model directly.
@@ -10261,6 +10255,41 @@ export function SandboxConciergePage() {
     },
     [allDirectionCards, directionCards, ecsState, shouldUseScenarioBackedArtifacts],
   )
+  const shadowBuildProviderArtifact =
+    isBuildWrapperActive &&
+    buildProviderIntegrationEnabled &&
+    shadowBuildProviderVerifiedOpportunity
+      ? buildStep2CandidateRouteArtifact(shadowBuildProviderVerifiedOpportunity)
+      : null
+  const buildProviderShadowArtifactCount = shadowBuildProviderArtifact ? 1 : 0
+  const buildProviderShadowArtifactId = shadowBuildProviderArtifact?.id ?? null
+  const buildProviderShadowArtifactBuilt = Boolean(shadowBuildProviderArtifact)
+  const buildProviderShadowArtifactFailureReason =
+    !isBuildWrapperActive
+      ? null
+      : !buildProviderIntegrationEnabled
+        ? null
+        : !shadowBuildProviderSourceOpportunity
+          ? null
+          : !shadowBuildProviderVerifiedOpportunity
+            ? null
+            : shadowBuildProviderArtifact
+              ? null
+              : 'provider_shadow_artifact_failed'
+  const buildProviderFallbackReason =
+    !isBuildWrapperActive
+      ? null
+      : !buildProviderIntegrationEnabled
+        ? 'build_provider_step2_integration_disabled'
+        : !shadowBuildProviderSourceOpportunity
+          ? 'build_provider_source_opportunity_unavailable'
+          : !shadowBuildProviderVerifiedOpportunity
+            ? 'provider_verified_opportunity_unavailable'
+            : !shadowBuildProviderArtifact
+              ? 'provider_shadow_artifact_failed'
+              : null
+  const buildProviderArtifactWouldMergeCount = buildProviderShadowArtifactCount
+  const buildProviderMergedIntoVisiblePool = false
 
   const step2CandidateRouteArtifacts = useMemo<ContractEntryArtifact[]>(() => {
     if (shouldUseScenarioBackedArtifacts) {
@@ -10306,6 +10335,22 @@ export function SandboxConciergePage() {
     isSurpriseWrapperActive,
     verifiedCityOpportunities,
   ])
+  const buildStaticCandidateArtifactCount = isBuildWrapperActive
+    ? step2CandidateRouteArtifacts.filter((artifact) => {
+        const sourceOpportunity = verifiedCityOpportunityById.get(
+          artifact.sourceOpportunityId,
+        )
+        return sourceOpportunity?.sourceMode !== 'live'
+      }).length
+    : 0
+  const buildLiveCandidateArtifactCount = isBuildWrapperActive
+    ? step2CandidateRouteArtifacts.filter((artifact) => {
+        const sourceOpportunity = verifiedCityOpportunityById.get(
+          artifact.sourceOpportunityId,
+        )
+        return sourceOpportunity?.sourceMode === 'live'
+      }).length + buildProviderShadowArtifactCount
+    : 0
   const curateQualificationSourceFingerprint = useMemo(
     () =>
       [
@@ -17512,11 +17557,17 @@ export function SandboxConciergePage() {
       buildProviderSourceOpportunityAvailable,
       buildProviderVerifiedOpportunityCount,
       buildProviderVerifiedOpportunityId,
+      buildProviderShadowArtifactCount,
+      buildProviderShadowArtifactId,
+      buildProviderShadowArtifactBuilt,
+      buildProviderShadowArtifactFailureReason,
       buildProviderFallbackReason,
       buildStaticSourceOpportunityCount,
       buildLiveSourceOpportunityCount,
-      buildProviderWouldMergeCount,
+      buildProviderArtifactWouldMergeCount,
       buildProviderMergedIntoVisiblePool,
+      buildStaticCandidateArtifactCount,
+      buildLiveCandidateArtifactCount,
       step2TryAnotherAlternatesCount: step2TryAnotherAlternates.length,
       surpriseArtifactSafetyKnownSafeIds,
       surpriseArtifactSafetyKnownFailedIds,
@@ -17638,14 +17689,20 @@ export function SandboxConciergePage() {
   }, [
     allDirectionCards,
     admittedScenarioBackedVerifiedCityOpportunities,
+    buildLiveCandidateArtifactCount,
     buildLiveSourceOpportunityCount,
+    buildProviderArtifactWouldMergeCount,
     buildProviderFallbackReason,
     buildProviderIntegrationEnabled,
     buildProviderMergedIntoVisiblePool,
+    buildProviderShadowArtifactBuilt,
+    buildProviderShadowArtifactCount,
+    buildProviderShadowArtifactFailureReason,
+    buildProviderShadowArtifactId,
     buildProviderSourceOpportunityAvailable,
     buildProviderVerifiedOpportunityCount,
     buildProviderVerifiedOpportunityId,
-    buildProviderWouldMergeCount,
+    buildStaticCandidateArtifactCount,
     buildStaticSourceOpportunityCount,
     candidateRouteArtifactByIdForDisplay,
     candidateRouteArtifactsForDisplay,
