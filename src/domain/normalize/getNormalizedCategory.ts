@@ -32,7 +32,14 @@ export function getNormalizedCategory(raw: RawVenueInput): NormalizedCategoryRes
     ...(raw.tags ?? []),
   ].map(normalizeValue)
 
-  const dessertType = firstMatch(rawTypes, ['dessert', 'bakery', 'ice-cream', 'gelato', 'pastry'])
+  const dessertType = firstMatch(rawTypes, [
+    'dessert',
+    'bakery',
+    'ice-cream',
+    'ice-cream-shop',
+    'gelato',
+    'pastry',
+  ])
   if (dessertType) {
     return { category: 'dessert', subcategory: dessertType }
   }
