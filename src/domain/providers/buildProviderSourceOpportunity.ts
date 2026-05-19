@@ -622,31 +622,49 @@ export async function buildProviderSourceOpportunity(
     const completenessResult = evaluateProviderVenueCompleteness({
       providerVenue: candidate.providerVenue,
       canonicalMapping,
+      options: {
+        treatUnresolvedCanonicalIdentityAsDiagnosticOnly: true,
+      },
     })
     completeness.push(completenessResult)
 
+    const identityAdmission = admitLiveVenueIdentity({
+      providerVenue: candidate.providerVenue,
+      canonicalMapping,
+      completeness: completenessResult,
+      equivalence: null,
+      mode: 'product',
+      requestedAt,
+    })
     const equivalenceResult = evaluateSupplyEquivalence(
       {
         kind: 'live',
         gateResult: completenessResult,
         canonicalMapping,
+        canonicalIdentityStatus: identityAdmission.canonicalIdentityStatus,
       },
       {
         allowLiveWarningsForEquivalence: false,
       },
     )
     equivalence.push(equivalenceResult)
-    const identityAdmission = admitLiveVenueIdentity({
-      providerVenue: candidate.providerVenue,
-      canonicalMapping,
-      completeness: completenessResult,
-      equivalence: equivalenceResult,
-      mode: 'product',
-      requestedAt,
-    })
 
     const candidateSuppressionReasons: string[] = []
-    const admittedVenue = identityAdmission.admitted
+    if (!canonicalMapping.canonicalVenueId) {
+      candidateSuppressionReasons.push('unresolved_canonical_identity_pre_admission')
+    }
+    if (identityAdmission.admitted) {
+      candidateSuppressionReasons.push('live_identity_admitted')
+    }
+    if (equivalenceResult.status === 'equivalent') {
+      candidateSuppressionReasons.push('final_equivalence_passed')
+    } else {
+      candidateSuppressionReasons.push('final_equivalence_failed')
+    }
+
+    const finalAdmissionPassed =
+      identityAdmission.admitted && equivalenceResult.status === 'equivalent'
+    const admittedVenue = finalAdmissionPassed
       ? normalizeAdmittedProviderVenue({
           rawPlace: candidate.rawPlace,
           identity: identityAdmission,
@@ -662,15 +680,19 @@ export async function buildProviderSourceOpportunity(
       suppressionReasons.push(
         `${candidate.providerVenue.providerRecordId}:anchor_self_match`,
       )
-    } else if (!identityAdmission.admitted || !admittedVenue) {
+    } else if (!finalAdmissionPassed || !admittedVenue) {
       const identityReason =
+        equivalenceResult.blockingReasons[0] ??
         identityAdmission.blockingReasons[0] ??
         identityAdmission.warnings[0] ??
+        equivalenceResult.status ??
         identityAdmission.canonicalIdentityStatus
       candidateSuppressionReasons.push(
         ...(
-          identityAdmission.blockingReasons.length > 0
-            ? identityAdmission.blockingReasons
+          equivalenceResult.blockingReasons.length > 0
+            ? equivalenceResult.blockingReasons
+            : identityAdmission.blockingReasons.length > 0
+              ? identityAdmission.blockingReasons
             : [identityReason]
         ),
       )

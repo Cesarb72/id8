@@ -12,6 +12,7 @@ import {
   isProviderVenueDryRunEligible,
   isProviderVenueProductEligible,
 } from './providerCompletenessGate'
+import type { CanonicalIdentityStatus } from './admitLiveVenueIdentity'
 
 export type SupplyEquivalenceStatus =
   | 'equivalent'
@@ -60,6 +61,7 @@ type LiveSupplyInput = {
   kind: 'live'
   gateResult: ProviderCompletenessGateResult
   canonicalMapping?: ProviderCanonicalVenueMapping
+  canonicalIdentityStatus?: CanonicalIdentityStatus
 }
 
 type BootstrapSupplyInput = {
@@ -152,7 +154,11 @@ export function evaluateSupplyEquivalence(
   const mapping = input.canonicalMapping
   const warnings: SupplyEquivalenceReason[] = []
   const blockingReasons: SupplyEquivalenceReason[] = []
-  const identityResolved = mapping ? isCanonicalVenueResolved(mapping) : false
+  const identityResolvedByMapping = mapping ? isCanonicalVenueResolved(mapping) : false
+  const identityResolved =
+    input.canonicalIdentityStatus === 'resolved' ||
+    input.canonicalIdentityStatus === 'live_admitted' ||
+    identityResolvedByMapping
 
   if (!isProviderVenueDryRunEligible(gateResult)) {
     if (gateResult.coordinatesStatus === 'missing') {

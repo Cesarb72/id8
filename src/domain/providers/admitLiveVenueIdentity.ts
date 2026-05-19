@@ -56,7 +56,7 @@ export function admitLiveVenueIdentity(params: {
   providerVenue: ProviderVenue
   canonicalMapping?: ProviderCanonicalVenueMapping
   completeness: ProviderCompletenessGateResult
-  equivalence: SupplyEquivalenceResult
+  equivalence?: SupplyEquivalenceResult | null
   mode: 'product' | 'diagnostic'
   requestedAt: number
 }): LiveVenueIdentityAdmissionResult {
@@ -70,8 +70,8 @@ export function admitLiveVenueIdentity(params: {
   void params.requestedAt
 
   const providerRecordId = providerVenue.providerRecordId.trim()
-  const warnings = [...equivalence.warnings]
-  const blockingReasons = [...equivalence.blockingReasons]
+  const warnings = [...(equivalence?.warnings ?? [])]
+  const blockingReasons = [...(equivalence?.blockingReasons ?? [])]
   const resolvedCanonicalVenueId =
     canonicalMapping && isCanonicalVenueResolved(canonicalMapping)
       ? canonicalMapping.canonicalVenueId
@@ -147,7 +147,7 @@ export function admitLiveVenueIdentity(params: {
     }
   }
 
-  if (equivalence.status !== 'equivalent') {
+  if (equivalence && equivalence.status !== 'equivalent') {
     return {
       admitted: false,
       canonicalIdentityStatus: 'unresolved',
@@ -168,6 +168,6 @@ export function admitLiveVenueIdentity(params: {
     providerRecordId,
     sourceMode: 'live',
     blockingReasons,
-    warnings,
+    warnings: [...warnings, 'live_identity_admitted'],
   }
 }

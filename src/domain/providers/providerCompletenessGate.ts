@@ -29,6 +29,7 @@ export interface ProviderCompletenessGateOptions {
   requireCanonicalIdentity?: boolean
   requireOpenNowConfidence?: boolean
   minimumConfidence?: number
+  treatUnresolvedCanonicalIdentityAsDiagnosticOnly?: boolean
 }
 
 export interface ProviderCompletenessGateResult {
@@ -57,6 +58,7 @@ function getDefaultOptions(): Required<ProviderCompletenessGateOptions> {
     requireCanonicalIdentity: false,
     requireOpenNowConfidence: false,
     minimumConfidence: 0.6,
+    treatUnresolvedCanonicalIdentityAsDiagnosticOnly: false,
   }
 }
 
@@ -132,7 +134,11 @@ export function evaluateProviderVenueCompleteness(params: {
 
   const identityResolved = canonicalMapping ? isCanonicalVenueResolved(canonicalMapping) : false
   if (!identityResolved) {
-    warnings.push('unresolved_canonical_identity')
+    warnings.push(
+      options.treatUnresolvedCanonicalIdentityAsDiagnosticOnly
+        ? 'unresolved_canonical_identity_pre_admission'
+        : 'unresolved_canonical_identity',
+    )
     if (options.requireCanonicalIdentity) {
       suppressionReasons.push('unresolved_canonical_identity')
     }
@@ -150,19 +156,25 @@ export function evaluateProviderVenueCompleteness(params: {
     (providerVenue.completenessHints.hasLocation ? 0.24 : 0) +
       (providerVenue.completenessHints.hasPrimaryType ? 0.22 : 0) +
       (providerVenue.completenessHints.hasAddress ? 0.16 : 0) +
-      (providerVenue.completenessHints.hasHours ? 0.12 : 0) +
-      // rating/reviewCount are Taste scoring inputs, not admission signals.
-      (identityResolved ? Math.min(0.2, canonicalMapping?.confidence ?? 0) : 0),
+      (providerVenue.completenessHints.hasHours ? 0.12 : 0),
   )
+  // rating/reviewCount are Taste scoring inputs, not admission signals.
+  // Static canonical resolution is also not an operational completeness signal.
 
   if (confidence < options.minimumConfidence) {
     suppressionReasons.push('low_confidence')
   }
 
   const blocked = suppressionReasons.length > 0
+  const statusWarnings = warnings.filter((warning) => {
+    return !(
+      options.treatUnresolvedCanonicalIdentityAsDiagnosticOnly &&
+      warning === 'unresolved_canonical_identity_pre_admission'
+    )
+  })
   const status: ProviderCompletenessGateStatus = blocked
     ? 'blocked'
-    : warnings.length > 0
+    : statusWarnings.length > 0
       ? 'warning'
       : 'passed'
 
