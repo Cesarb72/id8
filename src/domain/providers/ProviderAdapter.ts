@@ -200,7 +200,33 @@ async function queryGoogleTextSearch(
   })
 
   if (!response.ok) {
-    throw new Error(`${query.queryLabel} query failed (${response.status})`)
+    let providerStatus: string | undefined
+    let providerMessage: string | undefined
+
+    try {
+      const errorPayload = (await response.json()) as {
+        error?: {
+          status?: string
+          message?: string
+          code?: number
+        }
+      }
+      providerStatus = errorPayload.error?.status
+      providerMessage = errorPayload.error?.message?.trim()
+    } catch {
+      providerStatus = undefined
+      providerMessage = undefined
+    }
+
+    const diagnosticParts = [`${query.queryLabel} query failed (${response.status})`]
+    if (providerStatus) {
+      diagnosticParts.push(`provider_status=${providerStatus}`)
+    }
+    if (providerMessage) {
+      diagnosticParts.push(`provider_message=${providerMessage}`)
+    }
+
+    throw new Error(diagnosticParts.join(' | '))
   }
 
   const payload = (await response.json()) as { places?: GooglePlaceRecord[] }
