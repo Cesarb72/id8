@@ -36,7 +36,6 @@ export function getNormalizedCategory(raw: RawVenueInput): NormalizedCategoryRes
     'dessert',
     'bakery',
     'ice-cream',
-    'ice-cream-shop',
     'gelato',
     'pastry',
   ])
