@@ -982,11 +982,14 @@ interface SurpriseTryAnotherDebug {
   curateDisplayFallbackRouteArtifactsCount: number
   candidateRouteArtifactsForDisplayCount: number
   buildProviderIntegrationEnabled: boolean
-  buildProviderSourceOpportunityEmitted: boolean
+  buildProviderSourceOpportunityAvailable: boolean
   buildProviderVerifiedOpportunityCount: number
+  buildProviderVerifiedOpportunityId: string | null
   buildProviderFallbackReason: string | null
   buildStaticSourceOpportunityCount: number
   buildLiveSourceOpportunityCount: number
+  buildProviderWouldMergeCount: number
+  buildProviderMergedIntoVisiblePool: boolean
   step2TryAnotherAlternatesCount: number
   surpriseArtifactSafetyKnownSafeIds: string[]
   surpriseArtifactSafetyKnownFailedIds: string[]
@@ -10174,18 +10177,20 @@ export function SandboxConciergePage() {
           opportunity: shadowBuildProviderSourceOpportunity,
         })
       : null
-  const buildProviderSourceOpportunityEmitted = Boolean(
+  const buildProviderSourceOpportunityAvailable = Boolean(
     shadowBuildProviderSourceOpportunity,
   )
   const buildProviderVerifiedOpportunityCount =
     shadowBuildProviderVerifiedOpportunity ? 1 : 0
+  const buildProviderVerifiedOpportunityId =
+    shadowBuildProviderVerifiedOpportunity?.id ?? null
   const buildProviderFallbackReason =
     !isBuildWrapperActive
       ? null
       : !buildProviderIntegrationEnabled
         ? 'build_provider_step2_integration_disabled'
         : !shadowBuildProviderSourceOpportunity
-          ? 'build_provider_shadow_not_attempted'
+          ? 'build_provider_source_opportunity_unavailable'
           : !shadowBuildProviderVerifiedOpportunity
             ? 'build_provider_verified_opportunity_adapter_returned_null'
             : null
@@ -10199,6 +10204,8 @@ export function SandboxConciergePage() {
         (opportunity) => opportunity.sourceMode === 'live',
       ).length + buildProviderVerifiedOpportunityCount
     : 0
+  const buildProviderWouldMergeCount = buildProviderVerifiedOpportunityCount
+  const buildProviderMergedIntoVisiblePool = false
 
   const scenarioPreviewModelByOpportunityId = useMemo(() => {
     // Boundary: for supported romantic flows, Step 3 should consume this engine-authored preview model directly.
@@ -17502,11 +17509,14 @@ export function SandboxConciergePage() {
       curateDisplayFallbackRouteArtifactsCount: curateDisplayFallbackRouteArtifacts.length,
       candidateRouteArtifactsForDisplayCount: candidateRouteArtifactsForDisplay.length,
       buildProviderIntegrationEnabled,
-      buildProviderSourceOpportunityEmitted,
+      buildProviderSourceOpportunityAvailable,
       buildProviderVerifiedOpportunityCount,
+      buildProviderVerifiedOpportunityId,
       buildProviderFallbackReason,
       buildStaticSourceOpportunityCount,
       buildLiveSourceOpportunityCount,
+      buildProviderWouldMergeCount,
+      buildProviderMergedIntoVisiblePool,
       step2TryAnotherAlternatesCount: step2TryAnotherAlternates.length,
       surpriseArtifactSafetyKnownSafeIds,
       surpriseArtifactSafetyKnownFailedIds,
@@ -17631,8 +17641,11 @@ export function SandboxConciergePage() {
     buildLiveSourceOpportunityCount,
     buildProviderFallbackReason,
     buildProviderIntegrationEnabled,
-    buildProviderSourceOpportunityEmitted,
+    buildProviderMergedIntoVisiblePool,
+    buildProviderSourceOpportunityAvailable,
     buildProviderVerifiedOpportunityCount,
+    buildProviderVerifiedOpportunityId,
+    buildProviderWouldMergeCount,
     buildStaticSourceOpportunityCount,
     candidateRouteArtifactByIdForDisplay,
     candidateRouteArtifactsForDisplay,
