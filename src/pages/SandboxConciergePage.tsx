@@ -9309,6 +9309,8 @@ export function SandboxConciergePage() {
   const buildProviderAttemptedByAnchorKeyRef = useRef<
     Map<string, BuildProviderShadowInvocationSnapshot>
   >(new Map())
+  const buildProviderActiveAttemptTokenByAnchorKeyRef = useRef<Map<string, number>>(new Map())
+  const buildProviderAttemptSequenceRef = useRef(0)
   const updateFinalRoute = useCallback((nextRoute: RuntimeRouteArtifact | null) => {
     setFinalRoute(nextRoute)
     setRouteVersion((current) => (nextRoute ? current + 1 : 0))
@@ -10263,18 +10265,29 @@ export function SandboxConciergePage() {
     const cachedAttempt = buildProviderAttemptedByAnchorKeyRef.current.get(
       buildProviderRequestAnchorKey,
     )
-    if (cachedAttempt) {
+    const activeAttemptToken = buildProviderActiveAttemptTokenByAnchorKeyRef.current.get(
+      buildProviderRequestAnchorKey,
+    )
+    if (cachedAttempt && (!cachedAttempt.inFlight || activeAttemptToken !== undefined)) {
       setShadowBuildProviderSourceOpportunity(cachedAttempt.sourceOpportunity)
       setShadowBuildProviderDiagnostics(cachedAttempt.diagnostics)
       setBuildProviderAttempted(cachedAttempt.attempted)
       setBuildProviderInFlight(cachedAttempt.inFlight)
       return
     }
+    if (cachedAttempt?.inFlight) {
+      buildProviderAttemptedByAnchorKeyRef.current.delete(buildProviderRequestAnchorKey)
+    }
 
     if (!selectedBuildAnchorVenue) {
       return
     }
 
+    const attemptToken = ++buildProviderAttemptSequenceRef.current
+    buildProviderActiveAttemptTokenByAnchorKeyRef.current.set(
+      buildProviderRequestAnchorKey,
+      attemptToken,
+    )
     buildProviderAttemptedByAnchorKeyRef.current.set(buildProviderRequestAnchorKey, {
       sourceOpportunity: null,
       diagnostics: null,
@@ -10292,7 +10305,12 @@ export function SandboxConciergePage() {
         const result = await buildProviderSourceOpportunity({
           anchorVenue: selectedBuildAnchorVenue,
         })
-        if (cancelled) {
+        if (
+          cancelled ||
+          buildProviderActiveAttemptTokenByAnchorKeyRef.current.get(
+            buildProviderRequestAnchorKey,
+          ) !== attemptToken
+        ) {
           return
         }
         const settledAttempt: BuildProviderShadowInvocationSnapshot = {
@@ -10310,7 +10328,12 @@ export function SandboxConciergePage() {
         setBuildProviderAttempted(true)
         setBuildProviderInFlight(false)
       } catch {
-        if (cancelled) {
+        if (
+          cancelled ||
+          buildProviderActiveAttemptTokenByAnchorKeyRef.current.get(
+            buildProviderRequestAnchorKey,
+          ) !== attemptToken
+        ) {
           return
         }
         buildProviderAttemptedByAnchorKeyRef.current.set(buildProviderRequestAnchorKey, {
@@ -10323,6 +10346,16 @@ export function SandboxConciergePage() {
         setShadowBuildProviderDiagnostics(null)
         setBuildProviderAttempted(true)
         setBuildProviderInFlight(false)
+      } finally {
+        if (
+          buildProviderActiveAttemptTokenByAnchorKeyRef.current.get(
+            buildProviderRequestAnchorKey,
+          ) === attemptToken
+        ) {
+          buildProviderActiveAttemptTokenByAnchorKeyRef.current.delete(
+            buildProviderRequestAnchorKey,
+          )
+        }
       }
     })()
 
