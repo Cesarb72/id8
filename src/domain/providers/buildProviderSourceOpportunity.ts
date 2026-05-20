@@ -224,7 +224,7 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
   return undefined
 }
 
-function isBuildProviderSupplyEnabled(): boolean {
+export function isBuildProviderSupplyEnabled(): boolean {
   return parseBooleanEnv(readEnvValue(BUILD_PROVIDER_SUPPLY_ENV_FLAG)) === true
 }
 

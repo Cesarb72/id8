@@ -119,7 +119,12 @@ import {
   adaptBuildProviderSourceOpportunityToVerifiedOpportunity,
   isBuildProviderStep2IntegrationEnabled,
 } from '../domain/providers/adaptBuildProviderSourceOpportunityToVerifiedOpportunity'
-import type { BuildProviderSourceOpportunity } from '../domain/providers/buildProviderSourceOpportunity'
+import {
+  buildProviderSourceOpportunity,
+  isBuildProviderSupplyEnabled,
+  type BuildProviderSourceOpportunity,
+  type BuildProviderSourceOpportunityDiagnostics,
+} from '../domain/providers/buildProviderSourceOpportunity'
 import {
   mapBuiltScenarioNightToVerifiedOpportunity,
   type BuiltScenarioNightPreviewModel,
@@ -982,7 +987,11 @@ interface SurpriseTryAnotherDebug {
   curateDisplayFallbackRouteArtifactsCount: number
   candidateRouteArtifactsForDisplayCount: number
   buildProviderIntegrationEnabled: boolean
+  buildProviderSupplyEnabled: boolean
+  buildProviderAttempted: boolean
+  buildProviderInFlight: boolean
   buildProviderSourceOpportunityAvailable: boolean
+  buildProviderSourceOpportunityId: string | null
   buildProviderVerifiedOpportunityCount: number
   buildProviderVerifiedOpportunityId: string | null
   buildProviderShadowArtifactCount: number
@@ -990,6 +999,7 @@ interface SurpriseTryAnotherDebug {
   buildProviderShadowArtifactBuilt: boolean
   buildProviderShadowArtifactFailureReason: string | null
   buildProviderFallbackReason: string | null
+  buildProviderBillableCount: number | null
   buildStaticSourceOpportunityCount: number
   buildLiveSourceOpportunityCount: number
   buildProviderArtifactWouldMergeCount: number
@@ -4748,6 +4758,13 @@ type BuildAnchorSelection = {
   category: AnchorSearchResult['venue']['category']
   city: string
   neighborhood: string
+}
+
+type BuildProviderShadowInvocationSnapshot = {
+  sourceOpportunity: BuildProviderSourceOpportunity | null
+  diagnostics: BuildProviderSourceOpportunityDiagnostics | null
+  attempted: boolean
+  inFlight: boolean
 }
 
 function normalizeCanonicalCity(value: string): string {
@@ -9264,6 +9281,9 @@ export function SandboxConciergePage() {
     Record<string, CuratePreviewCommitabilityState>
   >({})
   const buildAnchorSearchAttemptRef = useRef(0)
+  const buildProviderAttemptedByAnchorKeyRef = useRef<
+    Map<string, BuildProviderShadowInvocationSnapshot>
+  >(new Map())
   const updateFinalRoute = useCallback((nextRoute: RuntimeRouteArtifact | null) => {
     setFinalRoute(nextRoute)
     setRouteVersion((current) => (nextRoute ? current + 1 : 0))
@@ -10174,10 +10194,118 @@ export function SandboxConciergePage() {
     [step2PrimarySourceOpportunities],
   )
   const buildProviderIntegrationEnabled = isBuildProviderStep2IntegrationEnabled()
-  const shadowBuildProviderSourceOpportunity: BuildProviderSourceOpportunity | null = null
+  const buildProviderSupplyEnabled = isBuildProviderSupplyEnabled()
+  const selectedBuildAnchorVenue = useMemo(
+    () =>
+      isBuildWrapperActive && selectedBuildAnchor
+        ? buildAnchorResults.find((result) => result.venue.id === selectedBuildAnchor.venueId)?.venue ?? null
+        : null,
+    [buildAnchorResults, isBuildWrapperActive, selectedBuildAnchor],
+  )
+  const buildProviderRequestAnchorKey = useMemo(
+    () =>
+      isBuildWrapperActive &&
+      buildProviderIntegrationEnabled &&
+      buildProviderSupplyEnabled &&
+      selectedBuildAnchorVenue
+        ? `build_provider_shadow:${selectedBuildAnchorVenue.id}`
+        : null,
+    [
+      buildProviderIntegrationEnabled,
+      buildProviderSupplyEnabled,
+      isBuildWrapperActive,
+      selectedBuildAnchorVenue,
+    ],
+  )
+  const [shadowBuildProviderSourceOpportunity, setShadowBuildProviderSourceOpportunity] =
+    useState<BuildProviderSourceOpportunity | null>(null)
+  const [shadowBuildProviderDiagnostics, setShadowBuildProviderDiagnostics] =
+    useState<BuildProviderSourceOpportunityDiagnostics | null>(null)
+  const [buildProviderAttempted, setBuildProviderAttempted] = useState(false)
+  const [buildProviderInFlight, setBuildProviderInFlight] = useState(false)
+  useEffect(() => {
+    if (!buildProviderRequestAnchorKey) {
+      setShadowBuildProviderSourceOpportunity(null)
+      setShadowBuildProviderDiagnostics(null)
+      setBuildProviderAttempted(false)
+      setBuildProviderInFlight(false)
+      return
+    }
+
+    const cachedAttempt = buildProviderAttemptedByAnchorKeyRef.current.get(
+      buildProviderRequestAnchorKey,
+    )
+    if (cachedAttempt) {
+      setShadowBuildProviderSourceOpportunity(cachedAttempt.sourceOpportunity)
+      setShadowBuildProviderDiagnostics(cachedAttempt.diagnostics)
+      setBuildProviderAttempted(cachedAttempt.attempted)
+      setBuildProviderInFlight(cachedAttempt.inFlight)
+      return
+    }
+
+    if (!selectedBuildAnchorVenue) {
+      return
+    }
+
+    buildProviderAttemptedByAnchorKeyRef.current.set(buildProviderRequestAnchorKey, {
+      sourceOpportunity: null,
+      diagnostics: null,
+      attempted: true,
+      inFlight: true,
+    })
+    setShadowBuildProviderSourceOpportunity(null)
+    setShadowBuildProviderDiagnostics(null)
+    setBuildProviderAttempted(true)
+    setBuildProviderInFlight(true)
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const result = await buildProviderSourceOpportunity({
+          anchorVenue: selectedBuildAnchorVenue,
+        })
+        if (cancelled) {
+          return
+        }
+        const settledAttempt: BuildProviderShadowInvocationSnapshot = {
+          sourceOpportunity: result.opportunity,
+          diagnostics: result.diagnostics,
+          attempted: true,
+          inFlight: false,
+        }
+        buildProviderAttemptedByAnchorKeyRef.current.set(
+          buildProviderRequestAnchorKey,
+          settledAttempt,
+        )
+        setShadowBuildProviderSourceOpportunity(result.opportunity)
+        setShadowBuildProviderDiagnostics(result.diagnostics)
+        setBuildProviderAttempted(true)
+        setBuildProviderInFlight(false)
+      } catch {
+        if (cancelled) {
+          return
+        }
+        buildProviderAttemptedByAnchorKeyRef.current.set(buildProviderRequestAnchorKey, {
+          sourceOpportunity: null,
+          diagnostics: null,
+          attempted: true,
+          inFlight: false,
+        })
+        setShadowBuildProviderSourceOpportunity(null)
+        setShadowBuildProviderDiagnostics(null)
+        setBuildProviderAttempted(true)
+        setBuildProviderInFlight(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [buildProviderRequestAnchorKey, selectedBuildAnchorVenue])
   const shadowBuildProviderVerifiedOpportunity =
     isBuildWrapperActive &&
     buildProviderIntegrationEnabled &&
+    buildProviderSupplyEnabled &&
     shadowBuildProviderSourceOpportunity
       ? adaptBuildProviderSourceOpportunityToVerifiedOpportunity({
           opportunity: shadowBuildProviderSourceOpportunity,
@@ -10186,10 +10314,14 @@ export function SandboxConciergePage() {
   const buildProviderSourceOpportunityAvailable = Boolean(
     shadowBuildProviderSourceOpportunity,
   )
+  const buildProviderSourceOpportunityId =
+    shadowBuildProviderSourceOpportunity?.id ?? null
   const buildProviderVerifiedOpportunityCount =
     shadowBuildProviderVerifiedOpportunity ? 1 : 0
   const buildProviderVerifiedOpportunityId =
     shadowBuildProviderVerifiedOpportunity?.id ?? null
+  const buildProviderBillableCount =
+    shadowBuildProviderDiagnostics?.buildProviderTraceBillableCallCount ?? null
   const buildStaticSourceOpportunityCount = isBuildWrapperActive
     ? step2PrimarySourceOpportunities.filter(
         (opportunity) => opportunity.sourceMode !== 'live',
@@ -10258,6 +10390,7 @@ export function SandboxConciergePage() {
   const shadowBuildProviderArtifact =
     isBuildWrapperActive &&
     buildProviderIntegrationEnabled &&
+    buildProviderSupplyEnabled &&
     shadowBuildProviderVerifiedOpportunity
       ? buildStep2CandidateRouteArtifact(shadowBuildProviderVerifiedOpportunity)
       : null
@@ -10281,8 +10414,13 @@ export function SandboxConciergePage() {
       ? null
       : !buildProviderIntegrationEnabled
         ? 'build_provider_step2_integration_disabled'
+        : !buildProviderSupplyEnabled
+          ? 'build_provider_supply_disabled'
+          : buildProviderInFlight
+            ? null
         : !shadowBuildProviderSourceOpportunity
-          ? 'build_provider_source_opportunity_unavailable'
+          ? shadowBuildProviderDiagnostics?.buildProviderSupplyBlockedReason ??
+            (buildProviderAttempted ? 'build_provider_source_opportunity_unavailable' : null)
           : !shadowBuildProviderVerifiedOpportunity
             ? 'provider_verified_opportunity_unavailable'
             : !shadowBuildProviderArtifact
@@ -17554,7 +17692,11 @@ export function SandboxConciergePage() {
       curateDisplayFallbackRouteArtifactsCount: curateDisplayFallbackRouteArtifacts.length,
       candidateRouteArtifactsForDisplayCount: candidateRouteArtifactsForDisplay.length,
       buildProviderIntegrationEnabled,
+      buildProviderSupplyEnabled,
+      buildProviderAttempted,
+      buildProviderInFlight,
       buildProviderSourceOpportunityAvailable,
+      buildProviderSourceOpportunityId,
       buildProviderVerifiedOpportunityCount,
       buildProviderVerifiedOpportunityId,
       buildProviderShadowArtifactCount,
@@ -17562,6 +17704,7 @@ export function SandboxConciergePage() {
       buildProviderShadowArtifactBuilt,
       buildProviderShadowArtifactFailureReason,
       buildProviderFallbackReason,
+      buildProviderBillableCount,
       buildStaticSourceOpportunityCount,
       buildLiveSourceOpportunityCount,
       buildProviderArtifactWouldMergeCount,
@@ -17691,15 +17834,20 @@ export function SandboxConciergePage() {
     admittedScenarioBackedVerifiedCityOpportunities,
     buildLiveCandidateArtifactCount,
     buildLiveSourceOpportunityCount,
+    buildProviderAttempted,
     buildProviderArtifactWouldMergeCount,
+    buildProviderBillableCount,
     buildProviderFallbackReason,
     buildProviderIntegrationEnabled,
+    buildProviderInFlight,
     buildProviderMergedIntoVisiblePool,
     buildProviderShadowArtifactBuilt,
     buildProviderShadowArtifactCount,
     buildProviderShadowArtifactFailureReason,
     buildProviderShadowArtifactId,
+    buildProviderSourceOpportunityId,
     buildProviderSourceOpportunityAvailable,
+    buildProviderSupplyEnabled,
     buildProviderVerifiedOpportunityCount,
     buildProviderVerifiedOpportunityId,
     buildStaticCandidateArtifactCount,
