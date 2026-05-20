@@ -218,6 +218,7 @@ const DEV_CLOSEOUT_ORIGIN_MODE_KEY = 'id8.dev.closeout.originMode'
 const DEV_CLOSEOUT_CURATE_STARTER_PACK_ID_KEY = 'id8.dev.closeout.curateStarterPackId'
 const DEV_CLOSEOUT_CURATE_READY_KEY = 'id8.dev.closeout.curateReady'
 const DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY = 'id8.dev.closeout.buildAnchorSelection'
+const DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY = 'id8.dev.closeout.buildAnchorResult'
 const DEV_CLOSEOUT_BUILD_READY_KEY = 'id8.dev.closeout.buildReady'
 const DEV_CLOSEOUT_BUILD_QUERY_KEY = 'id8.dev.closeout.buildQuery'
 
@@ -9023,6 +9024,17 @@ export function SandboxConciergePage() {
       return null
     }
   })
+  const [selectedBuildAnchorResult, setSelectedBuildAnchorResult] = useState<AnchorSearchResult | null>(() => {
+    const raw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY)
+    if (!raw) {
+      return null
+    }
+    try {
+      return JSON.parse(raw) as AnchorSearchResult
+    } catch {
+      return null
+    }
+  })
   const [buildAnchorReady, setBuildAnchorReady] = useState<boolean>(
     () => readSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY) === '1',
   )
@@ -9217,6 +9229,19 @@ export function SandboxConciergePage() {
             if (buildRefinementVibe === 'auto') {
               setPrimaryVibe(getBuildDefaultVibe(persistedSelection.category))
             }
+          }
+        } catch {
+          // noop
+        }
+      }
+      const persistedResultRaw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY)
+      if (persistedResultRaw) {
+        try {
+          const persistedResult = JSON.parse(persistedResultRaw) as AnchorSearchResult
+          if (persistedResult?.venue?.id) {
+            setSelectedBuildAnchorResult((current) =>
+              current?.venue.id === persistedResult.venue.id ? current : persistedResult,
+            )
           }
         } catch {
           // noop
@@ -10198,9 +10223,12 @@ export function SandboxConciergePage() {
   const selectedBuildAnchorVenue = useMemo(
     () =>
       isBuildWrapperActive && selectedBuildAnchor
-        ? buildAnchorResults.find((result) => result.venue.id === selectedBuildAnchor.venueId)?.venue ?? null
+        ? buildAnchorResults.find((result) => result.venue.id === selectedBuildAnchor.venueId)?.venue ??
+          (selectedBuildAnchorResult?.venue.id === selectedBuildAnchor.venueId
+            ? selectedBuildAnchorResult.venue
+            : null)
         : null,
-    [buildAnchorResults, isBuildWrapperActive, selectedBuildAnchor],
+    [buildAnchorResults, isBuildWrapperActive, selectedBuildAnchor, selectedBuildAnchorResult],
   )
   const buildProviderRequestAnchorKey = useMemo(
     () =>
@@ -12602,11 +12630,13 @@ export function SandboxConciergePage() {
   const resetBuildAttemptState = useCallback(() => {
     buildAnchorSearchAttemptRef.current += 1
     setSelectedBuildAnchor(null)
+    setSelectedBuildAnchorResult(null)
     setBuildAnchorReady(false)
     setBuildAnchorResults([])
     setBuildAnchorError(undefined)
     setBuildAnchorLoading(false)
     writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
+    writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
     writeSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY, '0')
     buildValidationAttemptRef.current = null
     autoDirectionSyncAttemptRef.current = null
@@ -12684,6 +12714,8 @@ export function SandboxConciergePage() {
       neighborhood: result.venue.neighborhood,
     }
     setSelectedBuildAnchor(selection)
+    setSelectedBuildAnchorResult(result)
+    writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, JSON.stringify(result))
     setBuildRefinementVibe('auto')
     setPrimaryVibe(getBuildDefaultVibe(result.venue.category))
     setBuildAnchorError(undefined)
@@ -19164,6 +19196,19 @@ export function SandboxConciergePage() {
             ? scenarioBackedOpportunityFixtureStopIds.join(', ')
             : 'none'}
         </div>
+        <div>buildProviderIntegrationEnabled: {String(buildProviderIntegrationEnabled)}</div>
+        <div>buildProviderSupplyEnabled: {String(buildProviderSupplyEnabled)}</div>
+        <div>buildProviderAttempted: {String(buildProviderAttempted)}</div>
+        <div>buildProviderInFlight: {String(buildProviderInFlight)}</div>
+        <div>
+          buildProviderSourceOpportunityAvailable:{' '}
+          {String(buildProviderSourceOpportunityAvailable)}
+        </div>
+        <div>buildProviderVerifiedOpportunityCount: {buildProviderVerifiedOpportunityCount}</div>
+        <div>buildProviderShadowArtifactBuilt: {String(buildProviderShadowArtifactBuilt)}</div>
+        <div>buildProviderFallbackReason: {buildProviderFallbackReason ?? 'none'}</div>
+        <div>buildProviderBillableCount: {buildProviderBillableCount ?? 'n/a'}</div>
+        <div>buildProviderMergedIntoVisiblePool: {String(buildProviderMergedIntoVisiblePool)}</div>
         {verticalDebugEnabled && (
           <>
             <div style={{ marginTop: '0.55rem', borderTop: '1px solid #d7dde2', paddingTop: '0.5rem' }}>
