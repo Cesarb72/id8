@@ -118,6 +118,7 @@ import { buildLiveDistrictVerifiedCityOpportunity } from '../domain/interpretati
 import {
   adaptBuildProviderSourceOpportunityToVerifiedOpportunity,
   isBuildProviderStep2IntegrationEnabled,
+  isBuildProviderVisibleMergeEnabled,
 } from '../domain/providers/adaptBuildProviderSourceOpportunityToVerifiedOpportunity'
 import {
   buildProviderSourceOpportunity,
@@ -1002,6 +1003,9 @@ interface SurpriseTryAnotherDebug {
   buildProviderShadowArtifactFailureReason: string | null
   buildProviderFallbackReason: string | null
   buildProviderBillableCount: number | null
+  buildProviderVisibleMergeEnabled: boolean
+  buildProviderFallbackPreviewVisible: boolean
+  buildProviderSelectionAllowed: boolean
   buildStaticSourceOpportunityCount: number
   buildLiveSourceOpportunityCount: number
   buildProviderArtifactWouldMergeCount: number
@@ -10250,6 +10254,7 @@ export function SandboxConciergePage() {
     [step2PrimarySourceOpportunities],
   )
   const buildProviderIntegrationEnabled = isBuildProviderStep2IntegrationEnabled()
+  const buildProviderVisibleMergeEnabled = isBuildProviderVisibleMergeEnabled()
   const buildProviderSupplyEnabled = isBuildProviderSupplyEnabled()
   const selectedBuildAnchorVenue = useMemo(
     () =>
@@ -11008,6 +11013,15 @@ export function SandboxConciergePage() {
     isCurateWrapperActive,
   ])
   const candidateRouteArtifactsForDisplay = curateDisplayDedupeResult.artifacts
+  const buildProviderFallbackPreviewVisible = Boolean(
+    isBuildWrapperActive &&
+      buildProviderIntegrationEnabled &&
+      buildProviderVisibleMergeEnabled &&
+      buildProviderSupplyEnabled &&
+      shadowBuildProviderArtifact &&
+      candidateRouteArtifactsForDisplay.length === 0,
+  )
+  const buildProviderSelectionAllowed = false
   const curateDisplayDedupeDebug = curateDisplayDedupeResult.debug
   const curateVisibleCardModels = useMemo<CurateVisibleCardModel[]>(() => {
     return candidateRouteArtifactsForDisplay.map((artifact) =>
@@ -17817,6 +17831,9 @@ export function SandboxConciergePage() {
       buildProviderShadowArtifactFailureReason,
       buildProviderFallbackReason,
       buildProviderBillableCount,
+      buildProviderVisibleMergeEnabled,
+      buildProviderFallbackPreviewVisible,
+      buildProviderSelectionAllowed,
       buildStaticSourceOpportunityCount,
       buildLiveSourceOpportunityCount,
       buildProviderArtifactWouldMergeCount,
@@ -17957,9 +17974,12 @@ export function SandboxConciergePage() {
     buildProviderShadowArtifactCount,
     buildProviderShadowArtifactFailureReason,
     buildProviderShadowArtifactId,
+    buildProviderFallbackPreviewVisible,
     buildProviderSourceOpportunityId,
     buildProviderSourceOpportunityAvailable,
+    buildProviderSelectionAllowed,
     buildProviderSupplyEnabled,
+    buildProviderVisibleMergeEnabled,
     buildProviderVerifiedOpportunityCount,
     buildProviderVerifiedOpportunityId,
     buildStaticCandidateArtifactCount,
@@ -19277,6 +19297,7 @@ export function SandboxConciergePage() {
             : 'none'}
         </div>
         <div>buildProviderIntegrationEnabled: {String(buildProviderIntegrationEnabled)}</div>
+        <div>buildProviderVisibleMergeEnabled: {String(buildProviderVisibleMergeEnabled)}</div>
         <div>buildProviderSupplyEnabled: {String(buildProviderSupplyEnabled)}</div>
         <div>buildProviderAttempted: {String(buildProviderAttempted)}</div>
         <div>buildProviderInFlight: {String(buildProviderInFlight)}</div>
@@ -19288,6 +19309,10 @@ export function SandboxConciergePage() {
         <div>buildProviderShadowArtifactBuilt: {String(buildProviderShadowArtifactBuilt)}</div>
         <div>buildProviderFallbackReason: {buildProviderFallbackReason ?? 'none'}</div>
         <div>buildProviderBillableCount: {buildProviderBillableCount ?? 'n/a'}</div>
+        <div>
+          buildProviderFallbackPreviewVisible: {String(buildProviderFallbackPreviewVisible)}
+        </div>
+        <div>buildProviderSelectionAllowed: {String(buildProviderSelectionAllowed)}</div>
         <div>buildProviderMergedIntoVisiblePool: {String(buildProviderMergedIntoVisiblePool)}</div>
         {verticalDebugEnabled && (
           <>
@@ -22148,10 +22173,22 @@ export function SandboxConciergePage() {
         )}
         <div className="step2-night-options">
           <p className="step2-night-options-label">Choose tonight's direction</p>
-          {isBuildWrapperActive && selectedBuildAnchor && candidateRouteArtifactsForDisplay.length === 0 && (
+          {isBuildWrapperActive &&
+            selectedBuildAnchor &&
+            candidateRouteArtifactsForDisplay.length === 0 &&
+            !buildProviderFallbackPreviewVisible && (
             <p className="preview-notice-copy">
               No anchor-valid routes are available for "{selectedBuildAnchor.name}" in this context.
             </p>
+            )}
+          {isBuildWrapperActive && selectedBuildAnchor && buildProviderFallbackPreviewVisible && (
+            <div className="preview-notice draft-feedback">
+              <p className="preview-notice-title">Provider-backed fallback preview</p>
+              <p className="preview-notice-copy">
+                No static anchor-valid routes are available for "{selectedBuildAnchor.name}" right now.
+                The preview below is debug-visible only and is not selectable yet.
+              </p>
+            </div>
           )}
           {isCurateWrapperActive &&
             curatePrimaryCardDisplay.primaryCardDisplayMode === 'qualified_only' &&
@@ -22246,6 +22283,85 @@ export function SandboxConciergePage() {
                 </button>
               )
             })}
+            {buildProviderFallbackPreviewVisible && shadowBuildProviderArtifact && (
+              <div
+                className="district-card step2-night-option"
+                aria-label="Provider-backed fallback preview"
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '0.75rem',
+                    marginBottom: '0.6rem',
+                  }}
+                >
+                  <h5 className="step2-night-option-anchor-title" style={{ marginBottom: 0 }}>
+                    {shadowBuildProviderArtifact.routeTitle}
+                  </h5>
+                  <span className="step2-night-option-trait">Provider fallback preview</span>
+                </div>
+                <p className="step2-night-option-flavor-line">
+                  {shadowBuildProviderArtifact.routeSummary}
+                </p>
+                <div className="step2-night-option-traits">
+                  {shadowBuildProviderArtifact.traits.slice(0, 3).map((trait) => (
+                    <span
+                      key={`${shadowBuildProviderArtifact.id}_${trait}`}
+                      className="step2-night-option-trait"
+                    >
+                      {trait}
+                    </span>
+                  ))}
+                  <span className="step2-night-option-trait">
+                    sourceMode: {shadowBuildProviderArtifact.sourceMode ?? 'n/a'}
+                  </span>
+                </div>
+                <div className="step2-night-option-story-spine">
+                  <div className="step2-night-option-story-row">
+                    <span className="step2-night-option-story-role">Start</span>
+                    <span className="step2-night-option-story-stop">
+                      {shadowBuildProviderArtifact.storySpine.start}
+                    </span>
+                  </div>
+                  <div className="step2-night-option-story-row highlight">
+                    <span className="step2-night-option-story-role">Highlight</span>
+                    <span className="step2-night-option-story-stop">
+                      {shadowBuildProviderArtifact.storySpine.highlight}
+                    </span>
+                  </div>
+                  <div className="step2-night-option-story-row">
+                    <span className="step2-night-option-story-role">Wind-down</span>
+                    <span className="step2-night-option-story-stop">
+                      {shadowBuildProviderArtifact.storySpine.windDown}
+                    </span>
+                  </div>
+                </div>
+                <p className="step2-night-option-context">
+                  {shadowBuildProviderArtifact.districtLine}
+                </p>
+                <p className="step2-night-option-match">
+                  Provider-backed fallback preview only. This route is not in the selectable Build
+                  candidate pool yet.
+                </p>
+                <p className="step2-night-option-match">
+                  Selection is disabled until provider artifacts are merged into the real Build
+                  candidate path.
+                </p>
+                <p className="step2-night-option-match">
+                  {shadowBuildProviderArtifact.whyChooseLine}
+                </p>
+                <p className="step2-night-option-match">
+                  {shadowBuildProviderArtifact.authorityLine}
+                </p>
+                {shadowBuildProviderArtifact.whyTonightProofLine ? (
+                  <p className="step2-night-option-match">
+                    {shadowBuildProviderArtifact.whyTonightProofLine}
+                  </p>
+                ) : null}
+              </div>
+            )}
           </div>
           {isCurateWrapperActive && selectedCandidateRouteArtifact && selectedCuratePreviewCommitability && (
             <div className="preview-notice draft-feedback">

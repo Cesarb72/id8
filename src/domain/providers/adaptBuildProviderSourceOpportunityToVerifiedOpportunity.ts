@@ -14,6 +14,8 @@ import type { BuildProviderSourceOpportunity } from './buildProviderSourceOpport
 
 const BUILD_PROVIDER_STEP2_INTEGRATION_ENV_FLAG =
   'VITE_ID8_BUILD_PROVIDER_STEP2_INTEGRATION'
+const BUILD_PROVIDER_VISIBLE_MERGE_ENV_FLAG =
+  'VITE_ID8_BUILD_PROVIDER_VISIBLE_MERGE'
 
 export interface BuildProviderShadowIntegrationDiagnostics {
   buildProviderIntegrationEnabled: boolean
@@ -59,6 +61,13 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
 export function isBuildProviderStep2IntegrationEnabled(): boolean {
   return (
     parseBooleanEnv(readEnvValue(BUILD_PROVIDER_STEP2_INTEGRATION_ENV_FLAG)) ===
+    true
+  )
+}
+
+export function isBuildProviderVisibleMergeEnabled(): boolean {
+  return (
+    parseBooleanEnv(readEnvValue(BUILD_PROVIDER_VISIBLE_MERGE_ENV_FLAG)) ===
     true
   )
 }
@@ -422,4 +431,5 @@ export function adaptBuildProviderSourceOpportunityToVerifiedOpportunity(
 
 export const buildProviderStep2IntegrationConfig = {
   envFlag: BUILD_PROVIDER_STEP2_INTEGRATION_ENV_FLAG,
+  visibleMergeEnvFlag: BUILD_PROVIDER_VISIBLE_MERGE_ENV_FLAG,
 }
