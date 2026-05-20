@@ -151,6 +151,7 @@ import {
   readDevGreatStopFixturesEnvRaw,
   readDevGreatStopFixturesEnabled,
 } from '../domain/sources/devGreatStopFixtures'
+import { isDevOrSandboxCloseoutFlow } from '../domain/sources/getSourceMode'
 import { mapVenueToTasteInput } from '../domain/interpretation/taste/mapVenueToTasteInput'
 import { interpretVenueTaste } from '../domain/interpretation/taste/interpretVenueTaste'
 import {
@@ -4766,6 +4767,34 @@ type BuildProviderShadowInvocationSnapshot = {
   diagnostics: BuildProviderSourceOpportunityDiagnostics | null
   attempted: boolean
   inFlight: boolean
+}
+
+function buildDevSandboxBlockedProviderShadowDiagnostics(
+  anchorVenue: Venue,
+): BuildProviderSourceOpportunityDiagnostics {
+  return {
+    buildProviderSupplyEnabled: true,
+    buildProviderAnchorCanonicalVenueId: anchorVenue.id?.trim() || null,
+    buildProviderAnchorProviderRecordId: null,
+    buildProviderNearbyVenueCount: 0,
+    buildProviderSuppressedVenueCount: 0,
+    buildProviderRoleCandidateCounts: {
+      start: 0,
+      highlight: 0,
+      windDown: 0,
+    },
+    buildProviderSourceOpportunityEmitted: false,
+    buildProviderSupplyBlockedReason: 'provider_request_blocked',
+    buildProviderTraceBillableCallCount: 0,
+    suppressionReasons: [],
+    nearbyCandidateReviews: [],
+    roleCandidateReviewSummaries: [],
+    canonicalMappings: [],
+    completeness: [],
+    equivalence: [],
+    trace: null,
+    ledger: null,
+  }
 }
 
 function normalizeCanonicalCity(value: string): string {
@@ -10280,6 +10309,24 @@ export function SandboxConciergePage() {
     }
 
     if (!selectedBuildAnchorVenue) {
+      return
+    }
+
+    if (isDevOrSandboxCloseoutFlow()) {
+      const blockedAttempt: BuildProviderShadowInvocationSnapshot = {
+        sourceOpportunity: null,
+        diagnostics: buildDevSandboxBlockedProviderShadowDiagnostics(selectedBuildAnchorVenue),
+        attempted: true,
+        inFlight: false,
+      }
+      buildProviderAttemptedByAnchorKeyRef.current.set(
+        buildProviderRequestAnchorKey,
+        blockedAttempt,
+      )
+      setShadowBuildProviderSourceOpportunity(null)
+      setShadowBuildProviderDiagnostics(blockedAttempt.diagnostics)
+      setBuildProviderAttempted(true)
+      setBuildProviderInFlight(false)
       return
     }
 
