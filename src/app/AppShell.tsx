@@ -962,22 +962,37 @@ function buildPublicLockRuntimeRouteTruth(params: {
   persona: PersonaMode
   vibe: VibeAnchor
   mode: ExperienceMode
-}): {
-  selectedClusterConfirmation: string
-  itinerary: Itinerary
-  finalRoute: ReturnType<typeof buildFinalRoute>
-  lockSafeItineraryStops: Itinerary['stops']
-} | null {
+}):
+  | {
+      ok: true
+      selectedClusterConfirmation: string
+      itinerary: Itinerary
+      finalRoute: ReturnType<typeof buildFinalRoute>
+      lockSafeItineraryStops: Itinerary['stops']
+    }
+  | {
+      ok: false
+      reason: string
+    } {
   const { itinerary, scoredVenues, selectedDirectionId, selectedClusterConfirmation } = params
   if (!selectedDirectionId.trim() || !selectedClusterConfirmation.trim()) {
-    return null
+    return { ok: false, reason: 'missing_selected_direction_id' }
   }
 
   const lockSafeItineraryStops = itinerary.stops.filter(
     (stop) => stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown',
   )
-  if (lockSafeItineraryStops.length < 3) {
-    return null
+  const startStop = lockSafeItineraryStops.find((stop) => stop.role === 'start')
+  if (!startStop) {
+    return { ok: false, reason: 'missing_core_stop:start' }
+  }
+  const highlightStop = lockSafeItineraryStops.find((stop) => stop.role === 'highlight')
+  if (!highlightStop) {
+    return { ok: false, reason: 'missing_core_stop:highlight' }
+  }
+  const windDownStop = lockSafeItineraryStops.find((stop) => stop.role === 'windDown')
+  if (!windDownStop) {
+    return { ok: false, reason: 'missing_core_stop:windDown' }
   }
 
   const scoredVenueByVenueId = new Map(scoredVenues.map((item) => [item.venue.id, item] as const))
@@ -997,19 +1012,29 @@ function buildPublicLockRuntimeRouteTruth(params: {
     >
   >((next, stop) => {
     const scoredVenue = scoredVenueByVenueId.get(stop.venueId)
+    if (!scoredVenue) {
+      next.__failure = `missing_scored_venue:${stop.role}:${stop.venueId}`
+      return next
+    }
     const providerRecordId = scoredVenue?.venue.source.providerRecordId?.trim()
     const addressLine = scoredVenue?.venue.source.formattedAddress?.trim()
     const latitude = scoredVenue?.venue.source.latitude
     const longitude = scoredVenue?.venue.source.longitude
+    if (!providerRecordId) {
+      next.__failure = `missing_provider_record_id:${stop.role}:${stop.venueId}`
+      return next
+    }
+    if (!addressLine) {
+      next.__failure = `missing_formatted_address:${stop.role}:${stop.venueId}`
+      return next
+    }
     if (
-      !scoredVenue ||
-      !providerRecordId ||
-      !addressLine ||
       typeof latitude !== 'number' ||
       !Number.isFinite(latitude) ||
       typeof longitude !== 'number' ||
       !Number.isFinite(longitude)
     ) {
+      next.__failure = `missing_coordinates:${stop.role}:${stop.venueId}`
       return next
     }
     next[stop.role] = {
@@ -1022,13 +1047,16 @@ function buildPublicLockRuntimeRouteTruth(params: {
     }
     return next
   }, {})
+  if (typeof canonicalStopByRole.__failure === 'string') {
+    return { ok: false, reason: canonicalStopByRole.__failure }
+  }
 
   if (
     !canonicalStopByRole.start ||
     !canonicalStopByRole.highlight ||
     !canonicalStopByRole.windDown
   ) {
-    return null
+    return { ok: false, reason: 'missing_canonical_stop_identity' }
   }
 
   const finalRoute = buildFinalRoute({
@@ -1047,10 +1075,11 @@ function buildPublicLockRuntimeRouteTruth(params: {
     routeSummary: itinerary.storySpine?.routeSummary ?? itinerary.shareSummary,
   })
   if (!finalRoute) {
-    return null
+    return { ok: false, reason: 'build_final_route_failed' }
   }
 
   return {
+    ok: true,
     selectedClusterConfirmation,
     itinerary: {
       ...itinerary,
@@ -1105,6 +1134,7 @@ function AppShellContent({
   const [lceTraceNote, setLceTraceNote] = useState<string>()
   const [planAdjustmentFeedback, setPlanAdjustmentFeedback] = useState<PlanAdjustmentFeedback>()
   const [lockFailureMessage, setLockFailureMessage] = useState<string | null>(null)
+  const [lockFailureDiagnostic, setLockFailureDiagnostic] = useState<string | null>(null)
   const [pendingPlanAdjustment, setPendingPlanAdjustment] = useState<
     PendingPlanAdjustmentContext | undefined
   >()
@@ -1207,8 +1237,30 @@ function AppShellContent({
     setLandingNotice(consumeLiveArtifactExitNotice())
   }, [])
 
+  useEffect(() => {
+    if (!lockFailureDiagnostic || !(environment === 'dev' || debugFlags.debugMode)) {
+      return
+    }
+    console.warn('[ID8 LOCK FAIL-CLOSED]', {
+      diagnostic: lockFailureDiagnostic,
+      currentStep: state.currentStep,
+      mode: state.mode,
+      selectedDirectionId: publicLockSelectedDirectionId || null,
+      itineraryId: baselineVisibleItinerary?.id ?? null,
+    })
+  }, [
+    baselineVisibleItinerary?.id,
+    debugFlags.debugMode,
+    environment,
+    lockFailureDiagnostic,
+    publicLockSelectedDirectionId,
+    state.currentStep,
+    state.mode,
+  ])
+
   const handleAnchorSelect = (venue: Venue) => {
     setLockFailureMessage(null)
+    setLockFailureDiagnostic(null)
     actions.clearDistrictPreview()
     actions.clearDiscoveryPreview()
     actions.setDiscoverySelection([])
@@ -1224,6 +1276,7 @@ function AppShellContent({
 
   const handlePublicLockToLive = () => {
     setLockFailureMessage(null)
+    setLockFailureDiagnostic(null)
     if (
       environment !== 'default' ||
       !baselineVisibleItinerary ||
@@ -1233,6 +1286,17 @@ function AppShellContent({
       !publicLockVibe
     ) {
       setLockFailureMessage(buildPublicLockFailureMessage())
+      setLockFailureDiagnostic(
+        !baselineVisibleItinerary
+          ? 'missing_itinerary'
+          : !state.generatedArc
+            ? 'missing_generated_arc'
+            : !state.scoredVenues
+              ? 'missing_scored_venues'
+              : !publicLockPersona
+                ? 'missing_persona'
+                : 'missing_vibe',
+      )
       return
     }
 
@@ -1246,8 +1310,9 @@ function AppShellContent({
       vibe: publicLockVibe,
       mode: state.mode ?? state.lastIntentProfile?.mode ?? 'build',
     })
-    if (!routeTruth) {
+    if (!routeTruth.ok) {
       setLockFailureMessage(buildPublicLockFailureMessage())
+      setLockFailureDiagnostic(routeTruth.reason)
       return
     }
 
@@ -1263,6 +1328,11 @@ function AppShellContent({
     })
     if (!lockSaveResult.ok) {
       setLockFailureMessage(buildPublicLockFailureMessage())
+      setLockFailureDiagnostic(
+        lockSaveResult.failureReason
+          ? `save_locked_live_artifact_failed:${lockSaveResult.failureReason}`
+          : 'save_locked_live_artifact_failed',
+      )
       return
     }
 
@@ -2779,6 +2849,9 @@ function AppShellContent({
             <div className="preview-notice draft-feedback">
               <p className="preview-notice-title">Unable to lock route</p>
               <p className="preview-notice-copy">{lockFailureMessage}</p>
+              {(environment === 'dev' || debugFlags.debugMode) && lockFailureDiagnostic && (
+                <p className="preview-notice-copy">Debug: {lockFailureDiagnostic}</p>
+              )}
             </div>
           )}
           <RevealPage
@@ -2804,6 +2877,7 @@ function AppShellContent({
             showExtensions={false}
             onBackToPreview={() => {
               setLockFailureMessage(null)
+              setLockFailureDiagnostic(null)
               actions.setStep('preview')
             }}
             onLock={() => {
@@ -2816,6 +2890,7 @@ function AppShellContent({
             }}
             onStartOver={() => {
               setLockFailureMessage(null)
+              setLockFailureDiagnostic(null)
               if (environment === 'dev') {
                 window.location.assign('/dev/home')
                 return
