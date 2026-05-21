@@ -29,6 +29,7 @@ interface RevealPageProps {
   showRoadmap?: boolean
   showExtensions?: boolean
   showDebugPanels?: boolean
+  lockDisabled?: boolean
   onShowSwap: (role: UserStopRole) => void
   onShowNearby: (role: UserStopRole) => void
   onApplySwap: (role: UserStopRole, venueId: string) => void
@@ -151,6 +152,7 @@ export function RevealPage({
   showRoadmap = true,
   showExtensions = true,
   showDebugPanels = true,
+  lockDisabled = false,
   onShowSwap,
   onShowNearby,
   onApplySwap,
@@ -235,7 +237,12 @@ export function RevealPage({
               >
                 Refine It
               </button>
-              <button type="button" className="primary-button" onClick={onLock}>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={onLock}
+                disabled={lockDisabled}
+              >
                 Lock this night
               </button>
             </>

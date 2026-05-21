@@ -1218,6 +1218,22 @@ function AppShellContent({
     }
     return buildBaselineVisibleItinerary(state.generatedItinerary)
   }, [state.generatedItinerary])
+  const hasPublicLockStart = Boolean(
+    baselineVisibleItinerary?.stops.some((stop) => stop.role === 'start'),
+  )
+  const hasPublicLockHighlight = Boolean(
+    baselineVisibleItinerary?.stops.some((stop) => stop.role === 'highlight'),
+  )
+  const hasPublicLockWindDown = Boolean(
+    baselineVisibleItinerary?.stops.some((stop) => stop.role === 'windDown'),
+  )
+  const publicLockEligible =
+    environment !== 'default' ||
+    (hasPublicLockStart && hasPublicLockHighlight && hasPublicLockWindDown)
+  const publicLockIneligibleMessage =
+    environment === 'default' && !publicLockEligible
+      ? 'Locking needs a full Start, Highlight, and Wind-down route. Try refining or starting over.'
+      : null
   const publicLockSelectedDirectionId =
     state.selectedDiscoveryDirectionContext?.directionId?.trim() ||
     state.lastIntentProfile?.selectedDirectionContext?.directionId?.trim() ||
@@ -2856,7 +2872,13 @@ function AppShellContent({
 
       {state.currentStep === 'reveal' && state.generatedItinerary && (
         <>
-          {lockFailureMessage && (
+          {publicLockIneligibleMessage && (
+            <div className="preview-notice draft-feedback">
+              <p className="preview-notice-title">Unable to lock route</p>
+              <p className="preview-notice-copy">{publicLockIneligibleMessage}</p>
+            </div>
+          )}
+          {lockFailureMessage && publicLockEligible && (
             <div className="preview-notice draft-feedback">
               <p className="preview-notice-title">Unable to lock route</p>
               <p className="preview-notice-copy">{lockFailureMessage}</p>
@@ -2886,6 +2908,7 @@ function AppShellContent({
             showDebugPanels={false}
             showRoadmap={false}
             showExtensions={false}
+            lockDisabled={environment === 'default' && !publicLockEligible}
             onBackToPreview={() => {
               setLockFailureMessage(null)
               setLockFailureDiagnostic(null)
@@ -2893,6 +2916,9 @@ function AppShellContent({
             }}
             onLock={() => {
               if (environment === 'default') {
+                if (!publicLockEligible) {
+                  return
+                }
                 handlePublicLockToLive()
                 return
               }
