@@ -27,7 +27,12 @@ export interface ProviderCallTrace {
   resultCount: number
   mappedCount: number
   suppressedCount: number
+  // Preserves the existing "successful query count" semantics for now.
+  // This is not the same as outbound HTTP attempts when provider requests fail.
   billableCallCount: number
+  // Counts every outbound HTTP attempt actually issued by the adapter so app-side
+  // telemetry can be reconciled with provider dashboard request metrics.
+  attemptedHttpRequestCount: number
   failureReason?: string
   requestedAt: number
   sourceMode?: SourceMode
@@ -37,6 +42,7 @@ export interface ProviderCallLedger {
   traces: ProviderCallTrace[]
   totalAttempted: number
   totalBillable: number
+  totalAttemptedHttpRequests: number
   totalBlocked: number
   totalFailed: number
   byPurpose: Record<ProviderCallPurpose, number>
@@ -57,6 +63,7 @@ export function createProviderCallTrace(input: {
   mappedCount: number
   suppressedCount: number
   billableCallCount: number
+  attemptedHttpRequestCount: number
   requestedAt?: number
   blockedReason?: string
   failureReason?: string
@@ -77,6 +84,7 @@ export function createProviderCallTrace(input: {
     mappedCount: input.mappedCount,
     suppressedCount: input.suppressedCount,
     billableCallCount: input.billableCallCount,
+    attemptedHttpRequestCount: input.attemptedHttpRequestCount,
     failureReason: input.failureReason,
     requestedAt,
     sourceMode: input.sourceMode,
@@ -102,6 +110,7 @@ export function createBlockedProviderTrace(input: {
     mappedCount: 0,
     suppressedCount: 0,
     billableCallCount: 0,
+    attemptedHttpRequestCount: 0,
     requestedAt: input.requestedAt,
     sourceMode: input.sourceMode,
   })
@@ -126,6 +135,10 @@ export function summarizeProviderCallLedger(
     traces,
     totalAttempted: traces.filter((trace) => trace.attempted).length,
     totalBillable: traces.reduce((sum, trace) => sum + trace.billableCallCount, 0),
+    totalAttemptedHttpRequests: traces.reduce(
+      (sum, trace) => sum + trace.attemptedHttpRequestCount,
+      0,
+    ),
     totalBlocked: traces.filter((trace) => trace.blockedByEnv).length,
     totalFailed: traces.filter((trace) => trace.status === 'failed').length,
     byPurpose,

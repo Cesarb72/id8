@@ -431,36 +431,52 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
     }
   }
 
-  const settled = await Promise.allSettled(
-    input.queries.map(async (query) => ({
-      places: await queryGoogleTextSearch(
-        query,
-        config.apiKey!,
-        config.endpoint,
-        config.languageCode,
-        config.regionCode,
-      ),
-      query,
-    })),
+  const settled = await Promise.all(
+    input.queries.map(async (query) => {
+      try {
+        const places = await queryGoogleTextSearch(
+          query,
+          config.apiKey!,
+          config.endpoint,
+          config.languageCode,
+          config.regionCode,
+        )
+        return {
+          attemptedHttpRequestCount: 1,
+          places,
+          query,
+          status: 'fulfilled' as const,
+        }
+      } catch (error) {
+        return {
+          attemptedHttpRequestCount: 1,
+          error:
+            error instanceof Error
+              ? error.message
+              : String(error),
+          query,
+          status: 'rejected' as const,
+        }
+      }
+    }),
   )
 
   const errors: string[] = []
   const queryCounts: Array<{ queryLabel: string; resultCount: number }> = []
   const results: T[] = []
   let resultCount = 0
+  let attemptedHttpRequestCount = 0
   const fetchedAt = Date.now()
 
   for (const settledResult of settled) {
+    attemptedHttpRequestCount += settledResult.attemptedHttpRequestCount
+
     if (settledResult.status === 'rejected') {
-      errors.push(
-        settledResult.reason instanceof Error
-          ? settledResult.reason.message
-          : String(settledResult.reason),
-      )
+      errors.push(settledResult.error)
       continue
     }
 
-    const { places, query } = settledResult.value
+    const { places, query } = settledResult
     queryCounts.push({
       queryLabel: query.queryLabel,
       resultCount: places.length,
@@ -491,7 +507,10 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
     resultCount,
     mappedCount: results.length,
     suppressedCount: Math.max(0, resultCount - results.length),
+    // Preserve the existing "fulfilled provider query" semantics for now.
     billableCallCount: queryCounts.length,
+    // Count every outbound fetch attempt, including failed/non-OK responses.
+    attemptedHttpRequestCount,
     requestedAt,
     failureReason:
       results.length === 0 && errors.length > 0
