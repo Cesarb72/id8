@@ -975,8 +975,11 @@ function buildPublicLockRuntimeRouteTruth(params: {
       reason: string
     } {
   const { itinerary, scoredVenues, selectedDirectionId, selectedClusterConfirmation } = params
-  if (!selectedDirectionId.trim() || !selectedClusterConfirmation.trim()) {
+  if (!selectedDirectionId.trim()) {
     return { ok: false, reason: 'missing_selected_direction_id' }
+  }
+  if (!selectedClusterConfirmation.trim()) {
+    return { ok: false, reason: 'missing_selected_cluster_confirmation' }
   }
 
   const lockSafeItineraryStops = itinerary.stops.filter(
@@ -1218,6 +1221,9 @@ function AppShellContent({
   const publicLockSelectedDirectionId =
     state.selectedDiscoveryDirectionContext?.directionId?.trim() ||
     state.lastIntentProfile?.selectedDirectionContext?.directionId?.trim() ||
+    (environment === 'default' && state.generatedArc?.id
+      ? `generated-route:${state.generatedArc.id}`
+      : '') ||
     ''
   const publicLockPersona =
     state.intentDraft.persona ?? state.lastIntentProfile?.persona ?? null
