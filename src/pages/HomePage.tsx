@@ -51,7 +51,6 @@ export function HomePage() {
   const currentPath =
     typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : ''
   const isDevHome = currentPath.startsWith('/dev')
-  const surpriseStartPath = '/dev/start/surprise'
   const startPrefix = isDevHome ? '/dev/start' : '/start'
   const plansPath = isDevHome ? '/dev/plans' : '/plans'
   const homeState = loadLiveArtifactHomeState()
@@ -143,7 +142,7 @@ export function HomePage() {
             <h2>Start something new</h2>
           </div>
           <div className="home-v1-mode-grid">
-            <a className="home-v1-mode-card" href={surpriseStartPath}>
+            <a className="home-v1-mode-card" href={`${startPrefix}/surprise`}>
               <span>Surprise Me</span>
               <small>Just go.</small>
             </a>

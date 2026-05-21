@@ -1,6 +1,5 @@
 import { AppShell } from './app/AppShell'
 import { DevHomePage } from './pages/DevHomePage'
-import { DemoPage } from './pages/DemoPage'
 import { HomePage } from './pages/HomePage'
 import { LiveJourneyPage } from './pages/LiveJourneyPage'
 import { PlansHubPage } from './pages/PlansHubPage'
@@ -58,10 +57,17 @@ function App() {
     normalizedPathname = '/dev/home'
   }
   const startModeMatch = normalizedPathname.match(/^\/start\/(surprise|curate|build)\/?$/)
-  let page = <DemoPage />
+  const showEnvironmentAccessBar =
+    normalizedPathname === '/dev/home' ||
+    normalizedPathname === '/archive' ||
+    normalizedPathname === '/dev' ||
+    normalizedPathname === '/sandbox' ||
+    normalizedPathname.startsWith('/dev/') ||
+    normalizedPathname.startsWith('/sandbox/')
+  let page = <HomePage />
 
   if (normalizedPathname === '/') {
-    page = <DemoPage />
+    page = <HomePage />
   } else if (startModeMatch?.[1]) {
     page = <AppShell initialMode={startModeMatch[1] as ExperienceMode} />
   }
@@ -99,7 +105,7 @@ function App() {
 
   return (
     <>
-      <EnvironmentAccessBar currentPath={normalizedPathname} />
+      {showEnvironmentAccessBar && <EnvironmentAccessBar currentPath={normalizedPathname} />}
       {page}
     </>
   )
