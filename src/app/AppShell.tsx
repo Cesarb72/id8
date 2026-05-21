@@ -1147,6 +1147,10 @@ function AppShellContent({
     () => starterPacks.find((pack) => pack.id === state.selectedStarterPackId),
     [state.selectedStarterPackId],
   )
+  const verticalDebugEnvValue = String(import.meta.env.VITE_VERTICAL_DEBUG ?? '')
+  const verticalDebugEnabled = ['1', 'true', 'on'].includes(
+    verticalDebugEnvValue.trim().toLowerCase(),
+  )
   const queryDebugFlags = getDebugQueryFlags()
   const debugFlags =
     environment === 'dev'
@@ -1155,6 +1159,8 @@ function AppShellContent({
           debugMode: true,
         }
       : queryDebugFlags
+  const showLockFailureDiagnostics =
+    environment === 'dev' || debugFlags.debugMode || verticalDebugEnabled
   const appShellFlowPhase = useMemo(
     () =>
       mapLegacyFlowStepToArcFlowPhase({
@@ -1238,7 +1244,7 @@ function AppShellContent({
   }, [])
 
   useEffect(() => {
-    if (!lockFailureDiagnostic || !(environment === 'dev' || debugFlags.debugMode)) {
+    if (!lockFailureDiagnostic || !showLockFailureDiagnostics) {
       return
     }
     console.warn('[ID8 LOCK FAIL-CLOSED]', {
@@ -1250,10 +1256,9 @@ function AppShellContent({
     })
   }, [
     baselineVisibleItinerary?.id,
-    debugFlags.debugMode,
-    environment,
     lockFailureDiagnostic,
     publicLockSelectedDirectionId,
+    showLockFailureDiagnostics,
     state.currentStep,
     state.mode,
   ])
@@ -2849,7 +2854,7 @@ function AppShellContent({
             <div className="preview-notice draft-feedback">
               <p className="preview-notice-title">Unable to lock route</p>
               <p className="preview-notice-copy">{lockFailureMessage}</p>
-              {(environment === 'dev' || debugFlags.debugMode) && lockFailureDiagnostic && (
+              {showLockFailureDiagnostics && lockFailureDiagnostic && (
                 <p className="preview-notice-copy">Debug: {lockFailureDiagnostic}</p>
               )}
             </div>
