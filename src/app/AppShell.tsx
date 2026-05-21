@@ -39,6 +39,7 @@ import { buildContinuationPreviewContract } from '../domain/lce/continuationCont
 import { normalizeRawPlace } from '../domain/normalize/normalizeRawPlace'
 import { getNearbyAlternatives } from '../domain/retrieval/getNearbyAlternatives'
 import { scoreVenueFit } from '../domain/retrieval/scoreVenueFit'
+import { buildFinalRoute } from '../domain/artifacts/runtimeRouteProjection'
 import {
   generatePlanAdjustmentFeedback,
 } from '../domain/interpretation/adjustment/generatePlanAdjustmentFeedback'
@@ -76,12 +77,14 @@ import {
   consumeLiveArtifactExitNotice,
   type LiveArtifactExitNotice,
 } from '../domain/live/liveArtifactSession'
+import { saveLockedLiveArtifactSession } from './services/live/liveSessionHandoff'
 import {
   getVibeLabel,
   type ExperienceMode,
   type PreferredDiscoveryVenue,
   type IntentInput,
   type IntentProfile,
+  type PersonaMode,
   type VibeAnchor,
 } from '../domain/types/intent'
 import type { ArcCandidate, ScoredVenue } from '../domain/types/arc'
@@ -946,6 +949,118 @@ function buildAuthoredRouteConflictMessage(): string {
   return 'Could not fully preserve your edited route shape because the updated plan context created a hard fit conflict.'
 }
 
+function buildPublicLockFailureMessage(): string {
+  return "We couldn't save this route. Try locking again."
+}
+
+function buildPublicLockRuntimeRouteTruth(params: {
+  itinerary: Itinerary
+  scoredVenues: ScoredVenue[]
+  selectedDirectionId: string
+  selectedClusterConfirmation: string
+  city: string
+  persona: PersonaMode
+  vibe: VibeAnchor
+  mode: ExperienceMode
+}): {
+  selectedClusterConfirmation: string
+  itinerary: Itinerary
+  finalRoute: ReturnType<typeof buildFinalRoute>
+  lockSafeItineraryStops: Itinerary['stops']
+} | null {
+  const { itinerary, scoredVenues, selectedDirectionId, selectedClusterConfirmation } = params
+  if (!selectedDirectionId.trim() || !selectedClusterConfirmation.trim()) {
+    return null
+  }
+
+  const lockSafeItineraryStops = itinerary.stops.filter(
+    (stop) => stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown',
+  )
+  if (lockSafeItineraryStops.length < 3) {
+    return null
+  }
+
+  const scoredVenueByVenueId = new Map(scoredVenues.map((item) => [item.venue.id, item] as const))
+  const canonicalStopByRole = lockSafeItineraryStops.reduce<
+    Partial<
+      Record<
+        UserStopRole,
+        {
+          displayName: string
+          providerRecordId: string
+          latitude: number
+          longitude: number
+          addressLine: string
+          neighborhood: string
+        }
+      >
+    >
+  >((next, stop) => {
+    const scoredVenue = scoredVenueByVenueId.get(stop.venueId)
+    const providerRecordId = scoredVenue?.venue.source.providerRecordId?.trim()
+    const addressLine = scoredVenue?.venue.source.formattedAddress?.trim()
+    const latitude = scoredVenue?.venue.source.latitude
+    const longitude = scoredVenue?.venue.source.longitude
+    if (
+      !scoredVenue ||
+      !providerRecordId ||
+      !addressLine ||
+      typeof latitude !== 'number' ||
+      !Number.isFinite(latitude) ||
+      typeof longitude !== 'number' ||
+      !Number.isFinite(longitude)
+    ) {
+      return next
+    }
+    next[stop.role] = {
+      displayName: scoredVenue.venue.name,
+      providerRecordId,
+      latitude,
+      longitude,
+      addressLine,
+      neighborhood: scoredVenue.venue.neighborhood || stop.neighborhood,
+    }
+    return next
+  }, {})
+
+  if (
+    !canonicalStopByRole.start ||
+    !canonicalStopByRole.highlight ||
+    !canonicalStopByRole.windDown
+  ) {
+    return null
+  }
+
+  const finalRoute = buildFinalRoute({
+    itinerary: {
+      ...itinerary,
+      stops: lockSafeItineraryStops,
+    },
+    canonicalStopByRole,
+    selectedDirectionId,
+    city: params.city,
+    persona: params.persona,
+    vibe: params.vibe,
+    activeRole: 'start',
+    mode: params.mode,
+    routeHeadline: itinerary.story.headline,
+    routeSummary: itinerary.storySpine?.routeSummary ?? itinerary.shareSummary,
+  })
+  if (!finalRoute) {
+    return null
+  }
+
+  return {
+    selectedClusterConfirmation,
+    itinerary: {
+      ...itinerary,
+      stops: lockSafeItineraryStops,
+    },
+    finalRoute,
+    lockSafeItineraryStops,
+  }
+}
+
 function normalizeModeSet(values: string[] | undefined): string {
   if (!values || values.length === 0) {
     return ''
@@ -989,6 +1104,7 @@ function AppShellContent({
   const [lceSystemMessage, setLceSystemMessage] = useState<string>()
   const [lceTraceNote, setLceTraceNote] = useState<string>()
   const [planAdjustmentFeedback, setPlanAdjustmentFeedback] = useState<PlanAdjustmentFeedback>()
+  const [lockFailureMessage, setLockFailureMessage] = useState<string | null>(null)
   const [pendingPlanAdjustment, setPendingPlanAdjustment] = useState<
     PendingPlanAdjustmentContext | undefined
   >()
@@ -1063,6 +1179,21 @@ function AppShellContent({
     }
     return buildBaselineVisibleItinerary(state.generatedItinerary)
   }, [state.generatedItinerary])
+  const publicLockSelectedDirectionId =
+    state.selectedDiscoveryDirectionContext?.directionId?.trim() ||
+    state.lastIntentProfile?.selectedDirectionContext?.directionId?.trim() ||
+    ''
+  const publicLockPersona =
+    state.intentDraft.persona ?? state.lastIntentProfile?.persona ?? null
+  const publicLockVibe =
+    state.intentDraft.primaryVibe ?? state.lastIntentProfile?.primaryAnchor ?? null
+  const publicLockSelectedClusterConfirmation =
+    state.selectedDiscoveryDirectionContext?.label?.trim() ||
+    state.lastIntentProfile?.selectedDirectionContext?.label?.trim() ||
+    baselineVisibleItinerary?.storySpine?.routeSummary?.trim() ||
+    baselineVisibleItinerary?.shareSummary?.trim() ||
+    baselineVisibleItinerary?.story.subtitle?.trim() ||
+    ''
   const baselineVisibleAlternativesByRole = useMemo(
     () => filterRoleRecord(state.alternativesByRole, BASELINE_VISIBLE_ROLES),
     [state.alternativesByRole],
@@ -1077,6 +1208,7 @@ function AppShellContent({
   }, [])
 
   const handleAnchorSelect = (venue: Venue) => {
+    setLockFailureMessage(null)
     actions.clearDistrictPreview()
     actions.clearDiscoveryPreview()
     actions.setDiscoverySelection([])
@@ -1088,6 +1220,53 @@ function AppShellContent({
         role: 'highlight',
       },
     })
+  }
+
+  const handlePublicLockToLive = () => {
+    setLockFailureMessage(null)
+    if (
+      environment !== 'default' ||
+      !baselineVisibleItinerary ||
+      !state.generatedArc ||
+      !state.scoredVenues ||
+      !publicLockPersona ||
+      !publicLockVibe
+    ) {
+      setLockFailureMessage(buildPublicLockFailureMessage())
+      return
+    }
+
+    const routeTruth = buildPublicLockRuntimeRouteTruth({
+      itinerary: baselineVisibleItinerary,
+      scoredVenues: state.scoredVenues,
+      selectedDirectionId: publicLockSelectedDirectionId,
+      selectedClusterConfirmation: publicLockSelectedClusterConfirmation,
+      city: baselineVisibleItinerary.city,
+      persona: publicLockPersona,
+      vibe: publicLockVibe,
+      mode: state.mode ?? state.lastIntentProfile?.mode ?? 'build',
+    })
+    if (!routeTruth) {
+      setLockFailureMessage(buildPublicLockFailureMessage())
+      return
+    }
+
+    const lockSaveResult = saveLockedLiveArtifactSession({
+      canonicalRouteArtifact: {
+        selectedClusterConfirmation: routeTruth.selectedClusterConfirmation,
+        itinerary: routeTruth.itinerary,
+        finalRoute: routeTruth.finalRoute,
+      },
+      lockSafeItineraryStops: routeTruth.lockSafeItineraryStops,
+      activeRole: 'start',
+      fallbackCity: baselineVisibleItinerary.city,
+    })
+    if (!lockSaveResult.ok) {
+      setLockFailureMessage(buildPublicLockFailureMessage())
+      return
+    }
+
+    window.location.assign('/journey/live')
   }
 
   useEffect(() => {
@@ -2595,42 +2774,56 @@ function AppShellContent({
       )}
 
       {state.currentStep === 'reveal' && state.generatedItinerary && (
-        <RevealPage
-          itinerary={baselineVisibleItinerary ?? state.generatedItinerary}
-          selectedRefinements={state.selectedRefinements}
-          generationTrace={state.generationTrace}
-          compositionConflictMessage={state.compositionConflictMessage}
-          explorationPlan={state.explorationPlan}
-          explorationLoading={state.explorationLoading}
-          lightNearbyExtensions={legacyContinuationPreviewContract.options.map(
-            ({ payload }) => payload,
+        <>
+          {lockFailureMessage && (
+            <div className="preview-notice draft-feedback">
+              <p className="preview-notice-title">Unable to lock route</p>
+              <p className="preview-notice-copy">{lockFailureMessage}</p>
+            </div>
           )}
-          alternativesByRole={baselineVisibleAlternativesByRole}
-          alternativeKindsByRole={baselineVisibleAlternativeKindsByRole}
-          onShowSwap={handleShowSwap}
-          onShowNearby={handleShowNearby}
-          onApplySwap={handleApplySwap}
-          onApplyRefinement={handleApplyRefinement}
-          onContinueOuting={handleContinueOuting}
-          forceDebug={false}
-          showDebugPanels={false}
-          showRoadmap={false}
-          showExtensions={false}
-          onBackToPreview={() => {
-            actions.setStep('preview')
-          }}
-          onLock={() => {
-            actions.lockPlan()
-            actions.setStep('ticket')
-          }}
-          onStartOver={() => {
-            if (environment === 'dev') {
-              window.location.assign('/dev/home')
-              return
-            }
-            actions.reset()
-          }}
-        />
+          <RevealPage
+            itinerary={baselineVisibleItinerary ?? state.generatedItinerary}
+            selectedRefinements={state.selectedRefinements}
+            generationTrace={state.generationTrace}
+            compositionConflictMessage={state.compositionConflictMessage}
+            explorationPlan={state.explorationPlan}
+            explorationLoading={state.explorationLoading}
+            lightNearbyExtensions={legacyContinuationPreviewContract.options.map(
+              ({ payload }) => payload,
+            )}
+            alternativesByRole={baselineVisibleAlternativesByRole}
+            alternativeKindsByRole={baselineVisibleAlternativeKindsByRole}
+            onShowSwap={handleShowSwap}
+            onShowNearby={handleShowNearby}
+            onApplySwap={handleApplySwap}
+            onApplyRefinement={handleApplyRefinement}
+            onContinueOuting={handleContinueOuting}
+            forceDebug={false}
+            showDebugPanels={false}
+            showRoadmap={false}
+            showExtensions={false}
+            onBackToPreview={() => {
+              setLockFailureMessage(null)
+              actions.setStep('preview')
+            }}
+            onLock={() => {
+              if (environment === 'default') {
+                handlePublicLockToLive()
+                return
+              }
+              actions.lockPlan()
+              actions.setStep('ticket')
+            }}
+            onStartOver={() => {
+              setLockFailureMessage(null)
+              if (environment === 'dev') {
+                window.location.assign('/dev/home')
+                return
+              }
+              actions.reset()
+            }}
+          />
+        </>
       )}
 
       {state.currentStep === 'ticket' && state.generatedItinerary && (
