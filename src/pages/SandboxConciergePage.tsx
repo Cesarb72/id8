@@ -415,6 +415,9 @@ interface SwapCompatibilityResult {
   softDirectionDriftDetected: boolean
 }
 
+type SandboxConciergeSurface = 'public' | 'sandbox'
+type SandboxConciergeInitialMode = 'surprise' | 'curate' | 'build'
+
 interface GenerationContractDebugBreadcrumb {
   validatorMode?: 'surprise' | 'curate' | 'build' | 'unknown'
   validatorValid?: boolean
@@ -2612,6 +2615,7 @@ function buildSelectedRouteArtifactProjection(params: {
   explicitSelectedCandidateArtifactId: string | null
   candidatePreviewAuthorityActive: boolean
   selectedRouteDirectionId: string | null
+  isPublicSurface: boolean
   isSurpriseWrapperActive: boolean
   isCurateWrapperActive: boolean
   selectedCuratePreviewCommitability: CuratePreviewCommitabilityState | null
@@ -2634,6 +2638,7 @@ function buildSelectedRouteArtifactProjection(params: {
     explicitSelectedCandidateArtifactId,
     candidatePreviewAuthorityActive,
     selectedRouteDirectionId,
+    isPublicSurface,
     isSurpriseWrapperActive,
     isCurateWrapperActive,
     selectedCuratePreviewCommitability,
@@ -2859,7 +2864,9 @@ function buildSelectedRouteArtifactProjection(params: {
         : selectedDirection.card.supportLine ?? selectedDirection.id,
       districtAnchorLine:
         selectedCandidateArtifactResolution.mode === 'ambiguous_direction_artifacts'
-          ? `Direction preview only: ${selectedCandidateArtifactResolution.artifactCountForDirection} route artifacts remain unresolved for this direction.`
+          ? isPublicSurface
+            ? 'Preview reflects this direction while the exact route is still being finalized.'
+            : `Direction preview only: ${selectedCandidateArtifactResolution.artifactCountForDirection} route artifacts remain unresolved for this direction.`
           : selectedDirection.card.supportLine ??
             selectedDirection.debugMeta?.pocketLabel ??
             selectedDirection.id,
@@ -2867,7 +2874,9 @@ function buildSelectedRouteArtifactProjection(params: {
       happeningsLine: undefined as string | undefined,
       whyChooseLine:
         selectedCandidateArtifactResolution.mode === 'ambiguous_direction_artifacts'
-          ? 'Preview reflects the selected direction card only. Exact stop preservation is not claimed until a route artifact is explicitly selected or a committed route exists.'
+          ? isPublicSurface
+            ? 'This preview reflects the selected direction until the exact route is confirmed.'
+            : 'Preview reflects the selected direction card only. Exact stop preservation is not claimed until a route artifact is explicitly selected or a committed route exists.'
           : selectedDirection.card.whyYou,
       whyTonightProofLine:
         selectedCandidateArtifactResolution.mode === 'ambiguous_direction_artifacts'
@@ -9020,13 +9029,20 @@ function getInlineStopDetail(
   }
 }
 
-export function SandboxConciergePage() {
+export function SandboxConciergePage({
+  surface = 'sandbox',
+  initialMode,
+}: {
+  surface?: SandboxConciergeSurface
+  initialMode?: SandboxConciergeInitialMode
+}) {
   /**
    * ARC BOUNDARY: Application wrapper for sandbox concierge.
    *
    * Owns orchestration + debug rendering only.
    * Must consume canonical engine artifacts and avoid re-authoring engine truth.
    */
+  const isPublicSurface = surface === 'public'
   const verticalDebugEnvValue = String(import.meta.env.VITE_VERTICAL_DEBUG ?? '')
   const verticalDebugEnvEnabled = ['1', 'true', 'on'].includes(
     verticalDebugEnvValue.trim().toLowerCase(),
@@ -9038,15 +9054,18 @@ export function SandboxConciergePage() {
   const [persona, setPersona] = useState<PersonaMode>('romantic')
   const [primaryVibe, setPrimaryVibe] = useState<VibeAnchor>('lively')
   const [selectedStarterPackId, setSelectedStarterPackId] = useState<string | null>(() =>
-    readSessionStorageValue(DEV_CLOSEOUT_CURATE_STARTER_PACK_ID_KEY),
+    isPublicSurface ? null : readSessionStorageValue(DEV_CLOSEOUT_CURATE_STARTER_PACK_ID_KEY),
   )
   const [curateStarterReady, setCurateStarterReady] = useState<boolean>(() =>
-    readSessionStorageValue(DEV_CLOSEOUT_CURATE_READY_KEY) === '1',
+    isPublicSurface ? false : readSessionStorageValue(DEV_CLOSEOUT_CURATE_READY_KEY) === '1',
   )
   const [buildAnchorQuery, setBuildAnchorQuery] = useState<string>(
-    () => readSessionStorageValue(DEV_CLOSEOUT_BUILD_QUERY_KEY) ?? '',
+    () => (isPublicSurface ? '' : readSessionStorageValue(DEV_CLOSEOUT_BUILD_QUERY_KEY) ?? ''),
   )
   const [selectedBuildAnchor, setSelectedBuildAnchor] = useState<BuildAnchorSelection | null>(() => {
+    if (isPublicSurface) {
+      return null
+    }
     const raw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY)
     if (!raw) {
       return null
@@ -9058,6 +9077,9 @@ export function SandboxConciergePage() {
     }
   })
   const [selectedBuildAnchorResult, setSelectedBuildAnchorResult] = useState<AnchorSearchResult | null>(() => {
+    if (isPublicSurface) {
+      return null
+    }
     const raw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY)
     if (!raw) {
       return null
@@ -9069,7 +9091,7 @@ export function SandboxConciergePage() {
     }
   })
   const [buildAnchorReady, setBuildAnchorReady] = useState<boolean>(
-    () => readSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY) === '1',
+    () => (isPublicSurface ? false : readSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY) === '1'),
   )
   const [buildAnchorResults, setBuildAnchorResults] = useState<AnchorSearchResult[]>([])
   const [buildAnchorLoading, setBuildAnchorLoading] = useState(false)
@@ -9177,17 +9199,23 @@ export function SandboxConciergePage() {
   }, [curatePreviewCommitabilityByArtifactId])
   const verticalDebugEnabled = debugQueryEnabled || verticalDebugEnvEnabled
   const currentPath = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : ''
-  const shouldLogLiveArtifactDebug = currentPath.startsWith('/dev') || showDebug
-  const isSurpriseEntryRoute = currentPath === '/dev/start/surprise'
-  const isCurateEntryRoute = currentPath === '/dev/start/curate'
-  const isBuildEntryRoute = currentPath === '/dev/start/build'
-  const isChooseRoute = currentPath === '/dev/choose'
+  const shouldLogLiveArtifactDebug = !isPublicSurface && (currentPath.startsWith('/dev') || showDebug)
+  const isSurpriseEntryRoute =
+    (isPublicSurface && initialMode === 'surprise') || currentPath === '/dev/start/surprise'
+  const isCurateEntryRoute =
+    (isPublicSurface && initialMode === 'curate') || currentPath === '/dev/start/curate'
+  const isBuildEntryRoute =
+    (isPublicSurface && initialMode === 'build') || currentPath === '/dev/start/build'
+  const isChooseRoute = !isPublicSurface && currentPath === '/dev/choose'
   const isSurpriseOrigin = readSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY) === 'surprise'
   const isCurateOrigin = readSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY) === 'curate'
   const isBuildOrigin = readSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY) === 'build'
-  const isSurpriseWrapperActive = isSurpriseEntryRoute || (isChooseRoute && isSurpriseOrigin)
-  const isCurateWrapperActive = isCurateEntryRoute || (isChooseRoute && isCurateOrigin)
-  const isBuildWrapperActive = isBuildEntryRoute || (isChooseRoute && isBuildOrigin)
+  const isSurpriseWrapperActive =
+    isSurpriseEntryRoute || (!isPublicSurface && isChooseRoute && isSurpriseOrigin)
+  const isCurateWrapperActive =
+    isCurateEntryRoute || (!isPublicSurface && isChooseRoute && isCurateOrigin)
+  const isBuildWrapperActive =
+    isBuildEntryRoute || (!isPublicSurface && isChooseRoute && isBuildOrigin)
   const isModeWrapperActive = isCurateWrapperActive || isSurpriseWrapperActive || isBuildWrapperActive
   const selectedStarterPack = useMemo<StarterPack | null>(
     () => starterPacks.find((pack) => pack.id === selectedStarterPackId) ?? null,
@@ -9204,7 +9232,7 @@ export function SandboxConciergePage() {
     () => vibeOptions.find((option) => option.value === primaryVibe)?.label ?? primaryVibe,
     [primaryVibe],
   )
-  const showStep2SecondarySurfaces = verticalDebugEnabled && showDebug
+  const showStep2SecondarySurfaces = !isPublicSurface && verticalDebugEnabled && showDebug
   const resolvedScenarioFamily = useMemo(
     () =>
       resolveScenarioFamily({
@@ -9242,6 +9270,9 @@ export function SandboxConciergePage() {
     [activeScenarioContract],
   )
   useEffect(() => {
+    if (isPublicSurface) {
+      return
+    }
     if (isSurpriseEntryRoute) {
       writeSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY, 'surprise')
       return
@@ -9309,6 +9340,7 @@ export function SandboxConciergePage() {
     isCurateEntryRoute,
     isCurateOrigin,
     isCurateWrapperActive,
+    isPublicSurface,
     isSurpriseEntryRoute,
     selectedBuildAnchor?.venueId,
     selectedStarterPackId,
@@ -10253,9 +10285,11 @@ export function SandboxConciergePage() {
       new Map(step2PrimarySourceOpportunities.map((opportunity) => [opportunity.id, opportunity] as const)),
     [step2PrimarySourceOpportunities],
   )
-  const buildProviderIntegrationEnabled = isBuildProviderStep2IntegrationEnabled()
-  const buildProviderVisibleMergeEnabled = isBuildProviderVisibleMergeEnabled()
-  const buildProviderSupplyEnabled = isBuildProviderSupplyEnabled()
+  const buildProviderIntegrationEnabled =
+    !isPublicSurface && isBuildProviderStep2IntegrationEnabled()
+  const buildProviderVisibleMergeEnabled =
+    !isPublicSurface && isBuildProviderVisibleMergeEnabled()
+  const buildProviderSupplyEnabled = !isPublicSurface && isBuildProviderSupplyEnabled()
   const selectedBuildAnchorVenue = useMemo(
     () =>
       isBuildWrapperActive && selectedBuildAnchor
@@ -15479,6 +15513,7 @@ export function SandboxConciergePage() {
       explicitSelectedCandidateArtifactId,
       candidatePreviewAuthorityActive,
       selectedRouteDirectionId,
+      isPublicSurface,
       isSurpriseWrapperActive,
       isCurateWrapperActive,
       selectedCuratePreviewCommitability,
@@ -15494,6 +15529,7 @@ export function SandboxConciergePage() {
   }, [
     canonicalRouteArtifact,
     city,
+    isPublicSurface,
     isBuildWrapperActive,
     isCurateWrapperActive,
     isSurpriseWrapperActive,
@@ -19016,6 +19052,15 @@ export function SandboxConciergePage() {
     } as Partial<Record<UserStopRole, string>>
   }, [appliedSwapRole, plan])
   const modeEntryPath = useMemo(() => {
+    if (isPublicSurface) {
+      if (isBuildWrapperActive) {
+        return '/start/build'
+      }
+      if (isCurateWrapperActive) {
+        return '/start/curate'
+      }
+      return '/start/surprise'
+    }
     if (isBuildWrapperActive) {
       return '/dev/start/build'
     }
@@ -19023,7 +19068,7 @@ export function SandboxConciergePage() {
       return '/dev/start/curate'
     }
     return '/dev/start/surprise'
-  }, [isBuildWrapperActive, isCurateWrapperActive])
+  }, [isBuildWrapperActive, isCurateWrapperActive, isPublicSurface])
   const showChooseBackToEntry = isModeWrapperActive && isChooseRoute && !hasRevealed
   const showConfirmBackToReview = isModeWrapperActive && hasRevealed
   const handleBackToModeEntry = useCallback(() => {
@@ -19081,7 +19126,7 @@ export function SandboxConciergePage() {
       subtitle={undefined}
     >
       <div className="demo-flow-frame concierge-flow">
-      {isModeWrapperActive && (
+      {isModeWrapperActive && !isPublicSurface && (
         <DevTopNav
           homeHref="/dev/home"
           backOnClick={navBackOnClick}
@@ -22256,7 +22301,9 @@ export function SandboxConciergePage() {
                   </div>
                   <p className="step2-night-option-context">{option.districtLine}</p>
                   <p className="step2-night-option-match">
-                    Qualification: {cardModel.qualificationDisplayStatus} via {cardModel.cardDisplaySource}
+                    {isPublicSurface
+                      ? `Route status: ${cardModel.qualificationDisplayStatus}`
+                      : `Qualification: ${cardModel.qualificationDisplayStatus} via ${cardModel.cardDisplaySource}`}
                   </p>
                   {cardModel.qualificationStatus === 'qualified' &&
                   cardModel.finalRouteStarterFitTier !== 'strong_starter_fit' &&
@@ -22267,7 +22314,7 @@ export function SandboxConciergePage() {
                         : 'Ready route - broader fit'}
                     </p>
                   ) : null}
-                  {cardModel.qualificationReason ? (
+                  {!isPublicSurface && cardModel.qualificationReason ? (
                     <p className="step2-night-option-match">
                       Qualification reason: {cardModel.qualificationReason}
                     </p>
@@ -22367,41 +22414,45 @@ export function SandboxConciergePage() {
             <div className="preview-notice draft-feedback">
               {selectedCuratePreviewCommitability.status === 'checking' ? (
                 <>
-                  <p className="preview-notice-title">Checking route commitability</p>
+                  <p className="preview-notice-title">
+                    {isPublicSurface ? 'Checking route readiness' : 'Checking route commitability'}
+                  </p>
                   <p className="preview-notice-copy">
-                    Verifying that this selected route can be committed exactly before entering
-                    Shared Plan Preview.
+                    {isPublicSurface
+                      ? 'Making sure this selected route is ready before you continue.'
+                      : 'Verifying that this selected route can be committed exactly before entering Shared Plan Preview.'}
                   </p>
                 </>
               ) : selectedCuratePreviewCommitability.status === 'infeasible' ? (
                 <>
                   <p className="preview-notice-title">
-                    {selectedCuratePreviewCommitability.failureKind === 'runtime_error'
-                      ? 'Selected route preflight hit a runtime error'
-                      : 'Selected route needs regeneration'}
+                    {isPublicSurface
+                      ? 'This route is not ready yet'
+                      : selectedCuratePreviewCommitability.failureKind === 'runtime_error'
+                        ? 'Selected route preflight hit a runtime error'
+                        : 'Selected route needs regeneration'}
                   </p>
                   <p className="preview-notice-copy">
-                    {selectedCuratePreviewCommitability.failureKind === 'runtime_error'
-                      ? 'This route could not complete preflight because of a runtime error.'
-                      : 'This route is not structurally committable as selected.'}
-                    {selectedCuratePreviewCommitability.missingRoleForContract
-                      ? ` Missing role support: ${selectedCuratePreviewCommitability.missingRoleForContract}.`
-                      : ''}
-                    {selectedCuratePreviewCommitability.failedCheck
-                      ? ` Failed check: ${selectedCuratePreviewCommitability.failedCheck}.`
-                      : ''}
-                    {selectedCuratePreviewCommitability.explicitFallbackReason
-                      ? ` Fallback reason: ${selectedCuratePreviewCommitability.explicitFallbackReason}.`
-                      : ''}
-                    Choose another route or adjust the setup before continuing.
+                    {isPublicSurface
+                      ? 'Choose another route or adjust your setup before continuing.'
+                      : `${selectedCuratePreviewCommitability.failureKind === 'runtime_error'
+                          ? 'This route could not complete preflight because of a runtime error.'
+                          : 'This route is not structurally committable as selected.'}${selectedCuratePreviewCommitability.missingRoleForContract
+                          ? ` Missing role support: ${selectedCuratePreviewCommitability.missingRoleForContract}.`
+                          : ''}${selectedCuratePreviewCommitability.failedCheck
+                          ? ` Failed check: ${selectedCuratePreviewCommitability.failedCheck}.`
+                          : ''}${selectedCuratePreviewCommitability.explicitFallbackReason
+                          ? ` Fallback reason: ${selectedCuratePreviewCommitability.explicitFallbackReason}.`
+                          : ''} Choose another route or adjust the setup before continuing.`}
                   </p>
                 </>
               ) : (
                 <>
                   <p className="preview-notice-title">Selected route is ready</p>
                   <p className="preview-notice-copy">
-                    This route preserved its Curate hard-commit target and can enter Shared Plan
-                    Preview.
+                    {isPublicSurface
+                      ? 'This route is ready for preview.'
+                      : 'This route preserved its Curate hard-commit target and can enter Shared Plan Preview.'}
                   </p>
                 </>
               )}
@@ -22479,7 +22530,7 @@ export function SandboxConciergePage() {
             onGenerate={generatePlan}
             loading={loading}
             directionCards={visibleDirectionCardsForSelection}
-            showDebugMeta={showDebug && verticalDebugEnabled}
+            showDebugMeta={!isPublicSurface && showDebug && verticalDebugEnabled}
             allowFallbackCards={false}
             showGenerateAction={false}
             showIntroCopy={false}
@@ -22757,8 +22808,9 @@ export function SandboxConciergePage() {
                 <div className="preview-notice draft-feedback">
                   <p className="preview-notice-title">Selected direction needs regeneration</p>
                   <p className="preview-notice-copy">
-                    The last generation drifted from the selected direction contract. This preview remains
-                    visible for recovery; regenerate this direction or try another route.
+                    {isPublicSurface
+                      ? 'The last generation drifted from this selected direction. Regenerate this direction or try another route.'
+                      : 'The last generation drifted from the selected direction contract. This preview remains visible for recovery; regenerate this direction or try another route.'}
                   </p>
                 </div>
               )}
@@ -22785,7 +22837,7 @@ export function SandboxConciergePage() {
                     Try another
                   </button>
                 )}
-                {showReturnToCurateDiscoveryAction && (
+                {showReturnToCurateDiscoveryAction && !isPublicSurface && (
                   <button
                     type="button"
                     className="ghost-button"
@@ -22898,8 +22950,8 @@ export function SandboxConciergePage() {
       )}
       </div>
 
-      {showDebug && (
-      <section className="preview-adjustments draft-tune-panel">
+      {!isPublicSurface && showDebug && (
+        <section className="preview-adjustments draft-tune-panel">
         <div className="action-row draft-actions">
           <p className="reality-curated-label" style={{ margin: 0 }}>
             What&apos;s working nearby

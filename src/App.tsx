@@ -3,6 +3,7 @@ import { DevHomePage } from './pages/DevHomePage'
 import { HomePage } from './pages/HomePage'
 import { LiveJourneyPage } from './pages/LiveJourneyPage'
 import { PlansHubPage } from './pages/PlansHubPage'
+import { PublicConciergePage } from './pages/PublicConciergePage'
 import { SandboxConciergePage } from './pages/SandboxConciergePage'
 import type { ExperienceMode } from './domain/types/intent'
 import './App.css'
@@ -69,7 +70,7 @@ function App() {
   if (normalizedPathname === '/') {
     page = <HomePage />
   } else if (startModeMatch?.[1]) {
-    page = <AppShell initialMode={startModeMatch[1] as ExperienceMode} />
+    page = <PublicConciergePage initialMode={startModeMatch[1] as ExperienceMode} />
   }
   if (normalizedPathname === '/dev/home') {
     page = <DevHomePage />
