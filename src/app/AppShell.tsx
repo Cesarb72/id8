@@ -1019,7 +1019,11 @@ function buildPublicLockRuntimeRouteTruth(params: {
       next.__failure = `missing_scored_venue:${stop.role}:${stop.venueId}`
       return next
     }
-    const providerRecordId = scoredVenue?.venue.source.providerRecordId?.trim()
+    const venue = scoredVenue.venue
+    const source = venue.source
+    const providerRecordId =
+      source.providerRecordId?.trim() ||
+      (source.sourceOrigin === 'curated' ? venue.id.trim() : '')
     const addressLine = scoredVenue?.venue.source.formattedAddress?.trim()
     const latitude = scoredVenue?.venue.source.latitude
     const longitude = scoredVenue?.venue.source.longitude
@@ -1041,12 +1045,12 @@ function buildPublicLockRuntimeRouteTruth(params: {
       return next
     }
     next[stop.role] = {
-      displayName: scoredVenue.venue.name,
+      displayName: venue.name,
       providerRecordId,
       latitude,
       longitude,
       addressLine,
-      neighborhood: scoredVenue.venue.neighborhood || stop.neighborhood,
+      neighborhood: venue.neighborhood || stop.neighborhood,
     }
     return next
   }, {})
