@@ -953,6 +953,19 @@ function buildPublicLockFailureMessage(): string {
   return "We couldn't save this route. Try locking again."
 }
 
+function hasPublicLockStopRouteTruth(stop: Itinerary['stops'][number] | undefined): boolean {
+  if (!stop?.formattedAddress?.trim()) {
+    return false
+  }
+
+  return (
+    typeof stop.latitude === 'number' &&
+    Number.isFinite(stop.latitude) &&
+    typeof stop.longitude === 'number' &&
+    Number.isFinite(stop.longitude)
+  )
+}
+
 function buildPublicLockRuntimeRouteTruth(params: {
   itinerary: Itinerary
   scoredVenues: ScoredVenue[]
@@ -1222,21 +1235,25 @@ function AppShellContent({
     }
     return buildBaselineVisibleItinerary(state.generatedItinerary)
   }, [state.generatedItinerary])
-  const hasPublicLockStart = Boolean(
-    baselineVisibleItinerary?.stops.some((stop) => stop.role === 'start'),
-  )
-  const hasPublicLockHighlight = Boolean(
-    baselineVisibleItinerary?.stops.some((stop) => stop.role === 'highlight'),
-  )
-  const hasPublicLockWindDown = Boolean(
-    baselineVisibleItinerary?.stops.some((stop) => stop.role === 'windDown'),
-  )
+  const publicLockStartStop = baselineVisibleItinerary?.stops.find((stop) => stop.role === 'start')
+  const publicLockHighlightStop = baselineVisibleItinerary?.stops.find((stop) => stop.role === 'highlight')
+  const publicLockWindDownStop = baselineVisibleItinerary?.stops.find((stop) => stop.role === 'windDown')
+  const hasPublicLockStart = Boolean(publicLockStartStop)
+  const hasPublicLockHighlight = Boolean(publicLockHighlightStop)
+  const hasPublicLockWindDown = Boolean(publicLockWindDownStop)
+  const hasPublicLockRouteTruth =
+    hasPublicLockStopRouteTruth(publicLockStartStop) &&
+    hasPublicLockStopRouteTruth(publicLockHighlightStop) &&
+    hasPublicLockStopRouteTruth(publicLockWindDownStop)
+  const publicLockHasCoreStops =
+    hasPublicLockStart && hasPublicLockHighlight && hasPublicLockWindDown
   const publicLockEligible =
-    environment !== 'default' ||
-    (hasPublicLockStart && hasPublicLockHighlight && hasPublicLockWindDown)
+    environment !== 'default' || (publicLockHasCoreStops && hasPublicLockRouteTruth)
   const publicLockIneligibleMessage =
     environment === 'default' && !publicLockEligible
-      ? 'Locking needs a full Start, Highlight, and Wind-down route. Try refining or starting over.'
+      ? publicLockHasCoreStops
+        ? "This route is missing location details for one or more stops, so it can't be locked yet. Try refining or starting over."
+        : 'Locking needs a full Start, Highlight, and Wind-down route. Try refining or starting over.'
       : null
   const publicLockSelectedDirectionId =
     state.selectedDiscoveryDirectionContext?.directionId?.trim() ||

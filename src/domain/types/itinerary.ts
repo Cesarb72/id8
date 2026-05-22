@@ -21,6 +21,9 @@ export interface ItineraryStop {
   title: UserStopTitle
   venueId: string
   venueName: string
+  formattedAddress?: string
+  latitude?: number
+  longitude?: number
   city: string
   category: VenueCategory
   subcategory: string
