@@ -171,6 +171,9 @@ function toMomentVenue(moment: Moment, venuePool: Venue[]): Venue | undefined {
     neighborhood: parent?.neighborhood ?? districtFallback.neighborhood,
     driveMinutes: parent?.driveMinutes ?? districtFallback.driveMinutes,
     priceTier: parent?.priceTier ?? '$$',
+    formattedAddress: parent?.source.formattedAddress,
+    latitude: parent?.source.latitude,
+    longitude: parent?.source.longitude,
     tags: [
       'moment-node',
       moment.momentType,

@@ -30,6 +30,9 @@ type VenueSeed = {
   driveMinutes: number
   category: VenueCategory
   priceTier: Venue['priceTier']
+  formattedAddress?: string
+  latitude?: number
+  longitude?: number
   tags: string[]
   useCases?: Venue['useCases']
   vibeTags?: Venue['vibeTags']
@@ -57,6 +60,9 @@ function makeVenue(seed: VenueSeed): Venue {
     neighborhood: seed.neighborhood,
     driveMinutes: seed.driveMinutes,
     priceTier: seed.priceTier,
+    formattedAddress: seed.formattedAddress,
+    latitude: seed.latitude,
+    longitude: seed.longitude,
     tags: seed.tags,
     shortDescription: seed.shortDescription,
     narrativeFlavor: seed.narrativeFlavor,
@@ -610,6 +616,9 @@ export const sanJoseVenues: Venue[] = [
     driveMinutes: 7,
     category: 'restaurant',
     priceTier: '$$$$',
+    formattedAddress: '1614 Alum Rock Ave, San Jose, CA 95116',
+    latitude: 37.35166,
+    longitude: -121.85141,
     tags: ['tasting-menu', 'wine-pairing', 'elevated'],
     useCases: ['romantic'],
     vibeTags: ['culinary', 'culture', 'cozy'],
@@ -809,6 +818,9 @@ export const sanJoseVenues: Venue[] = [
     driveMinutes: 10,
     category: 'event',
     priceTier: '$$',
+    formattedAddress: '208 Jackson St, San Jose, CA 95112',
+    latitude: 37.34842,
+    longitude: -121.89431,
     tags: ['market', 'discovery', 'movement', 'cultural-flow', 'community'],
     useCases: ['romantic', 'socialite', 'curator'],
     vibeTags: ['creative', 'culture', 'lively'],
@@ -897,6 +909,9 @@ export const sanJoseVenues: Venue[] = [
     driveMinutes: 8,
     category: 'live_music',
     priceTier: '$$',
+    formattedAddress: '66 S 1st St, San Jose, CA 95113',
+    latitude: 37.33477,
+    longitude: -121.8903,
     tags: ['listening', 'acoustic', 'small-stage'],
     useCases: ['romantic', 'socialite'],
     vibeTags: ['culture', 'cozy', 'creative'],
