@@ -11488,6 +11488,28 @@ export function SandboxConciergePage({
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
   ])
+  const publicSurpriseSelectableCardModels = useMemo(() => {
+    if (!isPublicSurface || !isSurpriseWrapperActive || selectedCandidateRouteArtifact) {
+      return [] as CurateVisibleCardModel[]
+    }
+    return curatePrimaryCardDisplay.models.filter(
+      (cardModel) =>
+        cardModel.isSelectable &&
+        verifiedCityOpportunityById.has(cardModel.artifact.sourceOpportunityId),
+    )
+  }, [
+    curatePrimaryCardDisplay.models,
+    isPublicSurface,
+    isSurpriseWrapperActive,
+    selectedCandidateRouteArtifact,
+    verifiedCityOpportunityById,
+  ])
+  const publicSurpriseSingleSelectableArtifact = useMemo(() => {
+    if (publicSurpriseSelectableCardModels.length !== 1) {
+      return null
+    }
+    return publicSurpriseSelectableCardModels[0]?.artifact ?? null
+  }, [publicSurpriseSelectableCardModels])
   const selectedCandidateArtifactResolution = useMemo(
     () =>
       resolveCandidateRouteArtifactSelection({
@@ -12973,6 +12995,24 @@ export function SandboxConciergePage({
     },
     [isCurateWrapperActive, selectedStep2CandidateArtifactId],
   )
+
+  useEffect(() => {
+    if (
+      !isPublicSurface ||
+      !isSurpriseWrapperActive ||
+      selectedCandidateRouteArtifact ||
+      !publicSurpriseSingleSelectableArtifact
+    ) {
+      return
+    }
+    handleSelectStep2NightOption(publicSurpriseSingleSelectableArtifact)
+  }, [
+    handleSelectStep2NightOption,
+    isPublicSurface,
+    isSurpriseWrapperActive,
+    publicSurpriseSingleSelectableArtifact,
+    selectedCandidateRouteArtifact,
+  ])
 
   const handlePreviewShape = useCallback(
     (intent: PreviewShapeIntent) => {
@@ -18340,8 +18380,14 @@ export function SandboxConciergePage({
   const showCurateDiscoveryPhase = Boolean(
     !isCurateWrapperActive || sharedFlowPhase === 'contract_selection',
   )
+  const publicSurpriseRouteChoiceVisible = Boolean(
+    isPublicSurface &&
+      isSurpriseWrapperActive &&
+      !selectedCandidateRouteArtifact &&
+      publicSurpriseSelectableCardModels.length > 1,
+  )
   const renderCurateRouteCardSection = Boolean(
-    !isSurpriseWrapperActive && showCurateDiscoveryPhase,
+    showCurateDiscoveryPhase && (!isSurpriseWrapperActive || publicSurpriseRouteChoiceVisible),
   )
   const renderCurateAreaContextSection = Boolean(
     !isSurpriseWrapperActive &&
@@ -22158,9 +22204,13 @@ export function SandboxConciergePage({
 
       {renderCurateRouteCardSection && (
       <section className="district-discovery">
-        <h4>Explore what&apos;s possible</h4>
+        <h4>
+          {publicSurpriseRouteChoiceVisible ? 'Choose a route for tonight' : "Explore what's possible"}
+        </h4>
         <p className="district-subtext">
-          See what&apos;s happening nearby and how your night could unfold.
+          {publicSurpriseRouteChoiceVisible
+            ? 'Pick one route to keep the night moving.'
+            : "See what's happening nearby and how your night could unfold."}
         </p>
         {showStep2SecondarySurfaces && !isCurateWrapperActive && (
           <div className="step2-ecs-controls" aria-label="Exploration controls">
@@ -22230,7 +22280,9 @@ export function SandboxConciergePage({
           </div>
         )}
         <div className="step2-night-options">
-          <p className="step2-night-options-label">Choose tonight's direction</p>
+          <p className="step2-night-options-label">
+            {publicSurpriseRouteChoiceVisible ? 'Available routes' : "Choose tonight's direction"}
+          </p>
           {isBuildWrapperActive &&
             selectedBuildAnchor &&
             candidateRouteArtifactsForDisplay.length === 0 &&
@@ -22262,7 +22314,10 @@ export function SandboxConciergePage({
               </p>
             )}
           <div className="step2-night-options-grid">
-            {curatePrimaryCardDisplay.models.map((cardModel) => {
+            {(publicSurpriseRouteChoiceVisible
+              ? publicSurpriseSelectableCardModels
+              : curatePrimaryCardDisplay.models
+            ).map((cardModel) => {
               const option = cardModel.artifact
               if (!verifiedCityOpportunityById.has(option.sourceOpportunityId)) {
                 return null
