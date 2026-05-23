@@ -11493,9 +11493,15 @@ export function SandboxConciergePage({
       return [] as CurateVisibleCardModel[]
     }
     return curatePrimaryCardDisplay.models.filter(
-      (cardModel) =>
-        cardModel.isSelectable &&
-        verifiedCityOpportunityById.has(cardModel.artifact.sourceOpportunityId),
+      (cardModel) => {
+        const artifactId = cardModel.artifact.id?.trim()
+        const sourceOpportunityId = cardModel.artifact.sourceOpportunityId?.trim()
+        return Boolean(
+          artifactId &&
+            sourceOpportunityId &&
+            verifiedCityOpportunityById.has(sourceOpportunityId),
+        )
+      },
     )
   }, [
     curatePrimaryCardDisplay.models,
@@ -18386,8 +18392,17 @@ export function SandboxConciergePage({
       !selectedCandidateRouteArtifact &&
       publicSurpriseSelectableCardModels.length > 1,
   )
+  const publicSurpriseEmptyStateVisible = Boolean(
+    isPublicSurface &&
+      isSurpriseWrapperActive &&
+      !selectedCandidateRouteArtifact &&
+      publicSurpriseSelectableCardModels.length === 0,
+  )
   const renderCurateRouteCardSection = Boolean(
-    showCurateDiscoveryPhase && (!isSurpriseWrapperActive || publicSurpriseRouteChoiceVisible),
+    showCurateDiscoveryPhase &&
+      (!isSurpriseWrapperActive ||
+        publicSurpriseRouteChoiceVisible ||
+        publicSurpriseEmptyStateVisible),
   )
   const renderCurateAreaContextSection = Boolean(
     !isSurpriseWrapperActive &&
@@ -22283,6 +22298,11 @@ export function SandboxConciergePage({
           <p className="step2-night-options-label">
             {publicSurpriseRouteChoiceVisible ? 'Available routes' : "Choose tonight's direction"}
           </p>
+          {publicSurpriseEmptyStateVisible && (
+            <p className="preview-notice-copy">
+              No route is ready yet. Try again in a moment or pick a direction instead.
+            </p>
+          )}
           {isBuildWrapperActive &&
             selectedBuildAnchor &&
             candidateRouteArtifactsForDisplay.length === 0 &&
@@ -22340,7 +22360,7 @@ export function SandboxConciergePage({
                   className={`district-card step2-night-option${isSelected ? ' selected' : ''}`}
                   onClick={() => handleSelectStep2NightOption(option)}
                   aria-pressed={isSelected}
-                  disabled={!cardModel.isSelectable}
+                  disabled={publicSurpriseRouteChoiceVisible ? false : !cardModel.isSelectable}
                 >
                   <h5 className="step2-night-option-anchor-title">{cardModel.title}</h5>
                   <p className="step2-night-option-flavor-line">
