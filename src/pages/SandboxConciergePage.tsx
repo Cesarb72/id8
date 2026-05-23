@@ -12750,10 +12750,13 @@ export function SandboxConciergePage({
     writeSessionStorageValue(DEV_CLOSEOUT_CURATE_STARTER_PACK_ID_KEY, selectedStarterPack.id)
     writeSessionStorageValue(DEV_CLOSEOUT_CURATE_READY_KEY, '1')
     setCurateStarterReady(true)
+    if (isPublicSurface) {
+      return
+    }
     if (typeof window !== 'undefined' && window.location.pathname.toLowerCase() !== '/dev/choose') {
       window.location.assign('/dev/choose')
     }
-  }, [selectedStarterPack])
+  }, [isPublicSurface, selectedStarterPack])
 
   const resetBuildAttemptState = useCallback(() => {
     buildAnchorSearchAttemptRef.current += 1
@@ -12880,10 +12883,20 @@ export function SandboxConciergePage({
     writeSessionStorageValue(DEV_CLOSEOUT_BUILD_QUERY_KEY, query)
     writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, JSON.stringify(selectedBuildAnchor))
     setBuildAnchorReady(true)
+    if (isPublicSurface) {
+      return
+    }
     if (typeof window !== 'undefined' && window.location.pathname.toLowerCase() !== '/dev/choose') {
       window.location.assign('/dev/choose')
     }
-  }, [buildAnchorError, buildAnchorLoading, buildAnchorQuery, buildAnchorResults, selectedBuildAnchor])
+  }, [
+    buildAnchorError,
+    buildAnchorLoading,
+    buildAnchorQuery,
+    buildAnchorResults,
+    isPublicSurface,
+    selectedBuildAnchor,
+  ])
 
   const handleSelectDirection = useCallback(
     (directionId: string, forceReset = false) => {
@@ -19275,7 +19288,7 @@ export function SandboxConciergePage({
         </section>
       ) : (
       <>
-      {showDebug && (
+      {!isPublicSurface && showDebug && (
       <details
         style={{
           border: '1px solid #d7dde2',
