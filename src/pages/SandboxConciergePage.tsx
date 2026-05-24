@@ -11542,8 +11542,8 @@ export function SandboxConciergePage({
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
   ])
-  const publicSurpriseSelectableCardModels = useMemo(() => {
-    if (!isPublicSurface || !isSurpriseWrapperActive || selectedCandidateRouteArtifact) {
+  const publicSurpriseVerifiedCardModels = useMemo(() => {
+    if (!isPublicSurface || !isSurpriseWrapperActive) {
       return [] as CurateVisibleCardModel[]
     }
     return curatePrimaryCardDisplay.models.filter(
@@ -11561,9 +11561,14 @@ export function SandboxConciergePage({
     curatePrimaryCardDisplay.models,
     isPublicSurface,
     isSurpriseWrapperActive,
-    selectedCandidateRouteArtifact,
     verifiedCityOpportunityById,
   ])
+  const publicSurpriseSelectableCardModels = useMemo(() => {
+    if (selectedCandidateRouteArtifact) {
+      return [] as CurateVisibleCardModel[]
+    }
+    return publicSurpriseVerifiedCardModels
+  }, [publicSurpriseVerifiedCardModels, selectedCandidateRouteArtifact])
   const publicSurpriseSingleSelectableArtifact = useMemo(() => {
     if (publicSurpriseSelectableCardModels.length !== 1) {
       return null
@@ -18459,6 +18464,17 @@ export function SandboxConciergePage({
       !selectedCandidateRouteArtifact &&
       publicSurpriseSelectableCardModels.length === 0,
   )
+  const publicSurpriseDriftRecoveryVisible = Boolean(
+    isPublicSurface &&
+      isSurpriseWrapperActive &&
+      !loading &&
+      error &&
+      (selectedDirectionGeneratePlanTrace?.generatePlanFailureSource === 'selected_direction_lineage' ||
+        error.toLowerCase().includes('route drifted from selected direction contract')),
+  )
+  const publicSurpriseRouteChoiceRecoveryAvailable = Boolean(
+    publicSurpriseVerifiedCardModels.length > 1,
+  )
   const renderCurateRouteCardSection = Boolean(
     showCurateDiscoveryPhase &&
       (!isSurpriseWrapperActive ||
@@ -18592,6 +18608,21 @@ export function SandboxConciergePage({
     }
     void generatePlan(selectedDirectionId, selectedCandidateRouteArtifact.id)
   }, [generatePlan, loading, selectedCandidateRouteArtifact, selectedDirectionId])
+  const handleReturnToPublicSurpriseRouteChoice = useCallback(() => {
+    if (!isPublicSurface || !isSurpriseWrapperActive || loading) {
+      return
+    }
+    selectionEpochRef.current += 1
+    surpriseAutoGenerateAttemptRef.current = null
+    setError(undefined)
+    setHasRevealed(false)
+    setSelectedDirectionId(null)
+    setSelectedStep2CandidateArtifactId(null)
+    setUserSelectedDirection(null)
+    setSurpriseContractValidationFailedDirectionId(null)
+    setSurpriseContractValidationFailedArtifactId(null)
+    setGenerationContractDebug(null)
+  }, [isPublicSurface, isSurpriseWrapperActive, loading])
   const debugViewModel = useMemo(() => {
     const rolePoolCountsSummary = rolePoolVenueIdsByRole
       ? `start:${rolePoolVenueIdsByRole.start.length}/highlight:${rolePoolVenueIdsByRole.highlight.length}/windDown:${rolePoolVenueIdsByRole.windDown.length}`
@@ -23002,7 +23033,40 @@ export function SandboxConciergePage({
         </section>
       )}
 
-      {error && !surpriseGenerationFailureRecoveryVisible && (
+      {publicSurpriseDriftRecoveryVisible && (
+        <section
+          className="preview-notice draft-feedback"
+          aria-live="polite"
+          aria-label="Surprise route recovery"
+        >
+          <p className="preview-notice-title">That route didn&apos;t hold together.</p>
+          <p className="preview-notice-copy">
+            This route drifted from the direction you picked. Choose another route or try again.
+          </p>
+          <div className="action-row draft-actions">
+            {publicSurpriseRouteChoiceRecoveryAvailable && (
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={handleReturnToPublicSurpriseRouteChoice}
+                disabled={loading}
+              >
+                Choose Another Route
+              </button>
+            )}
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={handleRetrySurpriseGeneration}
+              disabled={!surpriseRetryAvailable}
+            >
+              Try Again
+            </button>
+          </div>
+        </section>
+      )}
+
+      {error && !surpriseGenerationFailureRecoveryVisible && !publicSurpriseDriftRecoveryVisible && (
         <div className="preview-notice draft-feedback">
           <p className="preview-notice-title">Could not generate</p>
           <p className="preview-notice-copy">{error}</p>
