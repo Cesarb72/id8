@@ -9276,12 +9276,6 @@ export function SandboxConciergePage({
       }
       const persistedBuildReady = readSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY) === '1'
       if (!persistedBuildReady) {
-        if (selectedBuildAnchor) {
-          setSelectedBuildAnchor(null)
-        }
-        if (selectedBuildAnchorResult) {
-          setSelectedBuildAnchorResult(null)
-        }
         if (buildAnchorReady) {
           setBuildAnchorReady(false)
         }
