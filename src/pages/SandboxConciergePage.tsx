@@ -12969,6 +12969,9 @@ export function SandboxConciergePage({
         JSON.stringify(selectedBuildAnchorResult),
       )
     }
+    setError((current) =>
+      current === 'Select a required anchor before continuing.' ? undefined : current,
+    )
     setBuildAnchorReady(true)
     if (isPublicSurface) {
       return
@@ -13209,7 +13212,13 @@ export function SandboxConciergePage({
   ])
 
   useEffect(() => {
-    if (!isBuildWrapperActive || hasRevealed || loading) {
+    if (
+      !isBuildWrapperActive ||
+      !buildAnchorReady ||
+      !selectedBuildAnchor?.venueId ||
+      hasRevealed ||
+      loading
+    ) {
       return
     }
     if (!selectedDirectionId || !selectedCandidateRouteArtifact) {
@@ -13236,9 +13245,11 @@ export function SandboxConciergePage({
     finalRoute,
     generatePlan,
     hasRevealed,
+    buildAnchorReady,
     isBuildWrapperActive,
     loading,
     plan,
+    selectedBuildAnchor?.venueId,
     selectedCandidateRouteArtifact,
     selectedDirectionId,
   ])
