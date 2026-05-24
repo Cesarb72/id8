@@ -9271,6 +9271,56 @@ export function SandboxConciergePage({
   )
   useEffect(() => {
     if (isPublicSurface) {
+      if (!isBuildEntryRoute) {
+        return
+      }
+      const persistedBuildReady = readSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY) === '1'
+      if (!persistedBuildReady) {
+        if (selectedBuildAnchor) {
+          setSelectedBuildAnchor(null)
+        }
+        if (selectedBuildAnchorResult) {
+          setSelectedBuildAnchorResult(null)
+        }
+        if (buildAnchorReady) {
+          setBuildAnchorReady(false)
+        }
+        return
+      }
+      const persistedQuery = readSessionStorageValue(DEV_CLOSEOUT_BUILD_QUERY_KEY)
+      if (persistedQuery != null && persistedQuery !== buildAnchorQuery) {
+        setBuildAnchorQuery(persistedQuery)
+      }
+      const persistedSelectionRaw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY)
+      if (persistedSelectionRaw) {
+        try {
+          const persistedSelection = JSON.parse(persistedSelectionRaw) as BuildAnchorSelection
+          if (persistedSelection?.venueId && persistedSelection.venueId !== selectedBuildAnchor?.venueId) {
+            setSelectedBuildAnchor(persistedSelection)
+            if (buildRefinementVibe === 'auto') {
+              setPrimaryVibe(getBuildDefaultVibe(persistedSelection.category))
+            }
+          }
+        } catch {
+          // noop
+        }
+      }
+      const persistedResultRaw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY)
+      if (persistedResultRaw) {
+        try {
+          const persistedResult = JSON.parse(persistedResultRaw) as AnchorSearchResult
+          if (persistedResult?.venue?.id) {
+            setSelectedBuildAnchorResult((current) =>
+              current?.venue.id === persistedResult.venue.id ? current : persistedResult,
+            )
+          }
+        } catch {
+          // noop
+        }
+      }
+      if (buildAnchorReady !== persistedBuildReady) {
+        setBuildAnchorReady(persistedBuildReady)
+      }
       return
     }
     if (isSurpriseEntryRoute) {
@@ -9336,12 +9386,16 @@ export function SandboxConciergePage({
     isChooseRoute,
     isBuildEntryRoute,
     isBuildOrigin,
+    buildAnchorQuery,
+    buildAnchorReady,
     buildRefinementVibe,
     isCurateEntryRoute,
     isCurateOrigin,
     isCurateWrapperActive,
     isPublicSurface,
     isSurpriseEntryRoute,
+    selectedBuildAnchor,
+    selectedBuildAnchorResult,
     selectedBuildAnchor?.venueId,
     selectedStarterPackId,
   ])
@@ -12910,6 +12964,12 @@ export function SandboxConciergePage({
     writeSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY, '1')
     writeSessionStorageValue(DEV_CLOSEOUT_BUILD_QUERY_KEY, query)
     writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, JSON.stringify(selectedBuildAnchor))
+    if (selectedBuildAnchorResult) {
+      writeSessionStorageValue(
+        DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY,
+        JSON.stringify(selectedBuildAnchorResult),
+      )
+    }
     setBuildAnchorReady(true)
     if (isPublicSurface) {
       return
@@ -12924,6 +12984,7 @@ export function SandboxConciergePage({
     buildAnchorResults,
     isPublicSurface,
     selectedBuildAnchor,
+    selectedBuildAnchorResult,
   ])
 
   const handleSelectDirection = useCallback(
