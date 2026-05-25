@@ -52,6 +52,7 @@ export function HomePage() {
     typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : ''
   const isDevHome = currentPath.startsWith('/dev')
   const startPrefix = isDevHome ? '/dev/start' : '/start'
+  const buildStartHref = isDevHome ? `${startPrefix}/build` : `${startPrefix}/build?fresh=1`
   const plansPath = isDevHome ? '/dev/plans' : '/plans'
   const homeState = loadLiveArtifactHomeState()
   const liveArtifact = loadLiveArtifactSession()
@@ -150,7 +151,7 @@ export function HomePage() {
               <span>Curate Experience</span>
               <small>Pick a direction.</small>
             </a>
-            <a className="home-v1-mode-card" href={`${startPrefix}/build`}>
+            <a className="home-v1-mode-card" href={buildStartHref}>
               <span>Build My Plan</span>
               <small>Start with what you know.</small>
             </a>

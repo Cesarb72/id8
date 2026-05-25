@@ -9300,6 +9300,7 @@ export function SandboxConciergePage({
   }, [curatePreviewCommitabilityByArtifactId])
   const verticalDebugEnabled = debugQueryEnabled || verticalDebugEnvEnabled
   const currentPath = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : ''
+  const currentSearch = typeof window !== 'undefined' ? window.location.search : ''
   const shouldLogLiveArtifactDebug = !isPublicSurface && (currentPath.startsWith('/dev') || showDebug)
   const isSurpriseEntryRoute =
     (isPublicSurface && initialMode === 'surprise') || currentPath === '/dev/start/surprise'
@@ -9318,6 +9319,10 @@ export function SandboxConciergePage({
   const isBuildWrapperActive =
     isBuildEntryRoute || (!isPublicSurface && isChooseRoute && isBuildOrigin)
   const isModeWrapperActive = isCurateWrapperActive || isSurpriseWrapperActive || isBuildWrapperActive
+  const publicBuildFreshEntryRequested =
+    isPublicSurface &&
+    isBuildEntryRoute &&
+    new URLSearchParams(currentSearch).get('fresh') === '1'
   const selectedStarterPack = useMemo<StarterPack | null>(
     () => starterPacks.find((pack) => pack.id === selectedStarterPackId) ?? null,
     [selectedStarterPackId],
@@ -9373,6 +9378,32 @@ export function SandboxConciergePage({
   useEffect(() => {
     if (isPublicSurface) {
       if (!isBuildEntryRoute) {
+        return
+      }
+      if (publicBuildFreshEntryRequested) {
+        if (buildAnchorQuery) {
+          setBuildAnchorQuery('')
+        }
+        if (selectedBuildAnchor) {
+          setSelectedBuildAnchor(null)
+        }
+        if (selectedBuildAnchorResult) {
+          setSelectedBuildAnchorResult(null)
+        }
+        if (buildAnchorReady) {
+          setBuildAnchorReady(false)
+        }
+        writeSessionStorageValue(DEV_CLOSEOUT_BUILD_QUERY_KEY, '')
+        writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
+        writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
+        writeSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY, '0')
+        if (typeof window !== 'undefined') {
+          const nextSearchParams = new URLSearchParams(window.location.search)
+          nextSearchParams.delete('fresh')
+          const nextSearch = nextSearchParams.toString()
+          const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`
+          window.history.replaceState(null, '', nextUrl)
+        }
         return
       }
       const persistedBuildReady = readSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY) === '1'
@@ -9484,6 +9515,7 @@ export function SandboxConciergePage({
     buildAnchorQuery,
     buildAnchorReady,
     buildRefinementVibe,
+    publicBuildFreshEntryRequested,
     isCurateEntryRoute,
     isCurateOrigin,
     isCurateWrapperActive,
