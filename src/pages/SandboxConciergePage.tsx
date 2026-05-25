@@ -4410,6 +4410,107 @@ function resolveBuildAnchorRoleInOpportunity(
   return null
 }
 
+function buildStaticPaperPlaneBuildCoverageOpportunity(params: {
+  districtId: string
+  districtName: string
+  directionId: string
+  personaLabel: string
+  vibeLabel: string
+  anchorVenue: Venue
+  startVenue: Venue
+  windDownVenue: Venue
+}): VerifiedCityOpportunity {
+  const {
+    districtId,
+    districtName,
+    directionId,
+    personaLabel,
+    vibeLabel,
+    anchorVenue,
+    startVenue,
+    windDownVenue,
+  } = params
+
+  return {
+    id: 'step2_static_build_paper_plane',
+    sourceMode: 'curated',
+    flavor: 'Cocktail-led downtown night',
+    anchor: {
+      venueId: anchorVenue.id,
+      name: anchorVenue.name,
+      district: districtName,
+      verificationReasons: [
+        'Paper Plane can anchor a short downtown build with strong nightlife conviction.',
+        'Static curated coverage already supports a start-to-close sequence around this stop.',
+      ],
+    },
+    starts: [
+      {
+        venueId: startVenue.id,
+        name: startVenue.name,
+        reason: 'A polished downtown opener that sets up the cocktail centerpiece cleanly.',
+        score: 0.84,
+      },
+    ],
+    highlightAlternates: [
+      {
+        venueId: windDownVenue.id,
+        name: windDownVenue.name,
+        reason: 'A softer post-cocktail landing if you want a lower-volume finish.',
+        score: 0.76,
+      },
+    ],
+    closes: [
+      {
+        venueId: windDownVenue.id,
+        name: windDownVenue.name,
+        reason: 'A low-light closer that keeps the route nearby and romantic.',
+        score: 0.88,
+      },
+    ],
+    nearbyHappenings: [],
+    districtContext: {
+      primaryDistrict: districtName,
+    },
+    fit: {
+      persona: personaLabel,
+      vibe: vibeLabel,
+      confidenceLine: 'Short downtown movement with a high-confidence cocktail center.',
+      matchLine: 'Paper Plane now has static downtown route support in public Build.',
+    },
+    storySpine: {
+      start: startVenue.name,
+      highlight: anchorVenue.name,
+      windDown: windDownVenue.name,
+    },
+    selection: {
+      pocketId: districtId,
+      directionId,
+    },
+    survivorSignals: {
+      whyTonightStrength: 0.74,
+      cozyAuthorityStrength: 0.7,
+      highWhyTonight: true,
+      highCozyAuthority: true,
+    },
+    excellence: {
+      score: 0.82,
+      threshold: 0.62,
+      passes: true,
+      anchorStrength: 0.84,
+      startQuality: 0.76,
+      windDownQuality: 0.81,
+      supportCoherence: 0.79,
+      scenarioAlignment: 0.74,
+      experienceAlignment: 0.72,
+      localAuthority: 0.78,
+      modeExcellence: 0.77,
+    },
+    whyTonightProofLine:
+      'Paper Plane can hold a short downtown sequence with a confident opener and a polished close.',
+  }
+}
+
 const roleToInternalRole: Record<UserStopRole, keyof ScoredVenue['roleScores']> = {
   start: 'warmup',
   highlight: 'peak',
@@ -9916,6 +10017,10 @@ export function SandboxConciergePage({
     () => districtDiscoveryCards.map((district) => district.tasteBridgeArtifact),
     [districtDiscoveryCards],
   )
+  const curatedVenueById = useMemo(
+    () => new Map(curatedVenues.map((venue) => [venue.id, venue] as const)),
+    [],
+  )
 
   const directionCardsByPocketId = useMemo(() => {
     const next = new Map<string, RealityDirectionCard[]>()
@@ -9927,6 +10032,58 @@ export function SandboxConciergePage({
     })
     return next
   }, [allDirectionCards])
+  const staticPaperPlaneBuildCoverageOpportunity = useMemo<VerifiedCityOpportunity | null>(() => {
+    if (!isBuildWrapperActive || selectedBuildAnchor?.venueId !== 'sj-paper-plane') {
+      return null
+    }
+    const anchorVenue = curatedVenueById.get('sj-paper-plane')
+    const startVenue = curatedVenueById.get('sj-petiscos')
+    const windDownVenue = curatedVenueById.get('sj-hedley-club-lounge')
+    if (!anchorVenue || !startVenue || !windDownVenue) {
+      return null
+    }
+    const downtownDistrict =
+      districtDiscoveryCards.find((district) =>
+        buildDistrictLookupKeys(`${district.id} ${district.name}`).some((key) => key.includes('downtown')),
+      ) ?? districtDiscoveryCards[0]
+    if (!downtownDistrict) {
+      return null
+    }
+    const representativeDirection = (
+      directionCardsByPocketId.get(downtownDistrict.id) ?? allDirectionCards
+    )
+      .slice()
+      .sort((left, right) => {
+        const leftScore = left.debugMeta?.confidence ?? 0
+        const rightScore = right.debugMeta?.confidence ?? 0
+        if (rightScore !== leftScore) {
+          return rightScore - leftScore
+        }
+        return left.id.localeCompare(right.id)
+      })[0]
+    if (!representativeDirection) {
+      return null
+    }
+    return buildStaticPaperPlaneBuildCoverageOpportunity({
+      districtId: downtownDistrict.id,
+      districtName: downtownDistrict.name,
+      directionId: representativeDirection.id,
+      personaLabel: selectedPersonaLabel,
+      vibeLabel: selectedVibeLabel,
+      anchorVenue,
+      startVenue,
+      windDownVenue,
+    })
+  }, [
+    allDirectionCards,
+    curatedVenueById,
+    directionCardsByPocketId,
+    districtDiscoveryCards,
+    isBuildWrapperActive,
+    selectedBuildAnchor?.venueId,
+    selectedPersonaLabel,
+    selectedVibeLabel,
+  ])
 
   const verifiedCityOpportunities = useMemo<VerifiedCityOpportunity[]>(() => {
     const scoredCards = districtDiscoveryCards
@@ -9968,10 +10125,18 @@ export function SandboxConciergePage({
       .map((entry) => entry.card)
 
     const deduped = dedupeCityOpportunityCards(sortedCards, ecsState)
-    if (deduped.length > 0) {
-      return deduped
+    const withStaticBuildCoverage = staticPaperPlaneBuildCoverageOpportunity
+      ? dedupeCityOpportunityCards(
+          [staticPaperPlaneBuildCoverageOpportunity, ...deduped],
+          ecsState,
+        )
+      : deduped
+    if (withStaticBuildCoverage.length > 0) {
+      return withStaticBuildCoverage
     }
-    return []
+    return staticPaperPlaneBuildCoverageOpportunity
+      ? [staticPaperPlaneBuildCoverageOpportunity]
+      : []
   }, [
     activeTasteExperienceContract,
     activeScenarioContract,
@@ -9984,6 +10149,7 @@ export function SandboxConciergePage({
     primaryVibe,
     selectedPersonaLabel,
     selectedVibeLabel,
+    staticPaperPlaneBuildCoverageOpportunity,
   ])
   const directionView = useMemo(() => {
     if (activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID) {
@@ -19024,10 +19190,6 @@ export function SandboxConciergePage({
         planningDisplayStops.map((stop) => [stop.role, stop] as const),
       ),
     [planningDisplayStops],
-  )
-  const curatedVenueById = useMemo(
-    () => new Map(curatedVenues.map((venue) => [venue.id, venue] as const)),
-    [],
   )
   const curateTargetArtifactDebugLine = useMemo(() => {
     if (!isCurateWrapperActive) {
