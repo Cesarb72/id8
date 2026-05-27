@@ -18665,6 +18665,15 @@ export function SandboxConciergePage({
     isPublicSurface &&
       isSurpriseWrapperActive &&
       !selectedCandidateRouteArtifact &&
+  const publicCommittedRouteReady = Boolean(
+    isPublicSurface &&
+      selectedRouteArtifact?.source === 'committed' &&
+      canonicalRouteArtifact &&
+      (previewSynced || committedPlanMatchesGenerateDirection),
+  )
+  const publicCandidateOnlyPreviewActive = Boolean(
+    isPublicSurface && selectedRouteArtifact?.source === 'candidate',
+  )
       publicSurpriseSelectableCardModels.length === 0,
   )
   const publicSurpriseDriftRecoveryVisible = Boolean(
@@ -18723,7 +18732,9 @@ export function SandboxConciergePage({
     selectedRouteSummaryArtifact?.routeTitle ?? "Tonight's route is ready"
   const revealedStepSubline =
     selectedRouteSummaryArtifact?.routeSummary ?? previewSpatialCoherenceLine
-  const showPrimaryContinueAction = !selectedCandidatePreviewValidationFailed
+  const showPrimaryContinueAction = Boolean(
+    !selectedCandidatePreviewValidationFailed && !publicTruthGateSuppressPreview,
+  )
   const showTryAnotherAction = isSurpriseWrapperActive
   const showReturnToCurateDiscoveryAction = curatePreviewPhaseActive
   const selectedRouteArtifactIdForGeneration =
@@ -18752,10 +18763,28 @@ export function SandboxConciergePage({
       return
     }
     if (committedPlanMatchesGenerateDirection || (plan && previewSynced)) {
+  const publicSurpriseTruthGateSuppressPreview = Boolean(
+    isPublicSurface &&
+      isSurpriseWrapperActive &&
+      publicCandidateOnlyPreviewActive &&
+      !publicCommittedRouteReady &&
+      (selectedCandidatePreviewValidationFailed || publicSurpriseDriftRecoveryVisible),
+  )
+  const publicBuildTruthGateSuppressPreview = Boolean(
+    isPublicSurface &&
+      isBuildWrapperActive &&
+      publicCandidateOnlyPreviewActive &&
+      !publicCommittedRouteReady &&
+      Boolean(error),
+  )
+  const publicTruthGateSuppressPreview = Boolean(
+    publicSurpriseTruthGateSuppressPreview || publicBuildTruthGateSuppressPreview,
+  )
       setError(undefined)
       setHasRevealed(true)
       return
     }
+      !publicTruthGateSuppressPreview &&
     if (
       isCurateWrapperActive &&
       selectedCuratePreviewCommitability?.status === 'committable' &&
