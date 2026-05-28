@@ -262,6 +262,40 @@ function readDebugQueryFlag(): boolean {
   }
 }
 
+function getPublicRouteStatusLabel(
+  status: CurateVisibleCardModel['qualificationDisplayStatus'],
+): string {
+  if (status === 'qualified') {
+    return 'Ready for tonight'
+  }
+  if (status === 'rejected' || status === 'runtime_error') {
+    return 'Needs another try'
+  }
+  return 'Choose another option'
+}
+
+function getPublicBuildAnchorErrorMessage(message: string | undefined): string | undefined {
+  if (!message) {
+    return undefined
+  }
+  if (message === 'Enter at least 2 characters to find an anchor.') {
+    return 'Enter at least 2 characters to find a place.'
+  }
+  if (message === 'No local anchor match found. Try a nearby place or broader kind.') {
+    return 'No matching place found yet. Try a broader area or a different place.'
+  }
+  if (message === 'Anchor search is unavailable right now. Please try again.') {
+    return 'Place search is unavailable right now. Please try again.'
+  }
+  if (message === 'Select a required anchor before continuing.') {
+    return 'Choose a place before continuing.'
+  }
+  if (message === 'Select an anchor from the current results before continuing.') {
+    return 'Choose a place from the current results before continuing.'
+  }
+  return message.replace(/\banchor\b/gi, 'place')
+}
+
 interface DemoPlanState {
   itinerary: Itinerary
   selectedArc: ArcCandidate
@@ -2757,13 +2791,17 @@ function buildSelectedRouteArtifactProjection(params: {
       districtLine: `Mostly in ${canonicalRouteArtifact.finalRoute.location || city.trim()}`,
       districtAnchorLine:
         committedAnchorPreserved && committedAnchorName
-          ? `Required anchor: ${committedAnchorName}`
+          ? isPublicSurface
+            ? `Built around: ${committedAnchorName}`
+            : `Required anchor: ${committedAnchorName}`
           : `District anchor: ${canonicalRouteArtifact.finalRoute.location || city.trim()}`,
       authorityLine: canonicalRouteArtifact.selectedClusterConfirmation,
       happeningsLine: undefined as string | undefined,
       whyChooseLine:
         committedAnchorPreserved && committedAnchorName
-          ? `Includes required anchor: ${committedAnchorName}.`
+          ? isPublicSurface
+            ? `Includes your chosen place: ${committedAnchorName}.`
+            : `Includes required anchor: ${committedAnchorName}.`
           : canonicalRouteArtifact.selectedClusterConfirmation,
       whyTonightProofLine: undefined as string | undefined,
     }
@@ -2781,11 +2819,15 @@ function buildSelectedRouteArtifactProjection(params: {
     )
     const buildAnchorLine =
       buildAnchorClaimAllowed
-        ? `Required anchor: ${selectedBuildAnchor.name}`
+        ? isPublicSurface
+          ? `Built around: ${selectedBuildAnchor.name}`
+          : `Required anchor: ${selectedBuildAnchor.name}`
         : effectiveCurateSelectedArtifact.districtAnchorLine
     const buildWhyChooseLine =
       buildAnchorClaimAllowed
-        ? `Includes required anchor: ${selectedBuildAnchor.name}.`
+        ? isPublicSurface
+          ? `Includes your chosen place: ${selectedBuildAnchor.name}.`
+          : `Includes required anchor: ${selectedBuildAnchor.name}.`
         : effectiveCurateSelectedArtifact.whyChooseLine
     return {
       source: 'candidate',
@@ -18623,6 +18665,15 @@ export function SandboxConciergePage({
       canonicalRouteArtifact &&
       (previewSynced || committedPlanMatchesGenerateDirection),
   )
+  const publicCommittedRouteReady = Boolean(
+    isPublicSurface &&
+      selectedRouteArtifact?.source === 'committed' &&
+      canonicalRouteArtifact &&
+      (previewSynced || committedPlanMatchesGenerateDirection),
+  )
+  const publicCandidateOnlyPreviewActive = Boolean(
+    isPublicSurface && selectedRouteArtifact?.source === 'candidate',
+  )
   const sharedFlowPhase = resolveArcFlowPhase({
     mode: activeFlowMode,
     hasEntryReady: isCurateWrapperActive
@@ -18665,15 +18716,6 @@ export function SandboxConciergePage({
     isPublicSurface &&
       isSurpriseWrapperActive &&
       !selectedCandidateRouteArtifact &&
-  const publicCommittedRouteReady = Boolean(
-    isPublicSurface &&
-      selectedRouteArtifact?.source === 'committed' &&
-      canonicalRouteArtifact &&
-      (previewSynced || committedPlanMatchesGenerateDirection),
-  )
-  const publicCandidateOnlyPreviewActive = Boolean(
-    isPublicSurface && selectedRouteArtifact?.source === 'candidate',
-  )
       publicSurpriseSelectableCardModels.length === 0,
   )
   const publicSurpriseDriftRecoveryVisible = Boolean(
@@ -18719,10 +18761,28 @@ export function SandboxConciergePage({
   )
   const surpriseGeneratingNoticeRenderActive =
     surpriseDirectionFallbackPreviewSuppressed && !surpriseGenerationFailureRecoveryVisible
+  const publicSurpriseTruthGateSuppressPreview = Boolean(
+    isPublicSurface &&
+      isSurpriseWrapperActive &&
+      publicCandidateOnlyPreviewActive &&
+      !publicCommittedRouteReady &&
+      (selectedCandidatePreviewValidationFailed || publicSurpriseDriftRecoveryVisible),
+  )
+  const publicBuildTruthGateSuppressPreview = Boolean(
+    isPublicSurface &&
+      isBuildWrapperActive &&
+      publicCandidateOnlyPreviewActive &&
+      !publicCommittedRouteReady &&
+      Boolean(error),
+  )
+  const publicTruthGateSuppressPreview = Boolean(
+    publicSurpriseTruthGateSuppressPreview || publicBuildTruthGateSuppressPreview,
+  )
   const renderSharedPlanPreview = Boolean(
     !hasRevealed &&
       preview &&
       !surpriseDirectionFallbackPreviewSuppressed &&
+      !publicTruthGateSuppressPreview &&
       (!isModeWrapperActive || sharedFlowPhase === 'contract_preview'),
   )
   const renderCommittedReveal = Boolean(
@@ -18763,28 +18823,10 @@ export function SandboxConciergePage({
       return
     }
     if (committedPlanMatchesGenerateDirection || (plan && previewSynced)) {
-  const publicSurpriseTruthGateSuppressPreview = Boolean(
-    isPublicSurface &&
-      isSurpriseWrapperActive &&
-      publicCandidateOnlyPreviewActive &&
-      !publicCommittedRouteReady &&
-      (selectedCandidatePreviewValidationFailed || publicSurpriseDriftRecoveryVisible),
-  )
-  const publicBuildTruthGateSuppressPreview = Boolean(
-    isPublicSurface &&
-      isBuildWrapperActive &&
-      publicCandidateOnlyPreviewActive &&
-      !publicCommittedRouteReady &&
-      Boolean(error),
-  )
-  const publicTruthGateSuppressPreview = Boolean(
-    publicSurpriseTruthGateSuppressPreview || publicBuildTruthGateSuppressPreview,
-  )
       setError(undefined)
       setHasRevealed(true)
       return
     }
-      !publicTruthGateSuppressPreview &&
     if (
       isCurateWrapperActive &&
       selectedCuratePreviewCommitability?.status === 'committable' &&
@@ -19558,7 +19600,9 @@ export function SandboxConciergePage({
         <section className="preview-adjustments draft-tune-panel">
           <p className="kicker reality-curated-label">Build My Plan</p>
           <p className="instruction concierge-context-line">
-            Pick a required anchor first, then keep shaping light.
+            {isPublicSurface
+              ? 'Pick a place to build around first, then keep shaping light.'
+              : 'Pick a required anchor first, then keep shaping light.'}
           </p>
           <div className="controls preview-adjustments-grid compact">
             <label className="input-group inline-field">
@@ -19617,7 +19661,13 @@ export function SandboxConciergePage({
               Continue
             </button>
           </div>
-          {buildAnchorError && <p className="preview-notice-copy">{buildAnchorError}</p>}
+          {buildAnchorError && (
+            <p className="preview-notice-copy">
+              {isPublicSurface
+                ? getPublicBuildAnchorErrorMessage(buildAnchorError)
+                : buildAnchorError}
+            </p>
+          )}
           {buildAnchorResults.length > 0 && (
             <div className="card-stack">
               {buildAnchorResults.map((result) => {
@@ -22627,11 +22677,23 @@ export function SandboxConciergePage({
             selectedBuildAnchor &&
             candidateRouteArtifactsForDisplay.length === 0 &&
             !buildProviderFallbackPreviewVisible && (
-            <p className="preview-notice-copy">
-              No anchor-valid routes are available for "{selectedBuildAnchor.name}" in this context.
-            </p>
+            <div className="preview-notice draft-feedback">
+              <p className="preview-notice-title">
+                {isPublicSurface
+                  ? 'Nothing strong is lining up around this place yet.'
+                  : `No anchor-valid routes are available for "${selectedBuildAnchor.name}" in this context.`}
+              </p>
+              <p className="preview-notice-copy">
+                {isPublicSurface
+                  ? 'Try a broader area, choose a different place, or let ID.8 build the night without this stop.'
+                  : `No anchor-valid routes are available for "${selectedBuildAnchor.name}" in this context.`}
+              </p>
+            </div>
             )}
-          {isBuildWrapperActive && selectedBuildAnchor && buildProviderFallbackPreviewVisible && (
+          {isBuildWrapperActive &&
+            selectedBuildAnchor &&
+            buildProviderFallbackPreviewVisible &&
+            !isPublicSurface && (
             <div className="preview-notice draft-feedback">
               <p className="preview-notice-title">Provider-backed fallback preview</p>
               <p className="preview-notice-copy">
@@ -22644,13 +22706,17 @@ export function SandboxConciergePage({
             curatePrimaryCardDisplay.primaryCardDisplayMode === 'qualified_only' &&
             curatePrimaryCardDisplay.primaryVisibleQualifiedCount === 1 && (
               <p className="preview-notice-copy">
-                1 route is ready for this starter. More options need regeneration.
+                {isPublicSurface
+                  ? 'We found one strong option for this starter.'
+                  : '1 route is ready for this starter. More options need regeneration.'}
               </p>
             )}
           {isCurateWrapperActive &&
             curatePrimaryCardDisplay.primaryCardDisplayMode === 'no_qualified_fallback' && (
               <p className="preview-notice-copy">
-                No approved routes are ready for this starter yet. More options need regeneration.
+                {isPublicSurface
+                  ? 'Some options need another pass before they’re usable.'
+                  : 'No approved routes are ready for this starter yet. More options need regeneration.'}
               </p>
             )}
           <div className="step2-night-options-grid">
@@ -22710,16 +22776,18 @@ export function SandboxConciergePage({
                   <p className="step2-night-option-context">{option.districtLine}</p>
                   <p className="step2-night-option-match">
                     {isPublicSurface
-                      ? `Route status: ${cardModel.qualificationDisplayStatus}`
+                      ? getPublicRouteStatusLabel(cardModel.qualificationDisplayStatus)
                       : `Qualification: ${cardModel.qualificationDisplayStatus} via ${cardModel.cardDisplaySource}`}
                   </p>
                   {cardModel.qualificationStatus === 'qualified' &&
                   cardModel.finalRouteStarterFitTier !== 'strong_starter_fit' &&
                   cardModel.finalRouteStarterFitTier !== 'starter_aligned' ? (
                     <p className="step2-night-option-match">
-                      {cardModel.finalRouteStarterFitTier === 'nearby_alternative'
-                        ? 'Ready route - nearby alternative'
-                        : 'Ready route - broader fit'}
+                      {isPublicSurface
+                        ? 'Choose another option'
+                        : cardModel.finalRouteStarterFitTier === 'nearby_alternative'
+                          ? 'Ready route - nearby alternative'
+                          : 'Ready route - broader fit'}
                     </p>
                   ) : null}
                   {!isPublicSurface && cardModel.qualificationReason ? (
@@ -22738,7 +22806,7 @@ export function SandboxConciergePage({
                 </button>
               )
             })}
-            {buildProviderFallbackPreviewVisible && shadowBuildProviderArtifact && (
+            {buildProviderFallbackPreviewVisible && shadowBuildProviderArtifact && !isPublicSurface && (
               <div
                 className="district-card step2-night-option"
                 aria-label="Provider-backed fallback preview"
@@ -22823,11 +22891,11 @@ export function SandboxConciergePage({
               {selectedCuratePreviewCommitability.status === 'checking' ? (
                 <>
                   <p className="preview-notice-title">
-                    {isPublicSurface ? 'Checking route readiness' : 'Checking route commitability'}
+                    {isPublicSurface ? 'Checking this route' : 'Checking route commitability'}
                   </p>
                   <p className="preview-notice-copy">
                     {isPublicSurface
-                      ? 'Making sure this selected route is ready before you continue.'
+                      ? 'Making sure this route is ready.'
                       : 'Verifying that this selected route can be committed exactly before entering Shared Plan Preview.'}
                   </p>
                 </>
@@ -22835,14 +22903,14 @@ export function SandboxConciergePage({
                 <>
                   <p className="preview-notice-title">
                     {isPublicSurface
-                      ? 'This route is not ready yet'
+                      ? 'Choose another option'
                       : selectedCuratePreviewCommitability.failureKind === 'runtime_error'
                         ? 'Selected route preflight hit a runtime error'
                         : 'Selected route needs regeneration'}
                   </p>
                   <p className="preview-notice-copy">
                     {isPublicSurface
-                      ? 'Choose another route or adjust your setup before continuing.'
+                      ? 'Some options need another pass before they’re usable.'
                       : `${selectedCuratePreviewCommitability.failureKind === 'runtime_error'
                           ? 'This route could not complete preflight because of a runtime error.'
                           : 'This route is not structurally committable as selected.'}${selectedCuratePreviewCommitability.missingRoleForContract
@@ -22856,10 +22924,12 @@ export function SandboxConciergePage({
                 </>
               ) : (
                 <>
-                  <p className="preview-notice-title">Selected route is ready</p>
+                  <p className="preview-notice-title">
+                    {isPublicSurface ? 'This route is ready.' : 'Selected route is ready'}
+                  </p>
                   <p className="preview-notice-copy">
                     {isPublicSurface
-                      ? 'This route is ready for preview.'
+                      ? 'Review it before you continue.'
                       : 'This route preserved its Curate hard-commit target and can enter Shared Plan Preview.'}
                   </p>
                 </>
@@ -22966,7 +23036,7 @@ export function SandboxConciergePage({
               onClick={handleRetrySurpriseGeneration}
               disabled={!surpriseRetryAvailable}
             >
-              Retry Surprise
+              {isPublicSurface ? 'Try another surprise' : 'Retry Surprise'}
             </button>
           </div>
         </section>
@@ -22980,7 +23050,7 @@ export function SandboxConciergePage({
         >
           <p className="preview-notice-title">Building your surprise night...</p>
           <p className="preview-notice-copy">
-            Checking nearby options and assembling real PlanPreviews.
+            Checking nearby options and shaping your route.
           </p>
         </section>
       )}
@@ -23214,10 +23284,14 @@ export function SandboxConciergePage({
               </div>
               {selectedCandidatePreviewValidationFailed && (
                 <div className="preview-notice draft-feedback">
-                  <p className="preview-notice-title">Selected direction needs regeneration</p>
+                  <p className="preview-notice-title">
+                    {isPublicSurface
+                      ? 'This surprise changed shape.'
+                      : 'Selected direction needs regeneration'}
+                  </p>
                   <p className="preview-notice-copy">
                     {isPublicSurface
-                      ? 'The last generation drifted from this selected direction. Regenerate this direction or try another route.'
+                      ? 'The route no longer matches the version you picked. Try rebuilding it or choose another option.'
                       : 'The last generation drifted from the selected direction contract. This preview remains visible for recovery; regenerate this direction or try another route.'}
                   </p>
                 </div>
@@ -23230,7 +23304,11 @@ export function SandboxConciergePage({
                     onClick={handleBuildFullPlan}
                     disabled={!previewGenerateDirectionId || loading}
                   >
-                    {loading ? 'Building full plan...' : 'Continue with this plan'}
+                    {loading
+                      ? 'Building full plan...'
+                      : isPublicSurface
+                        ? 'Review this route'
+                        : 'Continue with this plan'}
                   </button>
                 )}
                 {showTryAnotherAction && (
@@ -23242,7 +23320,7 @@ export function SandboxConciergePage({
                     }}
                     disabled={loading}
                   >
-                    Try another
+                    {isPublicSurface && isSurpriseWrapperActive ? 'Try another surprise' : 'Try another'}
                   </button>
                 )}
                 {showReturnToCurateDiscoveryAction && !isPublicSurface && (
@@ -23267,9 +23345,9 @@ export function SandboxConciergePage({
           aria-live="polite"
           aria-label="Surprise route recovery"
         >
-          <p className="preview-notice-title">That route didn&apos;t hold together.</p>
+          <p className="preview-notice-title">This surprise changed shape.</p>
           <p className="preview-notice-copy">
-            This route drifted from the direction you picked. Choose another route or try again.
+            The route no longer matches the version you picked. Try rebuilding it or choose another option.
           </p>
           <div className="action-row draft-actions">
             {publicSurpriseRouteChoiceRecoveryAvailable && (
@@ -23279,7 +23357,7 @@ export function SandboxConciergePage({
                 onClick={handleReturnToPublicSurpriseRouteChoice}
                 disabled={loading}
               >
-                Choose Another Route
+                Choose another route
               </button>
             )}
             <button
@@ -23288,7 +23366,7 @@ export function SandboxConciergePage({
               onClick={handleRetrySurpriseGeneration}
               disabled={!surpriseRetryAvailable}
             >
-              Try Again
+              Try this surprise again
             </button>
           </div>
         </section>
