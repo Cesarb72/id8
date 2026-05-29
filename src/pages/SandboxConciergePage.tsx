@@ -2774,6 +2774,41 @@ function buildSelectedRouteArtifactProjection(params: {
       explicitSelectedCandidateArtifactId &&
       effectiveCurateSelectedArtifact.id === explicitSelectedCandidateArtifactId,
   )
+  const surpriseCommittedProjectionReady = Boolean(
+    isSurpriseWrapperActive &&
+      canonicalRouteArtifact &&
+      selectedRouteDirectionId &&
+      canonicalRouteArtifact.selectedDirectionId === selectedRouteDirectionId &&
+      candidatePreviewAuthorityActive &&
+      effectiveCurateSelectedArtifact?.id === explicitSelectedCandidateArtifactId &&
+      canonicalRouteArtifact.planSnapshot.selectedCandidateRouteArtifactId ===
+        explicitSelectedCandidateArtifactId &&
+      canonicalRouteArtifact.finalRoute.stops.length > 0,
+  )
+  if (surpriseCommittedProjectionReady && canonicalRouteArtifact && selectedRouteDirectionId) {
+    const committedHighlightStop =
+      canonicalRouteArtifact.finalRoute.stops.find((stop) => stop.role === 'highlight') ?? null
+    return {
+      source: 'committed',
+      directionId: selectedRouteDirectionId,
+      canonicalRouteArtifact,
+      activeHighlight: {
+        provenance: 'committed_runtime_route',
+        activeName: committedHighlightStop?.displayName ?? 'Selected highlight',
+        activeVenueId: committedHighlightStop?.venueId,
+        activeStopId: committedHighlightStop?.id,
+      },
+      preview: buildPreviewFromFinalRoute(canonicalRouteArtifact.finalRoute),
+      routeTitle: canonicalRouteArtifact.finalRoute.routeHeadline,
+      routeSummary: canonicalRouteArtifact.finalRoute.routeSummary,
+      districtLine: `Mostly in ${canonicalRouteArtifact.finalRoute.location || city.trim()}`,
+      districtAnchorLine: `District anchor: ${canonicalRouteArtifact.finalRoute.location || city.trim()}`,
+      authorityLine: canonicalRouteArtifact.selectedClusterConfirmation,
+      happeningsLine: undefined as string | undefined,
+      whyChooseLine: canonicalRouteArtifact.selectedClusterConfirmation,
+      whyTonightProofLine: undefined as string | undefined,
+    }
+  }
   const committedRouteBodyMatchesSelectedArtifact =
     explicitSurpriseRerollCandidateSelectionActive && canonicalRouteArtifact
       ? getArtifactStorySpineRouteBodyMatch(
@@ -18828,17 +18863,15 @@ export function SandboxConciergePage({
       : isBuildWrapperActive
         ? 'build'
         : null
-  const hasCommittedRoutePhase = Boolean(
-    hasRevealed &&
-      selectedRouteArtifact?.source === 'committed' &&
+  const committedRevealReady = Boolean(
+    selectedRouteArtifact?.source === 'committed' &&
       canonicalRouteArtifact &&
       (previewSynced || committedPlanMatchesGenerateDirection),
   )
+  const hasCommittedRoutePhase = Boolean(hasRevealed && committedRevealReady)
   const publicCommittedRouteReady = Boolean(
     isPublicSurface &&
-      selectedRouteArtifact?.source === 'committed' &&
-      canonicalRouteArtifact &&
-      (previewSynced || committedPlanMatchesGenerateDirection),
+      committedRevealReady,
   )
   const publicCandidateOnlyPreviewActive = Boolean(
     isPublicSurface && selectedRouteArtifact?.source === 'candidate',
@@ -18962,7 +18995,9 @@ export function SandboxConciergePage({
   const revealedStepSubline =
     selectedRouteSummaryArtifact?.routeSummary ?? previewSpatialCoherenceLine
   const showPrimaryContinueAction = Boolean(
-    !selectedCandidatePreviewValidationFailed && !publicTruthGateSuppressPreview,
+    !selectedCandidatePreviewValidationFailed &&
+      !publicTruthGateSuppressPreview &&
+      (!isPublicSurface || !isSurpriseWrapperActive || committedRevealReady),
   )
   const showTryAnotherAction = isSurpriseWrapperActive
   const showReturnToCurateDiscoveryAction = curatePreviewPhaseActive
@@ -18983,6 +19018,11 @@ export function SandboxConciergePage({
   }, [isCurateWrapperActive])
   const handleBuildFullPlan = useCallback(async () => {
     if (!previewGenerateDirectionId || loading) {
+      return
+    }
+    if (isPublicSurface && isSurpriseWrapperActive && !committedRevealReady) {
+      setHasRevealed(false)
+      setError('Route review is still preparing. Try again in a moment.')
       return
     }
     if (isBuildWrapperActive && selectedBuildAnchor && !selectedCandidateRouteArtifact) {
@@ -19028,6 +19068,9 @@ export function SandboxConciergePage({
     loading,
     applyCurateRefinementEntryPayload,
     committedPlanMatchesGenerateDirection,
+    committedRevealReady,
+    isPublicSurface,
+    isSurpriseWrapperActive,
     plan,
     previewSynced,
     previewGenerateDirectionId,

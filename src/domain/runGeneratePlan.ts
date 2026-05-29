@@ -197,7 +197,10 @@ function applySelectedArtifactLineageToPlannerInput(input: {
   selectedArtifactLineage?: ContractEntryArtifactLineage
 }): IntentInput {
   const { intent, selectedArtifactLineage } = input
-  if (!selectedArtifactLineage || intent.mode !== 'curate') {
+  if (
+    !selectedArtifactLineage ||
+    (intent.mode !== 'curate' && intent.mode !== 'surprise')
+  ) {
     return intent
   }
 
