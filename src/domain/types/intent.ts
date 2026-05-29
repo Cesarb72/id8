@@ -92,6 +92,7 @@ export type ConciergeObjectivePrimary =
   | 'lock_anchor_and_sequence'
   | 'preserve_route_integrity'
   | 'search_and_route'
+export type ConciergeObjectiveOccasion = 'explore' | 'connect' | 'celebrate'
 export type ConciergeExperiencePacing = 'quick' | 'balanced' | 'linger'
 export type ConciergeSocialEnergy = 'low' | 'medium' | 'high'
 export type ConciergeExplorationTolerance = 'low' | 'medium' | 'high'
@@ -107,6 +108,7 @@ export interface ConciergeIntent {
   intentMode: ConciergeIntentMode
   objective: {
     primary: ConciergeObjectivePrimary
+    occasion: ConciergeObjectiveOccasion
   }
   controlPosture: {
     mode: ConciergeControlPostureMode

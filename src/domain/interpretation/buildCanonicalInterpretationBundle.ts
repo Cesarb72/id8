@@ -12,6 +12,7 @@
  */
 import type {
   ConciergeIntent,
+  ConciergeObjectiveOccasion,
   ContractConstraints,
   ExperienceContract,
   PersonaMode,
@@ -92,6 +93,7 @@ function buildConciergeIntent(params: {
   planningMode?: 'engine-led' | 'user-led'
   entryPoint?: 'direction_selection' | 'swap' | 'search'
   hasAnchor?: boolean
+  occasion?: ConciergeObjectiveOccasion
 }): ConciergeIntent {
   const {
     persona,
@@ -129,6 +131,7 @@ function buildConciergeIntent(params: {
           : intentMode === 'surprise'
             ? 'discover_route_shape'
             : 'stabilize_selected_direction'
+  const objectiveOccasion = params.occasion ?? 'connect'
   const socialEnergy = getConciergeSocialEnergy(vibe)
   const explorationTolerance = getConciergeExplorationTolerance({
     persona,
@@ -177,6 +180,7 @@ function buildConciergeIntent(params: {
     intentMode,
     objective: {
       primary: objectivePrimary,
+      occasion: objectiveOccasion,
     },
     controlPosture: {
       mode: controlMode,
@@ -814,6 +818,7 @@ interface BuildCanonicalInterpretationBundleInput {
   planningMode?: 'engine-led' | 'user-led'
   entryPoint?: 'direction_selection' | 'swap' | 'search'
   hasAnchor?: boolean
+  occasion?: ConciergeObjectiveOccasion
   selectedDirectionContext?: ResolvedDirectionContext
   interpretationSource?: string
 }
@@ -908,6 +913,7 @@ export function buildCanonicalInterpretationBundle(
     planningMode: input.planningMode,
     entryPoint: input.entryPoint,
     hasAnchor: input.hasAnchor,
+    occasion: input.occasion,
   })
   const experienceContract = buildExperienceContract({
     persona: input.persona,

@@ -11,6 +11,10 @@ import type {
   RealityClusterCardCopy,
   RealityDirectionCard,
 } from '../app/types/realityDirectionCard'
+import type {
+  ConciergeCardInputDraft,
+  ConciergeCardVibeDraft,
+} from '../app/types/conciergeCardInput'
 import {
   type DirectionCandidate,
 } from '../domain/direction/buildDirectionCandidates'
@@ -2135,6 +2139,16 @@ const vibeOptions: Array<{ label: string; value: VibeAnchor }> = [
   { label: 'Cozy', value: 'cozy' },
   { label: 'Cultured', value: 'cultured' },
 ]
+
+function getConciergeCardVibeUxProfile(vibe: VibeAnchor): ConciergeCardVibeDraft['uxProfile'] {
+  if (vibe === 'cozy' || vibe === 'chill') {
+    return 'cozy'
+  }
+  if (vibe === 'cultured' || vibe === 'adventurous-outdoor' || vibe === 'adventurous-urban') {
+    return 'cultured'
+  }
+  return 'lively'
+}
 
 function getBuildDefaultVibe(category: AnchorSearchResult['venue']['category']): VibeAnchor {
   if (category === 'park') {
@@ -9372,6 +9386,24 @@ export function SandboxConciergePage({
   const showCurateStarterGate = isCurateWrapperActive && !curateStarterReady
   const showBuildAnchorGate = isBuildWrapperActive && !buildAnchorReady
   const districtLocationQuery = useMemo(() => city.trim(), [city])
+  const canonicalCardInputDraft = useMemo<ConciergeCardInputDraft>(
+    () => ({
+      city,
+      persona,
+      objectiveOccasion: 'connect',
+      when: {
+        startTime: undefined,
+        durationMinutes: null,
+        spatialMode: 'WALKABLE',
+      },
+      vibe: {
+        selectedVibe: primaryVibe,
+        uxProfile: getConciergeCardVibeUxProfile(primaryVibe),
+        tasteProfileId: null,
+      },
+    }),
+    [city, persona, primaryVibe],
+  )
   const selectedPersonaLabel = useMemo(
     () => personaOptions.find((option) => option.value === persona)?.label ?? persona,
     [persona],
