@@ -2,6 +2,8 @@
 import { ID8Butler } from '../components/butler/ID8Butler'
 import { StarterPackCard } from '../components/cards/StarterPackCard'
 import { PreviewVenueCard } from '../components/cards/PreviewVenueCard'
+import { ConciergeEchoBar } from '../components/concierge/ConciergeEchoBar'
+import { ConciergeCardStep } from '../components/concierge/cards/ConciergeCardStep'
 import { DistrictPreviewPanel } from '../components/dev/DistrictPreviewPanel'
 import {
   RealityCommitStep,
@@ -15,6 +17,17 @@ import type {
   ConciergeCardInputDraft,
   ConciergeCardVibeDraft,
 } from '../app/types/conciergeCardInput'
+import {
+  deriveConciergeEchoChips,
+  getConciergeCardSequence,
+  getInitialConciergeCardFlowState,
+  getNextConciergeCardId,
+  getRenderableConciergeCards,
+} from '../app/config/conciergeCardConfig'
+import type {
+  ConciergeCardId,
+  ConciergeCardMode,
+} from '../app/types/conciergeCardFlow'
 import {
   type DirectionCandidate,
 } from '../domain/direction/buildDirectionCandidates'
@@ -227,6 +240,7 @@ const DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY = 'id8.dev.closeout.buildAnchorSel
 const DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY = 'id8.dev.closeout.buildAnchorResult'
 const DEV_CLOSEOUT_BUILD_READY_KEY = 'id8.dev.closeout.buildReady'
 const DEV_CLOSEOUT_BUILD_QUERY_KEY = 'id8.dev.closeout.buildQuery'
+const PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED = false
 
 function readSessionStorageValue(key: string): string | null {
   if (typeof window === 'undefined') {
@@ -9375,6 +9389,25 @@ export function SandboxConciergePage({
   const isBuildWrapperActive =
     isBuildEntryRoute || (!isPublicSurface && isChooseRoute && isBuildOrigin)
   const isModeWrapperActive = isCurateWrapperActive || isSurpriseWrapperActive || isBuildWrapperActive
+  const publicCardPreviewMode = useMemo<ConciergeCardMode>(() => {
+    if (isBuildWrapperActive) {
+      return 'build'
+    }
+    if (isCurateWrapperActive) {
+      return 'curate'
+    }
+    return 'surprise'
+  }, [isBuildWrapperActive, isCurateWrapperActive])
+  const [cardFlowState, setCardFlowState] = useState(() =>
+    getInitialConciergeCardFlowState(publicCardPreviewMode),
+  )
+  useEffect(() => {
+    setCardFlowState((current) =>
+      current.mode === publicCardPreviewMode
+        ? current
+        : getInitialConciergeCardFlowState(publicCardPreviewMode),
+    )
+  }, [publicCardPreviewMode])
   const publicBuildFreshEntryRequested =
     isPublicSurface &&
     isBuildEntryRoute &&
@@ -9404,6 +9437,110 @@ export function SandboxConciergePage({
     }),
     [city, persona, primaryVibe],
   )
+  const [cardPreviewDraft, setCardPreviewDraft] =
+    useState<ConciergeCardInputDraft>(canonicalCardInputDraft)
+  const [hintLabel, setHintLabel] = useState<string | null>(null)
+  useEffect(() => {
+    if (!PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED) {
+      setCardPreviewDraft(canonicalCardInputDraft)
+      setHintLabel(null)
+    }
+  }, [canonicalCardInputDraft])
+  const publicCardPreviewRenderableCards = useMemo(
+    () => getRenderableConciergeCards(publicCardPreviewMode),
+    [publicCardPreviewMode],
+  )
+  const activePublicCardPreviewCard = useMemo(
+    () =>
+      publicCardPreviewRenderableCards.find((card) => card.id === cardFlowState.activeCardId) ??
+      publicCardPreviewRenderableCards[0] ??
+      null,
+    [cardFlowState.activeCardId, publicCardPreviewRenderableCards],
+  )
+  const publicCardEchoProjection = useMemo(
+    () =>
+      deriveConciergeEchoChips({
+        mode: publicCardPreviewMode,
+        draft: cardPreviewDraft,
+        flowState: cardFlowState,
+        hintLabel,
+      }),
+    [cardFlowState, cardPreviewDraft, hintLabel, publicCardPreviewMode],
+  )
+  const activePublicCardPreviewSummary = useMemo(() => {
+    const activeCardId = activePublicCardPreviewCard?.id
+    if (!activeCardId) {
+      return undefined
+    }
+    const chip = publicCardEchoProjection.chips.find((entry) => entry.id === activeCardId)
+    return chip ? { valueLabel: chip.valueLabel } : undefined
+  }, [activePublicCardPreviewCard?.id, publicCardEchoProjection.chips])
+  const handlePublicCardPreviewAnswer = useCallback(() => {
+    const activeCardId = cardFlowState.activeCardId
+    if (!activeCardId) {
+      return
+    }
+    if (activeCardId === 'hint') {
+      setHintLabel((current) => current ?? 'Anything')
+    }
+    setCardPreviewDraft((current) => ({ ...current }))
+    setCardFlowState((current) => {
+      const nextStatusById = {
+        ...current.statusById,
+        [activeCardId]: 'answered',
+      }
+      return {
+        ...current,
+        statusById: nextStatusById,
+        activeCardId: getNextConciergeCardId({
+          mode: current.mode,
+          currentCardId: activeCardId,
+          statusById: nextStatusById,
+        }),
+      }
+    })
+  }, [cardFlowState.activeCardId])
+  const handlePublicCardPreviewSkip = useCallback(() => {
+    const activeCardId = cardFlowState.activeCardId
+    if (!activeCardId) {
+      return
+    }
+    setCardFlowState((current) => {
+      const nextStatusById = {
+        ...current.statusById,
+        [activeCardId]: 'skipped',
+      }
+      return {
+        ...current,
+        statusById: nextStatusById,
+        activeCardId: getNextConciergeCardId({
+          mode: current.mode,
+          currentCardId: activeCardId,
+          statusById: nextStatusById,
+        }),
+      }
+    })
+  }, [cardFlowState.activeCardId])
+  const handlePublicCardPreviewChipClick = useCallback(
+    (cardId: ConciergeCardId) => {
+      const card = getConciergeCardSequence(publicCardPreviewMode).find((entry) => entry.id === cardId)
+      if (!card || card.requirement === 'skipped') {
+        return
+      }
+      setCardFlowState((current) => ({
+        ...current,
+        activeCardId: cardId,
+      }))
+    },
+    [publicCardPreviewMode],
+  )
+  const showPublicCardPreview =
+    isPublicSurface &&
+    PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED &&
+    isModeWrapperActive &&
+    !plan &&
+    !finalRoute &&
+    !hasRevealed
   const selectedPersonaLabel = useMemo(
     () => personaOptions.find((option) => option.value === persona)?.label ?? persona,
     [persona],
@@ -19600,6 +19737,23 @@ export function SandboxConciergePage({
           backOnClick={navBackOnClick}
           backLabel={navBackLabel}
         />
+      )}
+      {showPublicCardPreview && activePublicCardPreviewCard && (
+        <section className="preview-adjustments draft-tune-panel" aria-label="Concierge card preview">
+          <ConciergeEchoBar
+            chips={publicCardEchoProjection.chips}
+            summaryLabel={publicCardEchoProjection.summaryLabel}
+            onChipClick={handlePublicCardPreviewChipClick}
+            hidden={!showPublicCardPreview}
+          />
+          <ConciergeCardStep
+            card={activePublicCardPreviewCard}
+            summary={activePublicCardPreviewSummary}
+            canSkip={activePublicCardPreviewCard.requirement === 'optional'}
+            onAnswer={handlePublicCardPreviewAnswer}
+            onSkip={handlePublicCardPreviewSkip}
+          />
+        </section>
       )}
       {showCurateStarterGate ? (
         <section className="preview-adjustments draft-tune-panel">
