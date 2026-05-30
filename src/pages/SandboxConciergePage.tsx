@@ -19757,6 +19757,11 @@ export function SandboxConciergePage({
         ? handleBackToPreview
         : handleBackToChoose
       : undefined
+  const navHomeHref = isPublicSurface ? '/home' : '/dev/home'
+  const publicNavBackIsSafe =
+    !isPublicSurface || (showConfirmBackToReview && isSurpriseWrapperActive)
+  const effectiveNavBackLabel = publicNavBackIsSafe ? navBackLabel : undefined
+  const effectiveNavBackOnClick = publicNavBackIsSafe ? navBackOnClick : undefined
 
   return (
     <PageShell
@@ -19774,11 +19779,11 @@ export function SandboxConciergePage({
       subtitle={undefined}
     >
       <div className="demo-flow-frame concierge-flow">
-      {isModeWrapperActive && !isPublicSurface && (
+      {isModeWrapperActive && (
         <DevTopNav
-          homeHref="/dev/home"
-          backOnClick={navBackOnClick}
-          backLabel={navBackLabel}
+          homeHref={navHomeHref}
+          backOnClick={effectiveNavBackOnClick}
+          backLabel={effectiveNavBackLabel}
         />
       )}
       {showPublicCardPreview && activePublicCardPreviewCard && (
