@@ -143,6 +143,11 @@ import {
   type BuildProviderSourceOpportunity,
   type BuildProviderSourceOpportunityDiagnostics,
 } from '../domain/providers/buildProviderSourceOpportunity'
+import { getProviderRecordIdFromLiveGoogleVenueId } from '../domain/providers/admitLiveVenueIdentity'
+import {
+  isCanonicalVenueResolved,
+  resolveCanonicalVenueIdForProviderRecord,
+} from '../domain/providers/providerCanonicalVenueMapping'
 import {
   mapBuiltScenarioNightToVerifiedOpportunity,
   type BuiltScenarioNightPreviewModel,
@@ -4979,6 +4984,118 @@ type BuildAnchorSelection = {
   category: AnchorSearchResult['venue']['category']
   city: string
   neighborhood: string
+  sourceVenueId?: string
+  providerRecordId?: string
+}
+
+function normalizeOptionalString(value: string | undefined): string | undefined {
+  const normalized = value?.trim()
+  return normalized ? normalized : undefined
+}
+
+function getBuildAnchorProviderRecordIdFromVenue(venue: Venue): string | undefined {
+  return (
+    normalizeOptionalString(venue.source.providerRecordId) ??
+    getProviderRecordIdFromLiveGoogleVenueId(venue.id)
+  )
+}
+
+function getBuildAnchorProviderRecordIdFromSelection(
+  selection: BuildAnchorSelection,
+): string | undefined {
+  return (
+    normalizeOptionalString(selection.providerRecordId) ??
+    (selection.sourceVenueId
+      ? getProviderRecordIdFromLiveGoogleVenueId(selection.sourceVenueId)
+      : undefined) ??
+    getProviderRecordIdFromLiveGoogleVenueId(selection.venueId)
+  )
+}
+
+function canonicalizeBuildAnchorSelection(
+  selection: BuildAnchorSelection,
+): BuildAnchorSelection | null {
+  const venueId = normalizeOptionalString(selection.venueId)
+  const name = normalizeOptionalString(selection.name)
+  const city = normalizeOptionalString(selection.city)
+  const neighborhood = normalizeOptionalString(selection.neighborhood)
+  if (!venueId || !name || !city || !neighborhood || !selection.category) {
+    return null
+  }
+
+  const providerRecordId = getBuildAnchorProviderRecordIdFromSelection(selection)
+  const canonicalMapping = providerRecordId
+    ? resolveCanonicalVenueIdForProviderRecord({
+        provider: 'google-places',
+        providerRecordId,
+        staticVenues: curatedVenues,
+      })
+    : null
+  const canonicalVenueId =
+    canonicalMapping && isCanonicalVenueResolved(canonicalMapping)
+      ? canonicalMapping.canonicalVenueId
+      : undefined
+  const canonicalizedVenueId = canonicalVenueId ?? venueId
+  const sourceVenueId =
+    canonicalVenueId && canonicalVenueId !== venueId
+      ? normalizeOptionalString(selection.sourceVenueId) ?? venueId
+      : normalizeOptionalString(selection.sourceVenueId)
+
+  return {
+    venueId: canonicalizedVenueId,
+    name,
+    category: selection.category,
+    city,
+    neighborhood,
+    ...(sourceVenueId ? { sourceVenueId } : {}),
+    ...(providerRecordId ? { providerRecordId } : {}),
+  }
+}
+
+function buildAnchorSelectionFromSearchResult(
+  result: AnchorSearchResult,
+): BuildAnchorSelection {
+  return canonicalizeBuildAnchorSelection({
+    venueId: result.venue.id,
+    name: result.venue.name,
+    category: result.venue.category,
+    city: result.venue.city,
+    neighborhood: result.venue.neighborhood,
+    providerRecordId: getBuildAnchorProviderRecordIdFromVenue(result.venue),
+  }) ?? {
+    venueId: result.venue.id,
+    name: result.venue.name,
+    category: result.venue.category,
+    city: result.venue.city,
+    neighborhood: result.venue.neighborhood,
+  }
+}
+
+function doesBuildAnchorResultMatchSelection(
+  result: AnchorSearchResult,
+  selection: BuildAnchorSelection | null,
+): boolean {
+  if (!selection) {
+    return false
+  }
+  const resultVenueId = result.venue.id.trim()
+  const selectedVenueId = selection.venueId.trim()
+  if (resultVenueId && resultVenueId === selectedVenueId) {
+    return true
+  }
+
+  const sourceVenueId = normalizeOptionalString(selection.sourceVenueId)
+  if (sourceVenueId && resultVenueId === sourceVenueId) {
+    return true
+  }
+
+  const resultProviderRecordId = getBuildAnchorProviderRecordIdFromVenue(result.venue)
+  const selectedProviderRecordId = getBuildAnchorProviderRecordIdFromSelection(selection)
+  return Boolean(
+    resultProviderRecordId &&
+      selectedProviderRecordId &&
+      resultProviderRecordId === selectedProviderRecordId,
+  )
 }
 
 type BuildProviderShadowInvocationSnapshot = {
@@ -9277,8 +9394,19 @@ export function SandboxConciergePage({
       return null
     }
     try {
-      return JSON.parse(raw) as BuildAnchorSelection
+      const selection = canonicalizeBuildAnchorSelection(JSON.parse(raw) as BuildAnchorSelection)
+      if (!selection) {
+        writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
+        writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
+        return null
+      }
+      if (JSON.stringify(selection) !== raw) {
+        writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, JSON.stringify(selection))
+      }
+      return selection
     } catch {
+      writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
+      writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
       return null
     }
   })
@@ -9666,15 +9794,26 @@ export function SandboxConciergePage({
       const persistedSelectionRaw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY)
       if (persistedSelectionRaw) {
         try {
-          const persistedSelection = JSON.parse(persistedSelectionRaw) as BuildAnchorSelection
-          if (persistedSelection?.venueId && persistedSelection.venueId !== selectedBuildAnchor?.venueId) {
+          const parsedSelection = JSON.parse(persistedSelectionRaw) as BuildAnchorSelection
+          const persistedSelection = canonicalizeBuildAnchorSelection(parsedSelection)
+          if (!persistedSelection) {
+            writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
+            writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
+          } else if (persistedSelection.venueId !== selectedBuildAnchor?.venueId) {
             setSelectedBuildAnchor(persistedSelection)
+            if (JSON.stringify(persistedSelection) !== persistedSelectionRaw) {
+              writeSessionStorageValue(
+                DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY,
+                JSON.stringify(persistedSelection),
+              )
+            }
             if (buildRefinementVibe === 'auto') {
               setPrimaryVibe(getBuildDefaultVibe(persistedSelection.category))
             }
           }
         } catch {
-          // noop
+          writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
+          writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
         }
       }
       const persistedResultRaw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY)
@@ -9709,15 +9848,26 @@ export function SandboxConciergePage({
       const persistedSelectionRaw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY)
       if (persistedSelectionRaw) {
         try {
-          const persistedSelection = JSON.parse(persistedSelectionRaw) as BuildAnchorSelection
-          if (persistedSelection?.venueId && persistedSelection.venueId !== selectedBuildAnchor?.venueId) {
+          const parsedSelection = JSON.parse(persistedSelectionRaw) as BuildAnchorSelection
+          const persistedSelection = canonicalizeBuildAnchorSelection(parsedSelection)
+          if (!persistedSelection) {
+            writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
+            writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
+          } else if (persistedSelection.venueId !== selectedBuildAnchor?.venueId) {
             setSelectedBuildAnchor(persistedSelection)
+            if (JSON.stringify(persistedSelection) !== persistedSelectionRaw) {
+              writeSessionStorageValue(
+                DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY,
+                JSON.stringify(persistedSelection),
+              )
+            }
             if (buildRefinementVibe === 'auto') {
               setPrimaryVibe(getBuildDefaultVibe(persistedSelection.category))
             }
           }
         } catch {
-          // noop
+          writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
+          writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
         }
       }
       const persistedResultRaw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY)
@@ -10785,8 +10935,11 @@ export function SandboxConciergePage({
   const selectedBuildAnchorVenue = useMemo(
     () =>
       isBuildWrapperActive && selectedBuildAnchor
-        ? buildAnchorResults.find((result) => result.venue.id === selectedBuildAnchor.venueId)?.venue ??
-          (selectedBuildAnchorResult?.venue.id === selectedBuildAnchor.venueId
+        ? buildAnchorResults.find((result) =>
+            doesBuildAnchorResultMatchSelection(result, selectedBuildAnchor),
+          )?.venue ??
+          (selectedBuildAnchorResult &&
+          doesBuildAnchorResultMatchSelection(selectedBuildAnchorResult, selectedBuildAnchor)
             ? selectedBuildAnchorResult.venue
             : null)
         : null,
@@ -13362,13 +13515,7 @@ export function SandboxConciergePage({
   }, [buildAnchorQuery, districtLocationQuery, resetBuildAttemptState])
 
   const handleBuildAnchorSelect = useCallback((result: AnchorSearchResult) => {
-    const selection: BuildAnchorSelection = {
-      venueId: result.venue.id,
-      name: result.venue.name,
-      category: result.venue.category,
-      city: result.venue.city,
-      neighborhood: result.venue.neighborhood,
-    }
+    const selection = buildAnchorSelectionFromSearchResult(result)
     setSelectedBuildAnchor(selection)
     setSelectedBuildAnchorResult(result)
     writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, JSON.stringify(result))
@@ -13381,7 +13528,9 @@ export function SandboxConciergePage({
     const query = buildAnchorQuery.trim()
     const selectedAnchorInCurrentResults = Boolean(
       selectedBuildAnchor &&
-        buildAnchorResults.some((result) => result.venue.id === selectedBuildAnchor.venueId),
+        buildAnchorResults.some((result) =>
+          doesBuildAnchorResultMatchSelection(result, selectedBuildAnchor),
+        ),
     )
     if (buildAnchorLoading) {
       setBuildAnchorError('Wait for anchor search to finish before continuing.')
@@ -19889,7 +20038,9 @@ export function SandboxConciergePage({
                 buildAnchorLoading ||
                 Boolean(buildAnchorError) ||
                 buildAnchorQuery.trim().length < 2 ||
-                !buildAnchorResults.some((result) => result.venue.id === selectedBuildAnchor.venueId)
+                !buildAnchorResults.some((result) =>
+                  doesBuildAnchorResultMatchSelection(result, selectedBuildAnchor),
+                )
               }
             >
               Continue
@@ -19905,7 +20056,7 @@ export function SandboxConciergePage({
           {buildAnchorResults.length > 0 && (
             <div className="card-stack">
               {buildAnchorResults.map((result) => {
-                const selected = selectedBuildAnchor?.venueId === result.venue.id
+                const selected = doesBuildAnchorResultMatchSelection(result, selectedBuildAnchor)
                 return (
                   <button
                     key={`build_anchor_${result.venue.id}`}

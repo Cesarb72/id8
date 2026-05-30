@@ -57,6 +57,21 @@ function buildUnresolvedMapping(
   }
 }
 
+function buildUnresolvedProviderRecordMapping(params: {
+  provider: Extract<LiveDataProvider, 'google-places'>
+  providerRecordId: string
+  matchedAt?: number
+}): ProviderCanonicalVenueMapping {
+  return {
+    provider: params.provider,
+    providerRecordId: params.providerRecordId,
+    canonicalVenueId: null,
+    matchMethod: 'unresolved',
+    confidence: 0,
+    matchedAt: params.matchedAt,
+  }
+}
+
 function resolveSeededCanonicalVenueId(params: {
   providerVenue: ProviderVenue
   staticVenues: Venue[]
@@ -98,6 +113,68 @@ export function isCanonicalVenueResolved(
   mapping: ProviderCanonicalVenueMapping,
 ): mapping is ProviderCanonicalVenueMapping & { canonicalVenueId: string } {
   return Boolean(mapping.canonicalVenueId) && mapping.matchMethod !== 'unresolved'
+}
+
+export function resolveCanonicalVenueIdForProviderRecord(params: {
+  provider: Extract<LiveDataProvider, 'google-places'>
+  providerRecordId: string
+  staticVenues: Venue[]
+  matchedAt?: number
+}): ProviderCanonicalVenueMapping {
+  const { matchedAt, provider, staticVenues } = params
+  const providerRecordId = params.providerRecordId.trim()
+  if (!providerRecordId) {
+    return buildUnresolvedProviderRecordMapping({
+      provider,
+      providerRecordId,
+      matchedAt,
+    })
+  }
+
+  const seededMatch = providerCanonicalVenueSeeds.find(
+    (entry) => entry.provider === provider && entry.providerRecordId === providerRecordId,
+  )
+  if (seededMatch) {
+    const seededVenue = staticVenues.find((venue) => venue.id === seededMatch.canonicalVenueId)
+    if (!seededVenue) {
+      return buildUnresolvedProviderRecordMapping({
+        provider,
+        providerRecordId,
+        matchedAt,
+      })
+    }
+
+    return {
+      provider: seededMatch.provider,
+      providerRecordId: seededMatch.providerRecordId,
+      canonicalVenueId: seededMatch.canonicalVenueId,
+      matchMethod: seededMatch.matchMethod,
+      confidence: seededMatch.confidence,
+      matchedAt,
+    }
+  }
+
+  const providerIdMatches = staticVenues.filter(
+    (venue) =>
+      venue.source.provider === provider &&
+      venue.source.providerRecordId?.trim() === providerRecordId,
+  )
+  if (providerIdMatches.length === 1) {
+    return {
+      provider,
+      providerRecordId,
+      canonicalVenueId: providerIdMatches[0]!.id,
+      matchMethod: 'provider_id',
+      confidence: 1,
+      matchedAt,
+    }
+  }
+
+  return buildUnresolvedProviderRecordMapping({
+    provider,
+    providerRecordId,
+    matchedAt,
+  })
 }
 
 export interface StaticCanonicalPrecedenceResolution {
