@@ -1,4 +1,5 @@
 ﻿import { ID8Butler } from '../components/butler/ID8Butler'
+import { useState } from 'react'
 import { PageShell } from '../components/layout/PageShell'
 import {
   listSharedLiveArtifactPlans,
@@ -8,6 +9,8 @@ import {
 } from '../domain/live/liveArtifactSession'
 
 type HomePlanPriority = 'active-live' | 'locked-in-progress' | 'recent-saved'
+
+const HOME_PLANNING_CITY = 'San Jose'
 
 interface HomePlanSummary {
   priority: HomePlanPriority
@@ -48,6 +51,7 @@ function buildSavedPlanStatus(entry: SharedLiveArtifactPlanEntry): string {
 }
 
 export function HomePage() {
+  const [locationNoticeVisible, setLocationNoticeVisible] = useState(false)
   const currentPath =
     typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : ''
   const isDevHome = currentPath.startsWith('/dev')
@@ -118,7 +122,29 @@ export function HomePage() {
 
   return (
     <PageShell
-      topSlot={<ID8Butler message="Pick what you want to do next. Keep going, start fresh, or revisit a plan." />}
+      topSlot={
+        <>
+          <ID8Butler message="Pick what you want to do next. Keep going, start fresh, or revisit a plan." />
+          <div className="home-location-bar" aria-label="Planning location">
+            <div>
+              <span className="home-location-bar-label">Planning in</span>
+              <strong>{HOME_PLANNING_CITY}</strong>
+            </div>
+            <button
+              type="button"
+              className="home-location-bar-change"
+              onClick={() => setLocationNoticeVisible(true)}
+            >
+              Change
+            </button>
+          </div>
+          {locationNoticeVisible && (
+            <p className="home-location-bar-notice">
+              Location changes from Home are coming next.
+            </p>
+          )}
+        </>
+      }
       title="Home"
       subtitle="Tonight, without friction."
     >

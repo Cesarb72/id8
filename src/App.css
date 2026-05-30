@@ -1780,6 +1780,58 @@ fieldset {
   gap: 0.74rem;
 }
 
+.home-location-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.62rem 1.05rem;
+  border-top: 1px solid rgb(210 220 226 / 0.72);
+  border-bottom: 1px solid rgb(210 220 226 / 0.72);
+  background: rgb(255 255 255 / 0.72);
+}
+
+.home-location-bar div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.32rem;
+  min-width: 0;
+}
+
+.home-location-bar-label,
+.home-location-bar-notice {
+  color: rgb(84 99 110 / 0.92);
+  font-size: 0.82rem;
+}
+
+.home-location-bar strong {
+  color: rgb(35 49 58 / 0.96);
+  font-size: 0.88rem;
+}
+
+.home-location-bar-change {
+  border: 0;
+  background: transparent;
+  color: var(--brand-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.1rem 0;
+  text-decoration: underline;
+  text-underline-offset: 0.18rem;
+}
+
+.home-location-bar-change:hover,
+.home-location-bar-change:focus-visible {
+  color: var(--brand);
+}
+
+.home-location-bar-notice {
+  margin: -0.2rem 1.05rem 0;
+}
+
 .home-v1-section {
   display: grid;
   gap: 0.54rem;
