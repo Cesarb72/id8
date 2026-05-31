@@ -1,4 +1,5 @@
 import type { TasteModeId } from '../../domain/taste/selectTasteMode'
+import type { VibeTasteProfileId } from '../../domain/taste/resolveVibeTasteProfile'
 import type {
   ConciergeObjectiveOccasion,
   PersonaMode,
@@ -18,6 +19,7 @@ export interface ConciergeCardVibeDraft {
   selectedVibe: VibeAnchor
   uxProfile: ConciergeCardVibeUxProfile
   tasteProfileId: TasteModeId | null
+  vibeTasteProfileId: VibeTasteProfileId | null
 }
 
 export interface ConciergeCardInputDraft {

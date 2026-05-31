@@ -177,6 +177,7 @@ import {
 import { isDevOrSandboxCloseoutFlow } from '../domain/sources/getSourceMode'
 import { mapVenueToTasteInput } from '../domain/interpretation/taste/mapVenueToTasteInput'
 import { interpretVenueTaste } from '../domain/interpretation/taste/interpretVenueTaste'
+import { resolveVibeTasteProfile } from '../domain/taste/resolveVibeTasteProfile'
 import {
   buildDistrictOpportunityProfiles,
   type BuildDistrictOpportunityProfilesResult,
@@ -9630,6 +9631,7 @@ export function SandboxConciergePage({
         selectedVibe: primaryVibe,
         uxProfile: getConciergeCardVibeUxProfile(primaryVibe),
         tasteProfileId: null,
+        vibeTasteProfileId: resolveVibeTasteProfile(primaryVibe).id,
       },
     }),
     [city, persona, primaryVibe],
