@@ -13073,6 +13073,7 @@ export function SandboxConciergePage({
               sourceMode: 'curated',
               sourceModeOverrideApplied: true,
               debugMode: false,
+              vibeTasteProfileScoring: isCurateWrapperActive ? 'soft_planner_scoring' : 'off',
               curateCommitSemantics: isCurateWrapperActive
                 ? 'approved_route_hard_commit'
                 : undefined,

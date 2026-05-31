@@ -51,7 +51,10 @@ import { computeLiveCompetitiveness } from './retrieval/computeLiveCompetitivene
 import { getNearbyAlternatives } from './retrieval/getNearbyAlternatives'
 import { applyContractRetrievalPressure } from './retrieval/applyContractRetrievalPressure'
 import { retrieveVenues, type RetrieveVenuesResult } from './retrieval/retrieveVenues'
-import { scoreVenueCollection } from './retrieval/scoreVenueFit'
+import {
+  scoreVenueCollection,
+  type VibeTasteProfileScoringMode,
+} from './retrieval/scoreVenueFit'
 import { isValidArcCombination } from './arc/isValidArcCombination'
 import { isArcViable, scoreArcAssembly } from './arc/scoreArcAssembly'
 import { rankArcCandidatesWithDiagnostics } from '../integrations/waypoint/rankArcCandidates'
@@ -129,6 +132,7 @@ export interface RunGeneratePlanOptions {
   strictShape?: boolean
   sourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
+  vibeTasteProfileScoring?: VibeTasteProfileScoringMode
   // Narrow planner handoff around selected candidate artifact lineage when present.
   selectedArtifactLineage?: ContractEntryArtifactLineage
   curateCommitSemantics?: 'seed_guided' | 'approved_route_hard_commit'
@@ -1641,6 +1645,9 @@ export async function runGeneratePlan(
     lens,
     roleContracts,
     options.starterPack,
+    {
+      vibeTasteProfileScoring: options.vibeTasteProfileScoring ?? 'off',
+    },
   )
   const retrievalPressure = applyContractRetrievalPressure({
     scoredVenues: rawScoredVenues,

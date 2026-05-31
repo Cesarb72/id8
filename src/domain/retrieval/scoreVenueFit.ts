@@ -16,6 +16,7 @@ import { requiresRomanticPersonaMoment } from '../contracts/romanticPersonaContr
 import { mapVenueToTasteInput } from '../interpretation/taste/mapVenueToTasteInput'
 import { interpretVenueTaste } from '../interpretation/taste/interpretVenueTaste'
 import { computeVibeAuthority } from '../taste/computeVibeAuthority'
+import { resolveVibeTasteProfile } from '../taste/resolveVibeTasteProfile'
 import {
   assessGenericHospitalityFallbackPenalty,
   getGenericHospitalityFallbackPenalty,
@@ -36,10 +37,21 @@ import type { Venue } from '../types/venue'
 import type {
   TasteMomentIdentity,
   TasteMomentIntensityTier,
+  TasteSignals,
 } from '../interpretation/taste/types'
+
+export type VibeTasteProfileScoringMode = 'off' | 'soft_planner_scoring'
+
+export interface ScoreVenueFitOptions {
+  vibeTasteProfileScoring?: VibeTasteProfileScoringMode
+}
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
 }
 
 type WeightShape = {
@@ -134,6 +146,149 @@ function normalizeWeightedScore(
 function hasAnyTag(venue: Venue, tags: string[]): boolean {
   const normalized = new Set(venue.tags.map((tag) => tag.toLowerCase()))
   return tags.some((tag) => normalized.has(tag.toLowerCase()))
+}
+
+function countMatchingTags(venue: Venue, tags: string[]): number {
+  const normalized = new Set(venue.tags.map((tag) => tag.toLowerCase()))
+  return tags.filter((tag) => normalized.has(tag.toLowerCase())).length
+}
+
+interface VibeTasteProfileScorePressure {
+  fitDelta: number
+  roleDelta: Record<InternalRole, number>
+}
+
+const emptyVibeTasteProfileScorePressure: VibeTasteProfileScorePressure = {
+  fitDelta: 0,
+  roleDelta: {
+    warmup: 0,
+    peak: 0,
+    wildcard: 0,
+    cooldown: 0,
+  },
+}
+
+function computeVibeTasteProfileScorePressure(params: {
+  venue: Venue
+  intent: IntentProfile
+  tasteSignals: TasteSignals
+  options?: ScoreVenueFitOptions
+}): VibeTasteProfileScorePressure {
+  const mode = params.options?.vibeTasteProfileScoring ?? 'off'
+  const vibe = params.intent.primaryAnchor
+  if (mode !== 'soft_planner_scoring' || !vibe) {
+    return emptyVibeTasteProfileScorePressure
+  }
+
+  const { venue, tasteSignals } = params
+  const profile = resolveVibeTasteProfile(vibe)
+  const preferredCategory = profile.preferredCategories.includes(venue.category)
+  const discouragedCategory = profile.discouragedCategories.includes(venue.category)
+  const preferredTagCount = countMatchingTags(venue, profile.preferredTags)
+  const discouragedTagCount = countMatchingTags(venue, profile.discouragedTags)
+  const preferredTagSignal = Math.min(1, preferredTagCount / 2)
+  const discouragedTagSignal = Math.min(1, discouragedTagCount / 2)
+  const [minEnergy, maxEnergy] = profile.energyLevelRange
+  const energyInRange = venue.energyLevel >= minEnergy && venue.energyLevel <= maxEnergy
+  const energyDistance = energyInRange
+    ? 0
+    : Math.min(Math.abs(venue.energyLevel - minEnergy), Math.abs(venue.energyLevel - maxEnergy))
+  const energySignal = energyInRange ? 1 : Math.max(0, 1 - energyDistance / 4)
+
+  if (profile.id === 'low_key_intimate') {
+    const calmSignal = clamp01(
+      (1 - tasteSignals.energy) * 0.44 +
+        tasteSignals.intimacy * 0.28 +
+        tasteSignals.conversationFriendliness * 0.18 +
+        tasteSignals.lingerFactor * 0.1,
+    )
+    return {
+      fitDelta: clamp(
+        (preferredCategory ? 0.004 : 0) +
+          preferredTagSignal * 0.004 +
+          calmSignal * 0.006 +
+          energySignal * 0.003 -
+          (discouragedCategory ? 0.006 : 0) -
+          discouragedTagSignal * 0.004,
+        -0.015,
+        0.015,
+      ),
+      roleDelta: {
+        warmup: clamp(
+          calmSignal * 0.01 + (venue.category === 'cafe' ? 0.006 : 0) - (venue.energyLevel >= 4 ? 0.008 : 0),
+          -0.025,
+          0.025,
+        ),
+        peak: clamp(
+          tasteSignals.intimacy * 0.01 +
+            tasteSignals.conversationFriendliness * 0.006 +
+            (preferredCategory ? 0.004 : 0) -
+            (venue.energyLevel >= 5 ? 0.01 : 0),
+          -0.025,
+          0.025,
+        ),
+        wildcard: clamp(preferredTagSignal * 0.006 - discouragedTagSignal * 0.008, -0.025, 0.025),
+        cooldown: clamp(calmSignal * 0.016 + tasteSignals.lingerFactor * 0.006, -0.025, 0.025),
+      },
+    }
+  }
+
+  if (profile.id === 'social_buzzing') {
+    const socialSignal = clamp01(
+      tasteSignals.energy * 0.36 +
+        tasteSignals.socialDensity * 0.34 +
+        tasteSignals.experientialFactor * 0.18 +
+        preferredTagSignal * 0.12,
+    )
+    return {
+      fitDelta: clamp(
+        (preferredCategory ? 0.004 : 0) +
+          preferredTagSignal * 0.004 +
+          socialSignal * 0.006 +
+          energySignal * 0.003 -
+          (discouragedCategory ? 0.006 : 0) -
+          discouragedTagSignal * 0.004,
+        -0.015,
+        0.015,
+      ),
+      roleDelta: {
+        warmup: clamp(socialSignal * 0.006 + (venue.category === 'bar' ? 0.004 : 0), -0.025, 0.025),
+        peak: clamp(socialSignal * 0.018 + preferredTagSignal * 0.006, -0.025, 0.025),
+        wildcard: clamp(socialSignal * 0.014 + tasteSignals.experientialFactor * 0.006, -0.025, 0.025),
+        cooldown: clamp(-socialSignal * 0.014 + (tasteSignals.lingerFactor >= 0.58 ? 0.004 : 0), -0.025, 0.025),
+      },
+    }
+  }
+
+  const occasionSignal = clamp01(
+    tasteSignals.destinationFactor * 0.34 +
+      tasteSignals.experientialFactor * 0.3 +
+      tasteSignals.momentIntensity.score * 0.18 +
+      (tasteSignals.highlightTier === 1 ? 0.12 : tasteSignals.highlightTier === 2 ? 0.06 : 0) +
+      preferredTagSignal * 0.06,
+  )
+  return {
+    fitDelta: clamp(
+      (preferredCategory ? 0.004 : 0) +
+        preferredTagSignal * 0.004 +
+        occasionSignal * 0.006 +
+        energySignal * 0.002 -
+        (discouragedCategory ? 0.005 : 0) -
+        discouragedTagSignal * 0.004,
+      -0.015,
+      0.015,
+    ),
+    roleDelta: {
+      warmup: clamp(
+        (venue.driveMinutes <= 12 ? 0.004 : 0) - (tasteSignals.destinationFactor >= 0.7 ? 0.006 : 0),
+        -0.025,
+        0.025,
+      ),
+      peak: clamp(occasionSignal * 0.02 + (tasteSignals.highlightTier === 1 ? 0.005 : 0), -0.025, 0.025),
+      wildcard: clamp(tasteSignals.experientialFactor * 0.012 + preferredTagSignal * 0.006, -0.025, 0.025),
+      cooldown: clamp(tasteSignals.lingerFactor * 0.008 - (venue.energyLevel >= 5 ? 0.006 : 0), -0.025, 0.025),
+    },
+  }
 }
 
 function normalizeSignalToken(value: string): string {
@@ -969,6 +1124,7 @@ export function scoreVenueFit(
   lens: ExperienceLens,
   roleContracts?: RoleContractSet,
   starterPack?: StarterPack,
+  options?: ScoreVenueFitOptions,
 ): ScoredVenue {
   const anchorFit = scoreAnchorFit(venue, intent)
   const crewFit = scoreCrewFit(venue, crewPolicy)
@@ -1040,6 +1196,12 @@ export function scoreVenueFit(
     timeWindow: intent.timeWindow,
     persona: intent.persona ?? undefined,
     vibe: intent.primaryAnchor ?? undefined,
+  })
+  const vibeTasteProfilePressure = computeVibeTasteProfileScorePressure({
+    venue,
+    intent,
+    tasteSignals,
+    options,
   })
   const startMomentRoleFit = getMomentRolePreference(tasteSignals.momentIdentity, 'start')
   const highlightMomentRoleFit = getMomentRolePreference(
@@ -1213,6 +1375,7 @@ export function scoreVenueFit(
       venue.source.qualityScore * 0.05 +
       venue.source.sourceConfidence * 0.03 +
       venue.signature.signatureScore * 0.04 +
+      vibeTasteProfilePressure.fitDelta +
       contextSpecificity.overall * 0.08 -
       (venue.source.sourceOrigin === 'live' && venue.source.sourceConfidence < 0.62 && !liveFairness.supportRecoveryEligible ? 0.01 : 0) -
       (weakLiveWindow ? 0.06 : 0) -
@@ -1689,6 +1852,7 @@ export function scoreVenueFit(
       romanticMomentStartLift +
       startEnergyEntryLift +
       startIntentionalityBonus +
+      vibeTasteProfilePressure.roleDelta.warmup +
       romanticContextBoost * 0.4 +
       familyContextBoost * 0.35 +
       cozyConversationBoost * 0.45 +
@@ -1736,6 +1900,7 @@ export function scoreVenueFit(
       strongHighlightMomentLift +
       romanticMomentHighlightLift +
       highlightArchetypeLift +
+      vibeTasteProfilePressure.roleDelta.peak +
       peakEnergyLift -
       dominanceControl.byRole.peak -
       peakContractInfluence.penalty -
@@ -1798,6 +1963,7 @@ export function scoreVenueFit(
       lensCompatibility * 0.1 +
       crewPolicy.wildcardBias * 0.08 +
       wildcardLift +
+      vibeTasteProfilePressure.roleDelta.wildcard +
       surpriseDirectionSignal.wildcardBoost +
       discoveryLift -
       (1 - surpriseMomentRoleFit) * 0.06 -
@@ -1844,6 +2010,7 @@ export function scoreVenueFit(
       windDownSoftModeAlignmentBoost +
       windDownCloseLingerBoost +
       windDownIntentionalityBonus +
+      vibeTasteProfilePressure.roleDelta.cooldown +
       romanticContextBoost * 0.5 +
       familyContextBoost * 0.42 -
       dominanceControl.byRole.cooldown * 0.8 -
@@ -1936,15 +2103,16 @@ export function scoreVenueCollection(
   lens: ExperienceLens,
   roleContracts?: RoleContractSet,
   starterPack?: StarterPack,
+  options?: ScoreVenueFitOptions,
 ): ScoredVenue[] {
   const baseCandidates = venues.map((venue) =>
-    scoreVenueFit(venue, intent, crewPolicy, lens, roleContracts, starterPack),
+    scoreVenueFit(venue, intent, crewPolicy, lens, roleContracts, starterPack, options),
   )
   const momentCandidates = deriveMomentVenueRecords({
     intent,
     venuePool: venues,
   }).map(({ moment, venue }) => {
-    const candidate = scoreVenueFit(venue, intent, crewPolicy, lens, roleContracts, starterPack)
+    const candidate = scoreVenueFit(venue, intent, crewPolicy, lens, roleContracts, starterPack, options)
     const parentVenueName = moment.parentPlaceId
       ? venues.find((item) => item.id === moment.parentPlaceId)?.name
       : undefined
