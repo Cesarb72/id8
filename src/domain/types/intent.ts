@@ -93,6 +93,17 @@ export type ConciergeObjectivePrimary =
   | 'preserve_route_integrity'
   | 'search_and_route'
 export type ConciergeObjectiveOccasion = 'explore' | 'connect' | 'celebrate'
+
+export interface OccasionInterpretationProfile {
+  occasion: ConciergeObjectiveOccasion
+  meaningTag: string
+  arcPreference: string
+  highlightPreference: string
+  acceptableStopQualities: string[]
+  disfavoredRouteQualities: string[]
+  reasonSummary: string
+}
+
 export type ConciergeExperiencePacing = 'quick' | 'balanced' | 'linger'
 export type ConciergeSocialEnergy = 'low' | 'medium' | 'high'
 export type ConciergeExplorationTolerance = 'low' | 'medium' | 'high'
@@ -257,9 +268,11 @@ export interface ExperienceContract {
   pacingStyle: ExperienceContractPacingStyle
   constraintPriority: ExperienceContractConstraintPriority
   venuePressure: ExperienceContractVenuePressure
+  occasionSemantics: OccasionInterpretationProfile
   debug: {
     derivedFrom: string[]
     contractReasonSummary: string
+    occasionReasonSummary: string
   }
 }
 

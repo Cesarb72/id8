@@ -15,6 +15,7 @@ import type {
   ConciergeObjectiveOccasion,
   ContractConstraints,
   ExperienceContract,
+  OccasionInterpretationProfile,
   PersonaMode,
   ResolvedDirectionContext,
   VibeAnchor,
@@ -210,6 +211,94 @@ function buildConciergeIntent(params: {
       noveltyPriority,
       certaintyPriority,
     },
+  }
+}
+
+type OccasionInterpretationTemplate = Omit<OccasionInterpretationProfile, 'occasion'>
+
+const OCCASION_INTERPRETATION_PROFILE_BY_OCCASION: Record<
+  ConciergeObjectiveOccasion,
+  OccasionInterpretationTemplate
+> = {
+  explore: {
+    meaningTag: 'discovery-led, locally textured, less obvious route',
+    arcPreference: 'exploratory open, curiosity center, flexible landing',
+    highlightPreference:
+      'distinctive, local, cultural, hidden-gem, activity or neighborhood texture',
+    acceptableStopQualities: [
+      'cafe',
+      'bar',
+      'gallery',
+      'activity',
+      'market',
+      'casual dining',
+      'walkable local clusters',
+    ],
+    disfavoredRouteQualities: [
+      'generic polish',
+      'over-contained sameness',
+      'heavy centerpiece pressure',
+    ],
+    reasonSummary:
+      'Explore treats occasion as discovery pressure: favor local texture, novelty, and flexible curiosity without changing route authority.',
+  },
+  connect: {
+    meaningTag: 'conversation-friendly shared time',
+    arcPreference: 'easy entry, balanced center, lingering close',
+    highlightPreference: 'low-friction, comfortable, talkable, warm, not overly loud',
+    acceptableStopQualities: [
+      'restaurant',
+      'wine/cocktail bar',
+      'dessert',
+      'cafe',
+      'mellow activity',
+    ],
+    disfavoredRouteQualities: [
+      'chaotic',
+      'rushed',
+      'high-noise',
+      'overly spread out',
+      'too many peaks',
+    ],
+    reasonSummary:
+      'Connect treats occasion as conversation support: preserve low-friction balance and lingering time without changing route authority.',
+  },
+  celebrate: {
+    meaningTag: 'occasion-worthy night with a clear memorable center',
+    arcPreference: 'polished open, strong centerpiece, clean landing',
+    highlightPreference:
+      'high-confidence anchor, signature venue, destination dining, eventful moment, elevated hospitality',
+    acceptableStopQualities: [
+      'restaurant',
+      'cocktail bar',
+      'live performance',
+      'dessert',
+      'polished cultural/event anchor',
+    ],
+    disfavoredRouteQualities: [
+      'weak middle',
+      'overly casual anchor',
+      'diffuse highlights',
+      'too much ambiguity',
+    ],
+    reasonSummary:
+      'Celebrate treats occasion as centerpiece clarity: prefer a memorable middle and polished support without changing route authority.',
+  },
+}
+
+export function buildOccasionInterpretationProfile(
+  occasion: ConciergeObjectiveOccasion,
+): OccasionInterpretationProfile {
+  const template = OCCASION_INTERPRETATION_PROFILE_BY_OCCASION[occasion]
+
+  return {
+    occasion,
+    meaningTag: template.meaningTag,
+    arcPreference: template.arcPreference,
+    highlightPreference: template.highlightPreference,
+    acceptableStopQualities: [...template.acceptableStopQualities],
+    disfavoredRouteQualities: [...template.disfavoredRouteQualities],
+    reasonSummary: template.reasonSummary,
   }
 }
 
@@ -504,13 +593,14 @@ export function formatExperienceContractActShape(
 function buildExperienceContract(params: {
   persona: PersonaMode
   vibe: VibeAnchor
+  occasionSemantics: OccasionInterpretationProfile
   conciergeIntent?: ConciergeIntent
   selectedDirectionContext?: ResolvedDirectionContext
 }): ExperienceContract {
-  const { persona, vibe, conciergeIntent, selectedDirectionContext } = params
+  const { persona, vibe, occasionSemantics, conciergeIntent, selectedDirectionContext } = params
   const normalizedVibe = normalizeExperienceContractVibe(vibe)
   const template = EXPERIENCE_CONTRACT_V0_1_MATRIX[persona][normalizedVibe]
-  const derivedFrom = ['persona', 'vibe']
+  const derivedFrom = ['persona', 'vibe', 'objective_occasion']
   if (conciergeIntent) {
     derivedFrom.push('concierge_intent')
   }
@@ -541,12 +631,14 @@ function buildExperienceContract(params: {
     venuePressure: {
       ...template.venuePressure,
     },
+    occasionSemantics,
     debug: {
       derivedFrom,
       contractReasonSummary:
         selectedDirectionContext && conciergeIntent
           ? `${template.contractReasonSummary} Direction anchor: ${selectedDirectionContext.label}.`
           : template.contractReasonSummary,
+      occasionReasonSummary: occasionSemantics.reasonSummary,
     },
   }
 }
@@ -796,6 +888,7 @@ export interface InterpretationStrategyFamilyResolution {
 
 export interface CanonicalInterpretationBundle {
   normalizedIntent: ConciergeIntent
+  occasionSemantics: OccasionInterpretationProfile
   experienceContract: ExperienceContract
   contractConstraints: ContractConstraints
   contractSummary: string
@@ -808,6 +901,7 @@ export interface CanonicalInterpretationBundle {
     contractReasonSummary: string
     constraintReasonSummary: string
     strategyReasonSummary: string
+    occasionReasonSummary: string
   }
 }
 
@@ -915,9 +1009,13 @@ export function buildCanonicalInterpretationBundle(
     hasAnchor: input.hasAnchor,
     occasion: input.occasion,
   })
+  const occasionSemantics = buildOccasionInterpretationProfile(
+    normalizedIntent.objective.occasion,
+  )
   const experienceContract = buildExperienceContract({
     persona: input.persona,
     vibe: input.vibe,
+    occasionSemantics,
     conciergeIntent: normalizedIntent,
     selectedDirectionContext: input.selectedDirectionContext,
   })
@@ -932,6 +1030,7 @@ export function buildCanonicalInterpretationBundle(
 
   return {
     normalizedIntent,
+    occasionSemantics,
     experienceContract,
     contractConstraints,
     contractSummary,
@@ -951,12 +1050,15 @@ export function buildCanonicalInterpretationBundle(
         'planning_mode',
         'entry_point',
         'anchor_posture',
+        'objective_occasion',
+        'occasion_interpretation_profile_v0_1',
         'experience_contract_matrix_v0_1',
         'contract_constraints_matrix_v0_1',
       ],
       contractReasonSummary: experienceContract.debug.contractReasonSummary,
       constraintReasonSummary: contractConstraints.debug.constraintReasonSummary,
       strategyReasonSummary: strategySummary,
+      occasionReasonSummary: occasionSemantics.reasonSummary,
     },
   }
 }
