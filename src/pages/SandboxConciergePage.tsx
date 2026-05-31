@@ -1844,6 +1844,15 @@ function getScenarioFamilyVibeLabel(family: ScenarioFamily | null): string | nul
 
 type CoreTasteRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
 
+type RequiredBuildAnchorStop = {
+  venueId: string
+  role: CoreTasteRole
+}
+
+function isCoreTasteRole(role: UserStopRole | undefined): role is CoreTasteRole {
+  return role === 'start' || role === 'highlight' || role === 'windDown'
+}
+
 interface TasteRoleEligibilitySnapshot {
   score: number
   floor: number
@@ -6571,8 +6580,17 @@ function applyStrongCurationTastePass(params: {
   intentProfile: IntentProfile
   lens: ExperienceLens
   contractConstraints?: ContractConstraints
+  requiredBuildAnchor?: RequiredBuildAnchorStop
 }): StrongCurationTastePassResult {
-  const { selectedArc, itinerary, scoredVenues, intentProfile, lens, contractConstraints } = params
+  const {
+    selectedArc,
+    itinerary,
+    scoredVenues,
+    intentProfile,
+    lens,
+    contractConstraints,
+    requiredBuildAnchor,
+  } = params
   const persona = intentProfile.persona ?? 'friends'
   const vibe = intentProfile.primaryAnchor
   const baseBias = getStrongCurationTasteBias(persona, vibe, contractConstraints)
@@ -6794,6 +6812,16 @@ function applyStrongCurationTastePass(params: {
   let nextItinerary = itinerary
   let upstreamPoolSelectionApplied = false
   let postGenerationRepairCount = 0
+  const isRequiredBuildAnchorStop = (
+    role: CoreTasteRole,
+    candidate: ScoredVenue | undefined,
+  ): boolean =>
+    Boolean(
+      requiredBuildAnchor &&
+        candidate &&
+        requiredBuildAnchor.role === role &&
+        requiredBuildAnchor.venueId === candidate.venue.id,
+    )
 
   const applyRoleFromCustomPool = (
     role: CoreTasteRole,
@@ -6803,6 +6831,9 @@ function applyStrongCurationTastePass(params: {
     const internalRole = inverseRoleProjection[role]
     const currentStop = nextArc.stops.find((stop) => stop.role === internalRole)?.scoredVenue
     if (!currentStop) {
+      return false
+    }
+    if (isRequiredBuildAnchorStop(role, currentStop)) {
       return false
     }
     if (pool.length === 0) {
@@ -6879,6 +6910,9 @@ function applyStrongCurationTastePass(params: {
     const internalRole = inverseRoleProjection[role]
     const currentStop = nextArc.stops.find((stop) => stop.role === internalRole)?.scoredVenue
     if (!currentStop) {
+      return
+    }
+    if (isRequiredBuildAnchorStop(role, currentStop)) {
       return
     }
     const currentQualification = getCandidateQualificationForVenue(finalQualification, currentStop)
@@ -13011,10 +13045,18 @@ export function SandboxConciergePage({
           wrapperSeam: 'sandbox_concierge.generate',
           input: { selectedDirectionContext: activeIntentSelectedDirectionContext },
         })
+        const plannerMode = isBuildWrapperActive ? 'user-led' : 'engine-led'
+        const buildPlannerAnchor =
+          isBuildWrapperActive && selectedBuildAnchor?.venueId
+            ? {
+                venueId: selectedBuildAnchor.venueId,
+                role: activeCandidateRouteArtifact?.anchorRole ?? 'highlight',
+              }
+            : undefined
         const result = await runPlanBuild(
           {
             mode: isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build',
-            planningMode: isBuildWrapperActive ? 'user-led' : 'engine-led',
+            planningMode: plannerMode,
             persona,
             primaryVibe,
             city: districtLocationQuery,
@@ -13023,13 +13065,7 @@ export function SandboxConciergePage({
             refinementModes: clusterRefinementMap[activeCluster],
             selectedDirectionContext: activeIntentSelectedDirectionContext,
             discoveryPreferences: selectedArtifactDiscoveryPreferences,
-            anchor:
-              isBuildWrapperActive && selectedBuildAnchor?.venueId
-                ? {
-                    venueId: selectedBuildAnchor.venueId,
-                    role: activeCandidateRouteArtifact?.anchorRole ?? 'highlight',
-                  }
-                : undefined,
+            anchor: buildPlannerAnchor,
           },
           {
               sourceMode: 'curated',
@@ -13048,6 +13084,21 @@ export function SandboxConciergePage({
             selectedArtifactLineage: activeSelectedArtifactLineage,
           },
         )
+        const requiredAnchorVenueIdAfterRun =
+          isBuildWrapperActive && selectedBuildAnchor?.venueId
+            ? result.intentProfile.anchor?.venueId ?? selectedBuildAnchor.venueId
+            : undefined
+        const requiredAnchorRoleAfterRun =
+          result.intentProfile.anchor?.role ?? buildPlannerAnchor?.role ?? 'highlight'
+        const requiredBuildAnchorForPostPlanner =
+          isBuildWrapperActive &&
+          requiredAnchorVenueIdAfterRun &&
+          isCoreTasteRole(requiredAnchorRoleAfterRun)
+            ? {
+                venueId: requiredAnchorVenueIdAfterRun,
+                role: requiredAnchorRoleAfterRun,
+              }
+            : undefined
         preLineageExpectedDirectionId = activeDirectionContract.id
         preLineageActualDirectionId = result.intentProfile.selectedDirectionContext?.directionId ?? null
         preLineagePassed = preLineageActualDirectionId === preLineageExpectedDirectionId
@@ -13113,7 +13164,11 @@ export function SandboxConciergePage({
           },
           {
             buildPassthroughStrongCurationTastePass,
-            applyStrongCurationTastePass,
+            applyStrongCurationTastePass: (params) =>
+              applyStrongCurationTastePass({
+                ...params,
+                requiredBuildAnchor: requiredBuildAnchorForPostPlanner,
+              }),
             enforceFullStopRealityContract,
             applyCanonicalIdentityToItinerary,
             assessDirectionContractBuildability,
