@@ -19920,6 +19920,16 @@ export function SandboxConciergePage({
       [hintRole]: hintText,
     } as Partial<Record<UserStopRole, string>>
   }, [appliedSwapRole, plan])
+  const showCurateRouteSummaryPreview = Boolean(isCurateWrapperActive && renderSharedPlanPreview)
+  const showCurateDefaultCardStack =
+    isPublicSurface &&
+    isCurateWrapperActive &&
+    !plan &&
+    !finalRoute &&
+    !hasRevealed &&
+    !showCurateRouteSummaryPreview
+  const showPublicCardStack =
+    (showPublicCardPreview || showCurateDefaultCardStack) && !showCurateRouteSummaryPreview
   const modeEntryPath = useMemo(() => {
     if (isPublicSurface) {
       if (isBuildWrapperActive) {
@@ -20007,7 +20017,7 @@ export function SandboxConciergePage({
           backLabel={effectiveNavBackLabel}
         />
       )}
-      {showPublicCardPreview && (
+      {showPublicCardStack && (
         <section className="concierge-card-preview-panel" aria-label="Concierge card preview">
           <p className="concierge-card-preview-title">Card preview</p>
           {activePublicCardPreviewCard ? (
@@ -20016,7 +20026,7 @@ export function SandboxConciergePage({
                 chips={publicCardEchoProjection.chips}
                 summaryLabel={publicCardEchoProjection.summaryLabel}
                 onChipClick={handlePublicCardPreviewChipClick}
-                hidden={!showPublicCardPreview}
+                hidden={!showPublicCardStack}
               />
               <ConciergeCardStep
                 card={activePublicCardPreviewCard}
