@@ -13,7 +13,7 @@ import type {
 } from '../interpretation/taste/types'
 import type { TasteExperienceLane, TasteModeAlignmentTier } from '../taste/selectTasteMode'
 import type { HighlightValidityEvaluation } from './highlightValidity'
-import type { IntentProfile } from './intent'
+import type { ConciergeObjectiveOccasion, IntentProfile } from './intent'
 import type { MomentSourceType, MomentType } from './moment'
 import type { RoutePacingAnalysis } from './pacing'
 import type { RoleContractEvaluation } from './roleContract'
@@ -103,6 +103,15 @@ export interface ScoredVenue {
       applied: boolean
       strongerAlternativePresent: boolean
       strongerAlternativeName?: string
+      reason: string
+    }
+    occasionScoring?: {
+      mode: 'off' | 'soft_curate_scoring'
+      occasion?: ConciergeObjectiveOccasion
+      fitDelta: number
+      roleDelta: Record<InternalRole, number>
+      positiveSignal: number
+      negativeSignal: number
       reason: string
     }
     rolePoolInfluence: Record<

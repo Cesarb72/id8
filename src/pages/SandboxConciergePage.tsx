@@ -13074,6 +13074,7 @@ export function SandboxConciergePage({
               sourceModeOverrideApplied: true,
               debugMode: false,
               vibeTasteProfileScoring: isCurateWrapperActive ? 'soft_planner_scoring' : 'off',
+              occasionScoring: isCurateWrapperActive ? 'soft_curate_scoring' : 'off',
               curateCommitSemantics: isCurateWrapperActive
                 ? 'approved_route_hard_commit'
                 : undefined,

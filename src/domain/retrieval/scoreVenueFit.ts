@@ -29,7 +29,7 @@ import type { ScoredVenue } from '../types/arc'
 import type { CrewPolicy } from '../types/crewPolicies'
 import type { ExperienceLens } from '../types/experienceLens'
 import type { LensStopRole } from '../types/experienceLens'
-import type { IntentProfile } from '../types/intent'
+import type { IntentProfile, OccasionInterpretationProfile } from '../types/intent'
 import type { RoleContractEvaluation, RoleContractRule, RoleContractSet } from '../types/roleContract'
 import type { StarterPack } from '../types/starterPack'
 import type { InternalRole } from '../types/venue'
@@ -41,9 +41,12 @@ import type {
 } from '../interpretation/taste/types'
 
 export type VibeTasteProfileScoringMode = 'off' | 'soft_planner_scoring'
+export type OccasionScoringMode = 'off' | 'soft_curate_scoring'
 
 export interface ScoreVenueFitOptions {
   vibeTasteProfileScoring?: VibeTasteProfileScoringMode
+  occasionScoring?: OccasionScoringMode
+  occasionSemantics?: OccasionInterpretationProfile
 }
 
 function clamp01(value: number): number {
@@ -166,6 +169,169 @@ const emptyVibeTasteProfileScorePressure: VibeTasteProfileScorePressure = {
     wildcard: 0,
     cooldown: 0,
   },
+}
+
+interface OccasionScorePressure {
+  mode: OccasionScoringMode
+  occasion?: OccasionInterpretationProfile['occasion']
+  fitDelta: number
+  roleDelta: Record<InternalRole, number>
+  positiveSignal: number
+  negativeSignal: number
+  reason: string
+}
+
+const emptyOccasionScorePressure: OccasionScorePressure = {
+  mode: 'off',
+  fitDelta: 0,
+  roleDelta: {
+    warmup: 0,
+    peak: 0,
+    wildcard: 0,
+    cooldown: 0,
+  },
+  positiveSignal: 0,
+  negativeSignal: 0,
+  reason: 'occasion scoring off',
+}
+
+function hasVenuePersonality(
+  tasteSignals: TasteSignals,
+  tag: TasteSignals['venuePersonality']['tags'][number],
+): boolean {
+  return tasteSignals.venuePersonality.tags.includes(tag)
+}
+
+function computeOccasionScorePressure(params: {
+  venue: Venue
+  intent: IntentProfile
+  tasteSignals: TasteSignals
+  options?: ScoreVenueFitOptions
+}): OccasionScorePressure {
+  const mode = params.options?.occasionScoring ?? 'off'
+  const occasionSemantics = params.options?.occasionSemantics
+  if (mode !== 'soft_curate_scoring' || params.intent.mode !== 'curate' || !occasionSemantics) {
+    return emptyOccasionScorePressure
+  }
+
+  const { venue, tasteSignals } = params
+  const localTextureSignal = clamp01(
+    venue.underexposureScore * 0.2 +
+      venue.localSignals.localFavoriteScore * 0.16 +
+      venue.localSignals.neighborhoodPrideScore * 0.16 +
+      venue.distinctivenessScore * 0.16 +
+      venue.uniquenessScore * 0.12 +
+      tasteSignals.noveltyWeight * 0.12 +
+      tasteSignals.momentEnrichment.culturalDepth * 0.08,
+  )
+  const culturalActivitySignal = clamp01(
+    (venue.category === 'museum' || venue.category === 'activity' || venue.category === 'event' ? 0.3 : 0) +
+      (venue.category === 'cafe' || venue.category === 'bar' ? 0.1 : 0) +
+      tasteSignals.experientialFactor * 0.24 +
+      tasteSignals.interactiveStrength * 0.16 +
+      tasteSignals.momentEnrichment.culturalDepth * 0.18 +
+      tasteSignals.categorySpecificity * 0.12,
+  )
+  const centerpiecePolishSignal = clamp01(
+    tasteSignals.destinationFactor * 0.24 +
+      tasteSignals.anchorStrength * 0.22 +
+      tasteSignals.momentIntensity.score * 0.16 +
+      (tasteSignals.highlightTier === 1 ? 0.16 : tasteSignals.highlightTier === 2 ? 0.08 : 0) +
+      (venue.priceTier === '$$$$' ? 0.1 : venue.priceTier === '$$$' ? 0.06 : 0) +
+      (hasAnyTag(venue, ['chef-led', 'reservation', 'signature', 'special-occasion']) ? 0.12 : 0),
+  )
+  const conversationSignal = clamp01(
+    tasteSignals.conversationFriendliness * 0.32 +
+      tasteSignals.lingerFactor * 0.2 +
+      tasteSignals.intimacy * 0.16 +
+      (1 - tasteSignals.energy) * 0.12 +
+      (1 - tasteSignals.socialDensity) * 0.08 +
+      (hasVenuePersonality(tasteSignals, 'lingering') ? 0.06 : 0) +
+      (hasVenuePersonality(tasteSignals, 'intimate') ? 0.06 : 0),
+  )
+  const lowFrictionSignal = clamp01(
+    (venue.driveMinutes <= 12 ? 0.22 : venue.driveMinutes <= 18 ? 0.12 : 0) +
+      moderateBandScore(tasteSignals.energy, 0.48, 0.34) * 0.24 +
+      moderateBandScore(tasteSignals.socialDensity, 0.48, 0.34) * 0.18 +
+      tasteSignals.roleSuitability.start * 0.12 +
+      tasteSignals.roleSuitability.windDown * 0.12 +
+      (venue.category === 'restaurant' || venue.category === 'cafe' || venue.category === 'dessert' ? 0.12 : 0),
+  )
+  const chaosSignal = clamp01(
+    Math.max(0, tasteSignals.energy - 0.68) * 0.42 +
+      Math.max(0, tasteSignals.socialDensity - 0.72) * 0.28 +
+      (hasAnyTag(venue, ['party', 'chaotic', 'late-night']) ? 0.18 : 0) +
+      (venue.energyLevel >= 5 ? 0.12 : 0),
+  )
+  const celebrationSignal = clamp01(
+    centerpiecePolishSignal * 0.4 +
+      tasteSignals.destinationFactor * 0.18 +
+      tasteSignals.momentPotential.score * 0.14 +
+      tasteSignals.personalityStrength * 0.1 +
+      (hasVenuePersonality(tasteSignals, 'destination') ? 0.08 : 0) +
+      (venue.category === 'restaurant' || venue.category === 'live_music' || venue.category === 'event' ? 0.1 : 0),
+  )
+  const weakHighlightSignal = clamp01(
+    Math.max(0, 0.52 - tasteSignals.anchorStrength) * 0.38 +
+      Math.max(0, 0.5 - tasteSignals.momentPotential.score) * 0.3 +
+      (tasteSignals.highlightTier === 3 ? 0.18 : 0) +
+      (venue.signature.genericScore >= 0.5 ? 0.14 : 0),
+  )
+
+  if (occasionSemantics.occasion === 'explore') {
+    const positiveSignal = clamp01(localTextureSignal * 0.58 + culturalActivitySignal * 0.42)
+    const negativeSignal = clamp01(centerpiecePolishSignal * 0.62 + venue.signature.genericScore * 0.2)
+    return {
+      mode,
+      occasion: occasionSemantics.occasion,
+      fitDelta: clamp(positiveSignal * 0.014 - negativeSignal * 0.01, -0.012, 0.012),
+      roleDelta: {
+        warmup: clamp(positiveSignal * 0.01 - negativeSignal * 0.004, -0.02, 0.02),
+        peak: clamp(culturalActivitySignal * 0.012 - negativeSignal * 0.012, -0.02, 0.02),
+        wildcard: clamp(positiveSignal * 0.02, -0.02, 0.02),
+        cooldown: clamp(localTextureSignal * 0.006 - negativeSignal * 0.004, -0.02, 0.02),
+      },
+      positiveSignal: roundToThousandths(positiveSignal),
+      negativeSignal: roundToThousandths(negativeSignal),
+      reason: 'explore soft pressure: local texture and discovery without eligibility changes',
+    }
+  }
+
+  if (occasionSemantics.occasion === 'celebrate') {
+    const positiveSignal = celebrationSignal
+    const negativeSignal = weakHighlightSignal
+    return {
+      mode,
+      occasion: occasionSemantics.occasion,
+      fitDelta: clamp(positiveSignal * 0.014 - negativeSignal * 0.01, -0.012, 0.012),
+      roleDelta: {
+        warmup: clamp(conversationSignal * 0.006 + lowFrictionSignal * 0.004, -0.02, 0.02),
+        peak: clamp(positiveSignal * 0.02 - negativeSignal * 0.012, -0.02, 0.02),
+        wildcard: clamp(tasteSignals.experientialFactor * 0.01 + tasteSignals.momentIntensity.score * 0.006, -0.02, 0.02),
+        cooldown: clamp(tasteSignals.lingerFactor * 0.008 - chaosSignal * 0.006, -0.02, 0.02),
+      },
+      positiveSignal: roundToThousandths(positiveSignal),
+      negativeSignal: roundToThousandths(negativeSignal),
+      reason: 'celebrate soft pressure: stronger centerpiece and polished support without eligibility changes',
+    }
+  }
+
+  const positiveSignal = clamp01(conversationSignal * 0.56 + lowFrictionSignal * 0.44)
+  const negativeSignal = chaosSignal
+  return {
+    mode,
+    occasion: occasionSemantics.occasion,
+    fitDelta: clamp(positiveSignal * 0.012 - negativeSignal * 0.01, -0.012, 0.012),
+    roleDelta: {
+      warmup: clamp(lowFrictionSignal * 0.014 - negativeSignal * 0.006, -0.02, 0.02),
+      peak: clamp(conversationSignal * 0.01 - negativeSignal * 0.008, -0.02, 0.02),
+      wildcard: clamp(positiveSignal * 0.006 - negativeSignal * 0.01, -0.02, 0.02),
+      cooldown: clamp(conversationSignal * 0.018 - negativeSignal * 0.008, -0.02, 0.02),
+    },
+    positiveSignal: roundToThousandths(positiveSignal),
+    negativeSignal: roundToThousandths(negativeSignal),
+    reason: 'connect soft pressure: conversation and low-friction linger without eligibility changes',
+  }
 }
 
 function computeVibeTasteProfileScorePressure(params: {
@@ -1203,6 +1369,12 @@ export function scoreVenueFit(
     tasteSignals,
     options,
   })
+  const occasionPressure = computeOccasionScorePressure({
+    venue,
+    intent,
+    tasteSignals,
+    options,
+  })
   const startMomentRoleFit = getMomentRolePreference(tasteSignals.momentIdentity, 'start')
   const highlightMomentRoleFit = getMomentRolePreference(
     tasteSignals.momentIdentity,
@@ -1376,6 +1548,7 @@ export function scoreVenueFit(
       venue.source.sourceConfidence * 0.03 +
       venue.signature.signatureScore * 0.04 +
       vibeTasteProfilePressure.fitDelta +
+      occasionPressure.fitDelta +
       contextSpecificity.overall * 0.08 -
       (venue.source.sourceOrigin === 'live' && venue.source.sourceConfidence < 0.62 && !liveFairness.supportRecoveryEligible ? 0.01 : 0) -
       (weakLiveWindow ? 0.06 : 0) -
@@ -1853,6 +2026,7 @@ export function scoreVenueFit(
       startEnergyEntryLift +
       startIntentionalityBonus +
       vibeTasteProfilePressure.roleDelta.warmup +
+      occasionPressure.roleDelta.warmup +
       romanticContextBoost * 0.4 +
       familyContextBoost * 0.35 +
       cozyConversationBoost * 0.45 +
@@ -1901,6 +2075,7 @@ export function scoreVenueFit(
       romanticMomentHighlightLift +
       highlightArchetypeLift +
       vibeTasteProfilePressure.roleDelta.peak +
+      occasionPressure.roleDelta.peak +
       peakEnergyLift -
       dominanceControl.byRole.peak -
       peakContractInfluence.penalty -
@@ -1964,6 +2139,7 @@ export function scoreVenueFit(
       crewPolicy.wildcardBias * 0.08 +
       wildcardLift +
       vibeTasteProfilePressure.roleDelta.wildcard +
+      occasionPressure.roleDelta.wildcard +
       surpriseDirectionSignal.wildcardBoost +
       discoveryLift -
       (1 - surpriseMomentRoleFit) * 0.06 -
@@ -2011,6 +2187,7 @@ export function scoreVenueFit(
       windDownCloseLingerBoost +
       windDownIntentionalityBonus +
       vibeTasteProfilePressure.roleDelta.cooldown +
+      occasionPressure.roleDelta.cooldown +
       romanticContextBoost * 0.5 +
       familyContextBoost * 0.42 -
       dominanceControl.byRole.cooldown * 0.8 -
@@ -2090,6 +2267,20 @@ export function scoreVenueFit(
         applied: false,
         strongerAlternativePresent: false,
         reason: genericHospitalityFallbackSignal > 0 ? 'awaiting pool comparison' : 'not generic fallback',
+      },
+      occasionScoring: {
+        mode: occasionPressure.mode,
+        occasion: occasionPressure.occasion,
+        fitDelta: roundToThousandths(occasionPressure.fitDelta),
+        roleDelta: {
+          warmup: roundToThousandths(occasionPressure.roleDelta.warmup),
+          peak: roundToThousandths(occasionPressure.roleDelta.peak),
+          wildcard: roundToThousandths(occasionPressure.roleDelta.wildcard),
+          cooldown: roundToThousandths(occasionPressure.roleDelta.cooldown),
+        },
+        positiveSignal: occasionPressure.positiveSignal,
+        negativeSignal: occasionPressure.negativeSignal,
+        reason: occasionPressure.reason,
       },
       rolePoolInfluence: tasteRolePoolInfluence,
     },

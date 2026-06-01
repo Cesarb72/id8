@@ -53,6 +53,7 @@ import { applyContractRetrievalPressure } from './retrieval/applyContractRetriev
 import { retrieveVenues, type RetrieveVenuesResult } from './retrieval/retrieveVenues'
 import {
   scoreVenueCollection,
+  type OccasionScoringMode,
   type VibeTasteProfileScoringMode,
 } from './retrieval/scoreVenueFit'
 import { isValidArcCombination } from './arc/isValidArcCombination'
@@ -133,6 +134,7 @@ export interface RunGeneratePlanOptions {
   sourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
   vibeTasteProfileScoring?: VibeTasteProfileScoringMode
+  occasionScoring?: OccasionScoringMode
   // Narrow planner handoff around selected candidate artifact lineage when present.
   selectedArtifactLineage?: ContractEntryArtifactLineage
   curateCommitSemantics?: 'seed_guided' | 'approved_route_hard_commit'
@@ -1647,6 +1649,10 @@ export async function runGeneratePlan(
     options.starterPack,
     {
       vibeTasteProfileScoring: options.vibeTasteProfileScoring ?? 'off',
+      occasionScoring: options.occasionScoring ?? 'off',
+      occasionSemantics:
+        options.canonicalInterpretationBundle?.occasionSemantics ??
+        options.experienceContract?.occasionSemantics,
     },
   )
   const retrievalPressure = applyContractRetrievalPressure({
