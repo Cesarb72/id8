@@ -9611,6 +9611,8 @@ export function SandboxConciergePage({
     isPublicSurface &&
     isBuildEntryRoute &&
     new URLSearchParams(currentSearch).get('fresh') === '1'
+  const publicCardPreviewQueryGateActive =
+    new URLSearchParams(currentSearch).get('cards') === '1'
   const selectedStarterPack = useMemo<StarterPack | null>(
     () => starterPacks.find((pack) => pack.id === selectedStarterPackId) ?? null,
     [selectedStarterPackId],
@@ -9741,7 +9743,7 @@ export function SandboxConciergePage({
   )
   const showPublicCardPreview =
     isPublicSurface &&
-    PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED &&
+    publicCardPreviewQueryGateActive &&
     isModeWrapperActive &&
     !plan &&
     !finalRoute &&
@@ -13083,7 +13085,7 @@ export function SandboxConciergePage({
               occasionScoring: isCurateWrapperActive ? 'soft_curate_scoring' : 'off',
               whenSpatialScoring: isCurateWrapperActive ? 'soft_curate_spatial' : 'off',
               whenSignalProfile: isCurateWrapperActive
-                ? cardPreviewDraft.whenSignalProfile
+                ? canonicalCardInputDraft.whenSignalProfile
                 : undefined,
               curateCommitSemantics: isCurateWrapperActive
                 ? 'approved_route_hard_commit'
@@ -13445,7 +13447,7 @@ export function SandboxConciergePage({
       canonicalConciergeIntent,
       canonicalContractConstraints,
       canonicalExperienceContract,
-      cardPreviewDraft.whenSignalProfile,
+      canonicalCardInputDraft.whenSignalProfile,
       candidateRouteArtifactByIdForDisplay,
       directionCards,
       allDirectionCards,
