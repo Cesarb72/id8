@@ -39,7 +39,12 @@ import type { ArcCandidate, ArcScoreBreakdown, ArcStop } from '../types/arc'
 import type { CrewPolicy } from '../types/crewPolicies'
 import type { ExperienceLens } from '../types/experienceLens'
 import type { IntentProfile } from '../types/intent'
+import type { SpatialCoherenceAnalysis } from '../types/spatial'
 import type { InternalRole } from '../types/venue'
+import type {
+  WhenSignalProfile,
+  WhenSpatialScoringMode,
+} from '../when/whenSignalProfile'
 
 type CoarseArcCategory =
   | 'coffee'
@@ -70,6 +75,28 @@ const FAMILY_ALIGNMENT_CONFIDENCE_MIN = 0.58
 const ARC_VIABILITY_HIGHLIGHT_THRESHOLD = 0.6
 const FAKE_COMPLETENESS_PENALTY = 0.08
 
+export interface ScoreArcAssemblyOptions {
+  whenSpatialScoring?: WhenSpatialScoringMode
+  whenSignalProfile?: WhenSignalProfile
+}
+
+interface WhenSpatialScorePressure {
+  mode: WhenSpatialScoringMode
+  movementPreference?: WhenSignalProfile['movementPreference']
+  scoreDelta: number
+  positiveSignal: number
+  negativeSignal: number
+  reason: string
+}
+
+const emptyWhenSpatialScorePressure: WhenSpatialScorePressure = {
+  mode: 'off',
+  scoreDelta: 0,
+  positiveSignal: 0,
+  negativeSignal: 0,
+  reason: 'when spatial scoring off',
+}
+
 function getPrimaryExperienceArchetype(stop: ArcStop) {
   return stop.scoredVenue.taste.signals.primaryExperienceArchetype
 }
@@ -84,6 +111,14 @@ function getMomentIdentity(stop: ArcStop) {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function roundToThousandths(value: number): number {
+  return Number(value.toFixed(3))
 }
 
 function tokenizeDirectionSignal(value: string | undefined): string[] {
@@ -192,6 +227,73 @@ function normalizeArcTotalScore(value: number): number {
     return value
   }
   return value / (1 + value - 0.88)
+}
+
+function computeWhenSpatialScorePressure(params: {
+  intent: IntentProfile
+  spatial: SpatialCoherenceAnalysis
+  options?: ScoreArcAssemblyOptions
+}): WhenSpatialScorePressure {
+  const mode = params.options?.whenSpatialScoring ?? 'off'
+  const whenSignalProfile = params.options?.whenSignalProfile
+  if (mode !== 'soft_curate_spatial' || params.intent.mode !== 'curate' || !whenSignalProfile) {
+    return emptyWhenSpatialScorePressure
+  }
+
+  const { spatial } = params
+  const transitionCount = Math.max(1, spatial.transitions.length)
+  const sameClusterRate = spatial.sameClusterTransitionCount / transitionCount
+  const clusterEscapeRate = spatial.clusterEscapeCount / transitionCount
+  const longTransitionRate = spatial.longTransitionCount / transitionCount
+  const movementPreference = whenSignalProfile.movementPreference
+
+  if (movementPreference === 'walkable') {
+    const positiveSignal = clamp01(
+      sameClusterRate * 0.46 +
+        (spatial.clustersVisited.length <= 1 ? 0.36 : 0) +
+        (spatial.clusterEscapeCount === 0 ? 0.18 : 0),
+    )
+    const negativeSignal = clamp01(
+      longTransitionRate * 0.48 +
+        spatial.repeatedClusterEscapeCount * 0.22 +
+        Math.max(0, spatial.clusterEscapeCount - 1) * 0.16,
+    )
+    return {
+      mode,
+      movementPreference,
+      scoreDelta: clamp((positiveSignal - negativeSignal) * 0.03, -0.03, 0.03),
+      positiveSignal: roundToThousandths(positiveSignal),
+      negativeSignal: roundToThousandths(negativeSignal),
+      reason:
+        positiveSignal >= negativeSignal
+          ? 'walkable preference favored tighter same-cluster route'
+          : 'walkable preference penalized long or repeated cluster movement',
+    }
+  }
+
+  const positiveSignal = clamp01(
+    (spatial.clusterEscapeCount > 0 ? 0.32 : 0) +
+      (spatial.clustersVisited.length > 1 ? 0.26 : 0) +
+      (spatial.jumpUsed ? 0.12 : 0) +
+      (spatial.clusterEscapeCount > 0 && spatial.longTransitionCount <= 1 ? 0.18 : 0),
+  )
+  const negativeSignal = clamp01(
+    Math.max(0, spatial.longTransitionCount - 1) * 0.3 +
+      Math.max(0, spatial.repeatedClusterEscapeCount - 1) * 0.22 +
+      (spatial.clusterEscapeCount === 0 ? 0.08 : 0) +
+      Math.max(0, clusterEscapeRate - 0.7) * 0.14,
+  )
+  return {
+    mode,
+    movementPreference,
+    scoreDelta: clamp((positiveSignal - negativeSignal) * 0.03, -0.03, 0.03),
+    positiveSignal: roundToThousandths(positiveSignal),
+    negativeSignal: roundToThousandths(negativeSignal),
+    reason:
+      positiveSignal >= negativeSignal
+        ? 'flexible preference favored justified cross-cluster breadth'
+        : 'flexible preference penalized excessive or repeated long movement',
+  }
 }
 
 export function isArcViable(input: {
@@ -3405,9 +3507,15 @@ export function scoreArcAssembly(
   crewPolicy: CrewPolicy,
   lens: ExperienceLens,
   rolePools?: RolePools,
+  options?: ScoreArcAssemblyOptions,
 ): Pick<ArcCandidate, 'totalScore' | 'scoreBreakdown' | 'pacing' | 'spatial'> {
   const pacing = computeRouteDuration(stops, intent)
   const spatial = computeSpatialCoherence(stops, intent)
+  const whenSpatialPressure = computeWhenSpatialScorePressure({
+    intent,
+    spatial,
+    options,
+  })
   const categoryDiversityGuardrail = computeCategoryDiversityGuardrail(
     stops,
     intent,
@@ -3575,7 +3683,8 @@ export function scoreArcAssembly(
       surpriseHighlightCalibration.penalty -
       roleEnergyBalance.penalty -
       missedPeakPenalty.penalty -
-      alignmentPreservation.penalty
+      alignmentPreservation.penalty +
+      whenSpatialPressure.scoreDelta
   const totalScore = normalizeArcTotalScore(totalScoreRaw)
 
   return {
@@ -3694,6 +3803,12 @@ export function scoreArcAssembly(
       surpriseHighlightCalibrationPenalty: clamp01(surpriseHighlightCalibration.penalty),
       surpriseHighlightCalibrationApplied: surpriseHighlightCalibration.applied,
       surpriseHighlightCalibrationReason: surpriseHighlightCalibration.reason,
+      whenSpatialScoringMode: whenSpatialPressure.mode,
+      whenSpatialMovementPreference: whenSpatialPressure.movementPreference,
+      whenSpatialScoreDelta: roundToThousandths(whenSpatialPressure.scoreDelta),
+      whenSpatialPositiveSignal: whenSpatialPressure.positiveSignal,
+      whenSpatialNegativeSignal: whenSpatialPressure.negativeSignal,
+      whenSpatialReason: whenSpatialPressure.reason,
       eliteFieldCandidateNames: expressionRelease.eliteCandidateNames,
       eliteFieldCandidateLanes: expressionRelease.eliteCandidateLanes,
       activationMomentElevationScore: clamp01(activationMomentElevation.score),

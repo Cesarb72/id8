@@ -16,7 +16,11 @@ import {
   hasArcGeographyViolation,
   isValidArcCombination,
 } from './isValidArcCombination'
-import { isArcViable, scoreArcAssembly } from './scoreArcAssembly'
+import {
+  isArcViable,
+  scoreArcAssembly,
+  type ScoreArcAssemblyOptions,
+} from './scoreArcAssembly'
 import type {
   ArcCandidate,
   AnchorArcTraceDiagnostics,
@@ -128,6 +132,7 @@ function buildPartialFallbackCandidates(
   intent: IntentProfile,
   crewPolicy: CrewPolicy,
   lens: ExperienceLens,
+  scoringOptions?: ScoreArcAssemblyOptions,
 ): ArcCandidate[] {
   const candidates: ArcCandidate[] = []
   const candidateKeys = new Set<string>()
@@ -175,7 +180,7 @@ function buildPartialFallbackCandidates(
       if (invalidReasons.length > 0) {
         continue
       }
-      const score = scoreArcAssembly(stops, intent, crewPolicy, lens, pools)
+      const score = scoreArcAssembly(stops, intent, crewPolicy, lens, pools, scoringOptions)
       const key = buildDiagnosticArcId(stops)
       if (candidateKeys.has(key)) {
         continue
@@ -209,6 +214,7 @@ function buildPartialFallbackCandidates(
             crewPolicy,
             lens,
             pools,
+            scoringOptions,
           )
           candidateKeys.add(key)
           candidates.push({
@@ -509,6 +515,7 @@ function evaluateSurprisePromotion(params: {
   crewPolicy: CrewPolicy
   lens: ExperienceLens
   pools: RolePools
+  scoringOptions?: ScoreArcAssemblyOptions
 }): SurprisePromotionAssessment {
   const currentHighlight = params.baseStops[1]?.scoredVenue
   if (!currentHighlight) {
@@ -563,6 +570,7 @@ function evaluateSurprisePromotion(params: {
         params.crewPolicy,
         params.lens,
         params.pools,
+        params.scoringOptions,
       )
       return {
         promotedStops,
@@ -815,6 +823,7 @@ export function assembleArcCandidates(
   crewPolicy: CrewPolicy,
   lens: ExperienceLens,
   prebuiltPools?: RolePools,
+  scoringOptions?: ScoreArcAssemblyOptions,
 ): AssembleArcCandidatesResult {
   const pools = prebuiltPools ?? buildRolePools(scoredVenues, crewPolicy, lens)
   const anchorRole =
@@ -886,7 +895,14 @@ export function assembleArcCandidates(
           if (hasArcGeographyViolation(baseStops, intent, crewPolicy, lens)) {
             geographyViolationCount += 1
           }
-          const diagnosticScore = scoreArcAssembly(baseStops, intent, crewPolicy, lens, pools)
+          const diagnosticScore = scoreArcAssembly(
+            baseStops,
+            intent,
+            crewPolicy,
+            lens,
+            pools,
+            scoringOptions,
+          )
           bestPreValidationAnchorArc = updateBestAnchorDiagnostic(
             bestPreValidationAnchorArc,
             buildDiagnosticArcId(baseStops),
@@ -910,7 +926,14 @@ export function assembleArcCandidates(
           continue
         }
 
-        const baseScore = scoreArcAssembly(baseStops, intent, crewPolicy, lens, pools)
+        const baseScore = scoreArcAssembly(
+          baseStops,
+          intent,
+          crewPolicy,
+          lens,
+          pools,
+          scoringOptions,
+        )
         const baseCandidate: ArcCandidate = {
           id: createId('arc'),
           stops: baseStops,
@@ -942,6 +965,7 @@ export function assembleArcCandidates(
             crewPolicy,
             lens,
             pools,
+            scoringOptions,
           })
           const wildcardIncludesAnchor =
             anchorRole && anchorVenueId
@@ -958,7 +982,14 @@ export function assembleArcCandidates(
             if (hasArcGeographyViolation(wildcardStops, intent, crewPolicy, lens)) {
               geographyViolationCount += 1
             }
-            const diagnosticScore = scoreArcAssembly(wildcardStops, intent, crewPolicy, lens, pools)
+            const diagnosticScore = scoreArcAssembly(
+              wildcardStops,
+              intent,
+              crewPolicy,
+              lens,
+              pools,
+              scoringOptions,
+            )
             bestPreValidationAnchorArc = updateBestAnchorDiagnostic(
               bestPreValidationAnchorArc,
               buildDiagnosticArcId(wildcardStops),
@@ -983,7 +1014,14 @@ export function assembleArcCandidates(
               }
             }
           } else {
-            const wildcardScore = scoreArcAssembly(wildcardStops, intent, crewPolicy, lens, pools)
+            const wildcardScore = scoreArcAssembly(
+              wildcardStops,
+              intent,
+              crewPolicy,
+              lens,
+              pools,
+              scoringOptions,
+            )
             if (!isSurpriseSpatiallyFeasible(wildcardStops, wildcardScore, candidateTier)) {
               surpriseDiagnostics.rejectedBySpatialCount += 1
               if (candidateTier === 'nearStrong') {
@@ -1145,6 +1183,7 @@ export function assembleArcCandidates(
       intent,
       crewPolicy,
       lens,
+      scoringOptions,
     )
     candidates.push(...partialFallbackCandidates)
   }

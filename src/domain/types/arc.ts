@@ -19,6 +19,10 @@ import type { RoutePacingAnalysis } from './pacing'
 import type { RoleContractEvaluation } from './roleContract'
 import type { SpatialCoherenceAnalysis } from './spatial'
 import type { InternalRole, Venue } from './venue'
+import type {
+  WhenSignalMovementPreference,
+  WhenSpatialScoringMode,
+} from '../when/whenSignalProfile'
 
 export interface VenueFitBreakdown {
   anchorFit: number
@@ -320,6 +324,12 @@ export interface ArcScoreBreakdown {
   surpriseHighlightCalibrationPenalty?: number
   surpriseHighlightCalibrationApplied?: boolean
   surpriseHighlightCalibrationReason?: string
+  whenSpatialScoringMode?: WhenSpatialScoringMode
+  whenSpatialMovementPreference?: WhenSignalMovementPreference
+  whenSpatialScoreDelta?: number
+  whenSpatialPositiveSignal?: number
+  whenSpatialNegativeSignal?: number
+  whenSpatialReason?: string
 }
 
 export interface ArcCandidate {

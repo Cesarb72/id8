@@ -57,7 +57,11 @@ import {
   type VibeTasteProfileScoringMode,
 } from './retrieval/scoreVenueFit'
 import { isValidArcCombination } from './arc/isValidArcCombination'
-import { isArcViable, scoreArcAssembly } from './arc/scoreArcAssembly'
+import {
+  isArcViable,
+  scoreArcAssembly,
+  type ScoreArcAssemblyOptions,
+} from './arc/scoreArcAssembly'
 import { rankArcCandidatesWithDiagnostics } from '../integrations/waypoint/rankArcCandidates'
 import type { RankedPocket } from '../engines/district/types/districtTypes'
 import type { ContractGateWorld } from './bearings/buildContractGateWorld'
@@ -98,6 +102,10 @@ import type { Itinerary, UserStopRole } from './types/itinerary'
 import type { SourceMode } from './types/sourceMode'
 import type { StarterPack } from './types/starterPack'
 import type { Venue } from './types/venue'
+import type {
+  WhenSignalProfile,
+  WhenSpatialScoringMode,
+} from './when/whenSignalProfile'
 
 export interface GenerationTrace extends GenerationDiagnostics {
   intent: IntentProfile
@@ -135,6 +143,8 @@ export interface RunGeneratePlanOptions {
   sourceModeOverrideApplied?: boolean
   vibeTasteProfileScoring?: VibeTasteProfileScoringMode
   occasionScoring?: OccasionScoringMode
+  whenSpatialScoring?: WhenSpatialScoringMode
+  whenSignalProfile?: WhenSignalProfile
   // Narrow planner handoff around selected candidate artifact lineage when present.
   selectedArtifactLineage?: ContractEntryArtifactLineage
   curateCommitSemantics?: 'seed_guided' | 'approved_route_hard_commit'
@@ -1681,7 +1691,18 @@ export async function runGeneratePlan(
     rankedDistrictPockets: options.rankedDistrictPockets,
     plannerTopDistrictIds,
   })
-  const arcAssembly = assembleArcCandidates(scoredVenues, planningIntent, crewPolicy, lens, rolePools)
+  const arcScoringOptions: ScoreArcAssemblyOptions = {
+    whenSpatialScoring: options.whenSpatialScoring ?? 'off',
+    whenSignalProfile: options.whenSignalProfile,
+  }
+  const arcAssembly = assembleArcCandidates(
+    scoredVenues,
+    planningIntent,
+    crewPolicy,
+    lens,
+    rolePools,
+    arcScoringOptions,
+  )
   const arcCandidates = arcAssembly.candidates
   const anchorApplied =
     planningIntent.planningMode === 'user-led' && Boolean(planningIntent.anchor?.venueId)

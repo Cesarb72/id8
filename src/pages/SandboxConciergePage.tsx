@@ -13081,6 +13081,10 @@ export function SandboxConciergePage({
               debugMode: false,
               vibeTasteProfileScoring: isCurateWrapperActive ? 'soft_planner_scoring' : 'off',
               occasionScoring: isCurateWrapperActive ? 'soft_curate_scoring' : 'off',
+              whenSpatialScoring: isCurateWrapperActive ? 'soft_curate_spatial' : 'off',
+              whenSignalProfile: isCurateWrapperActive
+                ? cardPreviewDraft.whenSignalProfile
+                : undefined,
               curateCommitSemantics: isCurateWrapperActive
                 ? 'approved_route_hard_commit'
                 : undefined,
@@ -13441,6 +13445,7 @@ export function SandboxConciergePage({
       canonicalConciergeIntent,
       canonicalContractConstraints,
       canonicalExperienceContract,
+      cardPreviewDraft.whenSignalProfile,
       candidateRouteArtifactByIdForDisplay,
       directionCards,
       allDirectionCards,
