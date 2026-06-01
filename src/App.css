@@ -2219,6 +2219,32 @@ fieldset {
   padding: 0;
 }
 
+.concierge-card-preview-panel {
+  display: grid;
+  gap: 0.82rem;
+  padding: 0.92rem 0.96rem;
+  border: 1px solid rgb(71 83 153 / 0.42);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 0.96);
+  box-shadow: 0 12px 28px rgb(34 44 84 / 0.1);
+}
+
+.concierge-card-preview-title {
+  margin: 0;
+  color: rgb(71 83 153 / 0.96);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.concierge-card-preview-fallback {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.42;
+}
+
 .concierge-flow .preview-adjustments-grid.compact {
   gap: 0.56rem;
 }

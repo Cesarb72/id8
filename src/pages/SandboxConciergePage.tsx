@@ -9743,7 +9743,7 @@ export function SandboxConciergePage({
   )
   const showPublicCardPreview =
     isPublicSurface &&
-    publicCardPreviewQueryGateActive &&
+    (PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED || publicCardPreviewQueryGateActive) &&
     isModeWrapperActive &&
     !plan &&
     !finalRoute &&
@@ -20007,21 +20007,30 @@ export function SandboxConciergePage({
           backLabel={effectiveNavBackLabel}
         />
       )}
-      {showPublicCardPreview && activePublicCardPreviewCard && (
-        <section className="preview-adjustments draft-tune-panel" aria-label="Concierge card preview">
-          <ConciergeEchoBar
-            chips={publicCardEchoProjection.chips}
-            summaryLabel={publicCardEchoProjection.summaryLabel}
-            onChipClick={handlePublicCardPreviewChipClick}
-            hidden={!showPublicCardPreview}
-          />
-          <ConciergeCardStep
-            card={activePublicCardPreviewCard}
-            summary={activePublicCardPreviewSummary}
-            canSkip={activePublicCardPreviewCard.requirement === 'optional'}
-            onAnswer={handlePublicCardPreviewAnswer}
-            onSkip={handlePublicCardPreviewSkip}
-          />
+      {showPublicCardPreview && (
+        <section className="concierge-card-preview-panel" aria-label="Concierge card preview">
+          <p className="concierge-card-preview-title">Card preview</p>
+          {activePublicCardPreviewCard ? (
+            <>
+              <ConciergeEchoBar
+                chips={publicCardEchoProjection.chips}
+                summaryLabel={publicCardEchoProjection.summaryLabel}
+                onChipClick={handlePublicCardPreviewChipClick}
+                hidden={!showPublicCardPreview}
+              />
+              <ConciergeCardStep
+                card={activePublicCardPreviewCard}
+                summary={activePublicCardPreviewSummary}
+                canSkip={activePublicCardPreviewCard.requirement === 'optional'}
+                onAnswer={handlePublicCardPreviewAnswer}
+                onSkip={handlePublicCardPreviewSkip}
+              />
+            </>
+          ) : (
+            <p className="concierge-card-preview-fallback">
+              Card preview is enabled, but no active card was found.
+            </p>
+          )}
         </section>
       )}
       {showCurateStarterGate ? (
