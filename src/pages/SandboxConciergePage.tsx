@@ -13,9 +13,10 @@ import type {
   RealityClusterCardCopy,
   RealityDirectionCard,
 } from '../app/types/realityDirectionCard'
-import type {
-  ConciergeCardInputDraft,
-  ConciergeCardVibeDraft,
+import {
+  buildWhenSignalProfile,
+  type ConciergeCardInputDraft,
+  type ConciergeCardVibeDraft,
 } from '../app/types/conciergeCardInput'
 import {
   deriveConciergeEchoChips,
@@ -9618,22 +9619,27 @@ export function SandboxConciergePage({
   const showBuildAnchorGate = isBuildWrapperActive && !buildAnchorReady
   const districtLocationQuery = useMemo(() => city.trim(), [city])
   const canonicalCardInputDraft = useMemo<ConciergeCardInputDraft>(
-    () => ({
-      city,
-      persona,
-      objectiveOccasion: 'connect',
-      when: {
+    () => {
+      const when = {
         startTime: undefined,
         durationMinutes: null,
         spatialMode: 'WALKABLE',
-      },
-      vibe: {
-        selectedVibe: primaryVibe,
-        uxProfile: getConciergeCardVibeUxProfile(primaryVibe),
-        tasteProfileId: null,
-        vibeTasteProfileId: resolveVibeTasteProfile(primaryVibe).id,
-      },
-    }),
+      } satisfies ConciergeCardInputDraft['when']
+
+      return {
+        city,
+        persona,
+        objectiveOccasion: 'connect',
+        when,
+        whenSignalProfile: buildWhenSignalProfile(when),
+        vibe: {
+          selectedVibe: primaryVibe,
+          uxProfile: getConciergeCardVibeUxProfile(primaryVibe),
+          tasteProfileId: null,
+          vibeTasteProfileId: resolveVibeTasteProfile(primaryVibe).id,
+        },
+      }
+    },
     [city, persona, primaryVibe],
   )
   const [cardPreviewDraft, setCardPreviewDraft] =
