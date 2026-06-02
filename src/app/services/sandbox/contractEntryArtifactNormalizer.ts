@@ -13,15 +13,37 @@ import type {
 } from '../../../domain/discovery/getDiscoveryCandidates'
 import type { CuratePreviewCommitabilityStateLike } from './curatePreviewQualificationTypes'
 
-type QualificationRole<TQualification> =
-  TQualification extends CuratePreviewCommitabilityStateLike<infer TDirectionCoreRole, unknown>
-    ? TDirectionCoreRole
-    : string
+type ContractEntryAnchorRole = NonNullable<ContractEntryArtifact['anchorRole']>
+type QualifiedContractEntryArtifact<
+  TArtifact extends ContractEntryArtifact,
+  TDirectionCoreRole extends string,
+  TApprovedPayload,
+> = Omit<TArtifact, 'qualification'> & {
+  qualification?: ContractEntryArtifactQualification<
+    TDirectionCoreRole,
+    TApprovedPayload
+  >
+  qualificationStatus?:
+    | CuratePreviewCommitabilityStateLike<
+        TDirectionCoreRole,
+        TApprovedPayload
+      >['status']
+    | 'unchecked'
+}
 
-type QualificationApprovedPayload<TQualification> =
-  TQualification extends CuratePreviewCommitabilityStateLike<string, infer TApprovedPayload>
-    ? TApprovedPayload
-    : unknown
+function isContractEntryAnchorRole(
+  role: DiscoveryCandidate['role'],
+): role is ContractEntryAnchorRole {
+  return role === 'start' || role === 'highlight' || role === 'windDown'
+}
+
+function stripQualification<TArtifact extends ContractEntryArtifact>(
+  artifact: TArtifact,
+): Omit<TArtifact, 'qualification'> {
+  const { qualification, ...artifactWithoutQualification } = artifact
+  void qualification
+  return artifactWithoutQualification
+}
 
 function normalizeLabel(value: string | null | undefined, fallback: string): string {
   const normalized = value?.trim()
@@ -120,7 +142,9 @@ export function buildContractEntryArtifactFromDiscoveryCandidate(params: {
     id: `discovery-candidate:${direction.id}:${candidate.role}:${candidate.venueId}`,
     sourceOpportunityId: candidate.venueId,
     anchorVenueId: candidate.venueId,
-    anchorRole: candidate.role,
+    ...(isContractEntryAnchorRole(candidate.role)
+      ? { anchorRole: candidate.role }
+      : {}),
     anchorName: candidate.name,
     routeTitle: direction.title,
     flavorLine: candidate.categoryLabel,
@@ -140,26 +164,26 @@ export function buildContractEntryArtifactFromDiscoveryCandidate(params: {
 
 export function attachQualificationToContractEntryArtifact<
   TArtifact extends ContractEntryArtifact,
-  TQualification extends CuratePreviewCommitabilityStateLike = CuratePreviewCommitabilityStateLike,
+  TDirectionCoreRole extends string = string,
+  TApprovedPayload = unknown,
 >(
   artifact: TArtifact,
-  qualificationState: TQualification | null | undefined,
-): TArtifact & {
-  qualification?: ContractEntryArtifactQualification<
-    QualificationRole<TQualification>,
-    QualificationApprovedPayload<TQualification>
-  >
-  qualificationStatus?: TQualification['status'] | 'unchecked'
-} {
+  qualificationState:
+    | CuratePreviewCommitabilityStateLike<TDirectionCoreRole, TApprovedPayload>
+    | null
+    | undefined,
+): QualifiedContractEntryArtifact<TArtifact, TDirectionCoreRole, TApprovedPayload> {
+  const artifactWithoutQualification = stripQualification(artifact)
+
   if (!qualificationState) {
     return {
-      ...artifact,
+      ...artifactWithoutQualification,
       qualificationStatus: 'unchecked',
     }
   }
 
   return {
-    ...artifact,
+    ...artifactWithoutQualification,
     qualification: {
       status: qualificationState.status,
       ...(qualificationState.failureKind

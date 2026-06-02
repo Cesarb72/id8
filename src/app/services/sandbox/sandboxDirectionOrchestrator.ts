@@ -267,7 +267,7 @@ export function assembleSandboxDirectionWorld(
           const usedPocketTypes = new Set<PocketType>()
 
           return candidates
-            .map((candidate, index) => {
+            .map((candidate, index): RealityDirectionCard | null => {
               const hyperlocalExpression = buildHyperlocalDirectionExpression({
                 districtLabel: candidate.pocketLabel,
                 defaultTitle: candidate.label,
@@ -501,7 +501,7 @@ export function assembleSandboxDirectionWorld(
                 },
               }
             })
-            .filter((entry): entry is RealityDirectionCard => Boolean(entry))
+            .filter((entry): entry is RealityDirectionCard => entry !== null)
         })()
 
   return {

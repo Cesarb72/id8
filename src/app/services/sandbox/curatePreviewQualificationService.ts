@@ -11,6 +11,7 @@ import type {
 } from '../../../domain/arc/directionPlanning'
 import type { GeneratePlanResult } from '../../../domain/runGeneratePlan'
 import type { ConciergeIntent, ContractConstraints, ExperienceContract, IntentInput, PersonaMode, ResolvedDirectionContext, RouteShapeContract, VibeAnchor } from '../../../domain/types/intent'
+import type { UserStopRole } from '../../../domain/types/itinerary'
 import type { RankedPocket } from '../../../engines/district/types/districtTypes'
 import type {
   CuratePreviewCommitabilityStateLike,
@@ -21,6 +22,8 @@ import {
   PostPlannerCommitParityValidationError,
   type PostPlannerCommitParityStagesResult,
 } from './sandboxPlannerParityService'
+
+type CurateStopRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
 
 export type CuratePreviewQualificationAttemptResult<
   TDirectionCoreRole extends string = string,
@@ -183,6 +186,37 @@ export interface CuratePreviewQualificationAttemptDependencies<
   getCuratePreflightRuntimeReason(error: unknown): string
 }
 
+function hasScenarioNight(value: object): value is { scenarioNight?: unknown } {
+  return 'scenarioNight' in value
+}
+
+function hasScenarioFamily(value: object): value is { scenarioFamily?: unknown } {
+  return 'scenarioFamily' in value
+}
+
+function getPreviewScenarioFamily(opportunity: unknown): string | undefined {
+  if (
+    !opportunity ||
+    typeof opportunity !== 'object' ||
+    !hasScenarioNight(opportunity)
+  ) {
+    return undefined
+  }
+
+  const { scenarioNight } = opportunity
+  if (
+    !scenarioNight ||
+    typeof scenarioNight !== 'object' ||
+    !hasScenarioFamily(scenarioNight)
+  ) {
+    return undefined
+  }
+
+  return typeof scenarioNight.scenarioFamily === 'string'
+    ? scenarioNight.scenarioFamily
+    : undefined
+}
+
 function buildRepairDiagnostics<
   TDirectionCoreRole extends string,
   TApprovedPayload,
@@ -329,7 +363,9 @@ export async function runCuratePreviewQualificationAttempt<
       selectedDirectionContextForValidation: params.activeDirectionContextForValidation,
       selectedDirectionContractForValidation:
         params.activeDirectionContractForValidation,
-      previewScenarioFamily: params.activeCandidateOpportunity?.scenarioNight?.scenarioFamily,
+      previewScenarioFamily: getPreviewScenarioFamily(
+        params.activeCandidateOpportunity,
+      ),
       selectedDirectionId: params.activeDirectionContract.id,
       city: params.districtLocationQuery,
       persona: params.persona,
