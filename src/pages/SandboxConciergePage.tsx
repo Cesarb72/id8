@@ -9674,14 +9674,24 @@ export function SandboxConciergePage({
       }),
     [cardFlowState, cardPreviewDraft, hintLabel, publicCardPreviewMode],
   )
+  const publicVisibleCardEchoProjection = useMemo(() => {
+    if (publicCardPreviewMode !== 'surprise') {
+      return publicCardEchoProjection
+    }
+    const chips = publicCardEchoProjection.chips.filter((chip) => chip.state !== 'skipped')
+    return {
+      chips,
+      summaryLabel: chips.map((chip) => chip.valueLabel).join(' | '),
+    }
+  }, [publicCardEchoProjection, publicCardPreviewMode])
   const activePublicCardPreviewSummary = useMemo(() => {
     const activeCardId = activePublicCardPreviewCard?.id
     if (!activeCardId) {
       return undefined
     }
-    const chip = publicCardEchoProjection.chips.find((entry) => entry.id === activeCardId)
+    const chip = publicVisibleCardEchoProjection.chips.find((entry) => entry.id === activeCardId)
     return chip ? { valueLabel: chip.valueLabel } : undefined
-  }, [activePublicCardPreviewCard?.id, publicCardEchoProjection.chips])
+  }, [activePublicCardPreviewCard?.id, publicVisibleCardEchoProjection.chips])
   const handlePublicCardPreviewAnswer = useCallback(() => {
     const activeCardId = cardFlowState.activeCardId
     if (!activeCardId) {
@@ -19921,6 +19931,7 @@ export function SandboxConciergePage({
     } as Partial<Record<UserStopRole, string>>
   }, [appliedSwapRole, plan])
   const showCurateRouteSummaryPreview = Boolean(isCurateWrapperActive && renderSharedPlanPreview)
+  const showSurpriseRouteSummaryPreview = Boolean(isSurpriseWrapperActive && renderSharedPlanPreview)
   const showCurateDefaultCardStack =
     isPublicSurface &&
     isCurateWrapperActive &&
@@ -19928,8 +19939,21 @@ export function SandboxConciergePage({
     !finalRoute &&
     !hasRevealed &&
     !showCurateRouteSummaryPreview
+  const showSurpriseDefaultCardStack =
+    isPublicSurface &&
+    isSurpriseWrapperActive &&
+    !plan &&
+    !finalRoute &&
+    !hasRevealed &&
+    !selectedCandidateRouteArtifact &&
+    !showSurpriseRouteSummaryPreview
   const showPublicCardStack =
-    (showPublicCardPreview || showCurateDefaultCardStack) && !showCurateRouteSummaryPreview
+    (showPublicCardPreview || showCurateDefaultCardStack || showSurpriseDefaultCardStack) &&
+    !showCurateRouteSummaryPreview &&
+    !(
+      isSurpriseWrapperActive &&
+      (Boolean(selectedCandidateRouteArtifact) || showSurpriseRouteSummaryPreview)
+    )
   const modeEntryPath = useMemo(() => {
     if (isPublicSurface) {
       if (isBuildWrapperActive) {
@@ -20023,8 +20047,8 @@ export function SandboxConciergePage({
           {activePublicCardPreviewCard ? (
             <>
               <ConciergeEchoBar
-                chips={publicCardEchoProjection.chips}
-                summaryLabel={publicCardEchoProjection.summaryLabel}
+                chips={publicVisibleCardEchoProjection.chips}
+                summaryLabel={publicVisibleCardEchoProjection.summaryLabel}
                 onChipClick={handlePublicCardPreviewChipClick}
                 hidden={!showPublicCardStack}
               />
