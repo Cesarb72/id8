@@ -19,12 +19,14 @@ import {
   type ConciergeCardVibeDraft,
 } from '../app/types/conciergeCardInput'
 import {
-  deriveConciergeEchoChips,
   getConciergeCardSequence,
   getInitialConciergeCardFlowState,
   getNextConciergeCardId,
-  getRenderableConciergeCards,
 } from '../app/config/conciergeCardConfig'
+import {
+  selectCardEchoPreviewMode,
+  selectCardEchoPreviewState,
+} from '../app/concierge/cardEchoPreviewSelectors'
 import type {
   ConciergeCardId,
   ConciergeCardMode,
@@ -9588,15 +9590,10 @@ export function SandboxConciergePage({
   const isBuildWrapperActive =
     isBuildEntryRoute || (!isPublicSurface && isChooseRoute && isBuildOrigin)
   const isModeWrapperActive = isCurateWrapperActive || isSurpriseWrapperActive || isBuildWrapperActive
-  const publicCardPreviewMode = useMemo<ConciergeCardMode>(() => {
-    if (isBuildWrapperActive) {
-      return 'build'
-    }
-    if (isCurateWrapperActive) {
-      return 'curate'
-    }
-    return 'surprise'
-  }, [isBuildWrapperActive, isCurateWrapperActive])
+  const publicCardPreviewMode = useMemo<ConciergeCardMode>(
+    () => selectCardEchoPreviewMode({ isBuildWrapperActive, isCurateWrapperActive }),
+    [isBuildWrapperActive, isCurateWrapperActive],
+  )
   const [cardFlowState, setCardFlowState] = useState(() =>
     getInitialConciergeCardFlowState(publicCardPreviewMode),
   )
@@ -9653,45 +9650,6 @@ export function SandboxConciergePage({
       setHintLabel(null)
     }
   }, [canonicalCardInputDraft])
-  const publicCardPreviewRenderableCards = useMemo(
-    () => getRenderableConciergeCards(publicCardPreviewMode),
-    [publicCardPreviewMode],
-  )
-  const activePublicCardPreviewCard = useMemo(
-    () =>
-      publicCardPreviewRenderableCards.find((card) => card.id === cardFlowState.activeCardId) ??
-      publicCardPreviewRenderableCards[0] ??
-      null,
-    [cardFlowState.activeCardId, publicCardPreviewRenderableCards],
-  )
-  const publicCardEchoProjection = useMemo(
-    () =>
-      deriveConciergeEchoChips({
-        mode: publicCardPreviewMode,
-        draft: cardPreviewDraft,
-        flowState: cardFlowState,
-        hintLabel,
-      }),
-    [cardFlowState, cardPreviewDraft, hintLabel, publicCardPreviewMode],
-  )
-  const publicVisibleCardEchoProjection = useMemo(() => {
-    if (publicCardPreviewMode !== 'surprise') {
-      return publicCardEchoProjection
-    }
-    const chips = publicCardEchoProjection.chips.filter((chip) => chip.state !== 'skipped')
-    return {
-      chips,
-      summaryLabel: chips.map((chip) => chip.valueLabel).join(' | '),
-    }
-  }, [publicCardEchoProjection, publicCardPreviewMode])
-  const activePublicCardPreviewSummary = useMemo(() => {
-    const activeCardId = activePublicCardPreviewCard?.id
-    if (!activeCardId) {
-      return undefined
-    }
-    const chip = publicVisibleCardEchoProjection.chips.find((entry) => entry.id === activeCardId)
-    return chip ? { valueLabel: chip.valueLabel } : undefined
-  }, [activePublicCardPreviewCard?.id, publicVisibleCardEchoProjection.chips])
   const handlePublicCardPreviewAnswer = useCallback(() => {
     const activeCardId = cardFlowState.activeCardId
     if (!activeCardId) {
@@ -9751,13 +9709,6 @@ export function SandboxConciergePage({
     },
     [publicCardPreviewMode],
   )
-  const showPublicCardPreview =
-    isPublicSurface &&
-    (PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED || publicCardPreviewQueryGateActive) &&
-    isModeWrapperActive &&
-    !plan &&
-    !finalRoute &&
-    !hasRevealed
   const selectedPersonaLabel = useMemo(
     () => personaOptions.find((option) => option.value === persona)?.label ?? persona,
     [persona],
@@ -19930,30 +19881,48 @@ export function SandboxConciergePage({
       [hintRole]: hintText,
     } as Partial<Record<UserStopRole, string>>
   }, [appliedSwapRole, plan])
-  const showCurateRouteSummaryPreview = Boolean(isCurateWrapperActive && renderSharedPlanPreview)
-  const showSurpriseRouteSummaryPreview = Boolean(isSurpriseWrapperActive && renderSharedPlanPreview)
-  const showCurateDefaultCardStack =
-    isPublicSurface &&
-    isCurateWrapperActive &&
-    !plan &&
-    !finalRoute &&
-    !hasRevealed &&
-    !showCurateRouteSummaryPreview
-  const showSurpriseDefaultCardStack =
-    isPublicSurface &&
-    isSurpriseWrapperActive &&
-    !plan &&
-    !finalRoute &&
-    !hasRevealed &&
-    !selectedCandidateRouteArtifact &&
-    !showSurpriseRouteSummaryPreview
-  const showPublicCardStack =
-    (showPublicCardPreview || showCurateDefaultCardStack || showSurpriseDefaultCardStack) &&
-    !showCurateRouteSummaryPreview &&
-    !(
-      isSurpriseWrapperActive &&
-      (Boolean(selectedCandidateRouteArtifact) || showSurpriseRouteSummaryPreview)
-    )
+  const cardEchoPreviewState = useMemo(
+    () =>
+      selectCardEchoPreviewState({
+        mode: publicCardPreviewMode,
+        isPublicSurface,
+        isModeWrapperActive,
+        isCurateWrapperActive,
+        isSurpriseWrapperActive,
+        publicPreviewFeatureEnabled: PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED,
+        publicCardPreviewQueryGateActive,
+        hasPlan: Boolean(plan),
+        hasFinalRoute: Boolean(finalRoute),
+        hasRevealed,
+        renderSharedPlanPreview,
+        hasSelectedCandidateRouteArtifact: Boolean(selectedCandidateRouteArtifact),
+        cardFlowState,
+        cardPreviewDraft,
+        hintLabel,
+      }),
+    [
+      cardFlowState,
+      cardPreviewDraft,
+      finalRoute,
+      hasRevealed,
+      hintLabel,
+      isCurateWrapperActive,
+      isModeWrapperActive,
+      isPublicSurface,
+      isSurpriseWrapperActive,
+      plan,
+      publicCardPreviewMode,
+      publicCardPreviewQueryGateActive,
+      renderSharedPlanPreview,
+      selectedCandidateRouteArtifact,
+    ],
+  )
+  const {
+    activeCard: activePublicCardPreviewCard,
+    activeCardSummary: activePublicCardPreviewSummary,
+    showPublicCardStack,
+    visibleEchoProjection: publicVisibleCardEchoProjection,
+  } = cardEchoPreviewState
   const modeEntryPath = useMemo(() => {
     if (isPublicSurface) {
       if (isBuildWrapperActive) {
