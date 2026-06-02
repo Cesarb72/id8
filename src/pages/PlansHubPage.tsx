@@ -144,8 +144,8 @@ export function PlansHubPage() {
         {activePlan && (
           <section className="plans-hub-section plans-hub-active">
             <div className="plans-hub-active-header">
-              <h2>{activePlan.finalRoute.routeHeadline || 'Tonight'}</h2>
-              <p>{activePlan.finalRoute.location || activePlan.city || activePlan.itinerary.city || 'San Jose'}</p>
+              <h2>{activePlan.finalRoute?.routeHeadline || 'Tonight'}</h2>
+              <p>{activePlan.finalRoute?.location || activePlan.city || activePlan.itinerary.city || 'San Jose'}</p>
             </div>
             <p className="plans-hub-status">Live co-pilot is active</p>
             <div className="action-row wrap plans-hub-actions">

@@ -96,9 +96,9 @@ export function DevHomePage() {
     sharedPlans.find((entry) => buildSharedPlanSignature(entry) !== activeSignature) ?? null
   const continueHref = activePlan ? '/dev/live' : '/dev/plans'
   const continueLabel = activePlan ? 'Continue live plan' : 'Open plans'
-  const continueTitle = activePlan?.finalRoute.routeHeadline || 'No active live plan'
+  const continueTitle = activePlan?.finalRoute?.routeHeadline || 'No active live plan'
   const continueMeta = activePlan
-    ? `${activePlan.finalRoute.location || activePlan.city || activePlan.itinerary.city || 'San Jose'} | ${formatLockedAt(activePlan.lockedAt)}`
+    ? `${activePlan.finalRoute?.location || activePlan.city || activePlan.itinerary.city || 'San Jose'} | ${formatLockedAt(activePlan.lockedAt)}`
     : 'Resume from Plans Hub if available'
 
   return (

@@ -73,8 +73,8 @@ export function HomePage() {
   const prioritizedContinuation: HomePlanSummary | null = liveArtifact
     ? {
         priority: 'active-live',
-        title: liveArtifact.finalRoute.routeHeadline || 'Tonight',
-        city: liveArtifact.finalRoute.location || liveArtifact.city || liveArtifact.itinerary.city || 'San Jose',
+        title: liveArtifact.finalRoute?.routeHeadline || 'Tonight',
+        city: liveArtifact.finalRoute?.location || liveArtifact.city || liveArtifact.itinerary.city || 'San Jose',
         routePath: isDevHome ? '/dev/live' : '/journey/live',
         status: 'Live plan active',
         lockedAt: liveArtifact.lockedAt,

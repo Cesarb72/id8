@@ -49,6 +49,7 @@ import {
   SessionStoreProvider,
   useSessionStore,
   type FlowStep,
+  type GenerationTarget,
   type SessionState,
   type UserComposedStop,
 } from './state/sessionStore'
@@ -87,7 +88,7 @@ import {
   type PersonaMode,
   type VibeAnchor,
 } from '../domain/types/intent'
-import type { ArcCandidate, ScoredVenue } from '../domain/types/arc'
+import type { ArcCandidate, ScoredVenue, StopAlternative, StopAlternativeKind } from '../domain/types/arc'
 import type { ExperienceLens } from '../domain/types/experienceLens'
 import type { Itinerary, UserStopRole } from '../domain/types/itinerary'
 import type { PlanAdjustmentFeedback } from '../domain/types/planAdjustmentFeedback'
@@ -980,7 +981,7 @@ function buildPublicLockRuntimeRouteTruth(params: {
       ok: true
       selectedClusterConfirmation: string
       itinerary: Itinerary
-      finalRoute: ReturnType<typeof buildFinalRoute>
+      finalRoute: NonNullable<ReturnType<typeof buildFinalRoute>>
       lockSafeItineraryStops: Itinerary['stops']
     }
   | {
@@ -1012,24 +1013,21 @@ function buildPublicLockRuntimeRouteTruth(params: {
   }
 
   const scoredVenueByVenueId = new Map(scoredVenues.map((item) => [item.venue.id, item] as const))
-  const canonicalStopByRole = lockSafeItineraryStops.reduce<
-    Partial<
-      Record<
-        UserStopRole,
-        {
-          displayName: string
-          providerRecordId: string
-          latitude: number
-          longitude: number
-          addressLine: string
-          neighborhood: string
-        }
-      >
-    >
-  >((next, stop) => {
+  type LockCanonicalStopIdentity = {
+    displayName: string
+    providerRecordId: string
+    latitude: number
+    longitude: number
+    addressLine: string
+    neighborhood: string
+  }
+  const canonicalStopResult = lockSafeItineraryStops.reduce<{
+    stopsByRole: Partial<Record<UserStopRole, LockCanonicalStopIdentity>>
+    failureReason?: string
+  }>((next, stop) => {
     const scoredVenue = scoredVenueByVenueId.get(stop.venueId)
     if (!scoredVenue) {
-      next.__failure = `missing_scored_venue:${stop.role}:${stop.venueId}`
+      next.failureReason = `missing_scored_venue:${stop.role}:${stop.venueId}`
       return next
     }
     const venue = scoredVenue.venue
@@ -1041,11 +1039,11 @@ function buildPublicLockRuntimeRouteTruth(params: {
     const latitude = scoredVenue?.venue.source.latitude
     const longitude = scoredVenue?.venue.source.longitude
     if (!providerRecordId) {
-      next.__failure = `missing_provider_record_id:${stop.role}:${stop.venueId}`
+      next.failureReason = `missing_provider_record_id:${stop.role}:${stop.venueId}`
       return next
     }
     if (!addressLine) {
-      next.__failure = `missing_formatted_address:${stop.role}:${stop.venueId}`
+      next.failureReason = `missing_formatted_address:${stop.role}:${stop.venueId}`
       return next
     }
     if (
@@ -1054,10 +1052,10 @@ function buildPublicLockRuntimeRouteTruth(params: {
       typeof longitude !== 'number' ||
       !Number.isFinite(longitude)
     ) {
-      next.__failure = `missing_coordinates:${stop.role}:${stop.venueId}`
+      next.failureReason = `missing_coordinates:${stop.role}:${stop.venueId}`
       return next
     }
-    next[stop.role] = {
+    next.stopsByRole[stop.role] = {
       displayName: venue.name,
       providerRecordId,
       latitude,
@@ -1066,10 +1064,11 @@ function buildPublicLockRuntimeRouteTruth(params: {
       neighborhood: venue.neighborhood || stop.neighborhood,
     }
     return next
-  }, {})
-  if (typeof canonicalStopByRole.__failure === 'string') {
-    return { ok: false, reason: canonicalStopByRole.__failure }
+  }, { stopsByRole: {} })
+  if (canonicalStopResult.failureReason) {
+    return { ok: false, reason: canonicalStopResult.failureReason }
   }
+  const canonicalStopByRole = canonicalStopResult.stopsByRole
 
   if (
     !canonicalStopByRole.start ||
@@ -1274,11 +1273,15 @@ function AppShellContent({
     baselineVisibleItinerary?.story.subtitle?.trim() ||
     ''
   const baselineVisibleAlternativesByRole = useMemo(
-    () => filterRoleRecord(state.alternativesByRole, BASELINE_VISIBLE_ROLES),
+    () => filterRoleRecord<StopAlternative[]>(state.alternativesByRole, BASELINE_VISIBLE_ROLES),
     [state.alternativesByRole],
   )
   const baselineVisibleAlternativeKindsByRole = useMemo(
-    () => filterRoleRecord(state.alternativeKindsByRole, BASELINE_VISIBLE_ROLES),
+    () =>
+      filterRoleRecord<StopAlternativeKind>(
+        state.alternativeKindsByRole,
+        BASELINE_VISIBLE_ROLES,
+      ),
     [state.alternativeKindsByRole],
   )
 
@@ -1631,19 +1634,35 @@ function AppShellContent({
     state.scoredVenues,
   ])
   const baselineVisibleRoleShapeActionsByRole = useMemo(
-    () => filterRoleRecord(previewRoleShapeActionsByRole, BASELINE_VISIBLE_ROLES),
+    () =>
+      filterRoleRecord<ReturnType<typeof getRoleShapeActions>>(
+        previewRoleShapeActionsByRole,
+        BASELINE_VISIBLE_ROLES,
+      ),
     [previewRoleShapeActionsByRole],
   )
   const baselineVisibleComposeActionsByRole = useMemo(
-    () => filterRoleRecord(previewComposeActionsByRole, BASELINE_VISIBLE_ROLES),
+    () =>
+      filterRoleRecord<ReturnType<typeof getDraftComposeActions>>(
+        previewComposeActionsByRole,
+        BASELINE_VISIBLE_ROLES,
+      ),
     [previewComposeActionsByRole],
   )
   const baselineVisibleOwnedStopKindsByRole = useMemo(
-    () => filterRoleRecord(previewOwnedStopKindsByRole, BASELINE_VISIBLE_ROLES),
+    () =>
+      filterRoleRecord<'candidate' | 'custom'>(
+        previewOwnedStopKindsByRole,
+        BASELINE_VISIBLE_ROLES,
+      ),
     [previewOwnedStopKindsByRole],
   )
   const baselineVisibleAdjustLockedNotesByRole = useMemo(
-    () => filterRoleRecord(previewAdjustLockedNotesByRole ?? {}, BASELINE_VISIBLE_ROLES),
+    () =>
+      filterRoleRecord<string>(
+        previewAdjustLockedNotesByRole,
+        BASELINE_VISIBLE_ROLES,
+      ),
     [previewAdjustLockedNotesByRole],
   )
 
