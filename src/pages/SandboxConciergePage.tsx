@@ -15124,7 +15124,7 @@ export function SandboxConciergePage({
     if (shouldLogLiveArtifactDebug) {
       console.debug('[live-artifact] lock save attempted', {
         sessionId: lockSaveResult.sessionId,
-        lockedAt: canonicalRouteArtifact.lockedAt ?? null,
+        lockedAt: null,
       })
     }
     if (shouldLogLiveArtifactDebug) {
@@ -17184,7 +17184,7 @@ export function SandboxConciergePage({
       isSurpriseWrapperActive ? surpriseContrastScenarioFamily : null,
       isSurpriseWrapperActive ? surpriseCrossPersonaScenarioFamily : null,
     ]
-      .filter((value): value is string => Boolean(value))
+      .filter((value): value is ScenarioFamily => Boolean(value))
       .join(', ') || 'n/a'
     const surprisePrimaryScenarioFamily = resolvedScenarioFamily ?? 'n/a'
     const surpriseContrastScenarioFamilyDebug =
