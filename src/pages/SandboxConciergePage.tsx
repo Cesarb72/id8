@@ -2905,22 +2905,23 @@ function buildSelectedRouteArtifactProjection(params: {
       selectedDirectionContractId ??
       selectedDirectionId ??
       effectiveCurateSelectedArtifact.id
-    const buildAnchorClaimAllowed = Boolean(
+    const buildAnchorClaimAnchor =
       isBuildWrapperActive &&
-        selectedBuildAnchor &&
-        effectiveCurateSelectedArtifact.anchorVenueId === selectedBuildAnchor.venueId,
-    )
+      selectedBuildAnchor &&
+      effectiveCurateSelectedArtifact.anchorVenueId === selectedBuildAnchor.venueId
+        ? selectedBuildAnchor
+        : null
     const buildAnchorLine =
-      buildAnchorClaimAllowed
+      buildAnchorClaimAnchor
         ? isPublicSurface
-          ? `Built around: ${selectedBuildAnchor.name}`
-          : `Required anchor: ${selectedBuildAnchor.name}`
+          ? `Built around: ${buildAnchorClaimAnchor.name}`
+          : `Required anchor: ${buildAnchorClaimAnchor.name}`
         : effectiveCurateSelectedArtifact.districtAnchorLine
     const buildWhyChooseLine =
-      buildAnchorClaimAllowed
+      buildAnchorClaimAnchor
         ? isPublicSurface
-          ? `Includes your chosen place: ${selectedBuildAnchor.name}.`
-          : `Includes required anchor: ${selectedBuildAnchor.name}.`
+          ? `Includes your chosen place: ${buildAnchorClaimAnchor.name}.`
+          : `Includes required anchor: ${buildAnchorClaimAnchor.name}.`
         : effectiveCurateSelectedArtifact.whyChooseLine
     return {
       source: 'candidate',
@@ -18775,13 +18776,14 @@ export function SandboxConciergePage({
     return selected.slice(0, 2)
   }, [previewWhyCandidates])
   const planPreviewWhyThisWorksRenderActive = Boolean(activePlanPreview)
-  const activePlanPreviewStopCount = activePlanPreview?.stops.length ?? 0
+  const activePlanPreviewStops = activePlanPreview?.stops ?? []
+  const activePlanPreviewStopCount = activePlanPreviewStops.length
   const activePlanPreviewStopsHaveVenueIds =
     activePlanPreviewStopCount > 0 &&
-    activePlanPreview.stops.every((stop) => Boolean(stop.venueId?.trim()))
+    activePlanPreviewStops.every((stop) => Boolean(stop.venueId?.trim()))
   const activePlanPreviewStopsHaveMedia =
     activePlanPreviewStopCount > 0 &&
-    activePlanPreview.stops.some((stop) => Boolean(stop.mediaUrl?.trim()))
+    activePlanPreviewStops.some((stop) => Boolean(stop.mediaUrl?.trim()))
   const activePlanPreviewStopSourceSummary = summarizeDiagnosticCounts(
     activePlanPreview?.stops.map((stop) => stop.source) ?? [],
   )
