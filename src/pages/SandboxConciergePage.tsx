@@ -1176,6 +1176,21 @@ interface SurpriseTryAnotherDebug {
   fallbackReason: string | null
 }
 
+type ArtifactBearingTryAnotherAlternate = {
+  artifact: CanonicalCandidateRouteArtifact
+  direction: RealityDirectionCard
+  score: number
+  fingerprint: string
+  candidateScenarioFamilyHint: string | null
+  crossFamily: boolean
+  sameStart: boolean
+  sameHighlight: boolean
+  sameWindDown: boolean
+  roleOverlapCount: number
+  sameDirection: boolean
+  orderingReason: string
+}
+
 type SurpriseArtifactSafetyState = 'unknown' | 'known_failed' | 'known_safe'
 
 function isDiagnosticPreferredWindDownCategory(
@@ -16573,20 +16588,10 @@ export function SandboxConciergePage({
       selectedRouteSummaryArtifact?.traits,
     ],
   )
-  const step2TryAnotherAlternates = useMemo(() => {
+  const step2TryAnotherAlternates = useMemo<ArtifactBearingTryAnotherAlternate[]>(() => {
     const currentDirectionId = selectedDirectionId ?? directionCards[0]?.id ?? null
     if (!currentDirectionId) {
-      return [] as Array<{
-        direction: (typeof directionCards)[number]
-        score: number
-        fingerprint: string
-        sameStart: boolean
-        sameHighlight: boolean
-        sameWindDown: boolean
-        roleOverlapCount: number
-        sameDirection: boolean
-        orderingReason: string
-      }>
+      return []
     }
     const currentStructure = {
       routeTitle: selectedRouteSummaryArtifact?.routeTitle,
@@ -16695,20 +16700,7 @@ export function SandboxConciergePage({
       .filter(
         (
           entry,
-        ): entry is {
-          artifact: CanonicalCandidateRouteArtifact
-          direction: (typeof directionCards)[number]
-          score: number
-          fingerprint: string
-          candidateScenarioFamilyHint: string | null
-          crossFamily: boolean
-          sameStart: boolean
-          sameHighlight: boolean
-          sameWindDown: boolean
-          roleOverlapCount: number
-          sameDirection: boolean
-          orderingReason: string
-        } => Boolean(entry),
+        ): entry is ArtifactBearingTryAnotherAlternate => Boolean(entry),
       )
     const scoreOnlyTopCandidate = [...candidates].sort(
       (left, right) => right.score - left.score || left.direction.id.localeCompare(right.direction.id),
@@ -16738,20 +16730,7 @@ export function SandboxConciergePage({
       return left.direction.id.localeCompare(right.direction.id)
     })
 
-    const uniqueByFingerprint: Array<{
-      artifact: CanonicalCandidateRouteArtifact
-      direction: (typeof directionCards)[number]
-      score: number
-      fingerprint: string
-      candidateScenarioFamilyHint: string | null
-      crossFamily: boolean
-      sameStart: boolean
-      sameHighlight: boolean
-      sameWindDown: boolean
-      roleOverlapCount: number
-      sameDirection: boolean
-      orderingReason: string
-    }> = []
+    const uniqueByFingerprint: ArtifactBearingTryAnotherAlternate[] = []
     const seenFingerprints = new Set<string>()
     for (const candidate of sortedCandidates) {
       if (seenFingerprints.has(candidate.fingerprint)) {
@@ -16972,14 +16951,14 @@ export function SandboxConciergePage({
       staleCommittedMatchUsed: false,
       anyOverrideReason: null,
     })
-    const fallbackAlternates =
+    const fallbackAlternates: ArtifactBearingTryAnotherAlternate[] =
       candidateRouteArtifactsForDisplay
         .filter((artifact) => artifact.id !== currentArtifactId)
         .filter(
           (artifact) =>
             !isSurpriseWrapperActive || !surpriseGenerationFailedArtifactIds.includes(artifact.id),
         )
-        .map((artifact) => {
+        .map((artifact): ArtifactBearingTryAnotherAlternate | null => {
           const direction = resolveDirectionForCandidateArtifactWithTrace(artifact, {
             allowPocketFallbackOnUnmatchedDirectionId: isSurpriseWrapperActive,
           }).direction
@@ -16988,35 +16967,38 @@ export function SandboxConciergePage({
           }
           return {
             artifact,
-              direction,
-              score: 0,
-              fingerprint: buildVisibleNightFingerprint({
-                routeTitle: artifact.routeTitle,
-                routeSummary: artifact.routeSummary,
-                flavorLine: artifact.flavorLine,
-                traits: artifact.traits,
-                proofLines: [
-                  artifact.whyChooseLine,
-                  artifact.whyTonightProofLine,
-                  artifact.scenarioEvaluation?.notes?.[0],
-                  artifact.authorityLine,
-                  artifact.happeningsLine,
-                ].filter((value): value is string => Boolean(value && value.trim())),
-                districtAnchorLine: artifact.districtAnchorLine ?? artifact.districtLine,
-                stops: [artifact.storySpine.start, artifact.storySpine.highlight, artifact.storySpine.windDown],
-                stopVenueIds: artifact.anchorVenueId ? [artifact.anchorVenueId] : undefined,
-              }),
+            direction,
+            score: 0,
+            fingerprint: buildVisibleNightFingerprint({
+              routeTitle: artifact.routeTitle,
+              routeSummary: artifact.routeSummary,
+              flavorLine: artifact.flavorLine,
+              traits: artifact.traits,
+              proofLines: [
+                artifact.whyChooseLine,
+                artifact.whyTonightProofLine,
+                artifact.scenarioEvaluation?.notes?.[0],
+                artifact.authorityLine,
+                artifact.happeningsLine,
+              ].filter((value): value is string => Boolean(value && value.trim())),
+              districtAnchorLine: artifact.districtAnchorLine ?? artifact.districtLine,
+              stops: [artifact.storySpine.start, artifact.storySpine.highlight, artifact.storySpine.windDown],
+              stopVenueIds: artifact.anchorVenueId ? [artifact.anchorVenueId] : undefined,
+            }),
+            candidateScenarioFamilyHint: null,
+            crossFamily: false,
+            sameStart: false,
+            sameHighlight: false,
+            sameWindDown: false,
+            roleOverlapCount: 0,
+            sameDirection: direction.id === currentDirectionId,
+            orderingReason: 'fallback_alternate',
           }
         })
         .filter(
           (
             entry,
-          ): entry is {
-            artifact: CanonicalCandidateRouteArtifact
-            direction: (typeof directionCards)[number]
-            score: number
-            fingerprint: string
-          } => Boolean(entry),
+          ): entry is ArtifactBearingTryAnotherAlternate => Boolean(entry),
         )
     const candidatesToTry =
       step2TryAnotherAlternatesGenerationSafeHighlightPreferred.length > 0
