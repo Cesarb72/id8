@@ -23044,7 +23044,7 @@ export function SandboxConciergePage({
                   type="button"
                   className={`district-card step2-night-option${isSelected ? ' selected' : ''}`}
                   onClick={() => handleSelectStep2NightOption(option)}
-                  aria-pressed={isSelected}
+                  aria-pressed={Boolean(isSelected)}
                   disabled={publicSurpriseRouteChoiceVisible ? false : !cardModel.isSelectable}
                 >
                   <h5 className="step2-night-option-anchor-title">{cardModel.title}</h5>
