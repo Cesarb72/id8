@@ -994,7 +994,7 @@ export function JourneyMapReal({
             name: place.name,
             category: place.category,
             coordinates: place.coordinates,
-            inBounds: bounds.contains(place.coordinates),
+            inBounds: bounds ? bounds.contains(place.coordinates) : false,
           }))
           const inBoundsCount = plottedPlaces.filter((place) => place.inBounds).length
           const categoryCounts = plottedPlaces.reduce<Record<string, number>>((accumulator, place) => {

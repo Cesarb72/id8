@@ -97,7 +97,7 @@ function readStops(params: {
   return (previewStops ?? []).map((stop) => {
     const runtimeStop = runtimeContext.byRole.get(stop.role)
     const itineraryStop = runtimeContext.itineraryStopByRole.get(stop.role)
-    const fallbackFields = fallbackStopFields[stop.role]
+    const fallbackFields = fallbackStopFields[stop.role] ?? {}
     const stopName = stop.name.trim()
     const runtimeFitSummary = normalizePreviewString(
       runtimeStop?.subtitle || itineraryStop?.subtitle,

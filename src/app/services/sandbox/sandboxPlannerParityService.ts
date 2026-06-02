@@ -1,25 +1,25 @@
 import { buildFinalRoute } from '../../../domain/artifacts/runtimeRouteProjection'
-import type { GeneratePlanResult } from '../../domain/runGeneratePlan'
+import type { GeneratePlanResult } from '../../../domain/runGeneratePlan'
 import type {
   DirectionContractValidationResult,
   DirectionIdentityMode,
   DirectionPlanningSelection,
-} from '../../domain/arc/directionPlanning'
+} from '../../../domain/arc/directionPlanning'
 import type {
   DirectionContractBuildability,
   DirectionCoreRole,
-} from '../../domain/bearings/assessDirectionContractBuildability'
-import type { ArcCandidate, ScoredVenue } from '../../domain/types/arc'
-import type { ExperienceLens } from '../../domain/types/experienceLens'
+} from '../../../domain/bearings/assessDirectionContractBuildability'
+import type { ArcCandidate, ScoredVenue } from '../../../domain/types/arc'
+import type { ExperienceLens } from '../../../domain/types/experienceLens'
 import type {
   ContractConstraints,
   IntentProfile,
   PersonaMode,
   ResolvedDirectionContext,
   VibeAnchor,
-} from '../../domain/types/intent'
-import type { Itinerary, UserStopRole } from '../../domain/types/itinerary'
-import type { RuntimeRouteArtifact } from '../../domain/artifacts/runtimeRouteArtifact'
+} from '../../../domain/types/intent'
+import type { Itinerary, UserStopRole } from '../../../domain/types/itinerary'
+import type { RuntimeRouteArtifact } from '../../../domain/artifacts/runtimeRouteArtifact'
 
 export interface CanonicalPlanningStopIdentityLike {
   displayName: string

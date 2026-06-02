@@ -78,6 +78,7 @@ function buildCardClassName({
   locked: boolean
   anchorStop: boolean
   inlineDetailExpanded: boolean
+  liveAlerted: boolean
 }): string {
   return [
     'stop-card',

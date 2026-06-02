@@ -480,6 +480,9 @@ export function JourneyMap({
             transformOrigin: `${focusPoint.x}% ${focusPoint.y}%`,
             '--orientation-pan-x': `${orientationPanX}%`,
             '--orientation-pan-y': `${orientationPanY}%`,
+          } as CSSProperties & {
+            '--orientation-pan-x': string
+            '--orientation-pan-y': string
           }}
         >
           <div className="journey-map-grid" />
