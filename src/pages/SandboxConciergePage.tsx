@@ -10098,7 +10098,7 @@ export function SandboxConciergePage({
           persona,
           primaryVibe,
           districtLocationQuery,
-          districtPreviewResult,
+          districtPreviewResult: districtPreviewResult ?? null,
           resolvedScenarioFamily,
           scenarioBuiltNights,
         },
@@ -19011,7 +19011,7 @@ export function SandboxConciergePage({
     }
     setSelectedStep2CandidateArtifactId(null)
     setExpandedRole(null)
-    setPreviewFeedback(undefined)
+    setPreviewFeedback(null)
     setPreviewSwap(undefined)
     setAppliedSwapRole(null)
     setError(undefined)
