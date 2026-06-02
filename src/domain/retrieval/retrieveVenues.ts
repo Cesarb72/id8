@@ -224,20 +224,6 @@ function countBySource(venues: Venue[]): { curated: number; live: number } {
   )
 }
 
-function buildSourcePool(
-  requestedSourceMode: SourceMode,
-  curatedVenues: Venue[],
-  liveVenues: Venue[],
-): Venue[] {
-  if (requestedSourceMode === 'curated') {
-    return curatedVenues
-  }
-  if (requestedSourceMode === 'live') {
-    return liveVenues
-  }
-  return [...curatedVenues, ...liveVenues]
-}
-
 function resolveRequiredInventoryVenues(
   availableVenues: Venue[],
   seedVenues: Venue[] | undefined,
@@ -772,9 +758,6 @@ export async function retrieveVenues(
     shouldFallbackToCuratedByAvailability &&
     (governancePolicy.runtimeMode !== 'api_governed' || governancePolicy.allowCuratedFallback)
 
-  const sourcePool = shouldFallbackToCurated
-    ? curatedVenues
-    : buildSourcePool(retrievalSourceMode, curatedVenues, effectiveLiveVenues)
   const mergedPool = mergeVenueSources(
     curatedVenues,
     effectiveLiveVenues,

@@ -880,7 +880,6 @@ export function interpretVenueTaste(
     hyperlocalActivation,
   )
   const familyExpansion = deriveExpandedExperienceFamily(
-    venue,
     profile,
     momentPotential,
     momentIntensity,
@@ -2688,7 +2687,6 @@ function deriveExperienceFamily(
 }
 
 function deriveExpandedExperienceFamily(
-  venue: NormalizedVenueTasteInput,
   profile: TasteCoreProfile,
   momentPotential: TasteMomentPotential,
   momentIntensity: TasteMomentIntensity,

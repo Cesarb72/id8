@@ -250,7 +250,7 @@ const tasteModes: Record<TasteModeId, TasteModeBlueprint> = {
         preferredTags: ['easygoing', 'social'],
       },
     },
-    reasonBuilder: (intent) =>
+    reasonBuilder: () =>
       `Crew and vibe read as more social, so Taste favors nights with stronger group energy and lively anchors.`,
   },
   'scenic-outdoor': {

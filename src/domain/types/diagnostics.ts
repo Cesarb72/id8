@@ -34,7 +34,6 @@ import type {
   TasteHighlightTier,
   TasteRoleSuitability,
 } from '../interpretation/taste/types'
-import type { DistrictTasteBridgeArtifact } from '../interpretation/taste/districtTasteBridgeArtifact'
 
 export type FallbackRelaxationLevel = 'none' | 'lens-soft' | 'lens-off'
 export type SelectionStrengthLabel =

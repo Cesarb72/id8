@@ -1073,12 +1073,13 @@ function summarizeExpandedFamilyCandidates(scoredVenues: ScoredVenue[]): string 
 
 function formatTemporalRoleAdjustments(candidate: ScoredVenue): string {
   const adjustments = candidate.taste.signals.hyperlocalActivation.temporalCompatibility.roleAdjustments
-  const entries = [
+  const roleAdjustments: Array<[string, number]> = [
     ['highlight', adjustments.highlight],
     ['surprise', adjustments.surprise],
     ['wind down', adjustments.windDown],
     ['start', adjustments.start],
   ]
+  const entries = roleAdjustments
     .filter(([, value]) => Math.abs(value) >= 0.005)
     .sort((left, right) => Math.abs(right[1]) - Math.abs(left[1]))
 
