@@ -773,6 +773,16 @@ interface CurateWindDownRepairTarget {
     | 'fixture_pool_fallback'
 }
 
+type CurateWindDownRepairSource = CurateWindDownRepairTarget['source']
+
+type CurateWindDownRepairCandidate = {
+  venueId: string
+  name: string
+  category: string | null
+  source: CurateWindDownRepairSource
+  score: number
+}
+
 interface CurateDisplayDedupeDebug {
   visibleCardCountBeforeDedupe: number
   visibleCardCountAfterDedupe: number
@@ -789,6 +799,25 @@ interface CuratePreDisplayBuildability {
   missingRoles: DirectionCoreRole[]
   fallbackReason: string | null
   wasDeprioritizedForRoleSupport: boolean
+}
+
+function narrowDirectionExperienceFamily(
+  value: string | undefined,
+): DirectionCandidate['experienceFamily'] | undefined {
+  switch (value) {
+    case 'social':
+    case 'cultural':
+    case 'playful':
+    case 'intimate':
+    case 'exploratory':
+    case 'ambient':
+    case 'eventful':
+    case 'ritual':
+    case 'indulgent':
+      return value
+    default:
+      return undefined
+  }
 }
 
 interface CurateVisibleCardModel {
@@ -3238,7 +3267,7 @@ function attemptStarterAwareWindDownRepair(params: {
       .filter((venue) => venue.neighborhood === highlightVenue?.neighborhood)
       .map((venue) => venue.id),
   )
-  const scenarioNightCandidates =
+  const scenarioNightCandidates: CurateWindDownRepairCandidate[] =
     opportunity.scenarioNight?.stops.map((stop, index) => {
       const venue =
         curatedVenues.find((entry) => entry.id === stop.venueId) ??
@@ -3275,7 +3304,7 @@ function attemptStarterAwareWindDownRepair(params: {
         score,
       }
     }) ?? []
-  const closeCandidates = opportunity.closes.map((close, index) => {
+  const closeCandidates: CurateWindDownRepairCandidate[] = opportunity.closes.map((close, index) => {
     const venue =
       curatedVenues.find((entry) => entry.id === close.venueId) ??
       devGreatStopFixtureVenueById.get(close.venueId) ??
@@ -3304,7 +3333,7 @@ function attemptStarterAwareWindDownRepair(params: {
       score,
     }
   })
-  const curatedFallbackCandidates = [...curatedVenues, ...devGreatStopFixtureVenues]
+  const curatedFallbackCandidates: CurateWindDownRepairCandidate[] = [...curatedVenues, ...devGreatStopFixtureVenues]
     .filter((venue) => preferredWindDownCategories.has(venue.category))
     .filter((venue) => !blockedVenueIds.has(venue.id))
     .filter((venue) => !blockedNames.includes(normalizeCurateAuditStopName(venue.name)))
@@ -8254,7 +8283,7 @@ function buildSelectedDirectionPreviewContext(
     directionTitle: direction.card.title,
     pocketId: direction.debugMeta?.pocketId ?? direction.id,
     cluster: direction.cluster,
-    experienceFamily: direction.debugMeta?.experienceFamily,
+    experienceFamily: narrowDirectionExperienceFamily(direction.debugMeta?.experienceFamily),
     familyConfidence: direction.debugMeta?.familyConfidence,
     subtitle: direction.card.subtitle,
     supportLine: direction.card.supportLine,
@@ -8298,7 +8327,7 @@ function buildDirectionPlanningSelectionFromCard(
     pocketLabel: direction.debugMeta?.pocketLabel ?? direction.card.title,
     archetype: direction.debugMeta?.archetype ?? direction.cluster,
     cluster: direction.cluster,
-    experienceFamily: direction.debugMeta?.experienceFamily,
+    experienceFamily: narrowDirectionExperienceFamily(direction.debugMeta?.experienceFamily),
     familyConfidence: direction.debugMeta?.familyConfidence,
     subtitle: direction.card.subtitle,
     laneIdentity: direction.debugMeta?.laneIdentity,
