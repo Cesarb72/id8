@@ -146,11 +146,6 @@ import {
   type BuildProviderSourceOpportunity,
   type BuildProviderSourceOpportunityDiagnostics,
 } from '../domain/providers/buildProviderSourceOpportunity'
-import { getProviderRecordIdFromLiveGoogleVenueId } from '../domain/providers/admitLiveVenueIdentity'
-import {
-  isCanonicalVenueResolved,
-  resolveCanonicalVenueIdForProviderRecord,
-} from '../domain/providers/providerCanonicalVenueMapping'
 import {
   mapBuiltScenarioNightToVerifiedOpportunity,
   type BuiltScenarioNightPreviewModel,
@@ -203,6 +198,17 @@ import {
   type AnchorSearchResult,
   type GenerationTrace,
 } from '../app/services/arcApplicationService'
+import {
+  buildAnchorSelectionFromSearchResult,
+  deriveBuildPlannerAnchor,
+  deriveRequiredBuildAnchorForPostPlanner,
+  doesBuildAnchorResultMatchSelection,
+  restorePersistedBuildAnchorResult,
+  restorePersistedBuildAnchorSelection,
+  selectBuildAnchorVenue,
+  type BuildAnchorSelection,
+  type RequiredBuildAnchorStop,
+} from '../app/services/buildAnchorOrchestrationService'
 import {
   getCuratePreflightRuntimeReason,
   getErrorMessageRaw,
@@ -1847,15 +1853,6 @@ function getScenarioFamilyVibeLabel(family: ScenarioFamily | null): string | nul
 }
 
 type CoreTasteRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
-
-type RequiredBuildAnchorStop = {
-  venueId: string
-  role: CoreTasteRole
-}
-
-function isCoreTasteRole(role: UserStopRole | undefined): role is CoreTasteRole {
-  return role === 'start' || role === 'highlight' || role === 'windDown'
-}
 
 interface TasteRoleEligibilitySnapshot {
   score: number
@@ -4989,126 +4986,6 @@ function buildCanonicalAddressLine(
     return `${neighborhood}, ${city}`
   }
   return neighborhood ?? city
-}
-
-type BuildAnchorSelection = {
-  venueId: string
-  name: string
-  category: AnchorSearchResult['venue']['category']
-  city: string
-  neighborhood: string
-  sourceVenueId?: string
-  providerRecordId?: string
-}
-
-function normalizeOptionalString(value: string | undefined): string | undefined {
-  const normalized = value?.trim()
-  return normalized ? normalized : undefined
-}
-
-function getBuildAnchorProviderRecordIdFromVenue(venue: Venue): string | undefined {
-  return (
-    normalizeOptionalString(venue.source.providerRecordId) ??
-    getProviderRecordIdFromLiveGoogleVenueId(venue.id)
-  )
-}
-
-function getBuildAnchorProviderRecordIdFromSelection(
-  selection: BuildAnchorSelection,
-): string | undefined {
-  return (
-    normalizeOptionalString(selection.providerRecordId) ??
-    (selection.sourceVenueId
-      ? getProviderRecordIdFromLiveGoogleVenueId(selection.sourceVenueId)
-      : undefined) ??
-    getProviderRecordIdFromLiveGoogleVenueId(selection.venueId)
-  )
-}
-
-function canonicalizeBuildAnchorSelection(
-  selection: BuildAnchorSelection,
-): BuildAnchorSelection | null {
-  const venueId = normalizeOptionalString(selection.venueId)
-  const name = normalizeOptionalString(selection.name)
-  const city = normalizeOptionalString(selection.city)
-  const neighborhood = normalizeOptionalString(selection.neighborhood)
-  if (!venueId || !name || !city || !neighborhood || !selection.category) {
-    return null
-  }
-
-  const providerRecordId = getBuildAnchorProviderRecordIdFromSelection(selection)
-  const canonicalMapping = providerRecordId
-    ? resolveCanonicalVenueIdForProviderRecord({
-        provider: 'google-places',
-        providerRecordId,
-        staticVenues: curatedVenues,
-      })
-    : null
-  const canonicalVenueId =
-    canonicalMapping && isCanonicalVenueResolved(canonicalMapping)
-      ? canonicalMapping.canonicalVenueId
-      : undefined
-  const canonicalizedVenueId = canonicalVenueId ?? venueId
-  const sourceVenueId =
-    canonicalVenueId && canonicalVenueId !== venueId
-      ? normalizeOptionalString(selection.sourceVenueId) ?? venueId
-      : normalizeOptionalString(selection.sourceVenueId)
-
-  return {
-    venueId: canonicalizedVenueId,
-    name,
-    category: selection.category,
-    city,
-    neighborhood,
-    ...(sourceVenueId ? { sourceVenueId } : {}),
-    ...(providerRecordId ? { providerRecordId } : {}),
-  }
-}
-
-function buildAnchorSelectionFromSearchResult(
-  result: AnchorSearchResult,
-): BuildAnchorSelection {
-  return canonicalizeBuildAnchorSelection({
-    venueId: result.venue.id,
-    name: result.venue.name,
-    category: result.venue.category,
-    city: result.venue.city,
-    neighborhood: result.venue.neighborhood,
-    providerRecordId: getBuildAnchorProviderRecordIdFromVenue(result.venue),
-  }) ?? {
-    venueId: result.venue.id,
-    name: result.venue.name,
-    category: result.venue.category,
-    city: result.venue.city,
-    neighborhood: result.venue.neighborhood,
-  }
-}
-
-function doesBuildAnchorResultMatchSelection(
-  result: AnchorSearchResult,
-  selection: BuildAnchorSelection | null,
-): boolean {
-  if (!selection) {
-    return false
-  }
-  const resultVenueId = result.venue.id.trim()
-  const selectedVenueId = selection.venueId.trim()
-  if (resultVenueId && resultVenueId === selectedVenueId) {
-    return true
-  }
-
-  const sourceVenueId = normalizeOptionalString(selection.sourceVenueId)
-  if (sourceVenueId && resultVenueId === sourceVenueId) {
-    return true
-  }
-
-  const resultProviderRecordId = getBuildAnchorProviderRecordIdFromVenue(result.venue)
-  const selectedProviderRecordId = getBuildAnchorProviderRecordIdFromSelection(selection)
-  return Boolean(
-    resultProviderRecordId &&
-      selectedProviderRecordId &&
-      resultProviderRecordId === selectedProviderRecordId,
-  )
 }
 
 type BuildProviderShadowInvocationSnapshot = {
@@ -9431,36 +9308,27 @@ export function SandboxConciergePage({
     if (!raw) {
       return null
     }
-    try {
-      const selection = canonicalizeBuildAnchorSelection(JSON.parse(raw) as BuildAnchorSelection)
-      if (!selection) {
-        writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
-        writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
-        return null
-      }
-      if (JSON.stringify(selection) !== raw) {
-        writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, JSON.stringify(selection))
-      }
-      return selection
-    } catch {
+    const restoredSelection = restorePersistedBuildAnchorSelection(raw)
+    if (restoredSelection.shouldClearSelection) {
       writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
-      writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
-      return null
     }
+    if (restoredSelection.shouldClearResult) {
+      writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
+    }
+    if (restoredSelection.normalizedSelectionRaw) {
+      writeSessionStorageValue(
+        DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY,
+        restoredSelection.normalizedSelectionRaw,
+      )
+    }
+    return restoredSelection.selection
   })
   const [selectedBuildAnchorResult, setSelectedBuildAnchorResult] = useState<AnchorSearchResult | null>(() => {
     if (isPublicSurface) {
       return null
     }
     const raw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY)
-    if (!raw) {
-      return null
-    }
-    try {
-      return JSON.parse(raw) as AnchorSearchResult
-    } catch {
-      return null
-    }
+    return restorePersistedBuildAnchorResult(raw).result
   })
   const [buildAnchorReady, setBuildAnchorReady] = useState<boolean>(
     () => (isPublicSurface ? false : readSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY) === '1'),
@@ -9798,40 +9666,36 @@ export function SandboxConciergePage({
       }
       const persistedSelectionRaw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY)
       if (persistedSelectionRaw) {
-        try {
-          const parsedSelection = JSON.parse(persistedSelectionRaw) as BuildAnchorSelection
-          const persistedSelection = canonicalizeBuildAnchorSelection(parsedSelection)
-          if (!persistedSelection) {
-            writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
-            writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
-          } else if (persistedSelection.venueId !== selectedBuildAnchor?.venueId) {
-            setSelectedBuildAnchor(persistedSelection)
-            if (JSON.stringify(persistedSelection) !== persistedSelectionRaw) {
-              writeSessionStorageValue(
-                DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY,
-                JSON.stringify(persistedSelection),
-              )
-            }
-            if (buildRefinementVibe === 'auto') {
-              setPrimaryVibe(getBuildDefaultVibe(persistedSelection.category))
-            }
-          }
-        } catch {
+        const restoredSelection = restorePersistedBuildAnchorSelection(persistedSelectionRaw)
+        if (restoredSelection.shouldClearSelection) {
           writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
+        }
+        if (restoredSelection.shouldClearResult) {
           writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
+        }
+        if (
+          restoredSelection.selection &&
+          restoredSelection.selection.venueId !== selectedBuildAnchor?.venueId
+        ) {
+          setSelectedBuildAnchor(restoredSelection.selection)
+          if (restoredSelection.normalizedSelectionRaw) {
+            writeSessionStorageValue(
+              DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY,
+              restoredSelection.normalizedSelectionRaw,
+            )
+          }
+          if (buildRefinementVibe === 'auto') {
+            setPrimaryVibe(getBuildDefaultVibe(restoredSelection.selection.category))
+          }
         }
       }
       const persistedResultRaw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY)
       if (persistedResultRaw) {
-        try {
-          const persistedResult = JSON.parse(persistedResultRaw) as AnchorSearchResult
-          if (persistedResult?.venue?.id) {
-            setSelectedBuildAnchorResult((current) =>
-              current?.venue.id === persistedResult.venue.id ? current : persistedResult,
-            )
-          }
-        } catch {
-          // noop
+        const persistedResult = restorePersistedBuildAnchorResult(persistedResultRaw).result
+        if (persistedResult?.venue?.id) {
+          setSelectedBuildAnchorResult((current) =>
+            current?.venue.id === persistedResult.venue.id ? current : persistedResult,
+          )
         }
       }
       if (buildAnchorReady !== persistedBuildReady) {
@@ -9852,40 +9716,36 @@ export function SandboxConciergePage({
     if (isChooseRoute && isBuildOrigin) {
       const persistedSelectionRaw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY)
       if (persistedSelectionRaw) {
-        try {
-          const parsedSelection = JSON.parse(persistedSelectionRaw) as BuildAnchorSelection
-          const persistedSelection = canonicalizeBuildAnchorSelection(parsedSelection)
-          if (!persistedSelection) {
-            writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
-            writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
-          } else if (persistedSelection.venueId !== selectedBuildAnchor?.venueId) {
-            setSelectedBuildAnchor(persistedSelection)
-            if (JSON.stringify(persistedSelection) !== persistedSelectionRaw) {
-              writeSessionStorageValue(
-                DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY,
-                JSON.stringify(persistedSelection),
-              )
-            }
-            if (buildRefinementVibe === 'auto') {
-              setPrimaryVibe(getBuildDefaultVibe(persistedSelection.category))
-            }
-          }
-        } catch {
+        const restoredSelection = restorePersistedBuildAnchorSelection(persistedSelectionRaw)
+        if (restoredSelection.shouldClearSelection) {
           writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
+        }
+        if (restoredSelection.shouldClearResult) {
           writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
+        }
+        if (
+          restoredSelection.selection &&
+          restoredSelection.selection.venueId !== selectedBuildAnchor?.venueId
+        ) {
+          setSelectedBuildAnchor(restoredSelection.selection)
+          if (restoredSelection.normalizedSelectionRaw) {
+            writeSessionStorageValue(
+              DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY,
+              restoredSelection.normalizedSelectionRaw,
+            )
+          }
+          if (buildRefinementVibe === 'auto') {
+            setPrimaryVibe(getBuildDefaultVibe(restoredSelection.selection.category))
+          }
         }
       }
       const persistedResultRaw = readSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY)
       if (persistedResultRaw) {
-        try {
-          const persistedResult = JSON.parse(persistedResultRaw) as AnchorSearchResult
-          if (persistedResult?.venue?.id) {
-            setSelectedBuildAnchorResult((current) =>
-              current?.venue.id === persistedResult.venue.id ? current : persistedResult,
-            )
-          }
-        } catch {
-          // noop
+        const persistedResult = restorePersistedBuildAnchorResult(persistedResultRaw).result
+        if (persistedResult?.venue?.id) {
+          setSelectedBuildAnchorResult((current) =>
+            current?.venue.id === persistedResult.venue.id ? current : persistedResult,
+          )
         }
       }
       setBuildAnchorReady(true)
@@ -10939,15 +10799,12 @@ export function SandboxConciergePage({
   const buildProviderSupplyEnabled = !isPublicSurface && isBuildProviderSupplyEnabled()
   const selectedBuildAnchorVenue = useMemo(
     () =>
-      isBuildWrapperActive && selectedBuildAnchor
-        ? buildAnchorResults.find((result) =>
-            doesBuildAnchorResultMatchSelection(result, selectedBuildAnchor),
-          )?.venue ??
-          (selectedBuildAnchorResult &&
-          doesBuildAnchorResultMatchSelection(selectedBuildAnchorResult, selectedBuildAnchor)
-            ? selectedBuildAnchorResult.venue
-            : null)
-        : null,
+      selectBuildAnchorVenue({
+        isBuildWrapperActive,
+        selectedBuildAnchor,
+        buildAnchorResults,
+        selectedBuildAnchorResult,
+      }),
     [buildAnchorResults, isBuildWrapperActive, selectedBuildAnchor, selectedBuildAnchorResult],
   )
   const buildProviderRequestAnchorKey = useMemo(
@@ -13017,13 +12874,11 @@ export function SandboxConciergePage({
           input: { selectedDirectionContext: activeIntentSelectedDirectionContext },
         })
         const plannerMode = isBuildWrapperActive ? 'user-led' : 'engine-led'
-        const buildPlannerAnchor =
-          isBuildWrapperActive && selectedBuildAnchor?.venueId
-            ? {
-                venueId: selectedBuildAnchor.venueId,
-                role: activeCandidateRouteArtifact?.anchorRole ?? 'highlight',
-              }
-            : undefined
+        const buildPlannerAnchor = deriveBuildPlannerAnchor({
+          isBuildWrapperActive,
+          selectedBuildAnchor,
+          activeCandidateAnchorRole: activeCandidateRouteArtifact?.anchorRole,
+        })
         const result = await runPlanBuild(
           {
             mode: isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build',
@@ -13061,21 +12916,12 @@ export function SandboxConciergePage({
             selectedArtifactLineage: activeSelectedArtifactLineage,
           },
         )
-        const requiredAnchorVenueIdAfterRun =
-          isBuildWrapperActive && selectedBuildAnchor?.venueId
-            ? result.intentProfile.anchor?.venueId ?? selectedBuildAnchor.venueId
-            : undefined
-        const requiredAnchorRoleAfterRun =
-          result.intentProfile.anchor?.role ?? buildPlannerAnchor?.role ?? 'highlight'
-        const requiredBuildAnchorForPostPlanner =
-          isBuildWrapperActive &&
-          requiredAnchorVenueIdAfterRun &&
-          isCoreTasteRole(requiredAnchorRoleAfterRun)
-            ? {
-                venueId: requiredAnchorVenueIdAfterRun,
-                role: requiredAnchorRoleAfterRun,
-              }
-            : undefined
+        const requiredBuildAnchorForPostPlanner = deriveRequiredBuildAnchorForPostPlanner({
+          isBuildWrapperActive,
+          selectedBuildAnchor,
+          resultAnchor: result.intentProfile.anchor,
+          buildPlannerAnchor,
+        })
         preLineageExpectedDirectionId = activeDirectionContract.id
         preLineageActualDirectionId = result.intentProfile.selectedDirectionContext?.directionId ?? null
         preLineagePassed = preLineageActualDirectionId === preLineageExpectedDirectionId
