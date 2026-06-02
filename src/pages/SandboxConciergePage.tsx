@@ -2309,7 +2309,6 @@ function getScenarioPreviewStopForRole(
   if (role === 'highlight') {
     return (
       model.stops.find((stop) => stop.position === 'highlight') ??
-      model.stops.find((stop) => stop.stopType === 'anchor') ??
       model.stops[Math.min(1, model.stops.length - 1)]
     )
   }
@@ -3521,10 +3520,7 @@ function getScenarioStopForStarterRole(
     )
   }
   if (role === 'highlight') {
-    return (
-      opportunity.scenarioNight.stops.find((stop) => stop.position === 'highlight') ??
-      opportunity.scenarioNight.stops.find((stop) => stop.stopType === 'anchor')
-    )
+    return opportunity.scenarioNight.stops.find((stop) => stop.position === 'highlight')
   }
   return (
     opportunity.scenarioNight.stops.find((stop) => stop.position === 'closer') ??
@@ -8352,9 +8348,7 @@ function buildSelectedArtifactDiscoveryPreferences(params: {
   }
 
   const scenarioStart = opportunity?.scenarioNight?.stops.find((stop) => stop.position === 'start')
-  const scenarioHighlight =
-    opportunity?.scenarioNight?.stops.find((stop) => stop.position === 'highlight') ??
-    opportunity?.scenarioNight?.stops.find((stop) => stop.stopType === 'anchor')
+  const scenarioHighlight = opportunity?.scenarioNight?.stops.find((stop) => stop.position === 'highlight')
   const scenarioWindDown =
     opportunity?.scenarioNight?.stops.find((stop) => stop.position === 'closer') ??
     opportunity?.scenarioNight?.stops[opportunity.scenarioNight.stops.length - 1]
@@ -12446,7 +12440,6 @@ export function SandboxConciergePage({
           scenarioNight?.stops.find((stop) => stop.position === 'start') ?? scenarioNight?.stops[0]
         const scenarioHighlight =
           scenarioNight?.stops.find((stop) => stop.position === 'highlight') ??
-          scenarioNight?.stops.find((stop) => stop.stopType === 'anchor') ??
           scenarioNight?.stops[0]
         const scenarioWindDown =
           scenarioNight?.stops.find((stop) => stop.position === 'closer') ??
@@ -18716,9 +18709,7 @@ export function SandboxConciergePage({
       ? 'Start, highlight, and wind-down stay coordinated even with a distributed peak model.'
       : 'Clear start -> peak -> wind-down rhythm keeps the night coherent.'
   const previewMovementReason =
-    resolvedContractConstraints.movementTolerance === 'tight'
-      ? 'Short moves maintain momentum without rush.'
-      : resolvedContractConstraints.movementTolerance === 'moderate'
+    resolvedContractConstraints.movementTolerance === 'moderate'
         ? 'Short moves maintain momentum without rush.'
         : 'Manageable moves preserve momentum without rush.'
   const activePlanPreviewWhyThisWorksSourceLines = activePlanPreview?.whyThisWorks ?? []
@@ -18810,9 +18801,6 @@ export function SandboxConciergePage({
     selectedDirection?.debugMeta?.pocketLabel,
   ])
   const previewSpatialCoherenceLine = useMemo(() => {
-    if (resolvedContractConstraints.movementTolerance === 'tight') {
-      return 'Everything stays within a tight, walkable pocket.'
-    }
     if (resolvedContractConstraints.movementTolerance === 'moderate') {
       return 'All stops stay within a short, walkable area.'
     }
@@ -19545,7 +19533,6 @@ export function SandboxConciergePage({
       scenarioNight?.stops.find((stop) => stop.position === 'start') ?? scenarioNight?.stops[0]
     const scenarioHighlight =
       scenarioNight?.stops.find((stop) => stop.position === 'highlight') ??
-      scenarioNight?.stops.find((stop) => stop.stopType === 'anchor') ??
       scenarioNight?.stops[0]
     const scenarioWindDown =
       scenarioNight?.stops.find((stop) => stop.position === 'closer') ??
