@@ -697,6 +697,17 @@ type FamilyAwarePickResult = {
   fallbackUsed: boolean
 }
 
+type DirectionDecisionPick = NonNullable<FamilyAwarePickResult['pick']>
+
+type Slot3LaneSeparatedPickResult = DirectionDecisionPick & {
+  laneSeparatedSlot3: boolean
+  laneSeparationReason?: string
+  familyDiversityApplied: boolean
+  fallbackUsed: boolean
+}
+
+type Slot3PickResult = FamilyAwarePickResult | Slot3LaneSeparatedPickResult
+
 type TasteBridgeDiversificationContext = {
   enabled: boolean
   selected: VibeShapedDirectionCandidate[]
@@ -718,6 +729,10 @@ function getTasteBridgeFamilies(
   tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>,
 ): string[] {
   return tasteBridgeByPocketId?.get(candidate.pocketId)?.tasteEnrichment.topExperienceFamilies ?? []
+}
+
+function getSlot3DecisionPick(result: Slot3PickResult): DirectionDecisionPick | undefined {
+  return 'candidate' in result && 'decision' in result ? result : result.pick
 }
 
 function buildSelectedTasteBridgeContext(params: {
@@ -758,7 +773,8 @@ function getTasteBridgeDistinctnessScore(params: {
 } {
   const signature = getTasteBridgeSignatureValue(params.candidate, params.tasteBridgeByPocketId)
   const families = getTasteBridgeFamilies(params.candidate, params.tasteBridgeByPocketId)
-  const unseenSignature = Boolean(signature) && !params.selectedSignatureSet.has(signature)
+  const unseenSignature =
+    typeof signature === 'string' && !params.selectedSignatureSet.has(signature)
   const unseenFamilyCount = families.filter((family) => !params.selectedFamilySet.has(family)).length
 
   return {
@@ -980,16 +996,7 @@ function pickSlot3WithLaneSeparation(params: {
   selectedFamilies: Set<string>
   tasteBridgeDirectionDiversification?: boolean
   tasteBridgeByPocketId?: ReadonlyMap<string, DistrictTasteBridgeArtifact>
-}):
-  | {
-      candidate: VibeShapedDirectionCandidate
-      decision: DistinctDirectionSelectionDecision
-      laneSeparatedSlot3: boolean
-      laneSeparationReason?: string
-      familyDiversityApplied: boolean
-      fallbackUsed: boolean
-    }
-  | undefined {
+}): Slot3LaneSeparatedPickResult | undefined {
   const bestOverallPick = pickByDecisionWithFamilyDiversity({
     candidates: params.remaining,
     selectedFamilies: params.selectedFamilies,
@@ -1255,7 +1262,7 @@ export function selectBestDistinctDirections({
           },
         })
     if (slot3Pick) {
-      const picked = 'pick' in slot3Pick ? slot3Pick.pick : slot3Pick
+      const picked = getSlot3DecisionPick(slot3Pick)
       if (picked) {
         selected.push(picked.candidate)
         selectedFamilies.add(picked.candidate.experienceFamily)
