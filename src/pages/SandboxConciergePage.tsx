@@ -14202,7 +14202,16 @@ export function SandboxConciergePage({
               selectedDirectionPreviewContext,
             },
             {
-              runPlanBuild,
+              runPlanBuild: (input, options) =>
+                runPlanBuild(
+                  input,
+                  options
+                    ? {
+                        ...options,
+                        starterPack: selectedStarterPack ?? undefined,
+                      }
+                    : undefined,
+                ),
               enforceSelectedDirectionLineage,
               runPostPlannerCommitParityStages: (params) =>
                 runPostPlannerCommitParityStages(
