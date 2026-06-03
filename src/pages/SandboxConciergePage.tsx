@@ -91,6 +91,7 @@ import {
   resolveContractEntryArtifactDirectionBacking,
 } from '../app/services/sandbox/contractEntryArtifactNormalizer'
 import { runCuratePreviewQualificationAttempt } from '../app/services/sandbox/curatePreviewQualificationService'
+import type { CuratePreviewCommitabilityStateLike } from '../app/services/sandbox/curatePreviewQualificationTypes'
 import {
   SwapCommitCoreError,
   applyPreviewSwapCommit,
@@ -214,6 +215,7 @@ import {
   getErrorMessageRaw,
   getErrorName,
   runPostPlannerCommitParityStages,
+  type CanonicalPlanningStopIdentityLike,
   type FullStopRealityContractOutcome,
   type StrongCurationTastePassResult,
 } from '../app/services/sandbox/sandboxPlannerParityService'
@@ -515,6 +517,11 @@ interface GenerationContractDebugBreadcrumb {
   postPlannerStagesSummary?: string
 }
 
+type CurateApprovedRefinementPayload = CurateRefinementEntryPayload<
+  DemoPlanState,
+  Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
+>
+
 interface CuratePreviewCommitabilityState {
   status: 'checking' | 'committable' | 'infeasible'
   artifactId: string
@@ -540,10 +547,7 @@ interface CuratePreviewCommitabilityState {
   finalWinnerSummary?: string
   sampledCandidatesSummary?: string
   rolePoolVenueIdsByRole?: Record<DirectionCoreRole, string[]>
-  approvedRefinementEntryPayload?: CurateRefinementEntryPayload<
-    DemoPlanState,
-    Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
-  >
+  approvedRefinementEntryPayload?: CurateApprovedRefinementPayload
   windDownRepairAttempted?: boolean
   windDownRepairSucceeded?: boolean
   windDownRepairOriginal?: string | null
@@ -559,6 +563,14 @@ interface CuratePreviewCommitabilityState {
   repairedHardCommitCandidateCount?: number | null
   repairedFailureReason?: string | null
   repairedQualificationStatus?: 'committable' | 'infeasible' | null
+}
+
+function normalizeCuratePreviewCommitabilityState(
+  state: CuratePreviewCommitabilityStateLike<DirectionCoreRole, CurateApprovedRefinementPayload>,
+): CuratePreviewCommitabilityState {
+  return {
+    ...state,
+  }
 }
 
 interface CurateParityRunSummary {
@@ -1897,6 +1909,7 @@ function getScenarioFamilyVibeLabel(family: ScenarioFamily | null): string | nul
 }
 
 type CoreTasteRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
+const coreTasteRoles: CoreTasteRole[] = ['start', 'highlight', 'windDown']
 
 interface TasteRoleEligibilitySnapshot {
   score: number
@@ -1924,6 +1937,67 @@ interface TasteCandidateQualification {
   highlightQualificationPassed: boolean
   roleEligibility: Record<CoreTasteRole, TasteRoleEligibilitySnapshot>
   venuePersonality: TasteVenuePersonalityProfile
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isTasteRoleEligibilitySnapshot(value: unknown): value is TasteRoleEligibilitySnapshot {
+  if (!isRecord(value)) {
+    return false
+  }
+  return (
+    typeof value.score === 'number' &&
+    typeof value.floor === 'number' &&
+    typeof value.passed === 'boolean' &&
+    typeof value.reason === 'string'
+  )
+}
+
+function isTasteVenuePersonalityProfile(value: unknown): value is TasteVenuePersonalityProfile {
+  if (!isRecord(value)) {
+    return false
+  }
+  return (
+    typeof value.intimate === 'boolean' &&
+    typeof value.social === 'boolean' &&
+    typeof value.destination === 'boolean' &&
+    typeof value.lingering === 'boolean' &&
+    typeof value.quickStop === 'boolean' &&
+    typeof value.experiential === 'boolean' &&
+    typeof value.calm === 'boolean' &&
+    typeof value.highIntensity === 'boolean' &&
+    typeof value.lowFriction === 'boolean' &&
+    typeof value.summary === 'string'
+  )
+}
+
+function isTasteCandidateQualification(value: unknown): value is TasteCandidateQualification {
+  if (!isRecord(value)) {
+    return false
+  }
+  const roleEligibility = value.roleEligibility
+  return (
+    typeof value.candidateId === 'string' &&
+    typeof value.highlightQualificationScore === 'number' &&
+    typeof value.highlightQualificationPassed === 'boolean' &&
+    isRecord(roleEligibility) &&
+    coreTasteRoles.every((role) => isTasteRoleEligibilitySnapshot(roleEligibility[role])) &&
+    isTasteVenuePersonalityProfile(value.venuePersonality)
+  )
+}
+
+function normalizeTasteCandidateQualificationRecord(
+  value: Record<string, unknown>,
+): Record<string, TasteCandidateQualification> {
+  const normalized: Record<string, TasteCandidateQualification> = {}
+  for (const [candidateId, qualification] of Object.entries(value)) {
+    if (isTasteCandidateQualification(qualification)) {
+      normalized[candidateId] = qualification
+    }
+  }
+  return normalized
 }
 
 interface StrongCurationTasteBias {
@@ -4695,6 +4769,47 @@ interface CanonicalPlanningStopIdentity {
   addressLine: string
   city: string
   neighborhood: string
+}
+
+function normalizeCanonicalPlanningStopIdentity(
+  stop: ItineraryStop,
+  identity: CanonicalPlanningStopIdentityLike,
+): CanonicalPlanningStopIdentity | undefined {
+  const stopId = stop.id.trim()
+  const sourceVenueId = stop.venueId.trim()
+  if (!stopId || !sourceVenueId) {
+    return undefined
+  }
+  return {
+    role: stop.role,
+    stopId,
+    sourceVenueId,
+    displayName: identity.displayName,
+    providerRecordId: identity.providerRecordId,
+    latitude: identity.latitude,
+    longitude: identity.longitude,
+    addressLine: identity.addressLine,
+    city: identity.city,
+    neighborhood: identity.neighborhood,
+  }
+}
+
+function normalizeCanonicalPlanningStopIdentityByRole(
+  canonicalStopByRole: Partial<Record<UserStopRole, CanonicalPlanningStopIdentityLike>>,
+  itinerary: Itinerary,
+): Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>> {
+  const normalized: Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>> = {}
+  for (const stop of itinerary.stops) {
+    const identity = canonicalStopByRole[stop.role]
+    if (!identity) {
+      continue
+    }
+    const strictIdentity = normalizeCanonicalPlanningStopIdentity(stop, identity)
+    if (strictIdentity) {
+      normalized[stop.role] = strictIdentity
+    }
+  }
+  return normalized
 }
 
 function normalizePlanningNameCandidate(value: string | undefined): string | undefined {
@@ -12844,7 +12959,7 @@ export function SandboxConciergePage({
         city: districtLocationQuery,
         directionId: activeDirectionContract.id,
         pocketId: activeDirectionContract.pocketId,
-        discoveryPreferences: selectedArtifactDiscoveryPreferences,
+        discoveryPreferences: selectedArtifactDiscoveryPreferences ?? [],
       })
       if (!activeCluster) {
         markGeneratePlanTraceFailure('Direction cluster is unavailable before generation.')
@@ -13060,9 +13175,15 @@ export function SandboxConciergePage({
             )
           }
         }
+        const canonicalStopByRoleForState = normalizeCanonicalPlanningStopIdentityByRole(
+          anchoredPlan.canonicalStopByRole,
+          anchoredPlan.itinerary,
+        )
         const tasteCurationDebug = buildTasteCurationDebugForArc({
           selectedArc: anchoredPlan.selectedArc,
-          qualificationByCandidateId: strongCurationPass.qualificationByCandidateId,
+          qualificationByCandidateId: normalizeTasteCandidateQualificationRecord(
+            strongCurationPass.qualificationByCandidateId,
+          ),
           personaVibeTasteBiasSummary: strongCurationPass.personaVibeTasteBiasSummary,
           thinPoolHighlightFallbackApplied:
             strongCurationPass.thinPoolHighlightFallbackApplied,
@@ -13149,7 +13270,7 @@ export function SandboxConciergePage({
         })
         setCurateRefinementEntryPayload(null)
         updateFinalRoute(nextFinalRoute)
-        setCanonicalStopByRole(anchoredPlan.canonicalStopByRole)
+        setCanonicalStopByRole(canonicalStopByRoleForState)
         setRejectedStopRoles(anchoredPlan.rejectedStopRoles)
         setActiveRole('start')
         setNearbySummaryByRole({})
@@ -13950,7 +14071,7 @@ export function SandboxConciergePage({
             city: districtLocationQuery,
             directionId: activeDirectionContract.id,
             pocketId: activeDirectionContract.pocketId,
-            discoveryPreferences: selectedArtifactDiscoveryPreferences,
+            discoveryPreferences: selectedArtifactDiscoveryPreferences ?? [],
           })
           const attemptKey = `${artifactId}::${activeDirectionContract.id}::${artifactToQualify.storySpine.windDown}`
           curatePreviewCommitabilityAttemptRef.current[artifactId] = attemptKey
@@ -14039,7 +14160,15 @@ export function SandboxConciergePage({
 
           const selectedDirectionPreviewContext =
             buildSelectedDirectionPreviewContext(activeDirection)
-          const qualificationAttempt = await runCuratePreviewQualificationAttempt(
+          const qualificationAttempt = await runCuratePreviewQualificationAttempt<
+            RealityDirectionCard,
+            DirectionCoreRole,
+            VerifiedCityOpportunity,
+            StarterAwareOpportunityDebug,
+            CurateApprovedRefinementPayload,
+            CurateWindDownRepairTarget,
+            SelectedDirectionPreviewContext
+          >(
             {
               artifactId,
               artifactToQualify,
@@ -14129,10 +14258,16 @@ export function SandboxConciergePage({
                 canonicalContractConstraints,
               }) => {
                 const selectedClusterConfirmation = activeDirection.card.confirmation
+                const canonicalStopByRoleForPayload =
+                  normalizeCanonicalPlanningStopIdentityByRole(
+                    parity.anchoredPlan.canonicalStopByRole,
+                    parity.anchoredPlan.itinerary,
+                  )
                 const tasteCurationDebug = buildTasteCurationDebugForArc({
                   selectedArc: parity.anchoredPlan.selectedArc,
-                  qualificationByCandidateId:
+                  qualificationByCandidateId: normalizeTasteCandidateQualificationRecord(
                     parity.strongCurationPass.qualificationByCandidateId,
+                  ),
                   personaVibeTasteBiasSummary:
                     parity.strongCurationPass.personaVibeTasteBiasSummary,
                   thinPoolHighlightFallbackApplied:
@@ -14193,7 +14328,7 @@ export function SandboxConciergePage({
                     selectedCandidateRouteArtifactId: approvedArtifactId,
                   },
                   finalRoute: parity.nextFinalRoute,
-                  canonicalStopByRole: parity.anchoredPlan.canonicalStopByRole,
+                  canonicalStopByRole: canonicalStopByRoleForPayload,
                   rejectedStopRoles: parity.anchoredPlan.rejectedStopRoles,
                 })
               },
@@ -14218,7 +14353,7 @@ export function SandboxConciergePage({
           }
           setCuratePreviewCommitabilityByArtifactId((current) => ({
             ...current,
-            [artifactId]: qualificationAttempt.state,
+            [artifactId]: normalizeCuratePreviewCommitabilityState(qualificationAttempt.state),
           }))
         }
         await executeQualification(candidateArtifact)
@@ -15041,7 +15176,7 @@ export function SandboxConciergePage({
       role: swapSnapshot.role,
       swapSnapshot,
       planSnapshot: plan,
-      finalRouteSnapshot: finalRoute,
+      finalRouteSnapshot: finalRoute ?? undefined,
       routeVersionAtClick: routeVersion,
     })
   }
@@ -19423,7 +19558,7 @@ export function SandboxConciergePage({
             nearbySummary: nearbySummaryByRole[stop.role],
             routeShapeContract: plan.routeShapeContract,
             baselineItinerary: plan.itinerary,
-            finalRouteSnapshot: finalRoute,
+            finalRouteSnapshot: finalRoute ?? undefined,
             canonicalSwapIdentityByVenueId: swapCanonicalIdentityByVenueId,
             experienceContract: plan.experienceContract,
             contractConstraints: plan.contractConstraints,
