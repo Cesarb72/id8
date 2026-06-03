@@ -14,6 +14,7 @@ import type {
   ContractConstraints,
   ExperienceContract,
   GreatStopDownstreamSignal,
+  PersonaMode,
 } from '../types/intent'
 import {
   normalizeExperienceContractVibe,
@@ -1858,8 +1859,9 @@ function hasLateSeed(seeds: string[]): boolean {
 
 
 export function buildContractGateWorld(input: BuildContractGateWorldInput): ContractGateWorld {
-  const hasExperienceContract = Boolean(input.context?.experienceContract)
-  const hasContractConstraints = Boolean(input.context?.contractConstraints)
+  const context = input.context ?? {}
+  const hasExperienceContract = Boolean(context.experienceContract)
+  const hasContractConstraints = Boolean(context.contractConstraints)
   console.assert(
     hasExperienceContract === hasContractConstraints,
     '[ARC-BOUNDARY] ContractGateWorld expects experienceContract + contractConstraints together.',
@@ -1867,28 +1869,28 @@ export function buildContractGateWorld(input: BuildContractGateWorldInput): Cont
   const sortedRanked = input.ranked
     .slice()
     .sort((left, right) => left.rank - right.rank)
-  const strategyFamilyResolution = resolveStrategyFamilyFromInterpretation(input.context ?? {})
+  const strategyFamilyResolution = resolveStrategyFamilyFromInterpretation(context)
 
   const contractAwareRanking = rankDistrictProfilesWithContract({
     ranked: sortedRanked,
-    experienceContract: input.context?.experienceContract,
-    contractConstraints: input.context?.contractConstraints,
+    experienceContract: context.experienceContract,
+    contractConstraints: context.contractConstraints,
   })
 
   const gateEvaluation = applyContractGate({
     ranked: contractAwareRanking.ranked,
-    context: input.context,
+    context,
     gateProfileOverride: getContractGateProfile(
-      input.context ?? {},
+      context,
       strategyFamilyResolution.family,
     ),
   })
 
   const decisionByPocketId: Record<string, ContractGatePocketDecisionLog> = {}
   const greatStopReasonSuffix =
-    input.context?.greatStopAdmissibilitySignal?.available &&
-    input.context.greatStopAdmissibilitySignal.riskTier !== 'none'
-      ? `|great_stop_risk:${input.context.greatStopAdmissibilitySignal.riskTier}`
+    context.greatStopAdmissibilitySignal?.available &&
+    context.greatStopAdmissibilitySignal.riskTier !== 'none'
+      ? `|great_stop_risk:${context.greatStopAdmissibilitySignal.riskTier}`
       : ''
   gateEvaluation.decisionByPocketId.forEach((decision, pocketId) => {
     decisionByPocketId[pocketId] = {
@@ -1902,15 +1904,15 @@ export function buildContractGateWorld(input: BuildContractGateWorldInput): Cont
       gateAdjustedScore: decision.gateAdjustedScore,
       hardFailureReasons: [...decision.hardFailureReasons],
       greatStop:
-        input.context?.greatStopAdmissibilitySignal?.available
+        context.greatStopAdmissibilitySignal?.available
           ? {
-              riskTier: input.context.greatStopAdmissibilitySignal.riskTier,
-              failedStopCount: input.context.greatStopAdmissibilitySignal.failedStopCount,
-              severeFailureCount: input.context.greatStopAdmissibilitySignal.severeFailureCount,
+              riskTier: context.greatStopAdmissibilitySignal.riskTier,
+              failedStopCount: context.greatStopAdmissibilitySignal.failedStopCount,
+              severeFailureCount: context.greatStopAdmissibilitySignal.severeFailureCount,
               suppressionRecommended:
-                input.context.greatStopAdmissibilitySignal.suppressionRecommended,
+                context.greatStopAdmissibilitySignal.suppressionRecommended,
               penaltyApplied: decision.greatStopPenaltyApplied ?? 0,
-              reasonCodes: [...input.context.greatStopAdmissibilitySignal.reasonCodes],
+              reasonCodes: [...context.greatStopAdmissibilitySignal.reasonCodes],
             }
           : undefined,
     }
@@ -1930,15 +1932,15 @@ export function buildContractGateWorld(input: BuildContractGateWorldInput): Cont
         gateAdjustedScore: entry.score,
         hardFailureReasons: [],
         greatStop:
-          input.context?.greatStopAdmissibilitySignal?.available
+          context.greatStopAdmissibilitySignal?.available
             ? {
-                riskTier: input.context.greatStopAdmissibilitySignal.riskTier,
-                failedStopCount: input.context.greatStopAdmissibilitySignal.failedStopCount,
-                severeFailureCount: input.context.greatStopAdmissibilitySignal.severeFailureCount,
+                riskTier: context.greatStopAdmissibilitySignal.riskTier,
+                failedStopCount: context.greatStopAdmissibilitySignal.failedStopCount,
+                severeFailureCount: context.greatStopAdmissibilitySignal.severeFailureCount,
                 suppressionRecommended:
-                  input.context.greatStopAdmissibilitySignal.suppressionRecommended,
+                  context.greatStopAdmissibilitySignal.suppressionRecommended,
                 penaltyApplied: 0,
-                reasonCodes: [...input.context.greatStopAdmissibilitySignal.reasonCodes],
+                reasonCodes: [...context.greatStopAdmissibilitySignal.reasonCodes],
               }
             : undefined,
       }
@@ -1955,7 +1957,7 @@ export function buildContractGateWorld(input: BuildContractGateWorldInput): Cont
   })
 
   return {
-    contractConstraints: input.context?.contractConstraints ?? null,
+    contractConstraints: context.contractConstraints ?? null,
     gateSummary: gateEvaluation.summary,
     gateStrengthSummary: gateEvaluation.strengthSummary,
     admittedPockets: gateEvaluation.ranked,
@@ -1985,8 +1987,8 @@ export function buildContractGateWorld(input: BuildContractGateWorldInput): Cont
       allowedPreview: gateEvaluation.allowedPreview,
       suppressedPreview: gateEvaluation.suppressedPreview,
       rejectedPreview: rejectedPockets.slice(0, 3).map((entry) => entry.profile.pocketId),
-      greatStopQuality: input.context?.greatStopAdmissibilitySignal,
-      strategyFamilyResolution,
+      greatStopQuality: context.greatStopAdmissibilitySignal,
+      strategyFamilyResolution: strategyFamilyResolution.trace,
     },
   }
 }
