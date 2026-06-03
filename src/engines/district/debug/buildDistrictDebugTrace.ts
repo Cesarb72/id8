@@ -198,6 +198,17 @@ export function buildDistrictDebugTrace(
           districtProfile,
         })
       : undefined
+    const signals: Record<string, number | string | boolean> = {
+      viabilityScore: pocket.viability.score,
+      categoryDiversity: pocket.viability.signals.categoryDiversity,
+      walkabilityScore: pocket.viability.signals.walkabilityScore,
+      densityScore: pocket.viability.signals.densityScore,
+      compactnessScore: pocket.viability.signals.compactnessScore,
+      origin: pocket.origin,
+    }
+    if (districtProfile?.hyperlocal?.localSpecificityScore != null) {
+      signals.localSpecificityScore = districtProfile.hyperlocal.localSpecificityScore
+    }
     return {
     pocketId: pocket.id,
     origin: pocket.origin,
@@ -227,15 +238,7 @@ export function buildDistrictDebugTrace(
       densityClamped: pocket.geometry.densityClamped,
       densityEntitiesPerKm2: pocket.geometry.densityEntitiesPerKm2,
     },
-    signals: {
-      viabilityScore: pocket.viability.score,
-      categoryDiversity: pocket.viability.signals.categoryDiversity,
-      walkabilityScore: pocket.viability.signals.walkabilityScore,
-      densityScore: pocket.viability.signals.densityScore,
-      compactnessScore: pocket.viability.signals.compactnessScore,
-      origin: pocket.origin,
-      localSpecificityScore: districtProfile?.hyperlocal?.localSpecificityScore,
-    },
+    signals,
     composition: buildCompositionSnapshot(pocket),
     }
   })

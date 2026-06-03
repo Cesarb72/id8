@@ -170,6 +170,15 @@ function admitLiveVenue(
     })
   }
 
+  if (!hasRealCoordinates(venue)) {
+    return buildBlockedDiagnostic({
+      venue,
+      admissionStatus: 'blocked_missing_coordinates',
+      identityKind,
+      reason: 'Live provider venue is missing real coordinates required for district admission.',
+    })
+  }
+
   const providerRecordId = venue.source.providerRecordId?.trim()
   const entity = normalizePlaceEntity(venue, {
     coordinateSource: 'real',
