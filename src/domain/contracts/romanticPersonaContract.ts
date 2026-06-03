@@ -24,6 +24,10 @@ interface CenterpieceConvictionRead {
   missing: string[]
 }
 
+function getVenueSignatureStrength(candidate: ScoredVenue): number {
+  return candidate.venue.signature.signatureScore
+}
+
 function computeRomanticCenterpieceConviction(
   candidate: ScoredVenue,
 ): CenterpieceConvictionRead {
@@ -192,16 +196,17 @@ export function assessRomanticPersonaHighlightQualification(
   const standardIntensity =
     candidate.taste.signals.momentIntensity.score >= 0.74 &&
     candidate.taste.signals.momentPotential.score >= 0.6
+  const signatureStrength = getVenueSignatureStrength(candidate)
   const expandedIntensity =
     candidate.taste.signals.momentIntensity.score >= 0.64 &&
     (candidate.taste.signals.momentPotential.score >= 0.5 ||
       candidate.taste.signals.experientialFactor >= 0.66 ||
-      candidate.venue.signatureStrength >= 0.68)
+      signatureStrength >= 0.68)
   const experientialDiningIntensity =
     candidate.taste.signals.momentIntensity.score >= 0.6 &&
     (candidate.taste.signals.momentPotential.score >= 0.48 ||
       candidate.taste.signals.experientialFactor >= 0.68 ||
-      candidate.venue.signatureStrength >= 0.7)
+      signatureStrength >= 0.7)
   const lowChaos =
     candidate.venue.energyLevel <= 3 &&
     candidate.taste.signals.energy <= 0.72 &&
@@ -223,7 +228,7 @@ export function assessRomanticPersonaHighlightQualification(
   const dateShapedProfile =
     candidate.taste.signals.experientialFactor >= 0.64 ||
     candidate.taste.signals.anchorStrength >= 0.68 ||
-    candidate.venue.signatureStrength >= 0.68
+    signatureStrength >= 0.68
   const intimateAtmosphere =
     signals.intimacy >= 0.54 ||
     signals.ambiance >= 0.58 ||
@@ -240,7 +245,7 @@ export function assessRomanticPersonaHighlightQualification(
   const experientialDiningCompatible =
     family === 'intimate_dining' &&
     candidate.venue.signature.genericScore < 0.36 &&
-    candidate.venue.signatureStrength >= 0.68 &&
+    signatureStrength >= 0.68 &&
     candidate.taste.signals.experientialFactor >= 0.66 &&
     enrichment.ambientUniqueness >= 0.48
   const expandedAtmosphericDepth =
