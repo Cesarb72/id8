@@ -177,6 +177,10 @@ const FALLBACK_COORDINATES_BY_ROLE: Record<UserStopRole, [number, number]> = {
 }
 const LIVE_GOOGLE_STOP_ID_PREFIX = 'live_google_'
 
+function isUserStopRole(value: string | null | undefined): value is UserStopRole {
+  return value === 'start' || value === 'highlight' || value === 'surprise' || value === 'windDown'
+}
+
 function getLiveContinuationOptionById(
   optionId: LiveContinuationOptionId | null,
 ): LiveContinuationOptionContract | null {
@@ -540,7 +544,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
       return null
     }
     return {
-      code: 'final_route_itinerary_mapping_failed',
+      code: 'final_route_itinerary_mismatch',
       detail:
         'Locked finalRoute could not be mapped onto the canonical itinerary companion stops.',
     }
@@ -748,7 +752,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
         ? toSharedPlanPath(sharedId)
         : '/journey/live'
     saveLiveArtifactHomeState({
-      city: liveRenderRoute?.location ?? artifact.city,
+      city: liveRenderRoute?.location ?? artifact?.city ?? 'live',
       mapPath,
     })
     window.location.assign(isDevLive ? '/dev/plans' : '/plans')
@@ -826,6 +830,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
           return current
         }
         if (
+          !artifact ||
           !validateFinalRouteAgainstItinerary({
             itinerary: artifact.itinerary,
             finalRoute: patchedRoute.route,
@@ -1511,7 +1516,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
           <div className="confirm-night-header live-artifact-header is-live">
             <h2>Your night &mdash; live</h2>
             <p>
-              {liveRenderRoute?.location ?? artifact.city} &middot; Tonight
+              {liveRenderRoute?.location ?? artifact?.city ?? 'live'} &middot; Tonight
             </p>
             <p className="live-artifact-status">{liveHeaderStatus}</p>
           </div>
@@ -1822,7 +1827,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
                     {routeItineraryStops[0]?.imageUrl ? (
                       <img
                         src={routeItineraryStops[0].imageUrl}
-                        alt={`${liveRenderRoute?.location ?? artifact.city} route snapshot`}
+                        alt={`${liveRenderRoute?.location ?? artifact?.city ?? 'live'} route snapshot`}
                       />
                     ) : (
                       <p>Route snapshot unavailable</p>
@@ -1939,7 +1944,9 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
                 className="draft-story-spine artifact-reference-spine is-live"
                 stops={routeItineraryStops}
                 strictSharedSemantics
-                storySpine={canonicalRouteArtifact?.itinerary.storySpine ?? artifact.itinerary.storySpine}
+                storySpine={
+                  canonicalRouteArtifact?.itinerary.storySpine ?? artifact?.itinerary.storySpine
+                }
                 hideArcSummary
                 allowStopAdjustments={false}
                 enableInlineDetails
@@ -1947,7 +1954,11 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
                 appliedSwapNoteByRole={{}}
                 postSwapHintByRole={{}}
                 activeRole={activeRole}
-                alertedRole={liveAlertContract.alertedRole ?? null}
+                alertedRole={
+                  isUserStopRole(liveAlertContract.alertedRole)
+                    ? liveAlertContract.alertedRole
+                    : null
+                }
                 continuationEntries={continuationEntries}
                 changedRoles={[]}
                 animatedRoles={[]}
