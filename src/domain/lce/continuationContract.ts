@@ -59,11 +59,10 @@ export interface ContinuationConfirmContract<
   selectedOptionId?: TOptionId | null
 }
 
-export interface ContinuationOptionContract<
+export type ContinuationOptionContract<
   TOptionId extends string = string,
   TExtra extends object = Record<string, never>,
-> extends ContinuationOptionIdentity<TOptionId>,
-    TExtra {}
+> = ContinuationOptionIdentity<TOptionId> & TExtra
 
 export function wrapContinuationOptionsWithArtifactTargetKind<
   TOptionId extends string,
