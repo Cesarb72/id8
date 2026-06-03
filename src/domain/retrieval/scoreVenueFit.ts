@@ -2302,7 +2302,7 @@ export function scoreVenueCollection(
   const momentCandidates = deriveMomentVenueRecords({
     intent,
     venuePool: venues,
-  }).map(({ moment, venue }) => {
+  }).map<ScoredVenue>(({ moment, venue }) => {
     const candidate = scoreVenueFit(venue, intent, crewPolicy, lens, roleContracts, starterPack, options)
     const parentVenueName = moment.parentPlaceId
       ? venues.find((item) => item.id === moment.parentPlaceId)?.name
