@@ -253,7 +253,7 @@ function computeNoveltyScore(candidate: DirectionCandidate): number {
   return clamp(tagSignal + seedSignal, 0, 1)
 }
 
-function computeVibeBoost(candidate: DirectionCandidate, vibe: SupportedPrimaryVibe): number {
+function computeVibeBoost(candidate: ShapableDirectionCandidate, vibe: SupportedPrimaryVibe): number {
   const tags = new Set(candidate.derivedFrom.experientialTags.map((tag) => tag.toLowerCase()))
   const mix = candidate.derivedFrom.hospitalityMix
   const ambiance = candidate.derivedFrom.ambianceProfile
