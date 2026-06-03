@@ -357,14 +357,6 @@ function hasAnyPhrase(value: string, phrases: string[]): boolean {
 }
 
 function toSourceType(scoredVenue: ScoredVenue): 'venue' | 'event' | 'hybrid' {
-  if (scoredVenue.candidateIdentity.kind === 'moment') {
-    if (scoredVenue.candidateIdentity.momentSourceType === 'event') {
-      return 'event'
-    }
-    if (scoredVenue.candidateIdentity.momentSourceType === 'hybrid') {
-      return 'hybrid'
-    }
-  }
   return scoredVenue.venue.source.sourceOrigin === 'live' ? 'hybrid' : 'venue'
 }
 
@@ -407,9 +399,8 @@ function getFamilyAlignment(
   venueSignals: VenueSignals,
   scoredVenue: ScoredVenue,
 ): number {
-  const socialConversation =
-    scoredVenue.taste.signals.socialSignals?.conversationFriendliness ?? 0
-  const socialActivity = scoredVenue.taste.signals.socialSignals?.activityScore ?? 0
+  const socialConversation = scoredVenue.taste.signals.conversationFriendliness
+  const socialActivity = scoredVenue.taste.signals.interactiveStrength
   if (scenarioFamily === 'romantic_cozy') {
     return clamp01(
       venueSignals.hiddenGemScore * 0.28 +
@@ -517,8 +508,7 @@ function getStopTypeFit(
     venue.settings.musicCapable ||
     signals.performancePotential >= 0.58
   const scenicLike = hasAnyToken(tokens, ['garden', 'walk', 'stroll', 'scenic', 'promenade', 'park'])
-  const socialConversation =
-    scoredVenue.taste.signals.socialSignals?.conversationFriendliness ?? 0
+  const socialConversation = scoredVenue.taste.signals.conversationFriendliness
   const reasons: string[] = []
   let fit = 0
 
@@ -1302,9 +1292,14 @@ function asRecordByStopType(
       const fixtureJustOutsideTopFive = ranked
         .slice(5, 8)
         .find((candidate) => fixtureIds.has(candidate.venueId))
-      const replaceableIndex = selected.findLastIndex(
-        (candidate) => !fixtureIds.has(candidate.venueId),
-      )
+      let replaceableIndex = -1
+      for (let index = selected.length - 1; index >= 0; index -= 1) {
+        const candidate = selected[index]
+        if (candidate && !fixtureIds.has(candidate.venueId)) {
+          replaceableIndex = index
+          break
+        }
+      }
       if (fixtureJustOutsideTopFive && replaceableIndex >= 0) {
         selected[replaceableIndex] = fixtureJustOutsideTopFive
       }
