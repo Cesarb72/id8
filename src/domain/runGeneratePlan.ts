@@ -181,6 +181,9 @@ function normalizeSelectedArtifactLineage(input: {
   lineage?: ContractEntryArtifactLineage
 }): ContractEntryArtifactLineage | undefined {
   const { intent, lineage } = input
+  if (!lineage) {
+    return undefined
+  }
   const artifactId = lineage?.artifactId?.trim()
   if (!artifactId) {
     return undefined
