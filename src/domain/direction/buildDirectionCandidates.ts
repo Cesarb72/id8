@@ -13,7 +13,10 @@ import {
   detectExperienceFamily,
   type ExperienceFamily,
 } from '../directions/detectExperienceFamily'
-import { type ContractGateWorld } from '../bearings/buildContractGateWorld'
+import type {
+  ContractGatePocketDecisionLog,
+  ContractGateWorld,
+} from '../bearings/buildContractGateWorld'
 import {
   type DirectionStrategyFamily as BearingsDirectionStrategyFamily,
   type DirectionStrategyId as BearingsDirectionStrategyId,
@@ -1859,7 +1862,7 @@ function buildStrategyCandidates(
         ): value is {
           entry: RankedPocket
           baseCandidate: DirectionCandidate
-          strategyWorldDecision?: StrategyAdmissibleWorld['decisionByPocketId'][string]
+          strategyWorldDecision: StrategyAdmissibleWorld['decisionByPocketId'][string] | undefined
         } => Boolean(value),
       )
 
@@ -2525,7 +2528,7 @@ export function buildDirectionCandidates(
           value,
         ): value is {
           entry: RankedPocket
-          gateDecision: NonNullable<ReturnType<Map<string, DirectionCandidate['directionContractGateReasonSummary']>['get']>>
+          gateDecision: ContractGatePocketDecisionLog
           signature: string
         } => Boolean(value),
       )
