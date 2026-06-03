@@ -7,6 +7,7 @@ import type {
   StopShapeProfile,
 } from '../types/experienceLens'
 import type { IntentProfile, PersonaMode, VibeAnchor } from '../types/intent'
+import type { VenueCategory } from '../types/venue'
 
 type StopShapePatch = Partial<StopShapeProfile>
 
@@ -193,8 +194,8 @@ function buildRomanticContract(vibe: VibeAnchor): ResolvedHospitalityContractOut
   let highlight = baseHighlight
   let start = baseStart
   let windDown = baseWindDown
-  let preferredCategories = ['restaurant', 'dessert', 'park']
-  let discouragedCategories = ['event']
+  let preferredCategories: VenueCategory[] = ['restaurant', 'dessert', 'park']
+  let discouragedCategories: VenueCategory[] = ['event']
   let preferredTags = ['cozy', 'intimate', 'craft', 'conversation']
   let discouragedTags = ['high-energy', 'arcade']
   let energyBandAdditions: LensEnergy[] = []
