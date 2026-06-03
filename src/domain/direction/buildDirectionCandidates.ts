@@ -1441,6 +1441,11 @@ interface DirectionStrategyRuntimeMeta {
   directionStrategyWorldReasonSummary?: string
 }
 
+type StrategyPlanEntry = {
+  strategy: DirectionStrategyDefinition
+  strategyWorld: StrategyAdmissibleWorld | undefined
+}
+
 function buildDirectionCandidateFromRanked(
   entry: RankedPocket,
   input: BuildDirectionCandidatesInput,
@@ -1753,10 +1758,10 @@ function buildStrategyCandidates(
   const strategyWorldById = new Map(
     params.strategyAdmissibleWorlds.map((world) => [world.strategyId, world] as const),
   )
-  const seededStrategyPlan = (
+  const seededStrategyPlan: StrategyPlanEntry[] = (
     hasBearingsWorlds
       ? params.strategyAdmissibleWorlds
-          .map((world) => {
+          .map((world): StrategyPlanEntry | undefined => {
             const worldStrategies = resolveDirectionStrategiesForFamily(world.strategyFamily)
             const strategy = worldStrategies.find((entry) => entry.id === world.strategyId)
             if (!strategy) {
@@ -1767,7 +1772,7 @@ function buildStrategyCandidates(
           .filter(
             (
               value,
-            ): value is { strategy: DirectionStrategyDefinition; strategyWorld: StrategyAdmissibleWorld } =>
+            ): value is StrategyPlanEntry =>
               Boolean(value),
           )
       : fallbackStrategies.map((strategy) => ({
@@ -1775,7 +1780,7 @@ function buildStrategyCandidates(
           strategyWorld: undefined,
         }))
   ).slice(0, TARGET_DIRECTION_CANDIDATES)
-  const strategyPlan = seededStrategyPlan.slice()
+  const strategyPlan: StrategyPlanEntry[] = seededStrategyPlan.slice()
   if (strategyPlan.length < TARGET_DIRECTION_CANDIDATES) {
     const seededIds = new Set(strategyPlan.map((entry) => entry.strategy.id))
     for (const fallbackStrategy of fallbackStrategies) {
