@@ -231,8 +231,8 @@ function getZoneWindDownSupport(
 
 function getZoneDifferentiationSignature(
   profile: DistrictOpportunityProfile,
-  aggregation?: TasteOpportunityAggregation,
   sourceVenueEvidence: DistrictTasteBridgeSourceVenueEvidence[],
+  aggregation?: TasteOpportunityAggregation,
 ): string {
   const familySignal =
     aggregation?.signatures.archetypes[0] ??
@@ -356,8 +356,8 @@ export function buildDistrictTasteBridgeArtifact(params: {
       zoneWindDownSupport: getZoneWindDownSupport(districtProfile, tasteAggregation),
       zoneDifferentiationSignature: getZoneDifferentiationSignature(
         districtProfile,
-        tasteAggregation,
         sourceVenueEvidence,
+        tasteAggregation,
       ),
     },
     trace: {
