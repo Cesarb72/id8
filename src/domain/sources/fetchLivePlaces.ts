@@ -1,6 +1,7 @@
 import { getTimeWindowSignal } from '../retrieval/getTimeWindowSignal'
 import { normalizeVenue } from '../normalize/normalizeVenue'
 import { searchPlaces } from '../providers/ProviderAdapter'
+import type { ProviderVenue } from '../providers/providerTypes'
 import { buildLiveQueryPlan, type LivePlaceKind } from './buildLiveQueryPlan'
 import { getGooglePlacesConfig } from './getSourceMode'
 import {
@@ -12,6 +13,8 @@ import type { QualityGateStatus } from '../types/normalization'
 import type { RawPlace } from '../types/rawPlace'
 import type { StarterPack } from '../types/starterPack'
 import type { Venue } from '../types/venue'
+
+type LivePlaceMapperInput = Parameters<typeof mapLivePlaceToRawPlaceWithDiagnostics>[0]
 
 interface QueryCenter {
   id: 'core' | 'north' | 'south' | 'east' | 'west'
@@ -307,6 +310,52 @@ function countSuppressionReasons(venues: Venue[]): Record<string, number> {
   return reasons
 }
 
+function adaptProviderVenueToLivePlaceMapperInput(
+  place: ProviderVenue,
+): LivePlaceMapperInput {
+  return {
+    businessStatus: place.businessStatus,
+    currentOpeningHours: place.currentOpeningHours
+      ? {
+          openNow: place.currentOpeningHours.openNow,
+          periods: place.currentOpeningHours.periods,
+          weekdayDescriptions: place.currentOpeningHours.weekdayDescriptions,
+        }
+      : undefined,
+    displayName: {
+      text: place.displayName,
+    },
+    liveMusic: place.liveMusic,
+    editorialSummary: place.editorialSummary
+      ? {
+          text: place.editorialSummary,
+        }
+      : undefined,
+    formattedAddress: place.formattedAddress,
+    goodForChildren: place.goodForChildren,
+    goodForGroups: place.goodForGroups,
+    id: place.providerRecordId,
+    location: place.location,
+    primaryType: place.primaryType,
+    rating: place.rating,
+    regularOpeningHours: place.regularOpeningHours
+      ? {
+          periods: place.regularOpeningHours.periods,
+          weekdayDescriptions: place.regularOpeningHours.weekdayDescriptions,
+        }
+      : undefined,
+    allowsDogs: place.allowsDogs,
+    servesBeer: place.servesBeer,
+    servesVegetarianFood: place.servesVegetarianFood,
+    servesWine: place.servesWine,
+    shortFormattedAddress: place.shortFormattedAddress,
+    types: place.types,
+    userRatingCount: place.userRatingCount,
+    utcOffsetMinutes: place.utcOffsetMinutes,
+    websiteUri: place.websiteUri,
+  }
+}
+
 export async function fetchLivePlaces(
   intent: IntentProfile,
   starterPack?: StarterPack,
@@ -331,14 +380,17 @@ export async function fetchLivePlaces(
   const providerResults = await searchPlaces({
     callPurpose: 'retrieval_supply',
     mapPlace: (place, { index, query }) => {
-      const mapped = mapLivePlaceToRawPlaceWithDiagnostics(place, {
-        city: intent.city,
-        neighborhood: intent.neighborhood,
-        requestedKind: query.kind,
-        queryLabel: query.queryLabel,
-        queryTerms: query.queryTerms,
-        rank: index,
-      })
+      const mapped = mapLivePlaceToRawPlaceWithDiagnostics(
+        adaptProviderVenueToLivePlaceMapperInput(place),
+        {
+          city: intent.city,
+          neighborhood: intent.neighborhood,
+          requestedKind: query.kind,
+          queryLabel: query.queryLabel,
+          queryTerms: query.queryTerms,
+          rank: index,
+        },
+      )
       return {
         dropReason: mapped.dropReason,
         queryLabel: query.queryLabel,
@@ -359,7 +411,6 @@ export async function fetchLivePlaces(
       pageSize: config.pageSize,
       queryLabel: query.label,
       rankPreference: 'RELEVANCE',
-      textQuery: query.textQuery,
       ...query,
     })),
   })
