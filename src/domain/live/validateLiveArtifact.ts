@@ -3,8 +3,10 @@ import type {
 } from './liveArtifactSession'
 import type {
   RuntimeRouteArtifact,
+  RuntimeRouteMarker,
   RuntimeRouteStop,
 } from '../artifacts/runtimeRouteArtifact'
+import type { PersonaMode, VibeAnchor } from '../types/intent'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../types/itinerary'
 import {
   getProviderRecordIdFromLiveGoogleVenueId,
@@ -41,6 +43,26 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return isFiniteNumber(value) && Number.isInteger(value) && value >= 0
+}
+
+function isPersonaMode(value: unknown): value is PersonaMode {
+  return value === 'romantic' || value === 'friends' || value === 'family'
+}
+
+function isVibeAnchor(value: unknown): value is VibeAnchor {
+  return (
+    value === 'cozy' ||
+    value === 'lively' ||
+    value === 'playful' ||
+    value === 'cultured' ||
+    value === 'chill' ||
+    value === 'adventurous-outdoor' ||
+    value === 'adventurous-urban'
+  )
 }
 
 function isValidRole(value: unknown): value is UserStopRole {
@@ -304,8 +326,7 @@ function sanitizeFinalRouteStop(value: unknown): RuntimeRouteStop | null {
     !isFiniteNumber(value.longitude) ||
     !isNonEmptyString(value.address) ||
     !isValidRole(value.role) ||
-    !Number.isInteger(value.stopIndex) ||
-    (value.stopIndex as number) < 0 ||
+    !isNonNegativeInteger(value.stopIndex) ||
     !isNonEmptyString(value.venueId) ||
     !isNonEmptyString(value.title) ||
     !isNonEmptyString(value.subtitle) ||
@@ -399,6 +420,18 @@ function describeFinalRouteShapeIssues(value: unknown): string[] {
   return issues
 }
 
+function isRuntimeRouteMarkerShape(value: unknown): value is RuntimeRouteMarker {
+  return (
+    isObject(value) &&
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.displayName) &&
+    isValidRole(value.role) &&
+    isNonNegativeInteger(value.stopIndex) &&
+    isFiniteNumber(value.latitude) &&
+    isFiniteNumber(value.longitude)
+  )
+}
+
 function sanitizeFinalRoute(value: unknown): RuntimeRouteArtifact | null {
   if (!isObject(value)) {
     return null
@@ -407,10 +440,9 @@ function sanitizeFinalRoute(value: unknown): RuntimeRouteArtifact | null {
     !isNonEmptyString(value.routeId) ||
     !isNonEmptyString(value.selectedDirectionId) ||
     !isNonEmptyString(value.location) ||
-    !isNonEmptyString(value.persona) ||
-    !isNonEmptyString(value.vibe) ||
-    !Number.isInteger(value.activeStopIndex) ||
-    (value.activeStopIndex as number) < 0 ||
+    !isPersonaMode(value.persona) ||
+    !isVibeAnchor(value.vibe) ||
+    !isNonNegativeInteger(value.activeStopIndex) ||
     !isNonEmptyString(value.routeHeadline) ||
     !isNonEmptyString(value.routeSummary) ||
     !isFiniteNumber(value.updatedAt)
@@ -434,23 +466,14 @@ function sanitizeFinalRoute(value: unknown): RuntimeRouteArtifact | null {
     return null
   }
   const mapMarkers = rawMapMarkers
-    .filter(
-      (marker) =>
-        isObject(marker) &&
-        isNonEmptyString(marker.id) &&
-        isNonEmptyString(marker.displayName) &&
-        isValidRole(marker.role) &&
-        Number.isInteger(marker.stopIndex) &&
-        isFiniteNumber(marker.latitude) &&
-        isFiniteNumber(marker.longitude),
-    )
+    .filter(isRuntimeRouteMarkerShape)
     .map((marker) => ({
       id: marker.id,
       displayName: marker.displayName,
       role: marker.role,
-      stopIndex: marker.stopIndex as number,
-      latitude: marker.latitude as number,
-      longitude: marker.longitude as number,
+      stopIndex: marker.stopIndex,
+      latitude: marker.latitude,
+      longitude: marker.longitude,
     }))
   if (mapMarkers.length !== rawMapMarkers.length) {
     return null
@@ -539,6 +562,7 @@ export function sanitizeLiveArtifactSessionPayload(
   }
 
   if (
+    !isNonEmptyString(payload.sessionId) ||
     !isNonEmptyString(payload.city) ||
     !isItineraryShape(payload.itinerary) ||
     !isNonEmptyString(payload.selectedClusterConfirmation) ||
