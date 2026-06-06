@@ -246,8 +246,12 @@ function findSourceFiles(directory: string): string[] {
 function findRuntimeManifestImports(): string[] {
   const srcRoot = join(process.cwd(), 'src')
   const manifestPath = join(srcRoot, 'domain', 'providers', 'providerCorpusManifest.ts')
+  const offlineSchemaPaths = new Set([
+    manifestPath,
+    join(srcRoot, 'domain', 'providers', 'providerCorpusArtifact.ts'),
+  ])
   return findSourceFiles(srcRoot)
-    .filter((filePath) => filePath !== manifestPath)
+    .filter((filePath) => !offlineSchemaPaths.has(filePath))
     .filter((filePath) => readFileSync(filePath, 'utf8').includes('providerCorpusManifest'))
     .map((filePath) => relative(process.cwd(), filePath).replace(/\\/g, '/'))
 }
