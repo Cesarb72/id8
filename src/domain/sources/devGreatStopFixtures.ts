@@ -211,8 +211,21 @@ export const devGreatStopFixtureRawPlaces: RawPlace[] = [
 
 export const devGreatStopFixtureVenueIds = devGreatStopFixtureRawPlaces.map((fixture) => fixture.id)
 
+function getProcessEnvValue(key: string): string | undefined {
+  const processEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env
+  return processEnv?.[key]
+}
+
+function readEnvValue(key: string): string | undefined {
+  const importMetaEnv = (import.meta as ImportMeta & {
+    env?: Record<string, string | undefined>
+  }).env
+  return importMetaEnv?.[key] ?? getProcessEnvValue(key)
+}
+
 export function readDevGreatStopFixturesEnvRaw(): string {
-  return String(import.meta.env.VITE_ENABLE_DEV_GREAT_STOP_FIXTURES ?? '')
+  return String(readEnvValue('VITE_ENABLE_DEV_GREAT_STOP_FIXTURES') ?? '')
 }
 
 export function readDevGreatStopFixturesEnabled(): boolean {

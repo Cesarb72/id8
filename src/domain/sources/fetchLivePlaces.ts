@@ -11,6 +11,7 @@ import {
 import type { IntentProfile } from '../types/intent'
 import type { QualityGateStatus } from '../types/normalization'
 import type { RawPlace } from '../types/rawPlace'
+import type { SourceMode } from '../types/sourceMode'
 import type { StarterPack } from '../types/starterPack'
 import type { Venue } from '../types/venue'
 
@@ -78,6 +79,12 @@ export interface LiveSourceDiagnostics {
 export interface FetchLivePlacesResult {
   venues: Venue[]
   diagnostics: LiveSourceDiagnostics
+}
+
+export interface FetchLivePlacesOptions {
+  liveQueryLabels?: string[]
+  maxQueryCenters?: number
+  sourceMode?: SourceMode
 }
 
 const googleFieldMask = [
@@ -359,11 +366,21 @@ function adaptProviderVenueToLivePlaceMapperInput(
 export async function fetchLivePlaces(
   intent: IntentProfile,
   starterPack?: StarterPack,
+  options: FetchLivePlacesOptions = {},
 ): Promise<FetchLivePlacesResult> {
   const config = getGooglePlacesConfig()
   const queryLocationLabel = formatLocationLabel(intent)
-  const baseQueryPlan = buildLiveQueryPlan(intent, starterPack)
-  const queryCenters = deriveQueryCenters(intent.city, config.maxCenters, config.centerOffsetM)
+  const allBaseQueryPlan = buildLiveQueryPlan(intent, starterPack)
+  const allowedLabels = new Set(options.liveQueryLabels ?? [])
+  const baseQueryPlan =
+    allowedLabels.size > 0
+      ? allBaseQueryPlan.filter((entry) => allowedLabels.has(entry.label))
+      : allBaseQueryPlan
+  const queryCenters = deriveQueryCenters(
+    intent.city,
+    options.maxQueryCenters ?? config.maxCenters,
+    config.centerOffsetM,
+  )
   const queryPlan = baseQueryPlan.flatMap((entry) =>
     queryCenters.map((center) => ({
       ...entry,
@@ -413,6 +430,7 @@ export async function fetchLivePlaces(
       rankPreference: 'RELEVANCE',
       ...query,
     })),
+    sourceMode: options.sourceMode,
   })
 
   if (providerResults.diagnostics.blockedByEnv) {

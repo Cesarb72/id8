@@ -5,7 +5,6 @@ import {
   resolveAllowCuratedFallback,
   resolveDefaultCityFallback,
   resolveFieldGovernancePolicy,
-  resolveFieldRetrievalSourceMode,
   sanitizeCityKey,
 } from './fieldPolicy'
 import { fetchHybridPortableVenues } from './hybridPortableAdapter'
@@ -19,6 +18,7 @@ import {
 } from '../constraints/localStretchPolicy'
 import { fetchLivePlaces } from '../sources/fetchLivePlaces'
 import { isDevOrSandboxCloseoutFlow } from '../sources/getSourceMode'
+import { resolveDessertConversationProviderProof } from '../providers/providerProofGate'
 import type { LiveDedupeLossDiagnostics } from '../types/diagnostics'
 import type { LiveTrustBreakdownDiagnostics } from '../types/diagnostics'
 import type { FallbackRelaxationLevel } from '../types/diagnostics'
@@ -642,11 +642,14 @@ export async function retrieveVenues(
   const requestedSourceMode = isDevOrSandboxCloseoutFlow()
     ? 'curated'
     : options.requestedSourceMode ?? 'curated'
-  const retrievalSourceMode: SourceMode = resolveFieldRetrievalSourceMode({
-    cityQuery,
+  const providerProof = resolveDessertConversationProviderProof({
+    mode: intent.mode,
     requestedSourceMode,
-    sourceModeOverrideApplied: Boolean(options.sourceModeOverrideApplied),
+    starterPack: options.starterPack,
   })
+  const retrievalSourceMode: SourceMode = providerProof.allowed
+    ? providerProof.effectiveSourceMode
+    : 'curated'
   const curatedCoverageForCity = hasCuratedCityCoverage(curatedVenues, cityQuery)
   const normalizedNeighborhood = intent.neighborhood
     ? sanitize(intent.neighborhood)
@@ -704,7 +707,11 @@ export async function retrieveVenues(
             errors: [] as string[],
           },
         }
-      : await fetchLivePlaces(intent, options.starterPack)
+      : await fetchLivePlaces(intent, options.starterPack, {
+          liveQueryLabels: providerProof.liveQueryLabels,
+          maxQueryCenters: providerProof.maxQueryCenters,
+          sourceMode: retrievalSourceMode,
+        })
 
   const hybridPortable =
     retrievalSourceMode !== 'curated' && cityQuery.length > 0 && !curatedCoverageForCity
