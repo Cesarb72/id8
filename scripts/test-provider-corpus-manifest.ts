@@ -249,6 +249,7 @@ function findRuntimeManifestImports(): string[] {
   const offlineSchemaPaths = new Set([
     manifestPath,
     join(srcRoot, 'domain', 'providers', 'providerCorpusArtifact.ts'),
+    join(srcRoot, 'domain', 'providers', 'providerCorpusReviewReport.ts'),
   ])
   return findSourceFiles(srcRoot)
     .filter((filePath) => !offlineSchemaPaths.has(filePath))
