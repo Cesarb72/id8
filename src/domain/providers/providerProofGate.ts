@@ -8,6 +8,11 @@ export interface DessertConversationProofInput {
   starterPack?: StarterPack
 }
 
+export interface CurateProofSourceModeInput {
+  mode: ExperienceMode
+  starterPack?: StarterPack
+}
+
 export interface DessertConversationProofResolution {
   allowed: boolean
   effectiveSourceMode: SourceMode
@@ -86,6 +91,16 @@ export function resolveDessertConversationProviderProof(
     maxQueryCenters: DESSERT_CONVERSATION_MAX_QUERY_CENTERS,
     reason: 'proof_enabled',
   }
+}
+
+export function resolveCurateProofSourceMode(input: CurateProofSourceModeInput): SourceMode {
+  const proof = resolveDessertConversationProviderProof({
+    mode: input.mode,
+    requestedSourceMode: 'hybrid',
+    starterPack: input.starterPack,
+  })
+
+  return proof.allowed ? proof.effectiveSourceMode : 'curated'
 }
 
 export const providerProofGateConfig = {

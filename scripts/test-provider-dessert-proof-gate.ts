@@ -6,6 +6,7 @@ import {
 } from '../src/domain/providers/providerGovernance.ts'
 import {
   providerProofGateConfig,
+  resolveCurateProofSourceMode,
 } from '../src/domain/providers/providerProofGate.ts'
 import { retrieveVenues } from '../src/domain/retrieval/retrieveVenues.ts'
 import type { ExperienceMode, IntentInput, IntentProfile } from '../src/domain/types/intent.ts'
@@ -156,6 +157,23 @@ function resetFetchTracking(): void {
   fetchTextQueries.length = 0
 }
 
+function assertBridgeSourceMode(params: {
+  name: string
+  mode: ExperienceMode
+  starterPack?: StarterPack
+  expectedSourceMode: SourceMode
+}): SourceMode {
+  const sourceMode = resolveCurateProofSourceMode({
+    mode: params.mode,
+    starterPack: params.starterPack,
+  })
+  assert(
+    sourceMode === params.expectedSourceMode,
+    `${params.name}: expected bridge source mode ${params.expectedSourceMode}, received ${sourceMode}.`,
+  )
+  return sourceMode
+}
+
 async function expectNoProviderCall(params: {
   name: string
   run: () => Promise<void>
@@ -177,11 +195,17 @@ async function main(): Promise<void> {
   process.env[retrievalActivationEnvKey] = '1'
   process.env[retrievalBudgetCapEnvKey] = '1'
   await expectNoProviderCall({
-    name: 'proof env absent',
+    name: 'proof env absent bridge',
     run: async () => {
+      const requestedSourceMode = assertBridgeSourceMode({
+        name: 'proof env absent bridge',
+        mode: 'curate',
+        starterPack: dessertStarter,
+        expectedSourceMode: 'curated',
+      })
       const result = await runRetrieval({
         mode: 'curate',
-        requestedSourceMode: 'hybrid',
+        requestedSourceMode,
         starterPack: dessertStarter,
       })
       assert(!result.liveFetchAttempted, 'Expected live fetch not to be attempted.')
@@ -192,11 +216,17 @@ async function main(): Promise<void> {
   setRoute('/')
   setProofReadyEnv()
   await expectNoProviderCall({
-    name: 'non-dessert starter',
+    name: 'non-dessert starter bridge',
     run: async () => {
+      const requestedSourceMode = assertBridgeSourceMode({
+        name: 'non-dessert starter bridge',
+        mode: 'curate',
+        starterPack: coffeeStarter,
+        expectedSourceMode: 'curated',
+      })
       const result = await runRetrieval({
         mode: 'curate',
-        requestedSourceMode: 'hybrid',
+        requestedSourceMode,
         starterPack: coffeeStarter,
       })
       assert(!result.liveFetchAttempted, 'Expected live fetch not to be attempted.')
@@ -207,11 +237,17 @@ async function main(): Promise<void> {
   setRoute('/')
   setProofReadyEnv()
   await expectNoProviderCall({
-    name: 'surprise mode',
+    name: 'surprise mode bridge',
     run: async () => {
+      const requestedSourceMode = assertBridgeSourceMode({
+        name: 'surprise mode bridge',
+        mode: 'surprise',
+        starterPack: dessertStarter,
+        expectedSourceMode: 'curated',
+      })
       const result = await runRetrieval({
         mode: 'surprise',
-        requestedSourceMode: 'hybrid',
+        requestedSourceMode,
         starterPack: dessertStarter,
       })
       assert(!result.liveFetchAttempted, 'Expected live fetch not to be attempted.')
@@ -222,11 +258,17 @@ async function main(): Promise<void> {
   setRoute('/')
   setProofReadyEnv()
   await expectNoProviderCall({
-    name: 'build mode',
+    name: 'build mode bridge',
     run: async () => {
+      const requestedSourceMode = assertBridgeSourceMode({
+        name: 'build mode bridge',
+        mode: 'build',
+        starterPack: dessertStarter,
+        expectedSourceMode: 'curated',
+      })
       const result = await runRetrieval({
         mode: 'build',
-        requestedSourceMode: 'hybrid',
+        requestedSourceMode,
         starterPack: dessertStarter,
       })
       assert(!result.liveFetchAttempted, 'Expected live fetch not to be attempted.')
@@ -267,9 +309,15 @@ async function main(): Promise<void> {
   setRoute('/')
   setProofReadyEnv()
   resetFetchTracking()
+  const allowedSourceMode = assertBridgeSourceMode({
+    name: 'dessert proof allowed bridge',
+    mode: 'curate',
+    starterPack: dessertStarter,
+    expectedSourceMode: 'hybrid',
+  })
   const allowed = await runRetrieval({
     mode: 'curate',
-    requestedSourceMode: 'hybrid',
+    requestedSourceMode: allowedSourceMode,
     starterPack: dessertStarter,
   })
   assert(allowed.liveFetchAttempted, 'Expected live fetch to be attempted for allowed proof.')

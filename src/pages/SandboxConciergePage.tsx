@@ -174,6 +174,7 @@ import {
   readDevGreatStopFixturesEnabled,
 } from '../domain/sources/devGreatStopFixtures'
 import { isDevOrSandboxCloseoutFlow } from '../domain/sources/getSourceMode'
+import { resolveCurateProofSourceMode } from '../domain/providers/providerProofGate'
 import { mapVenueToTasteInput } from '../domain/interpretation/taste/mapVenueToTasteInput'
 import { interpretVenueTaste } from '../domain/interpretation/taste/interpretVenueTaste'
 import { resolveVibeTasteProfile } from '../domain/taste/resolveVibeTasteProfile'
@@ -13032,9 +13033,21 @@ export function SandboxConciergePage({
           selectedBuildAnchor,
           activeCandidateAnchorRole: activeCandidateRouteArtifact?.anchorRole,
         })
+        const generationMode = isSurpriseWrapperActive
+          ? 'surprise'
+          : isCurateWrapperActive
+            ? 'curate'
+            : 'build'
+        const generationStarterPack = isCurateWrapperActive
+          ? selectedStarterPack ?? undefined
+          : undefined
+        const generationSourceMode = resolveCurateProofSourceMode({
+          mode: generationMode,
+          starterPack: generationStarterPack,
+        })
         const result = await runPlanBuild(
           {
-            mode: isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build',
+            mode: generationMode,
             planningMode: plannerMode,
             persona,
             primaryVibe,
@@ -13047,7 +13060,7 @@ export function SandboxConciergePage({
             anchor: buildPlannerAnchor,
           },
           {
-              sourceMode: 'curated',
+              sourceMode: generationSourceMode,
               sourceModeOverrideApplied: true,
               debugMode: false,
               vibeTasteProfileScoring: isCurateWrapperActive ? 'soft_planner_scoring' : 'off',
@@ -13059,7 +13072,7 @@ export function SandboxConciergePage({
               curateCommitSemantics: isCurateWrapperActive
                 ? 'approved_route_hard_commit'
                 : undefined,
-              starterPack: isCurateWrapperActive ? selectedStarterPack ?? undefined : undefined,
+              starterPack: generationStarterPack,
               experienceContract: canonicalExperienceContract,
               contractConstraints: canonicalContractConstraints,
               canonicalInterpretationBundle,
