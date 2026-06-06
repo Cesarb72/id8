@@ -14,6 +14,7 @@ import {
   isDevOrSandboxCloseoutFlow,
 } from '../sources/getSourceMode'
 import { mapLivePlaceToRawPlace } from '../sources/mapLivePlaceToRawPlace'
+import { evaluateProviderGovernancePreflight } from './providerGovernance'
 import type { LivePlaceKind } from '../sources/buildLiveQueryPlan'
 import type { SourceMode } from '../types/sourceMode'
 import type { Venue } from '../types/venue'
@@ -416,6 +417,26 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
     }
   }
 
+  const governance = evaluateProviderGovernancePreflight({
+    purpose: input.callPurpose,
+    queryCount: input.queries.length,
+    sourceMode: input.sourceMode,
+  })
+  if (!governance.allowed) {
+    return {
+      diagnostics: buildBlockedDiagnostics(
+        input.callPurpose,
+        config.endpoint,
+        keyPresent,
+        governance.blockedReason ?? 'Provider call blocked by provider governance.',
+        input.sourceMode,
+      ),
+      errors: [],
+      queryCounts: [],
+      results: [],
+    }
+  }
+
   if (!keyPresent || !config.apiKey) {
     return {
       diagnostics: buildBlockedDiagnostics(
@@ -553,6 +574,7 @@ export async function searchAnchorPlaces(input: {
   pageSize?: number
   queryTerms: string[]
   requestedKind: LivePlaceKind
+  sourceMode?: SourceMode
   textQuery: string
 }): Promise<ProviderTextSearchResult<ProviderAnchorSearchResult>> {
   return searchPlaces({
@@ -587,6 +609,7 @@ export async function searchAnchorPlaces(input: {
           input.city,
       }
     },
+    sourceMode: input.sourceMode,
     queries: [
       {
         fieldMask: input.fieldMask,

@@ -177,6 +177,7 @@ export async function searchAnchorVenues(input: {
       pageSize: 6,
       queryTerms: buildAnchorQueryTerms(trimmedQuery, input.chip),
       requestedKind: mapChipToRequestedKind(input.chip),
+      sourceMode: 'curated',
       textQuery: buildTextQuery(trimmedQuery, input.city, input.neighborhood, input.chip),
     })
     if (googleResults.results.length > 0) {
