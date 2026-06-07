@@ -22,5 +22,9 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["vite.config.ts", "scripts/run-provider-dry-run.ts"]
+  "include": [
+    "vite.config.ts",
+    "scripts/run-provider-dry-run.ts",
+    "scripts/run-provider-corpus-build-harness.ts"
+  ]
 }
