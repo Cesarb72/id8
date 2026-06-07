@@ -227,7 +227,8 @@ function main(): void {
   assert(result.ledger.totalAttempted === 0, 'Expected mocked ledger totalAttempted to remain 0.')
   assert(result.ledger.totalAttemptedHttpRequests === 0, 'Expected mocked ledger attempted HTTP requests to remain 0.')
   assert(result.ledger.totalBillable === 0, 'Expected mocked ledger totalBillable to remain 0.')
-  assert(result.diagnostics.fetchCallCount === 0, 'Expected diagnostics fetchCallCount to remain 0.')
+  assert(result.diagnostics.attemptedHttpRequestCount === 0, 'Expected diagnostics attempted HTTP requests to remain 0.')
+  assert(result.diagnostics.billableCallCount === 0, 'Expected diagnostics billable calls to remain 0.')
   assert(fetchCallCount === 0, `Expected fetch not to be called, received ${fetchCallCount}.`)
   assert(result.diagnostics.runtimeImportHits.length === 0, 'Expected no runtime imports.')
 

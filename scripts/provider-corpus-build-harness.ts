@@ -11,6 +11,11 @@ import {
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  searchPlaces,
+  type ProviderTextSearchQuery,
+  type ProviderTextSearchResult,
+} from '../src/domain/providers/ProviderAdapter.ts'
+import {
   type ProviderCorpusArtifact,
   type ProviderCorpusArtifactVenue,
   validateProviderCorpusArtifact,
@@ -35,12 +40,18 @@ import type { VenueCategory } from '../src/domain/types/venue.ts'
 
 export const providerCorpusBuildHarnessConfig = {
   approvalEnvKey: 'ID8_PROVIDER_CORPUS_BUILD_APPROVED',
+  budgetCapEnvKey:
+    providerGovernanceConfig.budgetCapEnvKeys.byPurpose.retrieval_supply ??
+    'VITE_ID8_PROVIDER_RETRIEVAL_SUPPLY_BILLABLE_CALL_CAP',
+  expectedTextSearchEndpointPath: '/v1/places:searchText',
   keyEnvKey: 'VITE_GOOGLE_PLACES_API_KEY',
   mockedOutputRoot: 'tmp/provider-corpus/mock',
   modeEnvKey: 'ID8_PROVIDER_CORPUS_BUILD_MODE',
+  realOutputRoot: 'tmp/provider-corpus/real/san-jose',
   retrievalActivationEnvKey:
     providerGovernanceConfig.activationEnvKeys.retrieval_supply ??
     'VITE_ID8_PROVIDER_ENABLE_RETRIEVAL_SUPPLY',
+  sourceModeEnvKey: 'VITE_ID8_SOURCE_MODE',
 }
 
 export type ProviderCorpusBuildHarnessMode = 'mocked' | 'live'
@@ -49,11 +60,14 @@ export type ProviderCorpusBuildPreflightBlockCode =
   | 'approval_flag_present_in_mocked_mode'
   | 'dirty_git_status'
   | 'details_lookup_not_allowed'
+  | 'invalid_budget_cap'
+  | 'invalid_source_mode'
   | 'live_execution_not_approved'
-  | 'live_execution_not_implemented'
+  | 'live_mode_not_selected'
   | 'manifest_missing'
   | 'manifest_query_count_invalid'
   | 'manifest_query_malformed'
+  | 'missing_budget_cap'
   | 'missing_provider_key'
   | 'missing_retrieval_activation'
   | 'output_path_not_tmp_only'
@@ -80,7 +94,8 @@ export interface ProviderCorpusBuildPreflightResult {
 }
 
 export interface ProviderCorpusBuildHarnessDiagnostics {
-  fetchCallCount: 0
+  attemptedHttpRequestCount: number
+  billableCallCount: number
   mode: ProviderCorpusBuildHarnessMode
   outputRoot: string
   runId: string
@@ -115,9 +130,17 @@ export interface ProviderCorpusBuildPreflightInput {
 
 export interface RunProviderCorpusBuildHarnessInput {
   env?: Record<string, string | undefined>
+  gitStatusShort?: string
   manifest?: ProviderCorpusManifest
   outputRoot?: string
   runId?: string
+}
+
+interface LiveCorpusVenueResult {
+  entry: ProviderCorpusManifestEntry
+  providerVenue: ProviderVenue
+  queryResultCount: number
+  rank: number
 }
 
 function addBlock(
@@ -133,6 +156,14 @@ function parseBooleanEnv(value: string | undefined): boolean {
     return false
   }
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
+}
+
+function parseNonNegativeInteger(value: string | undefined): number | undefined {
+  if (!value?.trim()) {
+    return undefined
+  }
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
 }
 
 function normalizePathForGit(path: string): string {
@@ -232,7 +263,11 @@ export function evaluateProviderCorpusBuildPreflight(
   input: ProviderCorpusBuildPreflightInput,
 ): ProviderCorpusBuildPreflightResult {
   const env = input.env ?? process.env
-  const outputRoot = input.outputRoot ?? providerCorpusBuildHarnessConfig.mockedOutputRoot
+  const outputRoot =
+    input.outputRoot ??
+    (input.mode === 'live'
+      ? providerCorpusBuildHarnessConfig.realOutputRoot
+      : providerCorpusBuildHarnessConfig.mockedOutputRoot)
   const ignoredProbePath = normalizePathForGit(join(outputRoot, '.gitkeep'))
   const tmpIgnored = input.tmpIgnored ?? isGitIgnored(ignoredProbePath)
   const runtimeImportHits = input.runtimeImportHits ?? findRuntimeProviderCorpusImports()
@@ -276,8 +311,16 @@ export function evaluateProviderCorpusBuildPreflight(
     }
   } else {
     const gitStatusShort = input.gitStatusShort ?? getGitStatusShort()
+    const budgetCap = parseNonNegativeInteger(env[providerCorpusBuildHarnessConfig.budgetCapEnvKey])
     if (gitStatusShort.length > 0) {
       addBlock(blockers, 'dirty_git_status', 'Live corpus build requires a clean git worktree.')
+    }
+    if (env[providerCorpusBuildHarnessConfig.modeEnvKey] !== 'live') {
+      addBlock(
+        blockers,
+        'live_mode_not_selected',
+        `${providerCorpusBuildHarnessConfig.modeEnvKey} must be live for live corpus execution.`,
+      )
     }
     if (!env[providerCorpusBuildHarnessConfig.keyEnvKey]?.trim()) {
       addBlock(
@@ -293,6 +336,26 @@ export function evaluateProviderCorpusBuildPreflight(
         `${providerCorpusBuildHarnessConfig.retrievalActivationEnvKey} must explicitly activate retrieval_supply.`,
       )
     }
+    if (budgetCap === undefined) {
+      addBlock(
+        blockers,
+        'missing_budget_cap',
+        `${providerCorpusBuildHarnessConfig.budgetCapEnvKey} must be set to 12 or less.`,
+      )
+    } else if (budgetCap > 12) {
+      addBlock(
+        blockers,
+        'invalid_budget_cap',
+        `${providerCorpusBuildHarnessConfig.budgetCapEnvKey} must be 12 or less, received ${budgetCap}.`,
+      )
+    }
+    if (env[providerCorpusBuildHarnessConfig.sourceModeEnvKey] !== 'hybrid') {
+      addBlock(
+        blockers,
+        'invalid_source_mode',
+        `${providerCorpusBuildHarnessConfig.sourceModeEnvKey} must be hybrid for operator live execution.`,
+      )
+    }
     if (!parseBooleanEnv(env[providerCorpusBuildHarnessConfig.approvalEnvKey])) {
       addBlock(
         blockers,
@@ -300,11 +363,6 @@ export function evaluateProviderCorpusBuildPreflight(
         `${providerCorpusBuildHarnessConfig.approvalEnvKey} is required and is not set.`,
       )
     }
-    addBlock(
-      blockers,
-      'live_execution_not_implemented',
-      'Real provider corpus execution remains blocked; this harness only supports mocked execution.',
-    )
   }
 
   return {
@@ -420,6 +478,8 @@ function buildMockProviderVenue(entry: ProviderCorpusManifestEntry): ProviderVen
 function buildRawPlace(
   entry: ProviderCorpusManifestEntry,
   providerVenue: ProviderVenue,
+  rank = 0,
+  descriptionSource = 'mocked harness',
 ): RawPlace {
   const category = categoryForFamily(entry.expectedCategoryFamily)
   return {
@@ -432,15 +492,15 @@ function buildRawPlace(
       : entry.queryText.includes('SoFa')
         ? 'SoFa District'
         : 'Downtown',
-    driveMinutes: 8,
+    driveMinutes: 8 + Math.min(rank, 4),
     priceTier: priceForCategory(category),
     tags: uniqueSorted([
       entry.expectedCategoryFamily,
       ...entry.expectedRoles,
       ...entry.supportedBuildAnchorFamilies,
     ]),
-    shortDescription: `${providerVenue.displayName} is a mocked harness venue for ${entry.expectedCategoryFamily}.`,
-    narrativeFlavor: `${providerVenue.displayName} exists only in the mocked corpus build harness.`,
+    shortDescription: `${providerVenue.displayName} is a ${descriptionSource} venue for ${entry.expectedCategoryFamily}.`,
+    narrativeFlavor: `${providerVenue.displayName} was mapped by the ${descriptionSource} corpus build harness.`,
     categoryHint: category,
     subcategoryHint: providerVenue.primaryType,
     placeTypes: providerVenue.types,
@@ -461,6 +521,41 @@ function buildRawPlace(
     regularOpeningHoursText: providerVenue.regularOpeningHours?.weekdayDescriptions,
     latitude: providerVenue.location?.latitude,
     longitude: providerVenue.location?.longitude,
+  }
+}
+
+function buildProviderCorpusVenue(
+  result: LiveCorpusVenueResult,
+  generatedAt: string,
+): ProviderCorpusArtifactVenue {
+  const rawPlace = buildRawPlace(result.entry, result.providerVenue, result.rank, 'provider')
+  return {
+    fetchedAt: result.providerVenue.fetchedAt,
+    generatedAt,
+    id: rawPlace.id,
+    normalizedVenue: normalizeVenue(rawPlace),
+    provider: 'google-places',
+    providerRecordId: result.providerVenue.providerRecordId,
+    rawPlace,
+    runtimeSafety: {
+      reasons: [
+        'provider_payload_mapped_through_provider_adapter',
+        'provider_identity_present',
+        'coordinates_present',
+        'normalized_after_live_preflight',
+      ],
+      status: 'safe_for_future_runtime_ingestion',
+    },
+    sourceQueryLabel: result.entry.label,
+    sourceQueryText: result.entry.queryText,
+    support: {
+      buildAnchorFamilies: result.entry.supportedBuildAnchorFamilies,
+      categoryFamily: result.entry.expectedCategoryFamily,
+      roles: result.entry.expectedRoles,
+      scenarioFamilies: result.entry.supportedScenarioFamilies,
+      starters: result.entry.supportedStarters,
+      surpriseHighlightSupport: result.entry.surpriseHighlightSupport,
+    },
   }
 }
 
@@ -526,6 +621,122 @@ function buildZeroCallLedger(): ProviderCallLedger {
     totalBlocked: 0,
     totalFailed: 0,
     traces: [],
+  }
+}
+
+function combineProviderLedgers(ledgers: ProviderCallLedger[]): ProviderCallLedger {
+  return {
+    byPurpose: {
+      anchor_search: ledgers.reduce((sum, ledger) => sum + ledger.byPurpose.anchor_search, 0),
+      build_anchor_nearby: ledgers.reduce((sum, ledger) => sum + ledger.byPurpose.build_anchor_nearby, 0),
+      details_lookup: ledgers.reduce((sum, ledger) => sum + ledger.byPurpose.details_lookup, 0),
+      retrieval_supply: ledgers.reduce((sum, ledger) => sum + ledger.byPurpose.retrieval_supply, 0),
+      waypoint_nearby: ledgers.reduce((sum, ledger) => sum + ledger.byPurpose.waypoint_nearby, 0),
+    },
+    totalAttempted: ledgers.reduce((sum, ledger) => sum + ledger.totalAttempted, 0),
+    totalAttemptedHttpRequests: ledgers.reduce(
+      (sum, ledger) => sum + ledger.totalAttemptedHttpRequests,
+      0,
+    ),
+    totalBillable: ledgers.reduce((sum, ledger) => sum + ledger.totalBillable, 0),
+    totalBlocked: ledgers.reduce((sum, ledger) => sum + ledger.totalBlocked, 0),
+    totalFailed: ledgers.reduce((sum, ledger) => sum + ledger.totalFailed, 0),
+    traces: ledgers.flatMap((ledger) => ledger.traces),
+  }
+}
+
+function buildDedupeReport(venues: ProviderCorpusArtifactVenue[]): ProviderCorpusArtifact['dedupeReport'] {
+  const duplicateProviderRecordIds = collectDuplicateProviderRecordIds(venues)
+  const dedupedVenueIds = duplicateProviderRecordIds.flatMap((providerRecordId) => {
+    const duplicates = venues.filter((venue) => venue.providerRecordId === providerRecordId)
+    const keptVenue = duplicates[0]
+    if (!keptVenue) {
+      return []
+    }
+    return duplicates.slice(1).map((venue) => ({
+      droppedVenueId: venue.id,
+      keptVenueId: keptVenue.id,
+      providerRecordId,
+      reason: 'duplicate_provider_record_id' as const,
+    }))
+  })
+  return {
+    dedupedVenueIds,
+    duplicateProviderRecordIds,
+    inputVenueCount: venues.length,
+    uniqueVenueCount: new Set(venues.map((venue) => venue.providerRecordId)).size,
+  }
+}
+
+function buildCoverageReport(): ProviderCorpusArtifact['coverageReport'] {
+  const surpriseHighlightCategoryFamilies = uniqueSorted(
+    providerCorpusManifest.entries
+      .filter((entry) => entry.surpriseHighlightSupport)
+      .map((entry) => entry.expectedCategoryFamily),
+  )
+  return {
+    buildAnchorFamilies: uniqueSorted(
+      providerCorpusManifest.entries.flatMap((entry) => entry.supportedBuildAnchorFamilies),
+    ),
+    categoryFamilies: uniqueSorted(
+      providerCorpusManifest.entries.map((entry) => entry.expectedCategoryFamily),
+    ),
+    curateStarters: uniqueSorted(
+      providerCorpusManifest.entries.flatMap((entry) => entry.supportedStarters),
+    ),
+    manifestQueryLabels: providerCorpusManifest.entries.map((entry) => entry.label),
+    roles: uniqueSorted(providerCorpusManifest.entries.flatMap((entry) => entry.expectedRoles)),
+    scenarioFamilies: uniqueSorted(
+      providerCorpusManifest.entries.flatMap((entry) => entry.supportedScenarioFamilies),
+    ),
+    surpriseHighlightCategoryFamilies,
+    surpriseSupported: surpriseHighlightCategoryFamilies.length >= 6,
+  }
+}
+
+function buildProviderCorpusArtifactFromResults(input: {
+  generatedAt: string
+  ledger: ProviderCallLedger
+  queryResultCounts: Map<string, number>
+  results: LiveCorpusVenueResult[]
+}): ProviderCorpusArtifact {
+  const venues = input.results.map((result) => buildProviderCorpusVenue(result, input.generatedAt))
+  return {
+    artifactVersion: 'provider-corpus-snapshot.v1',
+    city: 'San Jose',
+    coverageReport: buildCoverageReport(),
+    dedupeReport: buildDedupeReport(venues),
+    dropReasons: {
+      normalizationDropped: {},
+      providerMappedDropped: {},
+      runtimeSafetyBlocked: {},
+    },
+    freshnessPolicy: {
+      generatedAt: input.generatedAt,
+      maxAgeDays: 30,
+      reviewBy: addDays(input.generatedAt, 30),
+      staleAction: 'review_before_runtime_ingestion',
+    },
+    generatedAt: input.generatedAt,
+    manifestQueryCount: providerCorpusManifest.entries.length,
+    manifestVersion: 'provider-corpus-manifest.v1',
+    providerLedgerSummary: input.ledger,
+    queries: providerCorpusManifest.entries.map((entry) => ({
+      billableCallCount: input.queryResultCounts.has(entry.label) ? 1 : 0,
+      expectedCategoryFamily: entry.expectedCategoryFamily,
+      expectedRoles: entry.expectedRoles,
+      gate1Required: entry.gate1Required,
+      label: entry.label,
+      maxCalls: entry.maxCalls,
+      maxCenters: entry.maxCenters,
+      mockedResultCount: 0,
+      providerResultCount: input.queryResultCounts.get(entry.label) ?? 0,
+      purpose: entry.purpose,
+      queryText: entry.queryText,
+    })),
+    runtimeImportAllowed: false,
+    source: 'provider',
+    venues,
   }
 }
 
@@ -671,7 +882,8 @@ export function runMockedProviderCorpusBuildHarness(
   assertValidReviewReport(report)
 
   const diagnostics: ProviderCorpusBuildHarnessDiagnostics = {
-    fetchCallCount: 0,
+    attemptedHttpRequestCount: 0,
+    billableCallCount: 0,
     mode: 'mocked',
     outputRoot,
     runId,
@@ -695,6 +907,175 @@ export function runMockedProviderCorpusBuildHarness(
     artifact,
     diagnostics,
     ledger: artifact.providerLedgerSummary,
+    outputPaths,
+    preflight,
+    report,
+  }
+}
+
+function assertNoKeyLeak(value: unknown, key: string): void {
+  if (!key.trim()) {
+    return
+  }
+  const serialized = JSON.stringify(value)
+  if (serialized.includes(key)) {
+    throw new Error('Refusing to emit output containing provider key material.')
+  }
+}
+
+function assertLiveLedgerWithinCaps(ledger: ProviderCallLedger): void {
+  if (ledger.totalAttempted > 12) {
+    throw new Error(`Provider attempted calls exceeded cap: ${ledger.totalAttempted}.`)
+  }
+  if (ledger.totalAttemptedHttpRequests > 12) {
+    throw new Error(`Provider attempted HTTP requests exceeded cap: ${ledger.totalAttemptedHttpRequests}.`)
+  }
+  if (ledger.totalBillable > 12) {
+    throw new Error(`Provider billable calls exceeded cap: ${ledger.totalBillable}.`)
+  }
+  const nonRetrievalTrace = ledger.traces.find((trace) => trace.purpose !== 'retrieval_supply')
+  if (nonRetrievalTrace) {
+    throw new Error(`Unexpected provider purpose in live corpus ledger: ${nonRetrievalTrace.purpose}.`)
+  }
+}
+
+function assertExpectedTextSearchEndpoint(result: ProviderTextSearchResult<LiveCorpusVenueResult>): void {
+  const requestPath = result.diagnostics.requestPath
+  if (!requestPath.includes(providerCorpusBuildHarnessConfig.expectedTextSearchEndpointPath)) {
+    throw new Error(`Unexpected provider endpoint for corpus build: ${requestPath}.`)
+  }
+}
+
+function buildCorpusTextSearchQuery(entry: ProviderCorpusManifestEntry): ProviderTextSearchQuery {
+  return {
+    fieldMask: [
+      'places.id',
+      'places.displayName',
+      'places.primaryType',
+      'places.types',
+      'places.formattedAddress',
+      'places.shortFormattedAddress',
+      'places.location',
+      'places.rating',
+      'places.userRatingCount',
+      'places.currentOpeningHours',
+      'places.regularOpeningHours',
+      'places.businessStatus',
+      'places.editorialSummary',
+      'places.websiteUri',
+    ].join(','),
+    pageSize: 8,
+    queryLabel: entry.label,
+    rankPreference: 'RELEVANCE',
+    textQuery: entry.queryText,
+  }
+}
+
+export async function runLiveProviderCorpusBuildHarness(
+  input: RunProviderCorpusBuildHarnessInput = {},
+): Promise<ProviderCorpusBuildHarnessResult> {
+  const outputRoot = input.outputRoot ?? providerCorpusBuildHarnessConfig.realOutputRoot
+  const env = input.env ?? process.env
+  const preflight = evaluateProviderCorpusBuildPreflight({
+    env,
+    gitStatusShort: input.gitStatusShort,
+    manifest: input.manifest ?? providerCorpusManifest,
+    mode: 'live',
+    outputRoot,
+  })
+
+  if (!preflight.allowed) {
+    throw new Error(`Live corpus build preflight blocked: ${preflight.blockers.map((blocker) => blocker.code).join(', ')}`)
+  }
+
+  const key = env[providerCorpusBuildHarnessConfig.keyEnvKey] ?? ''
+  const generatedAt = new Date().toISOString()
+  const ledgers: ProviderCallLedger[] = []
+  const providerResults: LiveCorpusVenueResult[] = []
+  const queryResultCounts = new Map<string, number>()
+
+  for (const entry of providerCorpusManifest.entries) {
+    const result = await searchPlaces<LiveCorpusVenueResult, ProviderTextSearchQuery>({
+      callPurpose: 'retrieval_supply',
+      mapPlace: (providerVenue, context) => ({
+        entry,
+        providerVenue,
+        queryResultCount: 0,
+        rank: context.index,
+      }),
+      queries: [buildCorpusTextSearchQuery(entry)],
+      sourceMode: 'hybrid',
+    })
+
+    assertExpectedTextSearchEndpoint(result)
+    if (result.errors.length > 0) {
+      throw new Error(`Provider corpus query failed for ${entry.label}: ${result.errors.join('; ')}`)
+    }
+    if (result.diagnostics.ledger) {
+      ledgers.push(result.diagnostics.ledger)
+    }
+    const resultCount = result.queryCounts.find((query) => query.queryLabel === entry.label)?.resultCount ?? 0
+    queryResultCounts.set(entry.label, resultCount)
+    providerResults.push(
+      ...result.results.map((providerResult) => ({
+        ...providerResult,
+        queryResultCount: resultCount,
+      })),
+    )
+  }
+
+  const ledger = combineProviderLedgers(ledgers)
+  assertLiveLedgerWithinCaps(ledger)
+  const artifact = buildProviderCorpusArtifactFromResults({
+    generatedAt,
+    ledger,
+    queryResultCounts,
+    results: providerResults,
+  })
+  assertValidArtifact(artifact)
+  const report = buildProviderCorpusReviewReport(artifact, {
+    now: generatedAt,
+    runtimeImportHits: preflight.runtimeImportHits,
+  })
+  assertValidReviewReport(report)
+
+  const runId = input.runId ?? `provider-corpus-real-${Date.now()}`
+  const diagnostics: ProviderCorpusBuildHarnessDiagnostics = {
+    attemptedHttpRequestCount: ledger.totalAttemptedHttpRequests,
+    billableCallCount: ledger.totalBillable,
+    mode: 'live',
+    outputRoot,
+    runId,
+    runtimeImportHits: preflight.runtimeImportHits,
+    tmpIgnored: preflight.tmpIgnored,
+  }
+  const outputDirectory = join(outputRoot, runId)
+  const outputPaths = {
+    artifact: normalizePathForGit(join(outputDirectory, 'provider-corpus-snapshot.provider.json')),
+    diagnostics: normalizePathForGit(join(outputDirectory, 'provider-corpus-diagnostics.provider.json')),
+    ledger: normalizePathForGit(join(outputDirectory, 'provider-corpus-ledger.provider.json')),
+    report: normalizePathForGit(join(outputDirectory, 'provider-corpus-review.provider.json')),
+  }
+
+  for (const path of Object.values(outputPaths)) {
+    if (!path.startsWith(`${providerCorpusBuildHarnessConfig.realOutputRoot}/`)) {
+      throw new Error(`Refusing to write live corpus output outside real tmp root: ${path}`)
+    }
+  }
+
+  assertNoKeyLeak(artifact, key)
+  assertNoKeyLeak(report, key)
+  assertNoKeyLeak(ledger, key)
+  assertNoKeyLeak(diagnostics, key)
+  writeJsonFile(outputPaths.artifact, artifact)
+  writeJsonFile(outputPaths.report, report)
+  writeJsonFile(outputPaths.ledger, ledger)
+  writeJsonFile(outputPaths.diagnostics, diagnostics)
+
+  return {
+    artifact,
+    diagnostics,
+    ledger,
     outputPaths,
     preflight,
     report,
