@@ -15,6 +15,7 @@ export type VenueSetting = 'indoor' | 'outdoor' | 'hybrid'
 export type VenueRouteFootprint = 'compact' | 'neighborhood-hop' | 'destination'
 
 export type QualityGateStatus = 'approved' | 'demoted' | 'suppressed'
+export type QualityGateContext = 'runtime-live' | 'offline-provider-corpus'
 
 export interface VenueHappeningsSignals {
   hotspotStrength: number
@@ -99,6 +100,10 @@ export interface QualityGateDecision {
   suppressionReasons: string[]
   hoursDemotionApplied: boolean
   hoursSuppressionApplied: boolean
+}
+
+export interface QualityGateOptions {
+  context?: QualityGateContext
 }
 
 export interface ExcludedVenueDiagnostics {

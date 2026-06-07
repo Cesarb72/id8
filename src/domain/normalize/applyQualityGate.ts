@@ -1,6 +1,9 @@
 import { computeLiveQualityFairness } from '../retrieval/computeLiveQualityFairness'
-import type { QualityGateDecision } from '../types/normalization'
+import type { QualityGateDecision, QualityGateOptions } from '../types/normalization'
 import type { Venue } from '../types/venue'
+
+const OFFLINE_CORPUS_TIME_SENSITIVE_DEMOTION_REASON =
+  'offline_corpus_time_sensitive_requires_runtime_hours_validation'
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
@@ -17,7 +20,27 @@ function hasAnySignal(venue: Venue, candidates: string[]): boolean {
   return candidates.some((candidate) => normalized.has(candidate.toLowerCase()))
 }
 
-export function applyQualityGate(venue: Venue): QualityGateDecision {
+function isStrongOfflineProviderCorpusCandidate(venue: Venue): boolean {
+  return (
+    venue.source.sourceOrigin === 'live' &&
+    venue.source.provider === 'google-places' &&
+    Boolean(venue.source.providerRecordId) &&
+    typeof venue.source.latitude === 'number' &&
+    typeof venue.source.longitude === 'number' &&
+    venue.source.businessStatus === 'operational' &&
+    venue.source.sourceConfidence >= 0.72 &&
+    venue.source.completenessScore >= 0.8 &&
+    venue.source.missingFields.length === 0 &&
+    venue.signature.signatureScore >= 0.58 &&
+    venue.signature.genericScore <= 0.5 &&
+    !venue.signature.chainLike
+  )
+}
+
+export function applyQualityGate(
+  venue: Venue,
+  options: QualityGateOptions = {},
+): QualityGateDecision {
   const notes: string[] = []
   const approvalBlockers: string[] = []
   const demotionReasons: string[] = []
@@ -26,6 +49,9 @@ export function applyQualityGate(venue: Venue): QualityGateDecision {
   let hoursDemotionApplied = false
   let hoursSuppressionApplied = false
 
+  const context = options.context ?? 'runtime-live'
+  const strongOfflineProviderCorpusCandidate =
+    context === 'offline-provider-corpus' && isStrongOfflineProviderCorpusCandidate(venue)
   const tagCount = meaningfulTagCount(venue)
   const isLiveSource = venue.source.sourceOrigin === 'live'
   const supportedLiveCategories = new Set([
@@ -38,6 +64,9 @@ export function applyQualityGate(venue: Venue): QualityGateDecision {
     'park',
     'event',
   ])
+  if (strongOfflineProviderCorpusCandidate) {
+    supportedLiveCategories.add('live_music')
+  }
   const nonCoreLiveCategory =
     venue.category !== 'restaurant' &&
     venue.category !== 'bar' &&
@@ -180,8 +209,13 @@ export function applyQualityGate(venue: Venue): QualityGateDecision {
     stronglyClosedNow &&
     venue.settings.highlightCapabilityTier === 'highlight-capable'
   ) {
-    suppressionReasons.push('live highlight-capable venue appears closed for the current planning window')
-    hoursSuppressionApplied = true
+    if (strongOfflineProviderCorpusCandidate) {
+      demotionReasons.push(OFFLINE_CORPUS_TIME_SENSITIVE_DEMOTION_REASON)
+      hoursDemotionApplied = true
+    } else {
+      suppressionReasons.push('live highlight-capable venue appears closed for the current planning window')
+      hoursSuppressionApplied = true
+    }
   }
   if (isLiveSource && (fastFoodLike || convenienceLike)) {
     suppressionReasons.push('unsupported low-signal place type for live restaurant/bar/cafe ingestion')

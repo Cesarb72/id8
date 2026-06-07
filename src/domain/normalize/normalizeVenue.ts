@@ -5,6 +5,7 @@ import { inferHoursPressure } from './inferHoursPressure'
 import { inferVenueSignals } from './inferVenueSignals'
 import { normalizeRawPlace } from './normalizeRawPlace'
 import type { PlanningTimeWindowSignal } from '../types/hours'
+import type { QualityGateContext } from '../types/normalization'
 import type { RawEvent, RawVenueInput } from '../types/rawPlace'
 import type { Venue } from '../types/venue'
 import type { CuratedSourceSubtype, VenueSourceOrigin } from '../types/sourceMode'
@@ -35,6 +36,7 @@ function collectMissingFields(raw: RawEvent): string[] {
 
 interface NormalizeVenueOptions {
   timeWindowSignal?: PlanningTimeWindowSignal
+  qualityGateContext?: QualityGateContext
 }
 
 function inferCuratedSubtype(raw: RawEvent, sourceOrigin: VenueSourceOrigin): CuratedSourceSubtype | undefined {
@@ -148,7 +150,9 @@ function normalizeRawEvent(raw: RawEvent, options: NormalizeVenueOptions = {}): 
     },
   }
 
-  const qualityGate = applyQualityGate(baseVenue)
+  const qualityGate = applyQualityGate(baseVenue, {
+    context: options.qualityGateContext ?? 'runtime-live',
+  })
 
   return {
     ...baseVenue,
