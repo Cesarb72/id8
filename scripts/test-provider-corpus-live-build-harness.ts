@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   evaluateProviderCorpusBuildPreflight,
+  getGitStatusShort,
   isGitIgnored,
   providerCorpusBuildHarnessConfig,
   removeMockedCorpusOutput,
@@ -20,6 +21,7 @@ const managedEnvKeys = [
   providerCorpusBuildHarnessConfig.budgetCapEnvKey,
   providerCorpusBuildHarnessConfig.keyEnvKey,
   providerCorpusBuildHarnessConfig.modeEnvKey,
+  providerCorpusBuildHarnessConfig.realOutputDeleteApprovalEnvKey,
   providerCorpusBuildHarnessConfig.retrievalActivationEnvKey,
   providerCorpusBuildHarnessConfig.sourceModeEnvKey,
   'VITE_ID8_PROVIDER_BILLABLE_CALL_CAP',
@@ -155,12 +157,33 @@ function assertNoPlaceholderKey(path: string): void {
   assert(!content.includes(placeholderKey), `Output leaked placeholder key: ${path}`)
 }
 
+function assertSharedRealRootDeleteBlocked(realFixtureRunDirectory: string): void {
+  let blocked = false
+  try {
+    removeMockedCorpusOutput(providerCorpusBuildHarnessConfig.realOutputRoot)
+  } catch {
+    blocked = true
+  }
+  assert(blocked, 'Shared real corpus output root cleanup must require explicit approval.')
+  assert(
+    existsSync(realFixtureRunDirectory),
+    'Shared real corpus output root cleanup guard must preserve existing real corpus directories.',
+  )
+}
+
 async function main(): Promise<void> {
   globalThis.fetch = mockedFetch
-  const outputRoot = providerCorpusBuildHarnessConfig.realOutputRoot
+  const outputRoot = providerCorpusBuildHarnessConfig.mockedLiveOutputRoot
+  const realFixtureRunDirectory = join(
+    providerCorpusBuildHarnessConfig.realOutputRoot,
+    'fake-real-run-should-survive',
+  )
+  mkdirSync(realFixtureRunDirectory, { recursive: true })
+  writeFileSync(join(realFixtureRunDirectory, 'sentinel.txt'), 'fake real corpus fixture\n', 'utf8')
+  assertSharedRealRootDeleteBlocked(realFixtureRunDirectory)
   const ignoredProbePath = join(outputRoot, '.gitkeep').replace(/\\/g, '/')
   const tmpIgnored = isGitIgnored(ignoredProbePath)
-  assert(tmpIgnored, `real output path must be ignored before mocked live output is written: ${ignoredProbePath}`)
+  assert(tmpIgnored, `mocked live output path must be ignored before output is written: ${ignoredProbePath}`)
 
   const withoutApproval = evaluateProviderCorpusBuildPreflight({
     env: liveEnv({ [providerCorpusBuildHarnessConfig.approvalEnvKey]: undefined }),
@@ -250,9 +273,10 @@ async function main(): Promise<void> {
   assert(readyPreflight.allowed, `Expected live preflight to allow mocked fetch execution, received ${blockerCodes(readyPreflight).join(', ')}`)
 
   const runId = 'live-harness-test-run'
-  removeMockedCorpusOutput(outputRoot)
+  removeMockedCorpusOutput(join(outputRoot, runId))
   applyEnv(liveEnv())
   const result = await runLiveProviderCorpusBuildHarness({
+    allowMockedLiveOutputRoot: true,
     gitStatusShort: '',
     outputRoot,
     runId,
@@ -274,11 +298,18 @@ async function main(): Promise<void> {
   assert(result.diagnostics.runtimeImportHits.length === 0, 'Expected no runtime imports.')
 
   for (const path of Object.values(result.outputPaths)) {
-    assert(path.startsWith('tmp/provider-corpus/real/san-jose/'), `Output path must stay under real tmp root: ${path}`)
+    assert(path.startsWith('tmp/provider-corpus/mock-live/'), `Output path must stay under mock-live tmp root: ${path}`)
     assert(existsSync(path), `Expected mocked live output file to exist: ${path}`)
     assertNoPlaceholderKey(path)
   }
-  removeMockedCorpusOutput(outputRoot)
+  removeMockedCorpusOutput(join(outputRoot, runId))
+  assert(
+    existsSync(realFixtureRunDirectory),
+    'Mocked live harness cleanup must not delete existing real corpus output directories.',
+  )
+  rmSync(realFixtureRunDirectory, { force: true, recursive: true })
+  const tmpOutputStatus = getGitStatusShort('tmp/provider-corpus')
+  assert(tmpOutputStatus.length === 0, `Expected provider corpus tmp output not to appear in git status, received ${tmpOutputStatus}.`)
 
   process.stdout.write('provider corpus live build harness mocked validation: passed\n')
   process.stdout.write(
@@ -296,8 +327,10 @@ async function main(): Promise<void> {
           withoutKey: blockerCodes(withoutKey),
           withoutRetrievalActivation: blockerCodes(withoutRetrievalActivation),
         },
+        realFixtureSurvivedMockedCleanup: true,
         runtimeImportHits: result.diagnostics.runtimeImportHits,
         tmpIgnored,
+        tmpOutputStatusAfterWrite: tmpOutputStatus,
       },
       null,
       2,

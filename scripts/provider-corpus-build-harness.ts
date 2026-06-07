@@ -45,8 +45,10 @@ export const providerCorpusBuildHarnessConfig = {
     'VITE_ID8_PROVIDER_RETRIEVAL_SUPPLY_BILLABLE_CALL_CAP',
   expectedTextSearchEndpointPath: '/v1/places:searchText',
   keyEnvKey: 'VITE_GOOGLE_PLACES_API_KEY',
+  mockedLiveOutputRoot: 'tmp/provider-corpus/mock-live',
   mockedOutputRoot: 'tmp/provider-corpus/mock',
   modeEnvKey: 'ID8_PROVIDER_CORPUS_BUILD_MODE',
+  realOutputDeleteApprovalEnvKey: 'ID8_PROVIDER_CORPUS_REAL_OUTPUT_DELETE_APPROVED',
   realOutputRoot: 'tmp/provider-corpus/real/san-jose',
   retrievalActivationEnvKey:
     providerGovernanceConfig.activationEnvKeys.retrieval_supply ??
@@ -129,6 +131,7 @@ export interface ProviderCorpusBuildPreflightInput {
 }
 
 export interface RunProviderCorpusBuildHarnessInput {
+  allowMockedLiveOutputRoot?: boolean
   env?: Record<string, string | undefined>
   gitStatusShort?: string
   manifest?: ProviderCorpusManifest
@@ -849,8 +852,17 @@ function writeJsonFile(path: string, value: unknown): void {
 export function removeMockedCorpusOutput(outputRoot = providerCorpusBuildHarnessConfig.mockedOutputRoot): void {
   const resolvedRoot = resolve(outputRoot)
   const resolvedTmp = resolve('tmp')
+  const resolvedRealOutputRoot = resolve(providerCorpusBuildHarnessConfig.realOutputRoot)
   if (resolvedRoot === resolvedTmp || !resolvedRoot.startsWith(`${resolvedTmp}\\`) && !resolvedRoot.startsWith(`${resolvedTmp}/`)) {
     throw new Error(`Refusing to remove output outside tmp/: ${outputRoot}`)
+  }
+  if (
+    resolvedRoot === resolvedRealOutputRoot &&
+    process.env[providerCorpusBuildHarnessConfig.realOutputDeleteApprovalEnvKey] !== '1'
+  ) {
+    throw new Error(
+      `Refusing to remove shared real corpus output root without ${providerCorpusBuildHarnessConfig.realOutputDeleteApprovalEnvKey}=1: ${outputRoot}`,
+    )
   }
   if (existsSync(resolvedRoot)) {
     rmSync(resolvedRoot, { force: true, recursive: true })
@@ -1057,9 +1069,13 @@ export async function runLiveProviderCorpusBuildHarness(
     report: normalizePathForGit(join(outputDirectory, 'provider-corpus-review.provider.json')),
   }
 
+  const allowedLiveOutputRoots = [
+    providerCorpusBuildHarnessConfig.realOutputRoot,
+    ...(input.allowMockedLiveOutputRoot ? [providerCorpusBuildHarnessConfig.mockedLiveOutputRoot] : []),
+  ]
   for (const path of Object.values(outputPaths)) {
-    if (!path.startsWith(`${providerCorpusBuildHarnessConfig.realOutputRoot}/`)) {
-      throw new Error(`Refusing to write live corpus output outside real tmp root: ${path}`)
+    if (!allowedLiveOutputRoots.some((root) => path.startsWith(`${root}/`))) {
+      throw new Error(`Refusing to write live corpus output outside approved tmp roots: ${path}`)
     }
   }
 

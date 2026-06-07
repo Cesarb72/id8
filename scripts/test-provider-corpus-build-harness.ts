@@ -213,7 +213,7 @@ function main(): void {
   assertBlockedBy('malformed maxCalls', blockerCodes(malformedCapManifest), 'query_max_calls_invalid')
 
   const runId = 'harness-test-run'
-  removeMockedCorpusOutput(outputRoot)
+  removeMockedCorpusOutput(join(outputRoot, runId))
   const result = runMockedProviderCorpusBuildHarness({
     env: cleanEnv(),
     outputRoot,
@@ -240,7 +240,7 @@ function main(): void {
 
   const tmpOutputStatus = getGitStatusShort(outputRoot)
   assert(tmpOutputStatus.length === 0, `Expected mocked tmp output not to appear in git status, received ${tmpOutputStatus}.`)
-  removeMockedCorpusOutput(outputRoot)
+  removeMockedCorpusOutput(join(outputRoot, runId))
 
   process.stdout.write('provider corpus build harness mocked validation: passed\n')
   process.stdout.write(
