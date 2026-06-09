@@ -68,7 +68,9 @@ function findRuntimeCorpusImports(): string[] {
   const srcRoot = join(process.cwd(), 'src')
   const allowed = new Set(
     [
+      'src/domain/field/corpus/fieldStaticProviderCorpusConfig.ts',
       'src/domain/field/corpus/promoteProviderCorpus.ts',
+      'src/domain/field/corpus/resolveCurateStaticFieldCorpusVenues.ts',
       'src/domain/field/corpus/sanJoseProviderCorpus.ts',
       'src/domain/field/corpus/sanJoseProviderCorpusManifest.ts',
       'src/domain/field/corpus/types.ts',
@@ -162,7 +164,7 @@ function validatePromotion(): void {
   const runtimeImports = findRuntimeCorpusImports()
   assert(
     runtimeImports.length === 0,
-    `Static provider corpus must not be wired into runtime yet: ${runtimeImports.join(', ')}`,
+    `Static provider corpus imports must stay on the approved Field-owned path: ${runtimeImports.join(', ')}`,
   )
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
 

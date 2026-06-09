@@ -10,6 +10,10 @@ import {
 import { fetchHybridPortableVenues } from './hybridPortableAdapter'
 import { mergeVenueSources } from './mergeVenueSources'
 import { buildLiveTrustBreakdown } from '../debug/buildLiveTrustBreakdown'
+import {
+  resolveCurateStaticFieldCorpusVenues,
+  type CurateStaticFieldCorpusDiagnostics,
+} from '../field/corpus/resolveCurateStaticFieldCorpusVenues'
 import { deriveVenueHappeningsSignals } from '../normalize/deriveVenueHappeningsSignals'
 import {
   BOUNDED_NEARBY_STRETCH_DRIVE_MINUTES,
@@ -171,6 +175,7 @@ export interface RetrieveVenuesResult {
     bootstrapInjectionUsed?: boolean
     defaultCityFallbackUsed?: boolean
     providerAuthoritySummary?: ProviderAuthoritySummary
+    curateStaticCorpus?: CurateStaticFieldCorpusDiagnostics
   }
   stageCounts: {
     totalSeed: number
@@ -633,15 +638,23 @@ export async function retrieveVenues(
   const curatedFixtureVenues = governancePolicy.allowFixtureInjection
     ? devGreatStopFixtureVenues
     : []
-  const curatedVenues = (
-    options.seedVenues
-      ? [...options.seedVenues, ...curatedFixtureVenues, ...baseCuratedVenues]
-      : [...curatedFixtureVenues, ...baseCuratedVenues]
-  ).map(ensureVenueHasHappenings)
   const cityQuery = sanitizeCity(intent.city)
   const requestedSourceMode = isDevOrSandboxCloseoutFlow()
     ? 'curated'
     : options.requestedSourceMode ?? 'curated'
+  const baseCuratedPool = options.seedVenues
+    ? [...options.seedVenues, ...curatedFixtureVenues, ...baseCuratedVenues]
+    : [...curatedFixtureVenues, ...baseCuratedVenues]
+  const curateStaticCorpus = resolveCurateStaticFieldCorpusVenues({
+    intent,
+    starterPack: options.starterPack,
+    existingCuratedVenues: baseCuratedPool,
+    requestedSourceMode,
+  })
+  const curatedVenues = [
+    ...baseCuratedPool,
+    ...curateStaticCorpus.venues,
+  ].map(ensureVenueHasHappenings)
   const providerProof = resolveDessertConversationProviderProof({
     mode: intent.mode,
     requestedSourceMode,
@@ -1000,6 +1013,9 @@ export async function retrieveVenues(
         bootstrapInjectionUsed,
         defaultCityFallbackUsed,
         providerAuthoritySummary,
+        ...(curateStaticCorpus.diagnostics.enabled
+          ? { curateStaticCorpus: curateStaticCorpus.diagnostics }
+          : {}),
       },
       stageCounts: {
         totalSeed: mergedPool.venues.length,
