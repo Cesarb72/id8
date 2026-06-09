@@ -352,6 +352,11 @@ export function evaluateHighlightValidity({
       contextVetoes.push('Dessert & Conversation vetoed: highlight is too noisy or activity-heavy.')
     }
   }
+  if (starterPack?.id === 'coffee-books') {
+    if (hasCategory(venue, ['activity', 'live_music', 'event', 'bar', 'park']) || venue.energyLevel >= 4) {
+      contextVetoes.push('Coffee & Books vetoed: highlight is outside the quiet cafe, book, or cultural scope.')
+    }
+  }
   if (starterPack?.id === 'cozy-date-night') {
     if (
       hasCategory(venue, ['activity']) ||

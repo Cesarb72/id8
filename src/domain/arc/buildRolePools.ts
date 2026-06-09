@@ -86,6 +86,10 @@ const CENTRAL_MOMENT_MIN_QUALITY = 0.56
 const CENTRAL_MOMENT_RECOVERY_BOOST = 0.06
 const CENTRAL_MOMENT_FAMILY_ALIGNMENT_BOOST = 0.04
 const CENTRAL_MOMENT_FAMILY_MISMATCH_PENALTY = 0.04
+const starterScopedSoftHighlightStarterIds = new Set([
+  'dessert-conversation',
+  'coffee-books',
+])
 
 export function roleToLensStop(role: InternalRole): LensStopRole {
   if (role === 'warmup') {
@@ -112,6 +116,31 @@ function defaultRoleContractRule(role: LensStopRole): RoleContractRule {
     preferredTags: [],
     discouragedTags: [],
   }
+}
+
+function getStarterScopedSoftHighlightStarterId(
+  roleContracts?: RoleContractSet,
+): string | undefined {
+  return roleContracts?.sourceLabels.find((label) =>
+    starterScopedSoftHighlightStarterIds.has(label),
+  )
+}
+
+function isStarterScopedSoftHighlightCandidate(
+  candidate: ScoredVenue,
+  starterId: string,
+): boolean {
+  if (!starterScopedSoftHighlightStarterIds.has(starterId)) {
+    return false
+  }
+  return (
+    candidate.highlightValidity.validityLevel === 'valid' &&
+    candidate.highlightValidity.packLiteralRequirementSatisfied === true &&
+    candidate.roleContract.peak.satisfied &&
+    candidate.highlightValidity.personaVetoes.length === 0 &&
+    candidate.highlightValidity.contextVetoes.length === 0 &&
+    candidate.highlightValidity.violations.length === 0
+  )
 }
 
 function strengthRank(value: RoleContractStrength): number {
@@ -2121,24 +2150,41 @@ function pickRoleCandidates(
         fallbackReason ?? `${roleContract.label} shaped by romantic persona contract.`
     }
   }
+  const starterScopedSoftHighlightStarterId =
+    role === 'peak' ? getStarterScopedSoftHighlightStarterId(roleContracts) : undefined
+  const starterScopedSoftHighlightCandidates = starterScopedSoftHighlightStarterId
+    ? roleCandidates.filter((candidate) =>
+        isStarterScopedSoftHighlightCandidate(
+          candidate,
+          starterScopedSoftHighlightStarterId,
+        ),
+      )
+    : []
   if (role === 'peak') {
-    const scopedByMomentTier = scopeRomanticHighlightCandidatesByMomentTier(
-      roleCandidates,
-      lens,
-    )
-    if (scopedByMomentTier.candidates.length > 0) {
-      roleCandidates = scopedByMomentTier.candidates
-      if (scopedByMomentTier.appliedTier === 'anchor') {
-        fallbackReason =
-          fallbackReason ?? 'Romantic highlight scope enforced: anchor-tier moments only.'
-      } else if (scopedByMomentTier.appliedTier === 'builder') {
-        fallbackReason =
-          fallbackReason ??
-          'Romantic highlight scope fallback: no anchor-tier moments, using builder-tier moments.'
-      } else if (scopedByMomentTier.appliedTier === 'support') {
-        fallbackReason =
-          fallbackReason ??
-          'Romantic highlight scope fallback: no anchor/builder moments, support-tier retained.'
+    if (starterScopedSoftHighlightCandidates.length >= 2) {
+      roleCandidates = starterScopedSoftHighlightCandidates
+      fallbackReason =
+        fallbackReason ??
+        `${roleContract.label} retained starter-scoped soft highlights.`
+    } else {
+      const scopedByMomentTier = scopeRomanticHighlightCandidatesByMomentTier(
+        roleCandidates,
+        lens,
+      )
+      if (scopedByMomentTier.candidates.length > 0) {
+        roleCandidates = scopedByMomentTier.candidates
+        if (scopedByMomentTier.appliedTier === 'anchor') {
+          fallbackReason =
+            fallbackReason ?? 'Romantic highlight scope enforced: anchor-tier moments only.'
+        } else if (scopedByMomentTier.appliedTier === 'builder') {
+          fallbackReason =
+            fallbackReason ??
+            'Romantic highlight scope fallback: no anchor-tier moments, using builder-tier moments.'
+        } else if (scopedByMomentTier.appliedTier === 'support') {
+          fallbackReason =
+            fallbackReason ??
+            'Romantic highlight scope fallback: no anchor/builder moments, support-tier retained.'
+        }
       }
     }
   }

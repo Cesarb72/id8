@@ -15,6 +15,10 @@ const validShapes: InternalRole[][] = [
 ]
 
 const ARC_VIABILITY_HIGHLIGHT_THRESHOLD = 0.6
+const starterScopedSoftHighlightLabels = new Set([
+  'Highlight should center dessert, coffee, wine, or low-energy conversation.',
+  'Highlight should feel thoughtful, quiet, and date-appropriate.',
+])
 
 function matchesValidShape(roles: InternalRole[]): boolean {
   return validShapes.some(
@@ -39,6 +43,32 @@ function hasAnchorStop(stops: ArcStop[], intent: IntentProfile): boolean {
       ((anchorRole === 'start' && stop.role === 'warmup') ||
         (anchorRole === 'highlight' && stop.role === 'peak') ||
         (anchorRole === 'windDown' && stop.role === 'cooldown')),
+  )
+}
+
+function hasStarterScopedSoftHighlight(stops: ArcStop[]): boolean {
+  const highlight = stops.find((stop) => stop.role === 'peak')
+  if (!highlight) {
+    return false
+  }
+  const validity = highlight.scoredVenue.highlightValidity
+  const supportingStopsCount = stops.filter(
+    (stop) => stop.role === 'warmup' || stop.role === 'cooldown',
+  ).length
+  return (
+    supportingStopsCount >= 1 &&
+    validity.validityLevel === 'valid' &&
+    validity.packLiteralRequirementSatisfied === true &&
+    Boolean(
+      validity.packLiteralRequirementLabel &&
+        starterScopedSoftHighlightLabels.has(validity.packLiteralRequirementLabel),
+    ) &&
+    highlight.scoredVenue.roleContract.peak.satisfied &&
+    validity.personaVetoes.length === 0 &&
+    validity.contextVetoes.length === 0 &&
+    validity.violations.length === 0 &&
+    highlight.scoredVenue.roleScores.peak >= 0.63 &&
+    highlight.scoredVenue.stopShapeFit.highlight >= 0.75
   )
 }
 
@@ -75,7 +105,8 @@ function avoidsCategoryRepetition(
 
   const categories = stops.map((stop) => stop.scoredVenue.venue.category)
   const uniqueCategories = new Set(categories)
-  const allowedRepeats = lens.repetitionTolerance === 'high' ? 1 : 0
+  const allowedRepeats =
+    lens.repetitionTolerance === 'high' || hasStarterScopedSoftHighlight(stops) ? 1 : 0
   return uniqueCategories.size >= stops.length - allowedRepeats
 }
 
@@ -218,7 +249,9 @@ export function getInvalidArcCombinationReasons(
       reasons.push('single_stop_highlight_too_weak')
     }
   } else if (!isArcViable(stops)) {
-    reasons.push('arc_viability')
+    if (!hasStarterScopedSoftHighlight(stops)) {
+      reasons.push('arc_viability')
+    }
   }
   if (!hasUniqueVenues(stops)) {
     reasons.push('duplicate_venue')

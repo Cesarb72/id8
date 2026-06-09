@@ -135,14 +135,12 @@ async function main(): Promise<void> {
       `${starterId}: fallback probe invalid reason histogram must be present.`,
     )
     assert(
-      diagnostics.runGeneratePlanComparison.generated === false,
-      `${starterId}: comparison run is expected to fail before Patch 3C fixes behavior.`,
+      diagnostics.runGeneratePlanComparison.generated === true,
+      `${starterId}: comparison run should generate after Patch 3E compatibility fix.`,
     )
     assert(
-      diagnostics.runGeneratePlanComparison.failureReason?.includes(
-        'partial_arcs_built_but_invalid',
-      ) === true,
-      `${starterId}: failure reason must include partial_arcs_built_but_invalid when applicable.`,
+      diagnostics.arcAssembly.candidateCount > 0,
+      `${starterId}: arc assembly should produce candidates after Patch 3E compatibility fix.`,
     )
 
     summaries.push({
@@ -166,7 +164,8 @@ async function main(): Promise<void> {
         validHighlightOnlyCount: diagnostics.fallbackProbe.validHighlightOnlyCount,
       },
       inferredFailureCategories: diagnostics.inferredFailureCategories,
-      failureReason: diagnostics.runGeneratePlanComparison.failureReason,
+      generated: diagnostics.runGeneratePlanComparison.generated,
+      selectedStopIds: diagnostics.runGeneratePlanComparison.selectedStopIds,
     })
   }
 
