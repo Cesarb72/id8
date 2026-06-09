@@ -2551,6 +2551,7 @@ export async function runGeneratePlan(
   }
   const retrievalDiagnostics: GenerationDiagnostics['retrievalDiagnostics'] = {
     stageCounts: retrieval.stageCounts,
+    bearingsRuntimeHours: retrieval.sourceMode.bearingsRuntimeHours,
     liveSource: {
       requestedMode: retrieval.sourceMode.requestedMode,
       effectiveMode: retrieval.sourceMode.effectiveMode,

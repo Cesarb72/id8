@@ -34,6 +34,7 @@ import type {
   TasteHighlightTier,
   TasteRoleSuitability,
 } from '../interpretation/taste/types'
+import type { BearingsRuntimeHoursDiagnostics } from '../bearings/runtimeHoursValidationDiagnostics'
 
 export type FallbackRelaxationLevel = 'none' | 'lens-soft' | 'lens-off'
 export type SelectionStrengthLabel =
@@ -439,6 +440,7 @@ export interface TasteInterpretationDiagnostics {
 
 export interface RetrievalDiagnostics {
   stageCounts: RetrievalStageDiagnostics
+  bearingsRuntimeHours?: BearingsRuntimeHoursDiagnostics
   liveSource: {
     requestedMode: SourceMode
     effectiveMode: SourceMode

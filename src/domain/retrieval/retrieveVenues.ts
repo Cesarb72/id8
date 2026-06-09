@@ -16,6 +16,10 @@ import {
 } from '../field/corpus/resolveCurateStaticFieldCorpusVenues'
 import { deriveVenueHappeningsSignals } from '../normalize/deriveVenueHappeningsSignals'
 import {
+  buildRuntimeHoursValidationDiagnostics,
+  type BearingsRuntimeHoursDiagnostics,
+} from '../bearings/runtimeHoursValidationDiagnostics'
+import {
   BOUNDED_NEARBY_STRETCH_DRIVE_MINUTES,
   isOutsideStrictNearbyButWithinBoundedStretch,
   isWithinStrictNearbyWindow,
@@ -176,6 +180,7 @@ export interface RetrieveVenuesResult {
     defaultCityFallbackUsed?: boolean
     providerAuthoritySummary?: ProviderAuthoritySummary
     curateStaticCorpus?: CurateStaticFieldCorpusDiagnostics
+    bearingsRuntimeHours?: BearingsRuntimeHoursDiagnostics
   }
   stageCounts: {
     totalSeed: number
@@ -939,6 +944,7 @@ export async function retrieveVenues(
     } else if (fallbackUsed && retrievalSourceMode !== 'curated') {
       inventoryTruth = 'fallback_filled'
     }
+    const bearingsRuntimeHours = buildRuntimeHoursValidationDiagnostics(venues)
     const result: RetrieveVenuesResult = {
       venues,
       totalVenueCount: mergedPool.venues.length,
@@ -1013,6 +1019,9 @@ export async function retrieveVenues(
         bootstrapInjectionUsed,
         defaultCityFallbackUsed,
         providerAuthoritySummary,
+        ...(bearingsRuntimeHours.requiredVenueCount > 0
+          ? { bearingsRuntimeHours }
+          : {}),
         ...(curateStaticCorpus.diagnostics.enabled
           ? { curateStaticCorpus: curateStaticCorpus.diagnostics }
           : {}),
