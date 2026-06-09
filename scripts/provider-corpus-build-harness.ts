@@ -209,6 +209,8 @@ function findSourceFiles(directory: string): string[] {
 export function findRuntimeProviderCorpusImports(): string[] {
   const srcRoot = join(process.cwd(), 'src')
   const allowedOfflineFiles = new Set([
+    join(srcRoot, 'domain', 'field', 'corpus', 'promoteProviderCorpus.ts'),
+    join(srcRoot, 'domain', 'field', 'corpus', 'types.ts'),
     join(srcRoot, 'domain', 'providers', 'providerCorpusArtifact.ts'),
     join(srcRoot, 'domain', 'providers', 'providerCorpusManifest.ts'),
     join(srcRoot, 'domain', 'providers', 'providerCorpusReviewReport.ts'),

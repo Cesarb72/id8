@@ -346,6 +346,8 @@ function findRuntimeArtifactImports(): string[] {
   const artifactPath = join(srcRoot, 'domain', 'providers', 'providerCorpusArtifact.ts')
   const offlineSchemaPaths = new Set([
     artifactPath,
+    join(srcRoot, 'domain', 'field', 'corpus', 'promoteProviderCorpus.ts'),
+    join(srcRoot, 'domain', 'field', 'corpus', 'types.ts'),
     join(srcRoot, 'domain', 'providers', 'providerCorpusReviewReport.ts'),
   ])
   return findSourceFiles(srcRoot)

@@ -16,6 +16,7 @@ export type VenueRouteFootprint = 'compact' | 'neighborhood-hop' | 'destination'
 
 export type QualityGateStatus = 'approved' | 'demoted' | 'suppressed'
 export type QualityGateContext = 'runtime-live' | 'offline-provider-corpus'
+export type BearingsValidationRequirement = 'runtime_hours_validation_required'
 
 export interface VenueHappeningsSignals {
   hotspotStrength: number
@@ -88,6 +89,7 @@ export interface VenueSourceMetadata {
   approvalBlockers: string[]
   demotionReasons: string[]
   suppressionReasons: string[]
+  bearingsValidationRequirements?: BearingsValidationRequirement[]
   happenings?: VenueHappeningsSignals
 }
 
