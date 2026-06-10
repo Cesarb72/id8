@@ -1,6 +1,7 @@
 import { starterPacks } from '../src/data/starterPacks.ts'
 import { buildCuratePublicCardGateDiagnostics } from '../src/app/services/curate/buildCuratePublicCardGateDiagnostics.ts'
 import { buildCurateScenarioCardGateDiagnostics } from '../src/app/services/curate/buildCurateScenarioCardGateDiagnostics.ts'
+import { buildCuratePreviewCommitabilityCacheKey } from '../src/app/services/curate/curatePreviewCommitabilityCache.ts'
 import { FIELD_STATIC_PROVIDER_CORPUS_CURATE_ENV_KEY } from '../src/domain/field/corpus/fieldStaticProviderCorpusConfig.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
 
@@ -23,6 +24,11 @@ const committedFallbackAcceptedStarterIds = new Set<string>([
   'hidden-cocktail-corners',
   'live-music-loop',
 ])
+const staleHostedRouteStops = [
+  'start:Nirvana Soul',
+  'highlight:Adega Wine Atelier',
+  'windDown:Jtown Manju House',
+] as const
 
 type TargetStarterId = (typeof targetStarterIds)[number]
 
@@ -96,8 +102,37 @@ function findStarterPack(id: TargetStarterId): StarterPack {
   return starterPack
 }
 
+function assertStarterScopedCacheIsolation(): void {
+  const artifactId = 'step2_scenario_built_friends_cultured_1'
+  const previousStarterId = 'wine-slow-evening'
+  const nextStarterId = 'live-music-loop'
+  const previousKey = buildCuratePreviewCommitabilityCacheKey({
+    starterPackId: previousStarterId,
+    artifactId,
+  })
+  const nextKey = buildCuratePreviewCommitabilityCacheKey({
+    starterPackId: nextStarterId,
+    artifactId,
+  })
+  const cache = {
+    [previousKey]: {
+      approvedFinalRouteStops: [...staleHostedRouteStops],
+    },
+  }
+  assert(previousKey !== nextKey, 'Starter-scoped commitability keys must differ.')
+  assert(
+    cache[nextKey as keyof typeof cache] == null,
+    'A starter switch must not find an approved payload under the next starter key.',
+  )
+}
+
+function hasExactStaleHostedRoute(stops: readonly string[]): boolean {
+  return staleHostedRouteStops.every((stop) => stops.includes(stop))
+}
+
 async function main(): Promise<void> {
   setEnv()
+  assertStarterScopedCacheIsolation()
   const rows = []
 
   for (const starterId of targetStarterIds) {
@@ -180,6 +215,18 @@ async function main(): Promise<void> {
         `${starterId} ${mode}: committed direct-route fallback must reject missing start role.`,
       )
     }
+    if (hostedFallbackStarterIds.has(starterId)) {
+      assert(
+        !hasExactStaleHostedRoute(diagnostics.directPlannerRouteStops),
+        `${starterId} ${mode}: direct planner route must not be the stale Adega/Nirvana/Jtown route.`,
+      )
+      if (diagnostics.committedRouteFallback.status === 'accepted') {
+        assert(
+          !hasExactStaleHostedRoute(diagnostics.directPlannerRouteStops),
+          `${starterId} ${mode}: accepted fallback must be based on current starter route stops.`,
+        )
+      }
+    }
     if (
       scenario &&
       scenario.qualifiedVisibleCardCount > 0 &&
@@ -236,6 +283,7 @@ async function main(): Promise<void> {
     `${JSON.stringify(
       {
         fetchCallCount,
+        starterScopedCacheIsolation: 'passed',
         targetStarterIds,
         rootCauseClassification:
           'E. public truth gate/card boundary hides committed route when scenario artifacts produce no qualified card',

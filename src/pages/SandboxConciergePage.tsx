@@ -98,6 +98,7 @@ import {
   isCurateCommittedRouteFallbackArtifact,
   type CurateCommittedRouteFallbackRejectedReason,
 } from '../app/services/curate/buildCurateCommittedRouteFallback'
+import { buildCuratePreviewCommitabilityCacheKey } from '../app/services/curate/curatePreviewCommitabilityCache'
 import {
   SwapCommitCoreError,
   applyPreviewSwapCommit,
@@ -9654,6 +9655,27 @@ export function SandboxConciergePage({
     () => starterPacks.find((pack) => pack.id === selectedStarterPackId) ?? null,
     [selectedStarterPackId],
   )
+  const selectedStarterPackCacheId = selectedStarterPack?.id ?? null
+  const getCuratePreviewCommitabilityCacheKey = useCallback(
+    (artifactId: string) =>
+      buildCuratePreviewCommitabilityCacheKey({
+        starterPackId: selectedStarterPackCacheId,
+        artifactId,
+      }),
+    [selectedStarterPackCacheId],
+  )
+  const getCuratePreviewCommitability = useCallback(
+    (artifactId: string | null | undefined) => {
+      const normalizedArtifactId = artifactId?.trim()
+      if (!normalizedArtifactId) {
+        return undefined
+      }
+      return curatePreviewCommitabilityByArtifactId[
+        getCuratePreviewCommitabilityCacheKey(normalizedArtifactId)
+      ]
+    },
+    [curatePreviewCommitabilityByArtifactId, getCuratePreviewCommitabilityCacheKey],
+  )
   const showCurateStarterGate = isCurateWrapperActive && !curateStarterReady
   const showBuildAnchorGate = isBuildWrapperActive && !buildAnchorReady
   const districtLocationQuery = useMemo(() => city.trim(), [city])
@@ -9966,6 +9988,7 @@ export function SandboxConciergePage({
   const previousDirectionIdentityRef = useRef<Map<string, string>>(new Map())
   const previousPersonaVibeRef = useRef<{ persona: PersonaMode; vibe: VibeAnchor } | null>(null)
   const selectionEpochRef = useRef(0)
+  const previousCurateStarterPackIdRef = useRef<string | null>(selectedStarterPack?.id ?? null)
   const autoDirectionSyncAttemptRef = useRef<string | null>(null)
   const planRef = useRef<DemoPlanState | undefined>(plan)
   const finalRouteRef = useRef<RuntimeRouteArtifact | null>(finalRoute)
@@ -9995,6 +10018,40 @@ export function SandboxConciergePage({
     setFinalRoute(nextRoute)
     setRouteVersion((current) => (nextRoute ? current + 1 : 0))
   }, [])
+  useEffect(() => {
+    if (!isCurateWrapperActive) {
+      previousCurateStarterPackIdRef.current = selectedStarterPack?.id ?? null
+      return
+    }
+    const currentStarterPackId = selectedStarterPack?.id ?? null
+    const previousStarterPackId = previousCurateStarterPackIdRef.current
+    if (previousStarterPackId === currentStarterPackId) {
+      return
+    }
+    previousCurateStarterPackIdRef.current = currentStarterPackId
+    selectionEpochRef.current += 1
+    curatePreviewCommitabilityAttemptRef.current = {}
+    curateQualificationInFlightRef.current = {}
+    curateCommittedRouteFallbackAttemptRef.current = null
+    setSelectedDirectionId(null)
+    setSelectedStep2CandidateArtifactId(null)
+    setUserSelectedDirection(null)
+    setSelectedIdReconciled(false)
+    setCuratePreviewCommitabilityByArtifactId({})
+    setCurateQualificationCacheHitByArtifactId({})
+    setCurateCommittedRouteFallbackState(null)
+    setCurateRefinementEntryPayload(null)
+    setCanonicalStopByRole({})
+    setRejectedStopRoles([])
+    setPlan(undefined)
+    updateFinalRoute(null)
+    setHasRevealed(false)
+    setPreviewSwap(undefined)
+    setExpandedRole(null)
+    setAppliedSwapRole(null)
+    setNearbySummaryByRole({})
+    setError(undefined)
+  }, [isCurateWrapperActive, selectedStarterPack?.id, updateFinalRoute])
   const applyCurateRefinementEntryPayload = useCallback(
     (
       nextPayload: CurateRefinementEntryPayload<
@@ -11319,12 +11376,13 @@ export function SandboxConciergePage({
   const curateQualificationSourceFingerprint = useMemo(
     () =>
       [
+        selectedStarterPack?.id ?? 'no_starter',
         fixtureCandidateSourceFingerprint,
         step2CandidateRouteArtifacts
           .map((artifact) => `${artifact.id}:${artifact.sourceOpportunityId}`)
           .join(','),
       ].join('|'),
-    [fixtureCandidateSourceFingerprint, step2CandidateRouteArtifacts],
+    [fixtureCandidateSourceFingerprint, selectedStarterPack?.id, step2CandidateRouteArtifacts],
   )
   const curateDisplayFallbackRouteArtifacts = useMemo<ContractEntryArtifact[]>(() => {
     if (!isCurateWrapperActive) {
@@ -11368,7 +11426,7 @@ export function SandboxConciergePage({
         if (byArtifactId.has(artifact.id)) {
           return
         }
-        const cachedPreflight = curatePreviewCommitabilityByArtifactId[artifact.id]
+        const cachedPreflight = getCuratePreviewCommitability(artifact.id)
         const opportunity = verifiedCityOpportunityById.get(artifact.sourceOpportunityId)
         const roleSupportByRole: Record<DirectionCoreRole, number> = {
           start: opportunity?.starts.length ?? 0,
@@ -11428,7 +11486,7 @@ export function SandboxConciergePage({
     },
     [
       curateDisplayFallbackRouteArtifacts,
-      curatePreviewCommitabilityByArtifactId,
+      getCuratePreviewCommitability,
       step2CandidateRouteArtifacts,
       verifiedCityOpportunityById,
     ],
@@ -11649,7 +11707,7 @@ export function SandboxConciergePage({
             wasDeprioritizedForRoleSupport: true,
           },
         qualificationStatus: getCurateQualificationStatus(
-          curatePreviewCommitabilityByArtifactId[artifact.id],
+          getCuratePreviewCommitability(artifact.id),
         ),
       }))
       .filter((entry, index, list) => list.findIndex((candidate) => candidate.identityKey === entry.identityKey) === index)
@@ -11741,19 +11799,19 @@ export function SandboxConciergePage({
     return candidateRouteArtifactsForDisplay.map((artifact) =>
       buildCurateVisibleCardModelFromArtifact({
         artifact,
-        preflight: curatePreviewCommitabilityByArtifactId[artifact.id],
+        preflight: getCuratePreviewCommitability(artifact.id),
         starterPack: selectedStarterPack,
       }),
     )
   }, [
     candidateRouteArtifactsForDisplay,
-    curatePreviewCommitabilityByArtifactId,
+    getCuratePreviewCommitability,
     selectedStarterPack,
   ])
   const curateQualificationSummary = useMemo(() => {
     const statuses = curateQualificationCandidateArtifacts.map((artifact) =>
       getCurateQualificationStatus(
-        curatePreviewCommitabilityByArtifactId[artifact.id],
+        getCuratePreviewCommitability(artifact.id),
         artifact.qualification,
       ),
     )
@@ -11765,7 +11823,7 @@ export function SandboxConciergePage({
         (status) => status === 'rejected' || status === 'runtime_error',
       ).length,
     }
-  }, [curatePreviewCommitabilityByArtifactId, curateQualificationCandidateArtifacts])
+  }, [getCuratePreviewCommitability, curateQualificationCandidateArtifacts])
   const curateScenarioQualifiedVisibleCardModels = useMemo(() => {
     return curateVisibleCardModels
       .filter((model) => model.hasApprovedPayload)
@@ -12278,14 +12336,14 @@ export function SandboxConciergePage({
       return null
     }
     return (
-      curatePreviewCommitabilityByArtifactId[activeCurateArtifact.id] ??
+      getCuratePreviewCommitability(activeCurateArtifact.id) ??
       (curateCommittedRouteFallbackState?.artifact?.id === activeCurateArtifact.id
         ? curateCommittedRouteFallbackState.commitability
         : null)
     )
   }, [
     curateCommittedRouteFallbackState,
-    curatePreviewCommitabilityByArtifactId,
+    getCuratePreviewCommitability,
     explicitQualifiedCurateSelectedArtifact,
     isCurateWrapperActive,
     selectedCandidateRouteArtifact,
@@ -12329,7 +12387,7 @@ export function SandboxConciergePage({
         opportunity,
       })
       const lineage = resolveSelectedArtifactPlanningLineage(artifact)
-      const preflight = curatePreviewCommitabilityByArtifactId[artifact.id]
+      const preflight = getCuratePreviewCommitability(artifact.id)
       const starterDebug = starterAwareOpportunityDebugById.get(artifact.sourceOpportunityId)
       const preDisplayBuildability =
         curatePreDisplayBuildabilityByArtifactId.get(artifact.id) ?? null
@@ -12507,9 +12565,15 @@ export function SandboxConciergePage({
         qualificationReason:
           visibleCardModel?.qualificationReason ?? preflight?.failedCheck ?? 'none',
         qualificationCacheHit:
-          curateQualificationCacheHitByArtifactId[artifact.id] == null
+          curateQualificationCacheHitByArtifactId[
+            getCuratePreviewCommitabilityCacheKey(artifact.id)
+          ] == null
             ? 'n/a'
-            : String(curateQualificationCacheHitByArtifactId[artifact.id]),
+            : String(
+                curateQualificationCacheHitByArtifactId[
+                  getCuratePreviewCommitabilityCacheKey(artifact.id)
+                ],
+              ),
         windDownRepairAttempted:
           preflight?.windDownRepairAttempted == null
             ? 'false'
@@ -12587,7 +12651,7 @@ export function SandboxConciergePage({
       primaryVisibleQualifiedCount: curatePrimaryCardDisplay.primaryVisibleQualifiedCount,
       selectedStep2CandidateArtifactId: selectedStep2CandidateArtifactId ?? 'n/a',
       visibleCards: curateVisibleCardModels.map((model) => {
-        const preflight = curatePreviewCommitabilityByArtifactId[model.artifact.id]
+        const preflight = getCuratePreviewCommitability(model.artifact.id)
         return {
           artifactId: model.artifact.id,
           qualificationStatus: model.qualificationStatus,
@@ -12609,7 +12673,7 @@ export function SandboxConciergePage({
       curatePrimaryCardDisplay.qualifiedRouteCardCount,
       curatePrimaryCardDisplay.scenarioSeedsCount,
       curatePrimaryCardDisplay.unqualifiedDraftsHiddenCount,
-      curatePreviewCommitabilityByArtifactId,
+      getCuratePreviewCommitability,
       curateQualificationCandidateArtifacts,
       curateQualificationSummary.checkedCandidateCount,
       curateQualificationSummary.qualifiedCandidateCount,
@@ -12656,7 +12720,7 @@ export function SandboxConciergePage({
           artifact,
           opportunity,
         })
-        const preflight = artifact ? curatePreviewCommitabilityByArtifactId[artifact.id] : undefined
+        const preflight = artifact ? getCuratePreviewCommitability(artifact.id) : undefined
         const rolePoolVenueIdsByRole = preflight?.rolePoolVenueIdsByRole
         const rolePoolVenueIdsSummary = rolePoolVenueIdsByRole
           ? `start:${formatIdList(rolePoolVenueIdsByRole.start)} | highlight:${formatIdList(
@@ -12728,9 +12792,15 @@ export function SandboxConciergePage({
             ? formatSelectedArtifactLineageSummary(resolveSelectedArtifactPlanningLineage(artifact))
             : 'n/a',
           qualificationCacheHit: artifact
-            ? curateQualificationCacheHitByArtifactId[artifact.id] == null
+            ? curateQualificationCacheHitByArtifactId[
+                getCuratePreviewCommitabilityCacheKey(artifact.id)
+              ] == null
               ? 'n/a'
-              : String(curateQualificationCacheHitByArtifactId[artifact.id])
+              : String(
+                  curateQualificationCacheHitByArtifactId[
+                    getCuratePreviewCommitabilityCacheKey(artifact.id)
+                  ],
+                )
             : 'n/a',
           rolePoolMembership: rolePoolVenueIdsByRole
             ? `start:${String(rolePoolVenueIdsByRole.start.includes(selectedStartVenueId))} | highlight:${String(
@@ -13792,9 +13862,30 @@ export function SandboxConciergePage({
         setPersona(pack.personaBias)
       }
       setPrimaryVibe(pack.primaryAnchor)
+      selectionEpochRef.current += 1
+      curatePreviewCommitabilityAttemptRef.current = {}
+      curateQualificationInFlightRef.current = {}
+      curateCommittedRouteFallbackAttemptRef.current = null
+      setSelectedDirectionId(null)
+      setSelectedStep2CandidateArtifactId(null)
+      setUserSelectedDirection(null)
+      setSelectedIdReconciled(false)
+      setCuratePreviewCommitabilityByArtifactId({})
+      setCurateQualificationCacheHitByArtifactId({})
+      setCurateCommittedRouteFallbackState(null)
+      setCurateRefinementEntryPayload(null)
+      setCanonicalStopByRole({})
+      setRejectedStopRoles([])
+      setPlan(undefined)
+      updateFinalRoute(null)
+      setHasRevealed(false)
+      setPreviewSwap(undefined)
+      setExpandedRole(null)
+      setAppliedSwapRole(null)
+      setNearbySummaryByRole({})
       setError(undefined)
     },
-    [],
+    [updateFinalRoute],
   )
 
   const handleCurateStarterContinue = useCallback(() => {
@@ -14317,16 +14408,17 @@ export function SandboxConciergePage({
         return
       }
       const artifactId = candidateArtifact.id
-      const cached = curatePreviewCommitabilityByArtifactIdRef.current[artifactId]
+      const cacheKey = getCuratePreviewCommitabilityCacheKey(artifactId)
+      const cached = curatePreviewCommitabilityByArtifactIdRef.current[cacheKey]
       if (
-        curateQualificationInFlightRef.current[artifactId] ||
+        curateQualificationInFlightRef.current[cacheKey] ||
         cached?.status === 'checking' ||
         cached?.status === 'committable' ||
         cached?.status === 'infeasible'
       ) {
         return
       }
-      curateQualificationInFlightRef.current[artifactId] = true
+      curateQualificationInFlightRef.current[cacheKey] = true
       const starterDebug = starterAwareOpportunityDebugById.get(candidateArtifact.sourceOpportunityId)
       try {
         const executeQualification = async (
@@ -14414,9 +14506,9 @@ export function SandboxConciergePage({
             discoveryPreferences: selectedArtifactDiscoveryPreferences ?? [],
           })
           const attemptKey = `${artifactId}::${activeDirectionContract.id}::${artifactToQualify.storySpine.windDown}`
-          curatePreviewCommitabilityAttemptRef.current[artifactId] = attemptKey
+          curatePreviewCommitabilityAttemptRef.current[cacheKey] = attemptKey
           setCuratePreviewCommitabilityByArtifactId((current) => {
-            const currentEntry = current[artifactId]
+            const currentEntry = current[cacheKey]
             const windDownRepairAttempted = Boolean(repairState?.attempted)
             const windDownRepairOriginal = repairState?.originalWindDown ?? null
             const windDownRepairReplacement = repairState?.repairedWindDown ?? null
@@ -14459,7 +14551,7 @@ export function SandboxConciergePage({
             }
             return {
               ...current,
-              [artifactId]: {
+              [cacheKey]: {
                 status: 'checking',
                 artifactId,
                 hardCommitCandidateCount: 0,
@@ -14690,7 +14782,7 @@ export function SandboxConciergePage({
               getCuratePreflightRuntimeReason,
             },
           )
-          if (curatePreviewCommitabilityAttemptRef.current[artifactId] !== attemptKey) {
+          if (curatePreviewCommitabilityAttemptRef.current[cacheKey] !== attemptKey) {
             return
           }
           if (qualificationAttempt.kind === 'repairRequested') {
@@ -14702,12 +14794,12 @@ export function SandboxConciergePage({
           }
           setCuratePreviewCommitabilityByArtifactId((current) => ({
             ...current,
-            [artifactId]: normalizeCuratePreviewCommitabilityState(qualificationAttempt.state),
+            [cacheKey]: normalizeCuratePreviewCommitabilityState(qualificationAttempt.state),
           }))
         }
         await executeQualification(candidateArtifact)
       } finally {
-        delete curateQualificationInFlightRef.current[artifactId]
+        delete curateQualificationInFlightRef.current[cacheKey]
       }
     },
     [
@@ -14719,6 +14811,7 @@ export function SandboxConciergePage({
       directionCards,
       districtLocationQuery,
       isCurateWrapperActive,
+      getCuratePreviewCommitabilityCacheKey,
       plannerDistrictTasteBridgeArtifacts,
       persona,
       primaryVibe,
@@ -14748,8 +14841,10 @@ export function SandboxConciergePage({
     curateQualificationSourceFingerprintRef.current = curateQualificationSourceFingerprint
     curatePreviewCommitabilityAttemptRef.current = {}
     curateQualificationInFlightRef.current = {}
+    curateCommittedRouteFallbackAttemptRef.current = null
     setCuratePreviewCommitabilityByArtifactId({})
     setCurateQualificationCacheHitByArtifactId({})
+    setCurateCommittedRouteFallbackState(null)
   }, [curateQualificationSourceFingerprint, isCurateWrapperActive])
 
   useEffect(() => {
@@ -14769,12 +14864,13 @@ export function SandboxConciergePage({
     }
     const qualificationCacheHitUpdates: Record<string, boolean> = {}
     const artifactsToQualify = curateQualificationCandidateArtifacts.filter((artifact) => {
-      const cached = curatePreviewCommitabilityByArtifactIdRef.current[artifact.id]
-      if (curateQualificationCacheHitByArtifactId[artifact.id] == null) {
-        qualificationCacheHitUpdates[artifact.id] = Boolean(cached)
+      const cacheKey = getCuratePreviewCommitabilityCacheKey(artifact.id)
+      const cached = curatePreviewCommitabilityByArtifactIdRef.current[cacheKey]
+      if (curateQualificationCacheHitByArtifactId[cacheKey] == null) {
+        qualificationCacheHitUpdates[cacheKey] = Boolean(cached)
       }
       return !(
-        curateQualificationInFlightRef.current[artifact.id] ||
+        curateQualificationInFlightRef.current[cacheKey] ||
         cached?.status === 'checking' ||
         cached?.status === 'committable' ||
         cached?.status === 'infeasible'
@@ -14811,6 +14907,7 @@ export function SandboxConciergePage({
   }, [
     curateQualificationCacheHitByArtifactId,
     curateQualificationPoolFingerprint,
+    getCuratePreviewCommitabilityCacheKey,
     hasRevealed,
     isCurateWrapperActive,
     qualifyCurateCandidateArtifact,
@@ -15573,7 +15670,7 @@ export function SandboxConciergePage({
       attachFinalRouteParityToContractEntryArtifact(
         attachQualificationToContractEntryArtifact(
           artifact,
-          curatePreviewCommitabilityByArtifactId[artifact.id],
+          getCuratePreviewCommitability(artifact.id),
         ),
         canonicalRouteArtifact?.finalRoute,
       ),
@@ -15610,7 +15707,7 @@ export function SandboxConciergePage({
   }, [
     candidateRouteArtifactsForDisplay,
     canonicalRouteArtifact?.finalRoute,
-    curatePreviewCommitabilityByArtifactId,
+    getCuratePreviewCommitability,
     curateQualifiedVisibleCardModels,
     directionCards,
   ])
@@ -16765,6 +16862,13 @@ export function SandboxConciergePage({
       curateVisibleCardModels.map((model) => [model.artifact.id, model] as const),
     )
 
+    const scopedCuratePreviewCommitabilityByArtifactId = Object.fromEntries(
+      candidateRouteArtifactsForDisplay.map((artifact) => [
+        artifact.id,
+        getCuratePreviewCommitability(artifact.id),
+      ]),
+    )
+
     return directionCards.map((entry) => {
       const explicitArtifactIdForDirection =
         selectedDirectionId === entry.id ? selectedStep2CandidateArtifactId : null
@@ -16788,16 +16892,18 @@ export function SandboxConciergePage({
         isCurateWrapperActive,
         selectedRouteArtifact,
         visibleCardModelByArtifactId,
-        curatePreviewCommitabilityByArtifactId,
+        curatePreviewCommitabilityByArtifactId:
+          scopedCuratePreviewCommitabilityByArtifactId,
         verifiedCityOpportunityById,
         finalRouteForParity,
       })
     })
   }, [
     canonicalRouteArtifact?.finalRoute,
-    curatePreviewCommitabilityByArtifactId,
+    candidateRouteArtifactsForDisplay,
     curateVisibleCardModels,
     directionCards,
+    getCuratePreviewCommitability,
     isCurateWrapperActive,
     resolveCandidateRouteArtifactSelection,
     selectedCandidateArtifactResolution.artifactCountForDirection,
@@ -20030,7 +20136,7 @@ export function SandboxConciergePage({
       return null
     }
     const opportunity = verifiedCityOpportunityById.get(artifact.sourceOpportunityId)
-    const preflight = curatePreviewCommitabilityByArtifactId[artifact.id]
+    const preflight = getCuratePreviewCommitability(artifact.id)
     const discoveryPreferences = buildSelectedArtifactDiscoveryPreferences({
       artifact,
       opportunity,
