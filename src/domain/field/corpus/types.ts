@@ -8,6 +8,7 @@ import type {
   BearingsValidationRequirement,
   QualityGateStatus,
 } from '../../types/normalization'
+import type { HoursPeriod } from '../../types/hours'
 import type { Venue } from '../../types/venue'
 
 export type { BearingsValidationRequirement } from '../../types/normalization'
@@ -40,10 +41,20 @@ export interface PromotedFieldProviderCorpusVenueAudit {
   suppressionReasons: string[]
 }
 
+export interface PromotedFieldProviderCorpusRuntimeHoursProof {
+  structuredPeriods: HoursPeriod[]
+  textHoursAvailable: boolean
+  proofSource:
+    | 'structured_periods'
+    | 'text_only'
+    | 'none'
+}
+
 export interface PromotedFieldProviderCorpusVenue {
   id: string
   providerProvenance: PromotedFieldProviderCorpusProvenance
   qualityGateStatus: Exclude<QualityGateStatus, 'suppressed'>
+  runtimeHoursProof: PromotedFieldProviderCorpusRuntimeHoursProof
   support: ProviderCorpusArtifactVenueSupport
   venue: Venue
   venueAudit: PromotedFieldProviderCorpusVenueAudit

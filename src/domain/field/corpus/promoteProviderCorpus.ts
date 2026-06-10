@@ -41,6 +41,27 @@ function buildBearingsValidationRequirements(
     : []
 }
 
+function buildRuntimeHoursProof(
+  venueArtifact: ProviderCorpusArtifact['venues'][number],
+): PromotedFieldProviderCorpusVenue['runtimeHoursProof'] {
+  const structuredPeriods = venueArtifact.rawPlace.hoursPeriods ?? []
+  const textHoursAvailable = Boolean(
+    venueArtifact.rawPlace.currentOpeningHoursText?.length ||
+      venueArtifact.rawPlace.regularOpeningHoursText?.length,
+  )
+
+  return {
+    structuredPeriods,
+    textHoursAvailable,
+    proofSource:
+      structuredPeriods.length > 0
+        ? 'structured_periods'
+        : textHoursAvailable
+          ? 'text_only'
+          : 'none',
+  }
+}
+
 function promoteVenue(
   venueArtifact: ProviderCorpusArtifact['venues'][number],
   staticVenues: Venue[],
@@ -84,6 +105,7 @@ function promoteVenue(
       sourceQueryText: venueArtifact.sourceQueryText,
     },
     qualityGateStatus: sourceVenue.source.qualityGateStatus,
+    runtimeHoursProof: buildRuntimeHoursProof(venueArtifact),
     support: venueArtifact.support,
     venue,
     venueAudit: {
@@ -182,6 +204,31 @@ export function validatePromotedFieldProviderCorpus(
       errors,
       !('rawPlace' in promotedVenue),
       `${promotedVenue.id}: rawPlace must not be present on promoted venue.`,
+    )
+    addError(
+      errors,
+      Array.isArray(promotedVenue.runtimeHoursProof.structuredPeriods),
+      `${promotedVenue.id}: runtimeHoursProof.structuredPeriods must be an array.`,
+    )
+    addError(
+      errors,
+      typeof promotedVenue.runtimeHoursProof.textHoursAvailable === 'boolean',
+      `${promotedVenue.id}: runtimeHoursProof.textHoursAvailable must be boolean.`,
+    )
+    addError(
+      errors,
+      ['structured_periods', 'text_only', 'none'].includes(promotedVenue.runtimeHoursProof.proofSource),
+      `${promotedVenue.id}: runtimeHoursProof.proofSource is invalid.`,
+    )
+    addError(
+      errors,
+      !('openNow' in promotedVenue.runtimeHoursProof),
+      `${promotedVenue.id}: runtimeHoursProof must not use persisted openNow as proof.`,
+    )
+    addError(
+      errors,
+      !('likelyOpenForCurrentWindow' in promotedVenue.runtimeHoursProof),
+      `${promotedVenue.id}: runtimeHoursProof must not use persisted likelyOpenForCurrentWindow as proof.`,
     )
     if (promotedVenue.venueAudit.demotionReasons.includes(OFFLINE_CORPUS_TIME_SENSITIVE_AUDIT_REASON)) {
       addError(
