@@ -10,7 +10,6 @@ import {
 import { sanJoseProviderCorpus } from '../src/domain/field/corpus/sanJoseProviderCorpus.ts'
 import { sanJoseProviderCorpusManifest } from '../src/domain/field/corpus/sanJoseProviderCorpusManifest.ts'
 import {
-  OFFLINE_CORPUS_TIME_SENSITIVE_AUDIT_REASON,
   RUNTIME_HOURS_VALIDATION_REQUIRED,
 } from '../src/domain/field/corpus/types.ts'
 import type { PromotedFieldProviderCorpus } from '../src/domain/field/corpus/types.ts'
@@ -116,6 +115,18 @@ function validatePromotion(): void {
   assert(!generatedSerialized.includes('"rawPlace"'), 'Promoted corpus must not include rawPlace.')
   assert(!/AIza[0-9A-Za-z_-]{20,}/.test(generatedSerialized), 'Promoted corpus contains key-like value.')
   assert(sanJoseProviderCorpus.venueCount === generatedJson.venueCount, 'Typed wrapper venue count mismatch.')
+  const structuredCount = generatedJson.venues.filter(
+    (venue) => venue.runtimeHoursProof.structuredPeriods.length > 0,
+  ).length
+  const textOnlyCount = generatedJson.venues.filter(
+    (venue) => venue.runtimeHoursProof.proofSource === 'text_only',
+  ).length
+  const noneCount = generatedJson.venues.filter(
+    (venue) => venue.runtimeHoursProof.proofSource === 'none',
+  ).length
+  assert(structuredCount === 92, `Expected structured runtime-hours proof count 92, received ${structuredCount}.`)
+  assert(textOnlyCount === 0, `Expected text-only runtime-hours proof count 0, received ${textOnlyCount}.`)
+  assert(noneCount === 4, `Expected no-hours runtime proof count 4, received ${noneCount}.`)
 
   const sourceSuppressedCount = artifact.venues.filter(
     (venue) => venue.normalizedVenue.source.qualityGateStatus === 'suppressed',
@@ -149,14 +160,14 @@ function validatePromotion(): void {
     'Original live_google id must remain provenance only.',
   )
   assert(
-    paperPlane.venueAudit.demotionReasons.includes(OFFLINE_CORPUS_TIME_SENSITIVE_AUDIT_REASON),
-    'Paper Plane audit demotion reason must be preserved.',
-  )
-  assert(
     paperPlane.venue.source.bearingsValidationRequirements?.includes(
       RUNTIME_HOURS_VALIDATION_REQUIRED,
     ) === true,
-    'Paper Plane Bearings runtime hours requirement must be preserved.',
+    'Paper Plane Bearings runtime hours requirement must be assigned from time-sensitive category ownership.',
+  )
+  assert(
+    paperPlane.runtimeHoursProof.structuredPeriods.length > 0,
+    'Paper Plane structured runtime hours proof must be preserved.',
   )
 
   const keyHits = findKeyLikeHits(join(process.cwd(), 'src', 'domain', 'field', 'corpus'))
@@ -181,6 +192,11 @@ function validatePromotion(): void {
         },
         promotedCorpusSha256: sha256(generatedSerialized),
         promotedVenueCount: generatedJson.venueCount,
+        runtimeHoursProof: {
+          structuredCount,
+          textOnlyCount,
+          noneCount,
+        },
         runtimeImports,
         sourceArtifactSha256: sha256(sourceSerialized),
         suppressedVenueCount: generatedJson.excluded.suppressedVenueCount,

@@ -21,30 +21,59 @@ function toWeeklyMinute(day: number, hour: number, minute: number): number {
   return day * 24 * 60 + hour * 60 + minute
 }
 
+function isValidPeriodPoint(point: HoursPeriod['open']): boolean {
+  return (
+    point !== undefined &&
+    Number.isInteger(point.day) &&
+    point.day >= 0 &&
+    point.day <= 6 &&
+    Number.isInteger(point.hour) &&
+    point.hour >= 0 &&
+    point.hour <= 23 &&
+    Number.isInteger(point.minute) &&
+    point.minute >= 0 &&
+    point.minute <= 59
+  )
+}
+
+function isValidPlanningWindow(planningWindow: PlanningTimeWindowSignal): boolean {
+  return isValidPeriodPoint({
+    day: planningWindow.day,
+    hour: planningWindow.hour,
+    minute: planningWindow.minute,
+  })
+}
+
 function isOpenDuringPlanningWindow(
   periods: HoursPeriod[],
   planningWindow: PlanningTimeWindowSignal,
-): boolean {
+): boolean | undefined {
+  if (!isValidPlanningWindow(planningWindow)) {
+    return undefined
+  }
+
   const targetMinute = toWeeklyMinute(
     planningWindow.day,
     planningWindow.hour,
     planningWindow.minute,
   )
+  let validPeriodCount = 0
 
   for (const period of periods) {
-    if (!period.open || !period.close) {
+    if (!isValidPeriodPoint(period.open) || !isValidPeriodPoint(period.close)) {
       continue
     }
+    validPeriodCount += 1
 
     let openMinute = toWeeklyMinute(
-      period.open.day,
-      period.open.hour,
-      period.open.minute,
+      period.open!.day,
+      period.open!.hour,
+      period.open!.minute,
     )
     let closeMinute = toWeeklyMinute(
-      period.close.day,
-      period.close.hour,
-      period.close.minute,
+      period.close!.day,
+      period.close!.hour,
+      period.close!.minute,
     )
 
     if (closeMinute <= openMinute) {
@@ -56,6 +85,10 @@ function isOpenDuringPlanningWindow(
     if (adjustedTarget >= openMinute && adjustedTarget < closeMinute) {
       return true
     }
+  }
+
+  if (validPeriodCount === 0) {
+    return undefined
   }
 
   return false
@@ -111,13 +144,18 @@ export function evaluateStaticRuntimeHoursProof(
     }
   }
 
+  const openDuringWindow = isOpenDuringPlanningWindow(
+    runtimeHoursProof.structuredPeriods,
+    planningWindow,
+  )
+
   return {
-    status: isOpenDuringPlanningWindow(
-      runtimeHoursProof.structuredPeriods,
-      planningWindow,
-    )
-      ? 'open_for_plan_window'
-      : 'closed_for_plan_window',
+    status:
+      openDuringWindow === undefined
+        ? 'unknown_for_plan_window'
+        : openDuringWindow
+          ? 'open_for_plan_window'
+          : 'closed_for_plan_window',
     required,
     proofSource: runtimeHoursProof.proofSource,
     structuredPeriodCount: runtimeHoursProof.structuredPeriods.length,

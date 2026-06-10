@@ -1,8 +1,11 @@
 import type { Venue } from '../types/venue'
 
 export type BearingsRuntimeHoursProofStatus =
+  | 'closed_for_plan_window'
   | 'missing_runtime_proof'
   | 'not_required'
+  | 'open_for_plan_window'
+  | 'unknown_for_plan_window'
 
 export interface BearingsRuntimeHoursPersistedSnapshot {
   openNow?: boolean
@@ -51,6 +54,11 @@ export function assessRuntimeHoursValidationDiagnostic(
 ): BearingsRuntimeHoursVenueDiagnostic {
   const wouldRequireRuntimeHoursValidation =
     venueRequiresRuntimeHoursValidation(venue)
+  const runtimeProofStatus =
+    venue.source.runtimeHoursPlanWindowProofStatus ??
+    (wouldRequireRuntimeHoursValidation
+      ? 'missing_runtime_proof'
+      : 'not_required')
 
   return {
     venueId: venue.id,
@@ -61,10 +69,10 @@ export function assessRuntimeHoursValidationDiagnostic(
     providerRecordId: venue.source.providerRecordId,
     qualityGateStatus: venue.source.qualityGateStatus,
     wouldRequireRuntimeHoursValidation,
-    runtimeProofStatus: wouldRequireRuntimeHoursValidation
-      ? 'missing_runtime_proof'
-      : 'not_required',
-    wouldBlockUnderConservativeEnforcement: wouldRequireRuntimeHoursValidation,
+    runtimeProofStatus,
+    wouldBlockUnderConservativeEnforcement:
+      runtimeProofStatus === 'closed_for_plan_window' ||
+      runtimeProofStatus === 'missing_runtime_proof',
     persistedHoursSnapshot: {
       openNow: venue.source.openNow,
       hoursKnown: venue.source.hoursKnown,

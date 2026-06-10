@@ -91,6 +91,24 @@ function validatePureHelper(): void {
     },
   }
   const notRequired = findNotRequiredVenue()
+  const requiredWithOpenProof: Venue = {
+    ...requiredFixture,
+    source: {
+      ...requiredFixture.source,
+      runtimeHoursPlanWindowProofStatus: 'open_for_plan_window',
+      runtimeHoursPlanWindowSource: 'gate1_default_evening_window',
+      runtimeHoursStructuredPeriodCount: 6,
+    },
+  }
+  const requiredWithUnknownProof: Venue = {
+    ...requiredFixture,
+    source: {
+      ...requiredFixture.source,
+      runtimeHoursPlanWindowProofStatus: 'unknown_for_plan_window',
+      runtimeHoursPlanWindowSource: 'gate1_default_evening_window',
+      runtimeHoursStructuredPeriodCount: 0,
+    },
+  }
 
   const likelyOpenDiagnostic =
     assessRuntimeHoursValidationDiagnostic(requiredLikelyOpen)
@@ -131,20 +149,42 @@ function validatePureHelper(): void {
     'Venue without runtime-hours requirement must not conservatively block.',
   )
 
+  const openProofDiagnostic = assessRuntimeHoursValidationDiagnostic(requiredWithOpenProof)
+  assert(
+    openProofDiagnostic.runtimeProofStatus === 'open_for_plan_window',
+    'Required venue with structured open proof must report open_for_plan_window.',
+  )
+  assert(
+    !openProofDiagnostic.wouldBlockUnderConservativeEnforcement,
+    'Required venue with structured open proof must not conservatively block.',
+  )
+
+  const unknownProofDiagnostic = assessRuntimeHoursValidationDiagnostic(requiredWithUnknownProof)
+  assert(
+    unknownProofDiagnostic.runtimeProofStatus === 'unknown_for_plan_window',
+    'Required venue with no-period admission must report unknown_for_plan_window.',
+  )
+  assert(
+    !unknownProofDiagnostic.wouldBlockUnderConservativeEnforcement,
+    'Required venue with unknown proof must be admitted and not counted as a conservative block.',
+  )
+
   const summary = buildRuntimeHoursValidationDiagnostics([
     requiredLikelyOpen,
     requiredOpenNow,
+    requiredWithOpenProof,
+    requiredWithUnknownProof,
     notRequired,
   ])
-  assert(summary.evaluatedVenueCount === 3, 'Summary must evaluate all supplied venues.')
-  assert(summary.requiredVenueCount === 2, 'Summary must count required venues.')
+  assert(summary.evaluatedVenueCount === 5, 'Summary must evaluate all supplied venues.')
+  assert(summary.requiredVenueCount === 4, 'Summary must count required venues.')
   assert(
     summary.missingRuntimeProofCount === 2,
-    'Summary must classify every required venue as missing runtime proof in Patch 3A.',
+    'Summary must count only required venues without runtime proof as missing runtime proof.',
   )
   assert(
     summary.wouldBlockUnderConservativeEnforcementCount === 2,
-    'Summary must count conservative enforcement blocks without enforcing them.',
+    'Summary must count only missing or closed runtime proof as conservative blocks.',
   )
 }
 
@@ -179,13 +219,28 @@ async function validateCurateRetrievalDiagnostics(): Promise<void> {
   assert(diagnostics !== undefined, 'Bearings runtime-hours diagnostics must be surfaced.')
   assert(diagnostics.requiredVenueCount > 0, 'Diagnostics must count required venues.')
   assert(
-    diagnostics.requiredVenueCount === diagnostics.missingRuntimeProofCount,
-    'Patch 3A must classify every required retrieved venue as missing runtime proof.',
+    diagnostics.missingRuntimeProofCount === 0,
+    'Structured Field corpus admission must not classify admitted required venues as missing runtime proof.',
   )
   assert(
-    diagnostics.requiredVenueCount ===
-      diagnostics.wouldBlockUnderConservativeEnforcementCount,
-    'Patch 3A must report conservative blocks without enforcing them.',
+    diagnostics.wouldBlockUnderConservativeEnforcementCount === 0,
+    'Structured Field corpus admission must not report admitted required venues as conservative blocks.',
+  )
+
+  const admission = retrieval.sourceMode.curateStaticCorpus.runtimeHoursAdmission
+  assert(admission !== undefined, 'Curate static corpus diagnostics must include runtime-hours admission.')
+  assert(
+    admission.planningWindow.source === 'gate1_default_evening_window',
+    'Gate 1 default planning window source must be explicit.',
+  )
+  assert(admission.evaluatedCount > 0, 'Runtime-hours admission must evaluate Field corpus candidates.')
+  assert(
+    admission.blockedCount === admission.closedBlockedCount,
+    'Only closed_for_plan_window candidates may be blocked.',
+  )
+  assert(
+    admission.unknownAdmittedCount >= 0,
+    'Unknown runtime-hours candidates must be admitted and counted diagnostically.',
   )
 
   const finalRetrievedVenueIds = new Set(retrieval.venues.map((venue) => venue.id))
@@ -199,7 +254,7 @@ async function validateCurateRetrievalDiagnostics(): Promise<void> {
   assert(requiredRetrievedVenueIds.length > 0, 'Required venues must be present in retrieval output for diagnostics.')
   assert(
     requiredRetrievedVenueIds.every((venueId) => finalRetrievedVenueIds.has(venueId)),
-    'Patch 3A must not filter required venues from retrieval output.',
+    'Admitted required venues must remain in retrieval output.',
   )
 }
 

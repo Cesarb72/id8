@@ -1,5 +1,5 @@
 import type { DurationClass } from './pacing'
-import type { BusinessStatus, HoursPressureLevel } from './hours'
+import type { BusinessStatus, HoursPressureLevel, PlanningTimeWindowSource } from './hours'
 import type {
   CuratedSourceSubtype,
   LiveDataProvider,
@@ -17,6 +17,11 @@ export type VenueRouteFootprint = 'compact' | 'neighborhood-hop' | 'destination'
 export type QualityGateStatus = 'approved' | 'demoted' | 'suppressed'
 export type QualityGateContext = 'runtime-live' | 'offline-provider-corpus'
 export type BearingsValidationRequirement = 'runtime_hours_validation_required'
+export type RuntimeHoursPlanWindowProofStatus =
+  | 'not_required'
+  | 'open_for_plan_window'
+  | 'closed_for_plan_window'
+  | 'unknown_for_plan_window'
 
 export interface VenueHappeningsSignals {
   hotspotStrength: number
@@ -90,6 +95,10 @@ export interface VenueSourceMetadata {
   demotionReasons: string[]
   suppressionReasons: string[]
   bearingsValidationRequirements?: BearingsValidationRequirement[]
+  runtimeHoursPlanWindowProofStatus?: RuntimeHoursPlanWindowProofStatus
+  runtimeHoursPlanWindowSource?: PlanningTimeWindowSource
+  runtimeHoursStructuredPeriodCount?: number
+  runtimeHoursTextHoursAvailable?: boolean
   happenings?: VenueHappeningsSignals
 }
 

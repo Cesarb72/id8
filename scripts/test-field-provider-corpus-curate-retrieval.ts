@@ -23,7 +23,7 @@ const fetchTrap: typeof fetch = async () => {
   throw new Error('Field static corpus Curate retrieval test must not call fetch.')
 }
 
-function assert(condition: boolean, message: string): void {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) {
     throw new Error(message)
   }
@@ -139,6 +139,15 @@ async function validateFlagOnCurateRetrieval(): Promise<void> {
     'Flag-on San Jose Curate retrieval must append static corpus venues.',
   )
   assert(
+    retrieval.sourceMode.curateStaticCorpus.runtimeHoursAdmission?.planningWindow.source ===
+      'gate1_default_evening_window',
+    'Flag-on Curate retrieval must expose explicit Gate 1 runtime-hours planning window source.',
+  )
+  assert(
+    retrieval.sourceMode.curateStaticCorpus.runtimeHoursAdmission.evaluatedCount > 0,
+    'Flag-on Curate retrieval must evaluate Field corpus runtime-hours admission.',
+  )
+  assert(
     retrieval.stageCounts.curatedSeed > curatedVenues.length,
     'Curated seed count must include appended static corpus venues.',
   )
@@ -213,6 +222,19 @@ function validateResolverSemantics(): void {
   assert(
     hidden.diagnostics.staticCollisionCount > 0,
     'Resolver must record static curated collision drops.',
+  )
+  assert(
+    hidden.diagnostics.runtimeHoursAdmission?.planningWindow.source === 'gate1_default_evening_window',
+    'Resolver diagnostics must mark the Gate 1 default runtime-hours planning window source.',
+  )
+  assert(
+    hidden.diagnostics.runtimeHoursAdmission.evaluatedCount > 0,
+    'Resolver must evaluate runtime-hours admission before projection.',
+  )
+  assert(
+    hidden.diagnostics.runtimeHoursAdmission.blockedCount ===
+      hidden.diagnostics.runtimeHoursAdmission.closedBlockedCount,
+    'Only closed required Field corpus venues may be blocked by runtime-hours admission.',
   )
 }
 

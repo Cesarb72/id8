@@ -65,6 +65,7 @@ export function getTimeWindowSignal(intent: IntentProfile): PlanningTimeWindowSi
       parsedHour === undefined
         ? `${phase} now`
         : intent.timeWindow?.trim() || phase,
+    source: parsedHour === undefined ? 'runtime_current_window' : 'intent_time_window',
     usesIntentWindow: parsedHour !== undefined,
   }
 }

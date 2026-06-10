@@ -2,6 +2,7 @@ import { createLiveGoogleVenueId } from '../../providers/admitLiveVenueIdentity'
 import type { ProviderCanonicalVenueMapping } from '../../providers/providerCanonicalVenueMapping'
 import { resolveCanonicalVenueIdForProviderRecord } from '../../providers/providerCanonicalVenueMapping'
 import type { ProviderCorpusArtifact } from '../../providers/providerCorpusArtifact'
+import type { ProviderCorpusCategoryFamily } from '../../providers/providerCorpusManifest'
 import type { Venue } from '../../types/venue'
 import {
   OFFLINE_CORPUS_TIME_SENSITIVE_AUDIT_REASON,
@@ -33,10 +34,18 @@ function resolvePromotedVenueId(mapping: ProviderCanonicalVenueMapping): string 
   return mapping.canonicalVenueId ?? createLiveGoogleVenueId(mapping.providerRecordId)
 }
 
+const TIME_SENSITIVE_RUNTIME_HOURS_CATEGORY_FAMILIES = new Set<ProviderCorpusCategoryFamily>([
+  'cocktail_nightlife',
+  'dining',
+  'live_music',
+  'street_food',
+  'wine_intimate',
+])
+
 function buildBearingsValidationRequirements(
-  demotionReasons: string[],
+  categoryFamily: ProviderCorpusCategoryFamily,
 ): BearingsValidationRequirement[] {
-  return demotionReasons.includes(OFFLINE_CORPUS_TIME_SENSITIVE_AUDIT_REASON)
+  return TIME_SENSITIVE_RUNTIME_HOURS_CATEGORY_FAMILIES.has(categoryFamily)
     ? [RUNTIME_HOURS_VALIDATION_REQUIRED]
     : []
 }
@@ -78,7 +87,9 @@ function promoteVenue(
   })
   const id = resolvePromotedVenueId(mapping)
   const demotionReasons = [...sourceVenue.source.demotionReasons]
-  const bearingsValidationRequirements = buildBearingsValidationRequirements(demotionReasons)
+  const bearingsValidationRequirements = buildBearingsValidationRequirements(
+    venueArtifact.support.categoryFamily,
+  )
   const venue: Venue = {
     ...sourceVenue,
     id,

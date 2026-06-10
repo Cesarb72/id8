@@ -5,6 +5,10 @@ export type BusinessStatus =
   | 'unknown'
 
 export type PlanningTimePhase = 'morning' | 'afternoon' | 'evening' | 'late-night'
+export type PlanningTimeWindowSource =
+  | 'gate1_default_evening_window'
+  | 'intent_time_window'
+  | 'runtime_current_window'
 
 export type HoursPressureLevel =
   | 'strong-open'
@@ -30,6 +34,7 @@ export interface PlanningTimeWindowSignal {
   minute: number
   phase: PlanningTimePhase
   label: string
+  source?: PlanningTimeWindowSource
   usesIntentWindow: boolean
 }
 

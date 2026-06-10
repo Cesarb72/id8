@@ -74,6 +74,7 @@ const fridayEvening: PlanningTimeWindowSignal = {
   minute: 30,
   phase: 'evening',
   label: 'Friday 7:30 PM',
+  source: 'intent_time_window',
   usesIntentWindow: true,
 }
 
@@ -83,6 +84,7 @@ const tuesdayAfternoon: PlanningTimeWindowSignal = {
   minute: 0,
   phase: 'afternoon',
   label: 'Tuesday 2:00 PM',
+  source: 'intent_time_window',
   usesIntentWindow: true,
 }
 
@@ -136,6 +138,24 @@ function main(): void {
     evaluateStaticRuntimeHoursProof(textOnlyVenue, fridayEvening).status ===
       'unknown_for_plan_window',
     'Text-only hours must stay unknown_for_plan_window without a supported parser.',
+  )
+
+  const malformedStructuredVenue = requiredVenue({
+    runtimeHoursProof: {
+      structuredPeriods: [
+        {
+          open: { day: 8, hour: 17, minute: 0 },
+          close: { day: 5, hour: 23, minute: 0 },
+        },
+      ],
+      textHoursAvailable: false,
+      proofSource: 'structured_periods',
+    },
+  })
+  assert(
+    evaluateStaticRuntimeHoursProof(malformedStructuredVenue, fridayEvening).status ===
+      'unknown_for_plan_window',
+    'Malformed structured periods must be unknown_for_plan_window.',
   )
 
   const persistedOpenNowVenue = requiredVenue({
@@ -224,18 +244,19 @@ function main(): void {
     'Non-required venue must return not_required.',
   )
 
-  const requiredRealTextOnly = sanJoseProviderCorpusVenues.find(
+  const requiredStructuredVenue = sanJoseProviderCorpusVenues.find(
     (venue) =>
       venue.venue.source.bearingsValidationRequirements?.includes(
         RUNTIME_HOURS_VALIDATION_REQUIRED,
       ) &&
-      venue.runtimeHoursProof.proofSource === 'text_only',
+      venue.runtimeHoursProof.proofSource === 'structured_periods',
   )
-  assert(requiredRealTextOnly !== undefined, 'Expected at least one required real text-only corpus venue.')
+  assert(requiredStructuredVenue !== undefined, 'Expected at least one required real structured corpus venue.')
   assert(
-    evaluateStaticRuntimeHoursProof(requiredRealTextOnly, fridayEvening).status ===
-      'unknown_for_plan_window',
-    'Real required text-only corpus venue must remain unknown_for_plan_window.',
+    ['open_for_plan_window', 'closed_for_plan_window'].includes(
+      evaluateStaticRuntimeHoursProof(requiredStructuredVenue, fridayEvening).status,
+    ),
+    'Real required structured corpus venue must evaluate to a definitive plan-window proof.',
   )
 
   const structuredCount = sanJoseProviderCorpusVenues.filter(
@@ -248,10 +269,10 @@ function main(): void {
     (venue) => venue.runtimeHoursProof.proofSource === 'none',
   ).length
   assert(
-    structuredCount === 0,
-    `Current retained real corpus cannot be retroactively recovered and must still have structuredCount 0, received ${structuredCount}.`,
+    structuredCount === 92,
+    `Structured-hours corpus must have structuredCount 92, received ${structuredCount}.`,
   )
-  assert(textOnlyCount === 92, `Expected retained real corpus textOnlyCount 92, received ${textOnlyCount}.`)
+  assert(textOnlyCount === 0, `Expected structured-hours corpus textOnlyCount 0, received ${textOnlyCount}.`)
   assert(noneCount === 4, `Expected retained real corpus noneCount 4, received ${noneCount}.`)
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
   process.stdout.write('bearings static runtime-hours proof validation: passed\n')

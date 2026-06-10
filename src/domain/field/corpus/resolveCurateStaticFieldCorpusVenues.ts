@@ -1,5 +1,11 @@
 import { sanJoseProviderCorpus, sanJoseProviderCorpusVenues } from './sanJoseProviderCorpus'
 import { readFieldStaticProviderCorpusCurateEnabled } from './fieldStaticProviderCorpusConfig'
+import {
+  applyFieldCorpusRuntimeHoursAdmission,
+  type FieldCorpusRuntimeHoursAdmissionDiagnostic,
+  type FieldCorpusRuntimeHoursAdmissionDiagnostics,
+} from '../../bearings/fieldCorpusRuntimeHoursAdmission'
+import { resolvePlanningTimeWindow } from '../../temporal/resolvePlanningTimeWindow'
 import type { PromotedFieldProviderCorpusVenue } from './types'
 import type { IntentProfile } from '../../types/intent'
 import type { SourceMode } from '../../types/sourceMode'
@@ -34,6 +40,7 @@ export interface CurateStaticFieldCorpusDiagnostics {
   approvedCount: number
   demotedCount: number
   bearingsRequirementCount: number
+  runtimeHoursAdmission?: FieldCorpusRuntimeHoursAdmissionDiagnostics
 }
 
 export interface ResolveCurateStaticFieldCorpusVenuesInput {
@@ -121,7 +128,11 @@ function hasStaticCollision(candidate: Venue, existingCuratedVenues: Venue[]): b
   })
 }
 
-function projectStaticFieldVenue(promotedVenue: PromotedFieldProviderCorpusVenue): Venue {
+function projectStaticFieldVenue(
+  promotedVenue: PromotedFieldProviderCorpusVenue,
+  runtimeHoursAdmission?: FieldCorpusRuntimeHoursAdmissionDiagnostic,
+  runtimeHoursPlanWindowSource?: Venue['source']['runtimeHoursPlanWindowSource'],
+): Venue {
   return {
     ...promotedVenue.venue,
     source: {
@@ -139,6 +150,12 @@ function projectStaticFieldVenue(promotedVenue: PromotedFieldProviderCorpusVenue
       bearingsValidationRequirements: [
         ...(promotedVenue.venue.source.bearingsValidationRequirements ?? []),
       ],
+      runtimeHoursPlanWindowProofStatus: runtimeHoursAdmission?.status,
+      runtimeHoursPlanWindowSource: runtimeHoursAdmission
+        ? runtimeHoursPlanWindowSource
+        : undefined,
+      runtimeHoursStructuredPeriodCount: runtimeHoursAdmission?.structuredPeriodCount,
+      runtimeHoursTextHoursAvailable: runtimeHoursAdmission?.textHoursAvailable,
     },
   }
 }
@@ -234,7 +251,18 @@ export function resolveCurateStaticFieldCorpusVenues({
   }
 
   const dedupedCandidates = dedupePromotedCandidates(candidates)
-  const projectedCandidates = dedupedCandidates.venues.map(projectStaticFieldVenue)
+  const planningWindow = resolvePlanningTimeWindow(intent)
+  const runtimeHoursAdmission = applyFieldCorpusRuntimeHoursAdmission(
+    dedupedCandidates.venues,
+    planningWindow,
+  )
+  const projectedCandidates = runtimeHoursAdmission.admitted.map((promotedVenue) =>
+    projectStaticFieldVenue(
+      promotedVenue,
+      runtimeHoursAdmission.diagnosticsByVenueId.get(promotedVenue.id),
+      planningWindow.source,
+    ),
+  )
   const venues: Venue[] = []
   let staticCollisionCount = 0
 
@@ -262,6 +290,7 @@ export function resolveCurateStaticFieldCorpusVenues({
       bearingsRequirementCount: venues.filter(
         (venue) => (venue.source.bearingsValidationRequirements ?? []).length > 0,
       ).length,
+      runtimeHoursAdmission: runtimeHoursAdmission.diagnostics,
     }),
   }
 }
