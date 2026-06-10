@@ -12,7 +12,7 @@ const fetchTrap: typeof fetch = async () => {
   throw new Error('Bearings static runtime-hours proof test must not call fetch.')
 }
 
-function assert(condition: boolean, message: string): void {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) {
     throw new Error(message)
   }
@@ -179,7 +179,29 @@ function main(): void {
   assert(
     evaluateStaticRuntimeHoursProof(persistedLikelyVenue, fridayEvening).status ===
       'unknown_for_plan_window',
-    'Persisted likelyOpenForCurrentWindow true alone must not prove open_for_plan_window.',
+    'Persisted likelyOpenForCurrentWindow true and high timeConfidence alone must not prove open_for_plan_window.',
+  )
+
+  const persistedTimeConfidenceVenue = requiredVenue({
+    runtimeHoursProof: {
+      structuredPeriods: [],
+      textHoursAvailable: false,
+      proofSource: 'none',
+    },
+    venue: {
+      ...sanJoseProviderCorpusVenues[0]!.venue,
+      source: {
+        ...sanJoseProviderCorpusVenues[0]!.venue.source,
+        openNow: false,
+        likelyOpenForCurrentWindow: false,
+        timeConfidence: 1,
+      },
+    },
+  })
+  assert(
+    evaluateStaticRuntimeHoursProof(persistedTimeConfidenceVenue, fridayEvening).status ===
+      'unknown_for_plan_window',
+    'Persisted timeConfidence alone must not prove open_for_plan_window.',
   )
 
   const nonRequiredVenue = clonePromotedVenue({
@@ -216,6 +238,21 @@ function main(): void {
     'Real required text-only corpus venue must remain unknown_for_plan_window.',
   )
 
+  const structuredCount = sanJoseProviderCorpusVenues.filter(
+    (venue) => venue.runtimeHoursProof.structuredPeriods.length > 0,
+  ).length
+  const textOnlyCount = sanJoseProviderCorpusVenues.filter(
+    (venue) => venue.runtimeHoursProof.proofSource === 'text_only',
+  ).length
+  const noneCount = sanJoseProviderCorpusVenues.filter(
+    (venue) => venue.runtimeHoursProof.proofSource === 'none',
+  ).length
+  assert(
+    structuredCount === 0,
+    `Current retained real corpus cannot be retroactively recovered and must still have structuredCount 0, received ${structuredCount}.`,
+  )
+  assert(textOnlyCount === 92, `Expected retained real corpus textOnlyCount 92, received ${textOnlyCount}.`)
+  assert(noneCount === 4, `Expected retained real corpus noneCount 4, received ${noneCount}.`)
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
   process.stdout.write('bearings static runtime-hours proof validation: passed\n')
   process.stdout.write(
@@ -223,15 +260,9 @@ function main(): void {
       {
         fetchCallCount,
         realCorpusRuntimeHoursProof: {
-          structuredCount: sanJoseProviderCorpusVenues.filter(
-            (venue) => venue.runtimeHoursProof.structuredPeriods.length > 0,
-          ).length,
-          textOnlyCount: sanJoseProviderCorpusVenues.filter(
-            (venue) => venue.runtimeHoursProof.proofSource === 'text_only',
-          ).length,
-          noneCount: sanJoseProviderCorpusVenues.filter(
-            (venue) => venue.runtimeHoursProof.proofSource === 'none',
-          ).length,
+          structuredCount,
+          textOnlyCount,
+          noneCount,
         },
       },
       null,

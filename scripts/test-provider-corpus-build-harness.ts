@@ -23,7 +23,7 @@ const fetchTrap: typeof fetch = async () => {
   throw new Error('Provider corpus build harness test must not call fetch.')
 }
 
-function assert(condition: boolean, message: string): void {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) {
     throw new Error(message)
   }
@@ -231,6 +231,17 @@ function main(): void {
   assert(result.diagnostics.billableCallCount === 0, 'Expected diagnostics billable calls to remain 0.')
   assert(fetchCallCount === 0, `Expected fetch not to be called, received ${fetchCallCount}.`)
   assert(result.diagnostics.runtimeImportHits.length === 0, 'Expected no runtime imports.')
+  const structuredVenue = result.artifact.venues[0]
+  assert(structuredVenue !== undefined, 'Expected mocked artifact to include venues.')
+  const structuredPeriods = structuredVenue.rawPlace.hoursPeriods ?? []
+  assert(
+    structuredPeriods.length === 1,
+    'Mocked ProviderVenue periods must survive into RawPlace.hoursPeriods.',
+  )
+  assert(
+    structuredPeriods[0]?.open?.hour === 10,
+    'RawPlace.hoursPeriods must prefer currentOpeningHours.periods over regularOpeningHours.periods.',
+  )
 
   for (const path of Object.values(result.outputPaths)) {
     assert(path.startsWith('tmp/provider-corpus/mock/'), `Output path must stay under tmp/provider-corpus/mock/: ${path}`)
@@ -251,6 +262,10 @@ function main(): void {
         ledger: result.ledger,
         manifestQueryCount: result.artifact.manifestQueryCount,
         outputPathRoot: outputRoot,
+        structuredPeriodSurvival: {
+          rawPlacePeriodCount: structuredPeriods.length,
+          rawPlacePreferredOpenHour: structuredPeriods[0]?.open?.hour,
+        },
         preflightBlockingConfirmed: {
           liveWithoutApproval: blockerCodes(liveWithoutApproval),
           liveWithoutKey: blockerCodes(liveWithoutKey),

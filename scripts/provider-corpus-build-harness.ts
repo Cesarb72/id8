@@ -456,6 +456,12 @@ function buildMockProviderVenue(entry: ProviderCorpusManifestEntry): ProviderVen
     },
     currentOpeningHours: {
       openNow: true,
+      periods: [
+        {
+          open: { day: 1, hour: 10, minute: 0 },
+          close: { day: 1, hour: 22, minute: 0 },
+        },
+      ],
       weekdayDescriptions: ['Monday: 10:00 AM - 10:00 PM'],
     },
     displayName: `Mock Harness ${entry.label}`,
@@ -471,6 +477,12 @@ function buildMockProviderVenue(entry: ProviderCorpusManifestEntry): ProviderVen
     rating: 4.4,
     rawPayloadAvailable: false,
     regularOpeningHours: {
+      periods: [
+        {
+          open: { day: 1, hour: 9, minute: 0 },
+          close: { day: 1, hour: 21, minute: 0 },
+        },
+      ],
       weekdayDescriptions: ['Monday: 10:00 AM - 10:00 PM'],
     },
     shortFormattedAddress: 'San Jose, CA',
@@ -487,6 +499,9 @@ function buildRawPlace(
   descriptionSource = 'mocked harness',
 ): RawPlace {
   const category = categoryForFamily(entry.expectedCategoryFamily)
+  const hoursPeriods = providerVenue.currentOpeningHours?.periods?.length
+    ? providerVenue.currentOpeningHours.periods
+    : providerVenue.regularOpeningHours?.periods
   return {
     rawType: 'place',
     id: createLiveGoogleVenueId(providerVenue.providerRecordId),
@@ -522,6 +537,7 @@ function buildRawPlace(
     ratingCount: providerVenue.userRatingCount,
     openNow: providerVenue.currentOpeningHours?.openNow,
     businessStatus: 'OPERATIONAL',
+    hoursPeriods,
     currentOpeningHoursText: providerVenue.currentOpeningHours?.weekdayDescriptions,
     regularOpeningHoursText: providerVenue.regularOpeningHours?.weekdayDescriptions,
     latitude: providerVenue.location?.latitude,
@@ -972,8 +988,11 @@ function buildCorpusTextSearchQuery(entry: ProviderCorpusManifestEntry): Provide
       'places.location',
       'places.rating',
       'places.userRatingCount',
-      'places.currentOpeningHours',
-      'places.regularOpeningHours',
+      'places.currentOpeningHours.openNow',
+      'places.currentOpeningHours.weekdayDescriptions',
+      'places.currentOpeningHours.periods',
+      'places.regularOpeningHours.weekdayDescriptions',
+      'places.regularOpeningHours.periods',
       'places.businessStatus',
       'places.editorialSummary',
       'places.websiteUri',

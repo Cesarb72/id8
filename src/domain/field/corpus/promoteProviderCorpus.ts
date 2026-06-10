@@ -230,6 +230,11 @@ export function validatePromotedFieldProviderCorpus(
       !('likelyOpenForCurrentWindow' in promotedVenue.runtimeHoursProof),
       `${promotedVenue.id}: runtimeHoursProof must not use persisted likelyOpenForCurrentWindow as proof.`,
     )
+    addError(
+      errors,
+      !('timeConfidence' in promotedVenue.runtimeHoursProof),
+      `${promotedVenue.id}: runtimeHoursProof must not use persisted timeConfidence as proof.`,
+    )
     if (promotedVenue.venueAudit.demotionReasons.includes(OFFLINE_CORPUS_TIME_SENSITIVE_AUDIT_REASON)) {
       addError(
         errors,

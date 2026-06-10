@@ -14,6 +14,9 @@ import {
   type ProviderCorpusManifest,
 } from '../src/domain/providers/providerCorpusManifest.ts'
 import { validateProviderCorpusArtifact } from '../src/domain/providers/providerCorpusArtifact.ts'
+import { curatedVenues } from '../src/data/venues.ts'
+import { promoteProviderCorpus } from '../src/domain/field/corpus/promoteProviderCorpus.ts'
+import { normalizeVenue } from '../src/domain/normalize/normalizeVenue.ts'
 
 const originalFetch = globalThis.fetch
 const managedEnvKeys = [
@@ -34,7 +37,7 @@ const originalEnvValues = new Map(
 let fetchCallCount = 0
 const placeholderKey = 'placeholder-live-corpus-key-not-real'
 
-function assert(condition: boolean, message: string): void {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) {
     throw new Error(message)
   }
@@ -110,7 +113,17 @@ const mockedFetch: typeof fetch = async (input, init) => {
   assert(endpoint.includes('/v1/places:searchText'), `Unexpected endpoint: ${endpoint}`)
   const headers = new Headers(init?.headers)
   assert(headers.get('X-Goog-Api-Key') === placeholderKey, 'Expected placeholder key to be supplied only as request header.')
-  assert(headers.get('X-Goog-FieldMask')?.includes('places.id') === true, 'Expected Places field mask.')
+  const fieldMask = headers.get('X-Goog-FieldMask') ?? ''
+  assert(fieldMask.includes('places.id'), 'Expected Places field mask.')
+  for (const expectedField of [
+    'places.currentOpeningHours.openNow',
+    'places.currentOpeningHours.weekdayDescriptions',
+    'places.currentOpeningHours.periods',
+    'places.regularOpeningHours.weekdayDescriptions',
+    'places.regularOpeningHours.periods',
+  ]) {
+    assert(fieldMask.includes(expectedField), `Expected Places field mask to include ${expectedField}.`)
+  }
   const body = typeof init?.body === 'string' ? JSON.parse(init.body) as { textQuery?: string } : {}
   const textQuery = body.textQuery ?? `missing-query-${fetchCallCount}`
   const slug = slugFromQuery(textQuery)
@@ -135,9 +148,21 @@ const mockedFetch: typeof fetch = async (input, init) => {
           businessStatus: 'OPERATIONAL',
           currentOpeningHours: {
             openNow: true,
+            periods: [
+              {
+                open: { day: 1, hour: 10, minute: 0 },
+                close: { day: 1, hour: 22, minute: 0 },
+              },
+            ],
             weekdayDescriptions: ['Monday: 10:00 AM - 10:00 PM'],
           },
           regularOpeningHours: {
+            periods: [
+              {
+                open: { day: 1, hour: 8, minute: 0 },
+                close: { day: 1, hour: 9, minute: 0 },
+              },
+            ],
             weekdayDescriptions: ['Monday: 10:00 AM - 10:00 PM'],
           },
         },
@@ -296,6 +321,55 @@ async function main(): Promise<void> {
   assert(result.diagnostics.attemptedHttpRequestCount === 12, 'Expected diagnostics attempted HTTP request count 12.')
   assert(result.diagnostics.billableCallCount === 12, 'Expected diagnostics billable count 12.')
   assert(result.diagnostics.runtimeImportHits.length === 0, 'Expected no runtime imports.')
+  const structuredVenue = result.artifact.venues[0]
+  assert(structuredVenue !== undefined, 'Expected mocked live artifact to include venues.')
+  const structuredPeriods = structuredVenue.rawPlace.hoursPeriods ?? []
+  assert(
+    structuredPeriods.length === 1,
+    'Mocked live provider periods must survive into RawPlace.hoursPeriods.',
+  )
+  assert(
+    structuredPeriods[0]?.open?.hour === 10,
+    'RawPlace.hoursPeriods must prefer currentOpeningHours.periods over regularOpeningHours.periods.',
+  )
+  const normalizedFromStructuredPeriods = normalizeVenue(
+    {
+      ...structuredVenue.rawPlace,
+      currentOpeningHoursText: undefined,
+      openNow: undefined,
+      regularOpeningHoursText: undefined,
+    },
+    {
+      timeWindowSignal: {
+        day: 1,
+        hour: 12,
+        minute: 0,
+        phase: 'afternoon',
+        label: 'Monday noon',
+        usesIntentWindow: true,
+      },
+    },
+  )
+  assert(
+    normalizedFromStructuredPeriods.source.likelyOpenForCurrentWindow === true,
+    'normalizeVenue/inferHoursPressure must be able to evaluate preserved RawPlace.hoursPeriods.',
+  )
+  const promoted = promoteProviderCorpus({
+    artifact: result.artifact,
+    sourceRunId: 'mocked-live-structured-period-survival',
+    staticVenues: curatedVenues,
+  })
+  const promotedStructuredVenue = promoted.venues.find(
+    (venue) => venue.providerProvenance.providerRecordId === structuredVenue.providerRecordId,
+  )
+  assert(
+    promotedStructuredVenue?.runtimeHoursProof.structuredPeriods.length === 1,
+    'Promoted runtimeHoursProof.structuredPeriods must preserve mocked provider structured periods.',
+  )
+  assert(
+    promotedStructuredVenue.runtimeHoursProof.proofSource === 'structured_periods',
+    'Promoted runtimeHoursProof.proofSource must mark structured periods as structured_periods.',
+  )
 
   for (const path of Object.values(result.outputPaths)) {
     assert(path.startsWith('tmp/provider-corpus/mock-live/'), `Output path must stay under mock-live tmp root: ${path}`)
@@ -319,6 +393,13 @@ async function main(): Promise<void> {
         gate1Readiness: result.report.gate1Readiness,
         ledger: result.ledger,
         outputPathRoot: outputRoot,
+        structuredPeriodSurvival: {
+          normalizedLikelyOpenForMondayNoon:
+            normalizedFromStructuredPeriods.source.likelyOpenForCurrentWindow,
+          promotedProofSource: promotedStructuredVenue.runtimeHoursProof.proofSource,
+          rawPlacePeriodCount: structuredPeriods.length,
+          rawPlacePreferredOpenHour: structuredPeriods[0]?.open?.hour,
+        },
         preflightBlockingConfirmed: {
           excessiveBudgetCap: blockerCodes(excessiveBudgetCap),
           malformedManifest: blockerCodes(malformedManifest),
