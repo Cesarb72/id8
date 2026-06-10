@@ -93,6 +93,12 @@ import {
 import { runCuratePreviewQualificationAttempt } from '../app/services/sandbox/curatePreviewQualificationService'
 import type { CuratePreviewCommitabilityStateLike } from '../app/services/sandbox/curatePreviewQualificationTypes'
 import {
+  buildCurateCommittedRouteFallbackDecision,
+  buildCurateStarterPlannerInput,
+  isCurateCommittedRouteFallbackArtifact,
+  type CurateCommittedRouteFallbackRejectedReason,
+} from '../app/services/curate/buildCurateCommittedRouteFallback'
+import {
   SwapCommitCoreError,
   applyPreviewSwapCommit,
 } from '../app/services/sandbox/sandboxSwapService'
@@ -857,6 +863,15 @@ interface CurateVisibleCardModel {
   qualifiedDisplayRankReason: string | null
   qualificationReason: string | null
   isSelectable: boolean
+}
+
+interface CurateCommittedRouteFallbackState {
+  attemptKey: string
+  starterPackId: string
+  artifact: ContractEntryArtifact | null
+  commitability: CuratePreviewCommitabilityState | null
+  rejectedReason: CurateCommittedRouteFallbackRejectedReason | null
+  routeStops: string[]
 }
 
 interface FinalApprovedRouteStarterFitDebug {
@@ -9500,6 +9515,8 @@ export function SandboxConciergePage({
   const [curatePreviewCommitabilityByArtifactId, setCuratePreviewCommitabilityByArtifactId] = useState<
     Record<string, CuratePreviewCommitabilityState>
   >({})
+  const [curateCommittedRouteFallbackState, setCurateCommittedRouteFallbackState] =
+    useState<CurateCommittedRouteFallbackState | null>(null)
   const [curateQualificationCacheHitByArtifactId, setCurateQualificationCacheHitByArtifactId] =
     useState<Record<string, boolean>>({})
   const [selectedIdReconciled, setSelectedIdReconciled] = useState(false)
@@ -9963,6 +9980,7 @@ export function SandboxConciergePage({
   const buildValidationAttemptRef = useRef<string | null>(null)
   const curatePreviewCommitabilityAttemptRef = useRef<Record<string, string>>({})
   const curateQualificationInFlightRef = useRef<Record<string, true>>({})
+  const curateCommittedRouteFallbackAttemptRef = useRef<string | null>(null)
   const curateQualificationSourceFingerprintRef = useRef<string>('')
   const curatePreviewCommitabilityByArtifactIdRef = useRef<
     Record<string, CuratePreviewCommitabilityState>
@@ -11748,7 +11766,7 @@ export function SandboxConciergePage({
       ).length,
     }
   }, [curatePreviewCommitabilityByArtifactId, curateQualificationCandidateArtifacts])
-  const curateQualifiedVisibleCardModels = useMemo(() => {
+  const curateScenarioQualifiedVisibleCardModels = useMemo(() => {
     return curateVisibleCardModels
       .filter((model) => model.hasApprovedPayload)
       .sort((left, right) => {
@@ -11760,6 +11778,39 @@ export function SandboxConciergePage({
         return left.artifact.id.localeCompare(right.artifact.id)
       })
   }, [curateVisibleCardModels])
+  const curateCommittedRouteFallbackVisibleCardModels = useMemo(() => {
+    if (
+      !isCurateWrapperActive ||
+      !selectedStarterPack ||
+      curateScenarioQualifiedVisibleCardModels.length > 0 ||
+      !curateCommittedRouteFallbackState?.artifact ||
+      !curateCommittedRouteFallbackState.commitability ||
+      curateCommittedRouteFallbackState.starterPackId !== selectedStarterPack.id
+    ) {
+      return [] as CurateVisibleCardModel[]
+    }
+    return [
+      buildCurateVisibleCardModelFromArtifact({
+        artifact: curateCommittedRouteFallbackState.artifact,
+        preflight: curateCommittedRouteFallbackState.commitability,
+        starterPack: selectedStarterPack,
+      }),
+    ]
+  }, [
+    curateCommittedRouteFallbackState,
+    curateScenarioQualifiedVisibleCardModels.length,
+    isCurateWrapperActive,
+    selectedStarterPack,
+  ])
+  const curateQualifiedVisibleCardModels = useMemo(() => {
+    if (curateScenarioQualifiedVisibleCardModels.length > 0) {
+      return curateScenarioQualifiedVisibleCardModels
+    }
+    return curateCommittedRouteFallbackVisibleCardModels
+  }, [
+    curateCommittedRouteFallbackVisibleCardModels,
+    curateScenarioQualifiedVisibleCardModels,
+  ])
   const curatePrimarySelectableArtifacts = useMemo(
     () => curateQualifiedVisibleCardModels.map((model) => model.artifact),
     [curateQualifiedVisibleCardModels],
@@ -12226,8 +12277,14 @@ export function SandboxConciergePage({
     if (!isCurateWrapperActive || !activeCurateArtifact) {
       return null
     }
-    return curatePreviewCommitabilityByArtifactId[activeCurateArtifact.id] ?? null
+    return (
+      curatePreviewCommitabilityByArtifactId[activeCurateArtifact.id] ??
+      (curateCommittedRouteFallbackState?.artifact?.id === activeCurateArtifact.id
+        ? curateCommittedRouteFallbackState.commitability
+        : null)
+    )
   }, [
+    curateCommittedRouteFallbackState,
     curatePreviewCommitabilityByArtifactId,
     explicitQualifiedCurateSelectedArtifact,
     isCurateWrapperActive,
@@ -12767,6 +12824,276 @@ export function SandboxConciergePage({
       selectedDirectionContract,
     ],
   )
+  useEffect(() => {
+    if (!isCurateWrapperActive || hasRevealed || !selectedStarterPack) {
+      curateCommittedRouteFallbackAttemptRef.current = null
+      setCurateCommittedRouteFallbackState((current) => (current ? null : current))
+      return
+    }
+    if (curateScenarioQualifiedVisibleCardModels.length > 0) {
+      curateCommittedRouteFallbackAttemptRef.current = null
+      setCurateCommittedRouteFallbackState((current) => (current ? null : current))
+      return
+    }
+    const scenarioQualificationPending = curateVisibleCardModels.some(
+      (model) =>
+        model.qualificationStatus === 'checking' || model.qualificationStatus === 'unchecked',
+    )
+    if (scenarioQualificationPending) {
+      return
+    }
+
+    const fallbackDirection =
+      selectedDirection ?? visibleDirectionCardsForSelection[0] ?? directionCards[0] ?? allDirectionCards[0]
+    const attemptKey = [
+      selectedStarterPack.id,
+      curateQualificationSourceFingerprint,
+      fallbackDirection?.id ?? 'no-direction',
+      persona,
+      primaryVibe,
+      districtLocationQuery,
+    ].join('|')
+    if (
+      curateCommittedRouteFallbackState?.attemptKey === attemptKey ||
+      curateCommittedRouteFallbackAttemptRef.current === attemptKey
+    ) {
+      return
+    }
+    curateCommittedRouteFallbackAttemptRef.current = attemptKey
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const result = await runPlanBuild(
+          {
+            ...buildCurateStarterPlannerInput(selectedStarterPack),
+            city: districtLocationQuery,
+          },
+          {
+            starterPack: selectedStarterPack,
+            sourceMode: 'curated',
+            sourceModeOverrideApplied: false,
+            debugMode: false,
+          },
+        )
+        if (cancelled) {
+          return
+        }
+        const decision = buildCurateCommittedRouteFallbackDecision({
+          starterPack: selectedStarterPack,
+          result,
+          selectedDirectionId: fallbackDirection?.id,
+          selectedPocketId: fallbackDirection?.debugMeta?.pocketId,
+        })
+        if (decision.status === 'rejected') {
+          setCurateCommittedRouteFallbackState({
+            attemptKey,
+            starterPackId: selectedStarterPack.id,
+            artifact: null,
+            commitability: null,
+            rejectedReason: decision.rejectedReason,
+            routeStops: decision.routeStops,
+          })
+          return
+        }
+        if (!fallbackDirection) {
+          setCurateCommittedRouteFallbackState({
+            attemptKey,
+            starterPackId: selectedStarterPack.id,
+            artifact: null,
+            commitability: null,
+            rejectedReason: 'missing_direction_backing',
+            routeStops: decision.routeStops,
+          })
+          return
+        }
+
+        const fallbackDirectionContract = buildDirectionPlanningSelectionFromCard(
+          fallbackDirection,
+          getGreatStopSignalForDirection({
+            direction: fallbackDirection,
+            opportunities: step2PrimarySourceOpportunities,
+          }),
+        )
+        const fallbackDirectionContext = buildResolvedDirectionContext(fallbackDirectionContract)
+        if (!fallbackDirectionContract || !fallbackDirectionContext) {
+          setCurateCommittedRouteFallbackState({
+            attemptKey,
+            starterPackId: selectedStarterPack.id,
+            artifact: null,
+            commitability: null,
+            rejectedReason: 'missing_direction_backing',
+            routeStops: decision.routeStops,
+          })
+          return
+        }
+
+        const anchoredPlan = await enforceFullStopRealityContract({
+          itinerary: result.itinerary,
+          selectedArc: result.selectedArc,
+          scoredVenues: result.scoredVenues,
+          intentProfile: result.intentProfile,
+          lens: result.lens,
+        })
+        const canonicalStopByRoleForPayload =
+          normalizeCanonicalPlanningStopIdentityByRole(
+            anchoredPlan.canonicalStopByRole,
+            anchoredPlan.itinerary,
+          )
+        const canonicalItinerary = applyCanonicalIdentityToItinerary(
+          anchoredPlan.itinerary,
+          canonicalStopByRoleForPayload,
+        )
+        const fallbackRouteHeadline =
+          result.itinerary.storySpine?.title ?? result.itinerary.story.headline
+        const fallbackRouteSummary =
+          result.itinerary.storySpine?.routeSummary ?? result.itinerary.shareSummary
+        const fallbackFinalRoute = buildFinalRoute({
+          itinerary: canonicalItinerary,
+          canonicalStopByRole: anchoredPlan.canonicalStopByRole,
+          selectedDirectionId: fallbackDirection.id,
+          city: districtLocationQuery,
+          persona,
+          vibe: primaryVibe,
+          activeRole: 'start',
+          mode: 'curate',
+          routeHeadline: fallbackRouteHeadline,
+          routeSummary: fallbackRouteSummary,
+        })
+        if (!fallbackFinalRoute) {
+          setCurateCommittedRouteFallbackState({
+            attemptKey,
+            starterPackId: selectedStarterPack.id,
+            artifact: null,
+            commitability: null,
+            rejectedReason: 'missing_start_role',
+            routeStops: decision.routeStops,
+          })
+          return
+        }
+        const fallbackRouteShapeContract = buildRouteShapeContract({
+          selectedDirection: fallbackDirectionContract,
+          selectedDirectionContext: fallbackDirectionContext,
+          conciergeIntent: canonicalConciergeIntent,
+          contractConstraints: canonicalContractConstraints,
+        })
+        const fallbackSelectedDirectionPreviewContext =
+          buildSelectedDirectionPreviewContext(fallbackDirection)
+        const selectedClusterConfirmation = fallbackDirection.card.confirmation
+        const approvedPayload = buildCurateRefinementEntryPayload<
+          DemoPlanState,
+          Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
+        >({
+          artifactId: decision.artifact.id,
+          selectedDirectionId: fallbackDirection.id,
+          selectedArtifactLineageSummary: 'committed_route_fallback',
+          previewRouteTitle: decision.artifact.routeTitle,
+          planSnapshot: {
+            itinerary: canonicalItinerary,
+            selectedArc: anchoredPlan.selectedArc,
+            scoredVenues: result.scoredVenues,
+            generationTrace: result.trace,
+            intentProfile: result.intentProfile,
+            lens: result.lens,
+            conciergeIntent: canonicalConciergeIntent,
+            experienceContract: canonicalExperienceContract,
+            contractConstraints: canonicalContractConstraints,
+            selectedDirectionContext: fallbackDirectionContext,
+            selectedCluster: fallbackDirection.cluster,
+            selectedClusterConfirmation,
+            selectedDirectionContract: fallbackDirectionContract,
+            routeShapeContract: fallbackRouteShapeContract,
+            selectedDirectionPreviewContext: fallbackSelectedDirectionPreviewContext,
+            selectedCandidateRouteArtifactId: decision.artifact.id,
+          },
+          finalRoute: fallbackFinalRoute,
+          canonicalStopByRole: canonicalStopByRoleForPayload,
+          rejectedStopRoles: anchoredPlan.rejectedStopRoles,
+        })
+        const commitability: CuratePreviewCommitabilityState = {
+          status: 'committable',
+          artifactId: decision.artifact.id,
+          hardCommitCandidateCount: 1,
+          rankedCandidateCount: result.selectedArc.stops.length,
+          curateCommitSemantics: 'approved_route_hard_commit',
+          hardCommitRequired: true,
+          failedRoles: [],
+          contractBuildabilityStatus: 'sufficient',
+          missingRoleForContract: null,
+          candidatePoolSufficiencyByRole: {
+            start: 1,
+            highlight: 1,
+            windDown: 1,
+          },
+          selectedDirectionId: fallbackDirection.id,
+          activeDistrictPocketId:
+            fallbackDirection.debugMeta?.pocketId ?? activeDistrictPocketId,
+          selectedArtifactLineageSummary: 'committed_route_fallback',
+          plannerInputSummary: `${selectedStarterPack.id}:direct_planner_fallback`,
+          selectedTargetSummary: decision.artifact.routeTitle,
+          exactPreservingCandidateIds: decision.artifact.storySpine
+            ? [
+                decision.artifact.storySpine.start,
+                decision.artifact.storySpine.highlight,
+                decision.artifact.storySpine.windDown,
+              ]
+            : [],
+          finalWinnerSummary: fallbackFinalRoute.stops
+            .map((stop) => `${stop.role}:${stop.displayName}`)
+            .join(' | '),
+          approvedRefinementEntryPayload: approvedPayload,
+        }
+        setCurateCommittedRouteFallbackState({
+          attemptKey,
+          starterPackId: selectedStarterPack.id,
+          artifact: decision.artifact,
+          commitability,
+          rejectedReason: null,
+          routeStops: decision.routeStops,
+        })
+      } catch {
+        if (!cancelled) {
+          setCurateCommittedRouteFallbackState({
+            attemptKey,
+            starterPackId: selectedStarterPack.id,
+            artifact: null,
+            commitability: null,
+            rejectedReason: 'missing_start_role',
+            routeStops: [],
+          })
+        }
+      } finally {
+        if (curateCommittedRouteFallbackAttemptRef.current === attemptKey) {
+          curateCommittedRouteFallbackAttemptRef.current = null
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeDistrictPocketId,
+    allDirectionCards,
+    canonicalConciergeIntent,
+    canonicalContractConstraints,
+    canonicalExperienceContract,
+    curateCommittedRouteFallbackState?.attemptKey,
+    curateQualificationSourceFingerprint,
+    curateScenarioQualifiedVisibleCardModels.length,
+    curateVisibleCardModels,
+    directionCards,
+    districtLocationQuery,
+    hasRevealed,
+    isCurateWrapperActive,
+    persona,
+    primaryVibe,
+    runPlanBuild,
+    selectedDirection,
+    selectedStarterPack,
+    step2PrimarySourceOpportunities,
+    visibleDirectionCardsForSelection,
+  ])
   const userSelectedOverrideActive = Boolean(
     selectedDirectionId &&
       userSelectedDirection &&
@@ -23197,7 +23524,12 @@ export function SandboxConciergePage({
               : curatePrimaryCardDisplay.models
             ).map((cardModel) => {
               const option = cardModel.artifact
-              if (!verifiedCityOpportunityById.has(option.sourceOpportunityId)) {
+              const committedRouteFallbackCard =
+                isCurateCommittedRouteFallbackArtifact(option)
+              if (
+                !committedRouteFallbackCard &&
+                !verifiedCityOpportunityById.has(option.sourceOpportunityId)
+              ) {
                 return null
               }
               const uniqueArtifactForDirection = option.selection.directionId
