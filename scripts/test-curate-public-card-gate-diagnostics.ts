@@ -2,6 +2,12 @@ import { starterPacks } from '../src/data/starterPacks.ts'
 import { buildCuratePublicCardGateDiagnostics } from '../src/app/services/curate/buildCuratePublicCardGateDiagnostics.ts'
 import { buildCurateScenarioCardGateDiagnostics } from '../src/app/services/curate/buildCurateScenarioCardGateDiagnostics.ts'
 import { buildCuratePreviewCommitabilityCacheKey } from '../src/app/services/curate/curatePreviewCommitabilityCache.ts'
+import {
+  PUBLIC_CURATE_CARD_TRUTH_MINIMUM_LOAD_BEARING_SOURCE_COUNT,
+  PUBLIC_CURATE_CARD_TRUTH_RENDER_MIGRATED,
+  buildPublicCurateCardTruthModel,
+  parsePublicCurateRouteStops,
+} from '../src/app/services/curate/publicCurateCardTruthService.ts'
 import { FIELD_STATIC_PROVIDER_CORPUS_CURATE_ENV_KEY } from '../src/domain/field/corpus/fieldStaticProviderCorpusConfig.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
 
@@ -25,6 +31,11 @@ const staleHostedRouteStops = [
   'start:Nirvana Soul',
   'highlight:Adega Wine Atelier',
   'windDown:Jtown Manju House',
+] as const
+const liveMusicLoopKnownMismatchStops = [
+  'start:Riverwalk Boardgame Cafe',
+  'highlight:Adega Wine Atelier',
+  'windDown:Orchard Artisan Gelato',
 ] as const
 
 type TargetStarterId = (typeof targetStarterIds)[number]
@@ -131,14 +142,16 @@ async function main(): Promise<void> {
   setEnv()
   assertStarterScopedCacheIsolation()
   const rows = []
+  const serviceProbeRows = []
 
   for (const starterId of targetStarterIds) {
+    const starterPack = findStarterPack(starterId)
     const directDiagnostics = await buildCuratePublicCardGateDiagnostics({
-      starterPack: findStarterPack(starterId),
+      starterPack,
       fetchCallCount: () => fetchCallCount,
     })
     const scenarioDiagnostics = await buildCurateScenarioCardGateDiagnostics({
-      starterPack: findStarterPack(starterId),
+      starterPack,
       fetchCallCount: () => fetchCallCount,
     })
 
@@ -156,6 +169,30 @@ async function main(): Promise<void> {
     ] as const
 
     for (const { mode, diagnostics, scenario } of diagnosticsByMode) {
+      const serviceRouteStops = parsePublicCurateRouteStops(
+        scenario?.scenarioArtifactRouteStops ?? diagnostics.directPlannerRouteStops,
+      )
+      const selectedArtifactId = scenario?.selectedArtifactId ?? null
+      const serviceModel = buildPublicCurateCardTruthModel({
+        selectedStarterPack: starterPack,
+        cacheKeyScope: `${starterId}:diagnostic`,
+        routeStops: serviceRouteStops,
+        selectedArtifactId,
+        qualificationByArtifactId: selectedArtifactId
+          ? {
+              [selectedArtifactId]: {
+                status: diagnostics.selectedCuratePreviewCommitability.status,
+                hasApprovedPayload: diagnostics.hasApprovedPayload,
+              },
+            }
+          : {},
+        committedRouteFallbackRenderEnabled: publicCurateCommittedRouteFallbackEnabled,
+        currentPageRender: {
+          wouldRenderCard: diagnostics.qualifiedVisibleCardCount > 0,
+          primaryCardDisplayMode: diagnostics.primaryCardDisplayMode,
+          selectedArtifactId,
+        },
+      })
       assert(
         diagnostics.publicCardGateReached,
         `${starterId} ${mode}: card gate diagnostics must run.`,
@@ -203,6 +240,30 @@ async function main(): Promise<void> {
       committedRouteFallbackRenderable === false,
       `${starterId} ${mode}: committed direct-route fallback must not be public-renderable.`,
     )
+    assert(
+      serviceModel.diagnostics.serviceTruthSourceCount ===
+        PUBLIC_CURATE_CARD_TRUTH_MINIMUM_LOAD_BEARING_SOURCE_COUNT,
+      `${starterId} ${mode}: service truth source count must be the minimum load-bearing target.`,
+    )
+    assert(
+      serviceModel.diagnostics.publicRenderMigrated === false &&
+        PUBLIC_CURATE_CARD_TRUTH_RENDER_MIGRATED === false,
+      `${starterId} ${mode}: public render must not be migrated to the service in Patch 3L.`,
+    )
+    assert(
+      serviceModel.diagnostics.committedRouteFallbackRenderEnabled === false,
+      `${starterId} ${mode}: committed fallback render flag must remain false.`,
+    )
+    assert(
+      serviceModel.diagnostics.committedRouteFallbackRenderEligible === false,
+      `${starterId} ${mode}: committed fallback must not be service-render-eligible.`,
+    )
+    if (starterId === 'arcade-and-drinks') {
+      assert(
+        serviceModel.diagnostics.rejectionReasons.includes('missing_required_role'),
+        `${starterId} ${mode}: service must classify incomplete arcade route as missing_required_role.`,
+      )
+    }
     if (starterId === 'arcade-and-drinks') {
       assert(
         diagnostics.committedRouteFallback.status === 'rejected',
@@ -264,6 +325,20 @@ async function main(): Promise<void> {
       committedRouteFallback: diagnostics.committedRouteFallback,
       committedRouteFallbackRenderEnabled: publicCurateCommittedRouteFallbackEnabled,
       committedRouteFallbackRenderable,
+      publicCurateCardTruthService: {
+        serviceTruthSourceCount: serviceModel.diagnostics.serviceTruthSourceCount,
+        starterPackId: serviceModel.starterPackId,
+        cardTruthStatus: serviceModel.diagnostics.cardTruthStatus,
+        starterFitStatus: serviceModel.diagnostics.starterFitStatus,
+        rejectionReasons: serviceModel.diagnostics.rejectionReasons,
+        routeStops: serviceModel.diagnostics.routeStops.map(
+          (stop) => `${stop.role}:${stop.name}`,
+        ),
+        allowedToRender: serviceModel.diagnostics.allowedToRender,
+        pageCurrentlyWouldRenderSomethingElse:
+          serviceModel.diagnostics.pageCurrentlyWouldRenderSomethingElse,
+        publicRenderMigrated: serviceModel.diagnostics.publicRenderMigrated,
+      },
       noQualifiedFallback: diagnostics.noQualifiedFallback,
       selectedInfeasible: diagnostics.selectedInfeasible,
       sourceMode: diagnostics.sourceMode,
@@ -273,6 +348,35 @@ async function main(): Promise<void> {
     })
     }
   }
+
+  const liveMusicMismatchProbe = buildPublicCurateCardTruthModel({
+    selectedStarterPack: findStarterPack('live-music-loop'),
+    cacheKeyScope: 'live-music-loop:known-mismatch-probe',
+    routeStops: parsePublicCurateRouteStops(liveMusicLoopKnownMismatchStops),
+    committedRouteFallbackRenderEnabled: publicCurateCommittedRouteFallbackEnabled,
+    currentPageRender: {
+      wouldRenderCard: true,
+      primaryCardDisplayMode: 'qualified_only',
+    },
+  })
+  assert(
+    liveMusicMismatchProbe.diagnostics.allowedToRender === false,
+    'live-music-loop known mismatch probe must not be allowed to render.',
+  )
+  assert(
+    liveMusicMismatchProbe.diagnostics.rejectionReasons.includes('card_promise_mismatch') ||
+      liveMusicMismatchProbe.diagnostics.rejectionReasons.includes('category_family_mismatch'),
+    'live-music-loop known mismatch probe must reject card-promise or category-family mismatch.',
+  )
+  serviceProbeRows.push({
+    probe: 'live-music-loop-known-mismatch',
+    routeStops: liveMusicLoopKnownMismatchStops,
+    cardTruthStatus: liveMusicMismatchProbe.diagnostics.cardTruthStatus,
+    starterFitStatus: liveMusicMismatchProbe.diagnostics.starterFitStatus,
+    rejectionReasons: liveMusicMismatchProbe.diagnostics.rejectionReasons,
+    allowedToRender: liveMusicMismatchProbe.diagnostics.allowedToRender,
+    publicRenderMigrated: liveMusicMismatchProbe.diagnostics.publicRenderMigrated,
+  })
 
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
 
@@ -285,6 +389,9 @@ async function main(): Promise<void> {
         targetStarterIds,
         rootCauseClassification:
           'E. public truth gate/card boundary disables committed route fallback as public render truth',
+        serviceTruthSourceCount: PUBLIC_CURATE_CARD_TRUTH_MINIMUM_LOAD_BEARING_SOURCE_COUNT,
+        publicRenderMigrated: PUBLIC_CURATE_CARD_TRUTH_RENDER_MIGRATED,
+        serviceProbeRows,
         rows,
       },
       null,
