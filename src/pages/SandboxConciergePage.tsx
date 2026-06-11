@@ -266,6 +266,7 @@ const DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY = 'id8.dev.closeout.buildAnchorResult
 const DEV_CLOSEOUT_BUILD_READY_KEY = 'id8.dev.closeout.buildReady'
 const DEV_CLOSEOUT_BUILD_QUERY_KEY = 'id8.dev.closeout.buildQuery'
 const PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED = false
+const PUBLIC_CURATE_COMMITTED_ROUTE_FALLBACK_ENABLED: boolean = false
 
 function readSessionStorageValue(key: string): string | null {
   if (typeof window === 'undefined') {
@@ -11838,6 +11839,7 @@ export function SandboxConciergePage({
   }, [curateVisibleCardModels])
   const curateCommittedRouteFallbackVisibleCardModels = useMemo(() => {
     if (
+      !PUBLIC_CURATE_COMMITTED_ROUTE_FALLBACK_ENABLED ||
       !isCurateWrapperActive ||
       !selectedStarterPack ||
       curateScenarioQualifiedVisibleCardModels.length > 0 ||
@@ -12337,7 +12339,8 @@ export function SandboxConciergePage({
     }
     return (
       getCuratePreviewCommitability(activeCurateArtifact.id) ??
-      (curateCommittedRouteFallbackState?.artifact?.id === activeCurateArtifact.id
+      (PUBLIC_CURATE_COMMITTED_ROUTE_FALLBACK_ENABLED
+        && curateCommittedRouteFallbackState?.artifact?.id === activeCurateArtifact.id
         ? curateCommittedRouteFallbackState.commitability
         : null)
     )

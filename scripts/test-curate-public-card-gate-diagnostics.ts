@@ -20,10 +20,7 @@ const hostedFallbackStarterIds = new Set<string>([
   'arcade-and-drinks',
   'live-music-loop',
 ])
-const committedFallbackAcceptedStarterIds = new Set<string>([
-  'hidden-cocktail-corners',
-  'live-music-loop',
-])
+const publicCurateCommittedRouteFallbackEnabled: boolean = false
 const staleHostedRouteStops = [
   'start:Nirvana Soul',
   'highlight:Adega Wine Atelier',
@@ -199,12 +196,13 @@ async function main(): Promise<void> {
       diagnostics.rejectedVisibleCardCount >= 0,
       `${starterId} ${mode}: rejected visible card count must be present.`,
     )
-    if (committedFallbackAcceptedStarterIds.has(starterId)) {
-      assert(
-        diagnostics.committedRouteFallback.status === 'accepted',
-        `${starterId} ${mode}: committed direct-route fallback must be accepted.`,
-      )
-    }
+    const committedRouteFallbackRenderable =
+      publicCurateCommittedRouteFallbackEnabled &&
+      diagnostics.committedRouteFallback.status === 'accepted'
+    assert(
+      committedRouteFallbackRenderable === false,
+      `${starterId} ${mode}: committed direct-route fallback must not be public-renderable.`,
+    )
     if (starterId === 'arcade-and-drinks') {
       assert(
         diagnostics.committedRouteFallback.status === 'rejected',
@@ -220,12 +218,10 @@ async function main(): Promise<void> {
         !hasExactStaleHostedRoute(diagnostics.directPlannerRouteStops),
         `${starterId} ${mode}: direct planner route must not be the stale Adega/Nirvana/Jtown route.`,
       )
-      if (diagnostics.committedRouteFallback.status === 'accepted') {
-        assert(
-          !hasExactStaleHostedRoute(diagnostics.directPlannerRouteStops),
-          `${starterId} ${mode}: accepted fallback must be based on current starter route stops.`,
-        )
-      }
+      assert(
+        committedRouteFallbackRenderable === false,
+        `${starterId} ${mode}: hosted fallback route must not be public-renderable.`,
+      )
     }
     if (
       scenario &&
@@ -266,6 +262,8 @@ async function main(): Promise<void> {
       failedReason: diagnostics.selectedCuratePreviewCommitability.failedReason,
       selectedArtifactId: scenario?.selectedArtifactId ?? null,
       committedRouteFallback: diagnostics.committedRouteFallback,
+      committedRouteFallbackRenderEnabled: publicCurateCommittedRouteFallbackEnabled,
+      committedRouteFallbackRenderable,
       noQualifiedFallback: diagnostics.noQualifiedFallback,
       selectedInfeasible: diagnostics.selectedInfeasible,
       sourceMode: diagnostics.sourceMode,
@@ -286,7 +284,7 @@ async function main(): Promise<void> {
         starterScopedCacheIsolation: 'passed',
         targetStarterIds,
         rootCauseClassification:
-          'E. public truth gate/card boundary hides committed route when scenario artifacts produce no qualified card',
+          'E. public truth gate/card boundary disables committed route fallback as public render truth',
         rows,
       },
       null,
