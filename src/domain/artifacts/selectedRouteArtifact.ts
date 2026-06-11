@@ -28,6 +28,10 @@ export interface ActiveHighlightProjection {
  * This contract projects the currently active route truth for Step 2 / preview
  * surfaces. It may point at either candidate (`ContractEntryArtifact`) truth or
  * committed/runtime truth, but it is not itself interpretation-owned or runtime-owned.
+ *
+ * P0-A: subsumed as a projection target. It remains for compatibility until
+ * public surfaces migrate to derived projections over enriched
+ * `ContractEntryArtifact` and `RuntimeRouteArtifact`.
  */
 export interface SelectedRouteArtifact<TRuntimeArtifact = unknown> {
   source: 'candidate' | 'committed'

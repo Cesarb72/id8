@@ -6,6 +6,10 @@ import type { UserStopRole } from '../../domain/types/itinerary'
  *
  * This payload carries the exact approved route forward from Shared Plan Preview
  * into route_refinement without requiring an immediate rebuild to populate reveal state.
+ *
+ * P0-A: subsumed as a compatibility wrapper. Future Curate handoff data should
+ * fold into `ContractEntryArtifact.qualification` and runtime lock eligibility
+ * instead of remaining a mode-private route truth layer.
  */
 export interface CurateRefinementEntryPayload<
   TPlanSnapshot = unknown,
