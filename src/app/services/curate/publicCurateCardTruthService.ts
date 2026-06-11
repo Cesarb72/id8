@@ -66,12 +66,86 @@ export interface PublicCurateCardTruthInput {
   }
 }
 
+export interface PublicCurateServiceCandidateInput {
+  artifactId?: string | null
+  routeStops: PublicCurateRouteStopInput[]
+  sourceMode?: string | null
+  qualification?: PublicCurateQualificationDiagnostic
+  approvedRefinementEntryPayload?: PublicCurateApprovedPayloadReference | null
+}
+
 export interface PublicCurateStarterFitResult {
   status: 'passed' | 'rejected' | 'not_run'
   allowedToRender: boolean
   rejectionReasons: PublicCurateStarterFitRejectionReason[]
   routeStops: PublicCurateRouteStopInput[]
   normalizedRoles: Partial<Record<'start' | 'highlight' | 'windDown', string>>
+}
+
+export interface PublicCurateRoleCoverageDiagnostic {
+  start: boolean
+  highlight: boolean
+  windDown: boolean
+}
+
+export interface PublicCurateServiceCandidateDiagnostic {
+  starterPackId: string | null
+  candidateArtifactId: string
+  cacheKeyScope: string | null
+  sourceMode: string | null
+  routeStops: PublicCurateRouteStopInput[]
+  roleCoverage: PublicCurateRoleCoverageDiagnostic
+  starterFitStatus: PublicCurateStarterFitResult['status']
+  rejectionReasons: PublicCurateStarterFitRejectionReason[]
+  allowedToRender: boolean
+  serviceTruthSourceCount: number
+  publicRenderMigrated: boolean
+  pageRenderMigrated: false
+}
+
+export interface PublicCurateCandidateConstructionDiagnostics {
+  starterPackId: string | null
+  serviceTruthSourceCount: number
+  publicRenderMigrated: boolean
+  pageRenderMigrated: false
+  candidateCount: number
+  candidateArtifactIds: string[]
+  selectedCandidateArtifactId: string | null
+  routeStops: PublicCurateRouteStopInput[]
+  roleCoverage: PublicCurateRoleCoverageDiagnostic
+  starterFitStatus: PublicCurateStarterFitResult['status']
+  rejectionReasons: PublicCurateStarterFitRejectionReason[]
+  cacheKeyScope: string | null
+  sourceMode: string | null
+  fetchCallCount: number
+  allowedToRender: boolean
+  committedRouteFallbackRenderEnabled: boolean
+  committedRouteFallbackRenderEligible: boolean
+  candidates: PublicCurateServiceCandidateDiagnostic[]
+}
+
+export type PublicCurateArcadeAndDrinksClassification =
+  | 'corpus/data gap'
+  | 'route-shape/planner gap'
+  | 'card truth gap'
+  | 'mixed'
+
+export interface PublicCurateArcadeCorpusCandidateSummary {
+  name: string
+  category: string
+  supportRoles: string[]
+  warmupAffinity: number | null
+  peakAffinity: number | null
+  status: string
+}
+
+export interface PublicCurateArcadeAndDrinksDiagnostic {
+  classification: PublicCurateArcadeAndDrinksClassification
+  evidence: string[]
+  supportedCandidateCount: number
+  startRoleCandidateCount: number
+  highlightOrSupportCandidateCount: number
+  generatedRouteMissingStart: boolean
 }
 
 export interface PublicCurateVisibleCardModel {
@@ -182,6 +256,37 @@ function routeStopsFromArtifact(artifact: ContractEntryArtifact): PublicCurateRo
       name: artifact.storySpine.windDown,
     },
   ]
+}
+
+function routeStopFingerprint(routeStops: PublicCurateRouteStopInput[]): string {
+  const value = routeStops
+    .map((stop) => `${normalizeText(stop.role)}-${normalizeText(stop.name)}`)
+    .filter(Boolean)
+    .join('--')
+  return value.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'empty'
+}
+
+function buildDiagnosticCandidateArtifactId(params: {
+  starterPackId: string | null
+  index: number
+  routeStops: PublicCurateRouteStopInput[]
+}): string {
+  return [
+    params.starterPackId ?? 'no-starter',
+    'service-candidate',
+    String(params.index + 1),
+    routeStopFingerprint(params.routeStops),
+  ].join(':')
+}
+
+function buildRoleCoverage(
+  starterFit: PublicCurateStarterFitResult,
+): PublicCurateRoleCoverageDiagnostic {
+  return {
+    start: Boolean(starterFit.normalizedRoles.start?.trim()),
+    highlight: Boolean(starterFit.normalizedRoles.highlight?.trim()),
+    windDown: Boolean(starterFit.normalizedRoles.windDown?.trim()),
+  }
 }
 
 function inferCategoryTokens(stop: PublicCurateRouteStopInput): Set<string> {
@@ -471,5 +576,142 @@ export function buildPublicCurateCardTruthModel(
       lockLive: false,
       plansHubSave: false,
     },
+  }
+}
+
+export function buildPublicCurateCandidateConstructionDiagnostics(params: {
+  selectedStarterPack: StarterPack | null
+  cacheKeyScope?: string | null
+  candidates: PublicCurateServiceCandidateInput[]
+  sourceMode: string | null
+  fetchCallCount: number
+  committedRouteFallbackRenderEnabled: boolean
+}): PublicCurateCandidateConstructionDiagnostics {
+  const starterPackId = params.selectedStarterPack?.id ?? null
+  const cacheKeyScope = params.cacheKeyScope ?? starterPackId
+  const candidates = params.candidates.map((candidate, index) => {
+    const candidateArtifactId =
+      candidate.artifactId?.trim() ||
+      buildDiagnosticCandidateArtifactId({
+        starterPackId,
+        index,
+        routeStops: candidate.routeStops,
+      })
+    const starterFit = validatePublicCurateStarterFit({
+      selectedStarterPack: params.selectedStarterPack,
+      routeStops: candidate.routeStops,
+      approvedRefinementEntryPayload: candidate.approvedRefinementEntryPayload,
+    })
+    return {
+      starterPackId,
+      candidateArtifactId,
+      cacheKeyScope,
+      sourceMode: candidate.sourceMode ?? params.sourceMode,
+      routeStops: starterFit.routeStops,
+      roleCoverage: buildRoleCoverage(starterFit),
+      starterFitStatus: starterFit.status,
+      rejectionReasons: starterFit.rejectionReasons,
+      allowedToRender: starterFit.allowedToRender,
+      serviceTruthSourceCount: PUBLIC_CURATE_CARD_TRUTH_MINIMUM_LOAD_BEARING_SOURCE_COUNT,
+      publicRenderMigrated: PUBLIC_CURATE_CARD_TRUTH_RENDER_MIGRATED,
+      pageRenderMigrated: false as const,
+    }
+  })
+  const selectedCandidate = candidates.find((candidate) => candidate.allowedToRender) ?? candidates[0] ?? null
+  const roleCoverage =
+    selectedCandidate?.roleCoverage ?? { start: false, highlight: false, windDown: false }
+  const rejectionReasons = selectedCandidate?.rejectionReasons ?? []
+
+  return {
+    starterPackId,
+    serviceTruthSourceCount: PUBLIC_CURATE_CARD_TRUTH_MINIMUM_LOAD_BEARING_SOURCE_COUNT,
+    publicRenderMigrated: PUBLIC_CURATE_CARD_TRUTH_RENDER_MIGRATED,
+    pageRenderMigrated: false,
+    candidateCount: candidates.length,
+    candidateArtifactIds: candidates.map((candidate) => candidate.candidateArtifactId),
+    selectedCandidateArtifactId: selectedCandidate?.candidateArtifactId ?? null,
+    routeStops: selectedCandidate?.routeStops ?? [],
+    roleCoverage,
+    starterFitStatus: selectedCandidate?.starterFitStatus ?? 'not_run',
+    rejectionReasons,
+    cacheKeyScope,
+    sourceMode: selectedCandidate?.sourceMode ?? params.sourceMode,
+    fetchCallCount: params.fetchCallCount,
+    allowedToRender: selectedCandidate?.allowedToRender ?? false,
+    committedRouteFallbackRenderEnabled: params.committedRouteFallbackRenderEnabled,
+    committedRouteFallbackRenderEligible: Boolean(
+      params.committedRouteFallbackRenderEnabled && selectedCandidate?.allowedToRender,
+    ),
+    candidates,
+  }
+}
+
+export function classifyArcadeAndDrinksCandidateState(params: {
+  generatedRouteStops: PublicCurateRouteStopInput[]
+  corpusCandidates: PublicCurateArcadeCorpusCandidateSummary[]
+}): PublicCurateArcadeAndDrinksDiagnostic {
+  const generatedStarterFit = validatePublicCurateStarterFit({
+    selectedStarterPack: {
+      id: 'arcade-and-drinks',
+      title: 'Arcade + Drinks',
+      description: 'High-social momentum with playful stop variety.',
+      personaBias: 'friends',
+      primaryAnchor: 'playful',
+      secondaryAnchors: ['lively'],
+      distanceMode: 'nearby',
+      lensPreset: {
+        lensTone: 'electric',
+        energyBand: ['medium', 'high'],
+        discoveryBias: 'medium',
+        movementTolerance: 'high',
+        preferredCategories: ['activity', 'bar', 'dessert'],
+        preferredTags: ['interactive', 'social', 'playful'],
+        preferredStopShapes: {
+          highlight: {
+            preferredCategories: ['activity', 'bar'],
+            energyPreference: ['high'],
+          },
+        },
+        windDown: {
+          closeToBase: false,
+          maxEnergy: 'medium',
+        },
+      },
+    },
+    routeStops: params.generatedRouteStops,
+  })
+  const startRoleCandidateCount = params.corpusCandidates.filter((candidate) =>
+    candidate.supportRoles.some((role) => normalizeText(role) === 'start' || normalizeText(role) === 'warmup'),
+  ).length
+  const highlightOrSupportCandidateCount = params.corpusCandidates.filter((candidate) =>
+    candidate.supportRoles.some((role) => {
+      const normalized = normalizeText(role)
+      return normalized === 'highlight' || normalized === 'support'
+    }),
+  ).length
+  const generatedRouteMissingStart =
+    generatedStarterFit.rejectionReasons.includes('missing_required_role') &&
+    !generatedStarterFit.normalizedRoles.start
+  const classification: PublicCurateArcadeAndDrinksClassification =
+    startRoleCandidateCount === 0 && generatedRouteMissingStart
+      ? 'mixed'
+      : generatedRouteMissingStart
+        ? 'route-shape/planner gap'
+        : params.corpusCandidates.length === 0
+          ? 'corpus/data gap'
+          : 'card truth gap'
+
+  return {
+    classification,
+    evidence: [
+      `arcade-supported-candidate-count:${params.corpusCandidates.length}`,
+      `arcade-start-role-candidate-count:${startRoleCandidateCount}`,
+      `arcade-highlight-or-support-candidate-count:${highlightOrSupportCandidateCount}`,
+      `generated-route-missing-start:${String(generatedRouteMissingStart)}`,
+    ],
+    supportedCandidateCount: params.corpusCandidates.length,
+    startRoleCandidateCount,
+    highlightOrSupportCandidateCount,
+    generatedRouteMissingStart,
   }
 }

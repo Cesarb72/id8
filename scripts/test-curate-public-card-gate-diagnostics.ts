@@ -6,9 +6,13 @@ import {
   PUBLIC_CURATE_CARD_TRUTH_MINIMUM_LOAD_BEARING_SOURCE_COUNT,
   PUBLIC_CURATE_CARD_TRUTH_RENDER_MIGRATED,
   buildPublicCurateCardTruthModel,
+  buildPublicCurateCandidateConstructionDiagnostics,
+  classifyArcadeAndDrinksCandidateState,
   parsePublicCurateRouteStops,
+  type PublicCurateCandidateConstructionDiagnostics,
 } from '../src/app/services/curate/publicCurateCardTruthService.ts'
 import { FIELD_STATIC_PROVIDER_CORPUS_CURATE_ENV_KEY } from '../src/domain/field/corpus/fieldStaticProviderCorpusConfig.ts'
+import { sanJoseProviderCorpusVenues } from '../src/domain/field/corpus/sanJoseProviderCorpus.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
 
 const targetStarterIds = [
@@ -138,11 +142,31 @@ function hasExactStaleHostedRoute(stops: readonly string[]): boolean {
   return staleHostedRouteStops.every((stop) => stops.includes(stop))
 }
 
+function buildArcadeCorpusCandidateSummaries() {
+  return sanJoseProviderCorpusVenues
+    .filter((candidate) => candidate.support.starters.includes('arcade-drinks'))
+    .map((candidate) => ({
+      name: candidate.venue.name,
+      category: candidate.venue.category,
+      supportRoles: [...candidate.support.roles],
+      warmupAffinity: candidate.venue.roleAffinity?.warmup ?? null,
+      peakAffinity: candidate.venue.roleAffinity?.peak ?? null,
+      status: candidate.qualityGateStatus,
+    }))
+}
+
 async function main(): Promise<void> {
   setEnv()
   assertStarterScopedCacheIsolation()
   const rows = []
   const serviceProbeRows = []
+  const serviceCandidateDiagnosticsByStarter = new Map<
+    TargetStarterId,
+    PublicCurateCandidateConstructionDiagnostics
+  >()
+  let arcadeClassification:
+    | ReturnType<typeof classifyArcadeAndDrinksCandidateState>
+    | null = null
 
   for (const starterId of targetStarterIds) {
     const starterPack = findStarterPack(starterId)
@@ -173,6 +197,35 @@ async function main(): Promise<void> {
         scenario?.scenarioArtifactRouteStops ?? diagnostics.directPlannerRouteStops,
       )
       const selectedArtifactId = scenario?.selectedArtifactId ?? null
+      const serviceCandidateDiagnostics = buildPublicCurateCandidateConstructionDiagnostics({
+        selectedStarterPack: starterPack,
+        cacheKeyScope: `${starterId}:service-candidate-diagnostics`,
+        candidates: serviceRouteStops.length > 0
+          ? [
+              {
+                artifactId: selectedArtifactId,
+                routeStops: serviceRouteStops,
+                sourceMode: diagnostics.sourceMode.effectiveMode,
+                qualification: {
+                  status: diagnostics.selectedCuratePreviewCommitability.status,
+                  hasApprovedPayload: diagnostics.hasApprovedPayload,
+                },
+              },
+            ]
+          : [],
+        sourceMode: diagnostics.sourceMode.effectiveMode,
+        fetchCallCount,
+        committedRouteFallbackRenderEnabled: publicCurateCommittedRouteFallbackEnabled,
+      })
+      if (mode === 'direct_planner_projection') {
+        serviceCandidateDiagnosticsByStarter.set(starterId, serviceCandidateDiagnostics)
+      }
+      if (starterId === 'arcade-and-drinks' && mode === 'direct_planner_projection') {
+        arcadeClassification = classifyArcadeAndDrinksCandidateState({
+          generatedRouteStops: serviceRouteStops,
+          corpusCandidates: buildArcadeCorpusCandidateSummaries(),
+        })
+      }
       const serviceModel = buildPublicCurateCardTruthModel({
         selectedStarterPack: starterPack,
         cacheKeyScope: `${starterId}:diagnostic`,
@@ -258,10 +311,37 @@ async function main(): Promise<void> {
       serviceModel.diagnostics.committedRouteFallbackRenderEligible === false,
       `${starterId} ${mode}: committed fallback must not be service-render-eligible.`,
     )
+    assert(
+      serviceCandidateDiagnostics.starterPackId === starterId,
+      `${starterId} ${mode}: service candidate diagnostics must report the current starter id.`,
+    )
+    assert(
+      serviceCandidateDiagnostics.cacheKeyScope?.includes(starterId) === true,
+      `${starterId} ${mode}: service candidate cache key scope must include the selected starter.`,
+    )
+    assert(
+      serviceCandidateDiagnostics.publicRenderMigrated === false &&
+        serviceCandidateDiagnostics.pageRenderMigrated === false,
+      `${starterId} ${mode}: service candidate diagnostics must remain non-render-migrated.`,
+    )
+    assert(
+      serviceCandidateDiagnostics.fetchCallCount === fetchCallCount,
+      `${starterId} ${mode}: service candidate diagnostics must carry fetch count.`,
+    )
+    assert(
+      serviceCandidateDiagnostics.candidates.every(
+        (candidate) => candidate.starterPackId === starterId,
+      ),
+      `${starterId} ${mode}: every service candidate must be starter-scoped.`,
+    )
     if (starterId === 'arcade-and-drinks') {
       assert(
         serviceModel.diagnostics.rejectionReasons.includes('missing_required_role'),
         `${starterId} ${mode}: service must classify incomplete arcade route as missing_required_role.`,
+      )
+      assert(
+        serviceCandidateDiagnostics.rejectionReasons.includes('missing_required_role'),
+        `${starterId} ${mode}: service candidate diagnostics must classify arcade as missing_required_role.`,
       )
     }
     if (starterId === 'arcade-and-drinks') {
@@ -339,6 +419,24 @@ async function main(): Promise<void> {
           serviceModel.diagnostics.pageCurrentlyWouldRenderSomethingElse,
         publicRenderMigrated: serviceModel.diagnostics.publicRenderMigrated,
       },
+      publicCurateServiceCandidateDiagnostics: {
+        starterPackId: serviceCandidateDiagnostics.starterPackId,
+        serviceTruthSourceCount: serviceCandidateDiagnostics.serviceTruthSourceCount,
+        publicRenderMigrated: serviceCandidateDiagnostics.publicRenderMigrated,
+        pageRenderMigrated: serviceCandidateDiagnostics.pageRenderMigrated,
+        candidateCount: serviceCandidateDiagnostics.candidateCount,
+        candidateArtifactIds: serviceCandidateDiagnostics.candidateArtifactIds,
+        routeStops: serviceCandidateDiagnostics.routeStops.map(
+          (stop) => `${stop.role}:${stop.name}`,
+        ),
+        roleCoverage: serviceCandidateDiagnostics.roleCoverage,
+        starterFitStatus: serviceCandidateDiagnostics.starterFitStatus,
+        rejectionReasons: serviceCandidateDiagnostics.rejectionReasons,
+        cacheKeyScope: serviceCandidateDiagnostics.cacheKeyScope,
+        sourceMode: serviceCandidateDiagnostics.sourceMode,
+        fetchCallCount: serviceCandidateDiagnostics.fetchCallCount,
+        allowedToRender: serviceCandidateDiagnostics.allowedToRender,
+      },
       noQualifiedFallback: diagnostics.noQualifiedFallback,
       selectedInfeasible: diagnostics.selectedInfeasible,
       sourceMode: diagnostics.sourceMode,
@@ -348,6 +446,79 @@ async function main(): Promise<void> {
     })
     }
   }
+
+  const starterADiagnostics = serviceCandidateDiagnosticsByStarter.get('hidden-cocktail-corners')
+  const starterBDiagnostics = serviceCandidateDiagnosticsByStarter.get('live-music-loop')
+  assert(starterADiagnostics, 'Cross-starter diagnostics must include Starter A.')
+  assert(starterBDiagnostics, 'Cross-starter diagnostics must include Starter B.')
+  assert(
+    starterADiagnostics.starterPackId !== starterBDiagnostics.starterPackId,
+    'Cross-starter diagnostics must report different starter ids.',
+  )
+  assert(
+    starterADiagnostics.cacheKeyScope?.includes(starterADiagnostics.starterPackId ?? '') === true,
+    'Starter A cache scope must include Starter A id.',
+  )
+  assert(
+    starterBDiagnostics.cacheKeyScope?.includes(starterBDiagnostics.starterPackId ?? '') === true,
+    'Starter B cache scope must include Starter B id.',
+  )
+  const starterASelectedArtifactId = starterADiagnostics.selectedCandidateArtifactId
+  const starterBCandidateIds = new Set(starterBDiagnostics.candidateArtifactIds)
+  assert(
+    !starterASelectedArtifactId || !starterBCandidateIds.has(starterASelectedArtifactId),
+    'Starter A selected artifact must not be selected under Starter B.',
+  )
+  assert(
+    starterADiagnostics.candidateArtifactIds.every((artifactId) =>
+      artifactId.includes(starterADiagnostics.starterPackId ?? ''),
+    ),
+    'Starter A diagnostic artifact ids must be explicitly starter-scoped.',
+  )
+  assert(
+    starterBDiagnostics.candidateArtifactIds.every((artifactId) =>
+      artifactId.includes(starterBDiagnostics.starterPackId ?? ''),
+    ),
+    'Starter B diagnostic artifact ids must be explicitly starter-scoped.',
+  )
+  const previousStarterApprovedPayloadProbe = buildPublicCurateCardTruthModel({
+    selectedStarterPack: findStarterPack('live-music-loop'),
+    cacheKeyScope: 'live-music-loop:previous-starter-approved-payload-probe',
+    routeStops: starterADiagnostics.routeStops,
+    approvedRefinementEntryPayload: {
+      starterPackId: 'hidden-cocktail-corners',
+      artifactId: starterASelectedArtifactId,
+    },
+    committedRouteFallbackRenderEnabled: publicCurateCommittedRouteFallbackEnabled,
+  })
+  assert(
+    previousStarterApprovedPayloadProbe.diagnostics.allowedToRender === false,
+    'Previous-starter approved payload must not pass current-starter service validation.',
+  )
+  assert(
+    previousStarterApprovedPayloadProbe.diagnostics.rejectionReasons.includes(
+      'approved_payload_starter_mismatch',
+    ),
+    'Previous-starter approved payload must reject with approved_payload_starter_mismatch.',
+  )
+  assert(arcadeClassification, 'Arcade classification must be produced.')
+  assert(
+    arcadeClassification.classification === 'mixed' ||
+      arcadeClassification.classification === 'route-shape/planner gap',
+    'Arcade must classify as mixed or route-shape/planner gap.',
+  )
+  assert(
+    arcadeClassification.generatedRouteMissingStart === true,
+    'Arcade classification must identify the missing start role.',
+  )
+  assert(
+    arcadeClassification.supportedCandidateCount > 0,
+    'Arcade classification must report supported Field corpus candidates.',
+  )
+  assert(
+    arcadeClassification.highlightOrSupportCandidateCount > 0,
+    'Arcade classification must report highlight/support candidates.',
+  )
 
   const liveMusicMismatchProbe = buildPublicCurateCardTruthModel({
     selectedStarterPack: findStarterPack('live-music-loop'),
@@ -376,6 +547,33 @@ async function main(): Promise<void> {
     rejectionReasons: liveMusicMismatchProbe.diagnostics.rejectionReasons,
     allowedToRender: liveMusicMismatchProbe.diagnostics.allowedToRender,
     publicRenderMigrated: liveMusicMismatchProbe.diagnostics.publicRenderMigrated,
+  })
+  serviceProbeRows.push({
+    probe: 'cross-starter-hidden-cocktail-to-live-music',
+    starterA: {
+      starterPackId: starterADiagnostics.starterPackId,
+      cacheKeyScope: starterADiagnostics.cacheKeyScope,
+      selectedCandidateArtifactId: starterADiagnostics.selectedCandidateArtifactId,
+      candidateArtifactIds: starterADiagnostics.candidateArtifactIds,
+    },
+    starterB: {
+      starterPackId: starterBDiagnostics.starterPackId,
+      cacheKeyScope: starterBDiagnostics.cacheKeyScope,
+      selectedCandidateArtifactId: starterBDiagnostics.selectedCandidateArtifactId,
+      candidateArtifactIds: starterBDiagnostics.candidateArtifactIds,
+    },
+    previousStarterPayloadRejected:
+      previousStarterApprovedPayloadProbe.diagnostics.rejectionReasons,
+    fetchCallCount,
+  })
+  serviceProbeRows.push({
+    probe: 'arcade-and-drinks-classification',
+    classification: arcadeClassification.classification,
+    evidence: arcadeClassification.evidence,
+    supportedCandidateCount: arcadeClassification.supportedCandidateCount,
+    startRoleCandidateCount: arcadeClassification.startRoleCandidateCount,
+    highlightOrSupportCandidateCount: arcadeClassification.highlightOrSupportCandidateCount,
+    generatedRouteMissingStart: arcadeClassification.generatedRouteMissingStart,
   })
 
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
