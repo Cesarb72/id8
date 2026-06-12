@@ -215,11 +215,11 @@ async function main(): Promise<void> {
     expectedReason: 'invalid_json',
   })
   await expectHandlerBlocked({
-    name: 'handler valid request fails closed',
+    name: 'handler valid request fails closed without durable store',
     method: 'POST',
     body: validRequest,
     expectedStatus: 503,
-    expectedReason: 'field_proxy_not_activated',
+    expectedReason: 'durable_store_unavailable',
   })
 
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)

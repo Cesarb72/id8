@@ -1,10 +1,13 @@
 import {
   buildFieldProxyBlockedResponse,
+  getFieldProxyBudgetSnapshot,
   parseFieldProxyJsonBody,
   validateFieldProxyMethod,
   validateFieldTextSearchRequestBody,
   type FieldRequestValidationFailureReason,
 } from './_lib/fieldRequestValidation'
+import { buildFieldTextSearchCacheKey, buildFieldQueryHash } from './_lib/fieldCacheKeys'
+import { checkFieldCacheAndBudget, createFieldLedgerStoreFromEnv } from './_lib/fieldLedgerStore'
 
 interface FieldProxyRequest {
   method?: string
@@ -53,10 +56,54 @@ export default async function handler(
     return
   }
 
+  const store = createFieldLedgerStoreFromEnv()
+  if (!store) {
+    response.status(503).json(
+      buildFieldProxyBlockedResponse({
+        request: validation.request,
+        reason: 'durable_store_unavailable',
+      }),
+    )
+    return
+  }
+
+  const budget = getFieldProxyBudgetSnapshot()
+  const queryHash = buildFieldQueryHash(validation.request.textQuery)
+  const cacheResult = await checkFieldCacheAndBudget({
+    store,
+    cacheKey: buildFieldTextSearchCacheKey({
+      date: budget.date,
+      environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? 'local',
+      request: validation.request,
+    }),
+    date: budget.date,
+    cap: budget.cap,
+    now: Date.now(),
+    queryHash,
+    purpose: validation.request.purpose,
+  })
+
+  if (cacheResult.status === 'hit') {
+    response.status(200).json(cacheResult.response)
+    return
+  }
+
+  if (cacheResult.status === 'cap_exhausted') {
+    response.status(429).json(
+      buildFieldProxyBlockedResponse({
+        request: validation.request,
+        reason: 'daily_cap_exhausted',
+        budget: cacheResult.budget,
+      }),
+    )
+    return
+  }
+
   response.status(503).json(
     buildFieldProxyBlockedResponse({
       request: validation.request,
       reason: 'field_proxy_not_activated',
+      budget: cacheResult.budget,
     }),
   )
 }

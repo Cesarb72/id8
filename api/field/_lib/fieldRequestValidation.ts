@@ -21,6 +21,8 @@ export type FieldRequestValidationFailureReason =
   | 'invalid_radius'
   | 'invalid_page_size'
   | 'field_proxy_not_activated'
+  | 'durable_store_unavailable'
+  | 'daily_cap_exhausted'
 
 export type FieldRequestValidationResult =
   | {
@@ -242,11 +244,12 @@ export function buildFieldProxyBlockedResponse(params: {
   request?: FieldTextSearchRequest
   reason: FieldRequestValidationFailureReason
   date?: Date
+  budget?: FieldTextSearchResponse['budget']
 }): FieldTextSearchResponse {
   return {
     ok: false,
     cache: 'miss',
-    budget: getFieldProxyBudgetSnapshot(params.date),
+    budget: params.budget ?? getFieldProxyBudgetSnapshot(params.date),
     results: [],
     diagnostics: {
       purpose: params.request?.purpose ?? 'retrieval_supply',
