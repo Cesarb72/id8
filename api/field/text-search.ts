@@ -78,15 +78,26 @@ export default async function handler(
     environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? 'local',
     request: validation.request,
   })
-  const cacheResult = await checkFieldCacheAndBudget({
-    store,
-    cacheKey,
-    date: budget.date,
-    cap: budget.cap,
-    now: Date.now(),
-    queryHash,
-    purpose: validation.request.purpose,
-  })
+  let cacheResult: Awaited<ReturnType<typeof checkFieldCacheAndBudget>>
+  try {
+    cacheResult = await checkFieldCacheAndBudget({
+      store,
+      cacheKey,
+      date: budget.date,
+      cap: budget.cap,
+      now: Date.now(),
+      queryHash,
+      purpose: validation.request.purpose,
+    })
+  } catch {
+    response.status(503).json(
+      buildFieldProxyBlockedResponse({
+        request: validation.request,
+        reason: 'durable_store_unavailable',
+      }),
+    )
+    return
+  }
 
   if (cacheResult.status === 'hit') {
     response.status(200).json(cacheResult.response)
@@ -148,12 +159,23 @@ export default async function handler(
       callConsumed: true,
     },
   }
-  await store.setCachedResponse(
-    cacheKey,
-    {
-      response: providerResponse,
-      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-    },
-  )
+  try {
+    await store.setCachedResponse(
+      cacheKey,
+      {
+        response: providerResponse,
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+      },
+    )
+  } catch {
+    response.status(503).json(
+      buildFieldProxyBlockedResponse({
+        request: validation.request,
+        reason: 'durable_store_unavailable',
+        budget: cacheResult.budget,
+      }),
+    )
+    return
+  }
   response.status(200).json(providerResponse)
 }

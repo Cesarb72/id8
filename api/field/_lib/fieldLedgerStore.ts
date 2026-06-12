@@ -1,5 +1,30 @@
 import type { FieldTextSearchResponse } from '../../../src/domain/field/fieldProxyTypes'
 
+const fieldLedgerKeyPrefix = 'id8:field:v1'
+const fieldCacheTtlMs = 24 * 60 * 60 * 1000
+const fieldBudgetTtlSeconds = 3 * 24 * 60 * 60
+const fieldCallLogTtlSeconds = 14 * 24 * 60 * 60
+
+type RedisCommand = Array<string | number>
+
+type FetchLike = (
+  input: string,
+  init: {
+    method: 'POST'
+    headers: Record<string, string>
+    body: string
+  },
+) => Promise<{
+  ok: boolean
+  status: number
+  text: () => Promise<string>
+}>
+
+interface UpstashRedisResponse<T> {
+  result?: T
+  error?: string
+}
+
 export interface FieldLedgerBudgetSnapshot {
   date: string
   cap: number
@@ -57,10 +82,68 @@ export type FieldLedgerCacheCheckResult =
       budget: FieldLedgerBudgetSnapshot
     }
 
+function normalizeUpstashUrl(url: string): string {
+  return url.trim().replace(/\/+$/g, '')
+}
+
+function buildBudgetKey(date: string): string {
+  return `${fieldLedgerKeyPrefix}:budget:${date}`
+}
+
+function buildLogKey(date: string): string {
+  return `${fieldLedgerKeyPrefix}:calls:${date}`
+}
+
+function buildCacheStorageKey(cacheKey: string): string {
+  return `${fieldLedgerKeyPrefix}:cache:${cacheKey}`
+}
+
+function isFieldLedgerCacheEntry(value: unknown): value is FieldLedgerCacheEntry {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const candidate = value as Partial<FieldLedgerCacheEntry>
+  return (
+    typeof candidate.expiresAt === 'number' &&
+    typeof candidate.response === 'object' &&
+    candidate.response !== null
+  )
+}
+
+function parseRedisNumber(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+function parseReserveCallResult(value: unknown): { allowed: boolean; used: number } {
+  if (!Array.isArray(value) || value.length < 2) {
+    return {
+      allowed: false,
+      used: 0,
+    }
+  }
+  return {
+    allowed: parseRedisNumber(value[0]) === 1,
+    used: parseRedisNumber(value[1]),
+  }
+}
+
 export function createFieldLedgerStoreFromEnv(): FieldLedgerStore | null {
-  // P0-B2 defines the durable boundary only. Hosted runtime must fail closed
-  // until a real KV/Redis implementation is wired in a later approved patch.
-  return null
+  const url = process.env.KV_REST_API_URL?.trim()
+  const token = process.env.KV_REST_API_TOKEN?.trim()
+  if (!url || !token) {
+    return null
+  }
+  return new UpstashFieldLedgerStore({
+    token,
+    url,
+  })
 }
 
 export async function checkFieldCacheAndBudget(params: {
@@ -202,4 +285,143 @@ export class MockFieldLedgerStore implements FieldLedgerStore {
   async logCall(entry: FieldLedgerCallLogEntry): Promise<void> {
     this.callLog.push(entry)
   }
+}
+
+export class UpstashFieldLedgerStore implements FieldLedgerStore {
+  private readonly fetchImpl: FetchLike
+  private readonly token: string
+  private readonly url: string
+
+  constructor(params: {
+    fetchImpl?: FetchLike
+    token: string
+    url: string
+  }) {
+    this.fetchImpl = params.fetchImpl ?? fetch
+    this.token = params.token
+    this.url = normalizeUpstashUrl(params.url)
+  }
+
+  private async command<T>(command: RedisCommand): Promise<T | null> {
+    const response = await this.fetchImpl(this.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(command),
+    })
+    const text = await response.text()
+    let payload: UpstashRedisResponse<T>
+    try {
+      payload = text ? (JSON.parse(text) as UpstashRedisResponse<T>) : {}
+    } catch {
+      throw new Error(`Field ledger store returned invalid JSON (${response.status}).`)
+    }
+    if (!response.ok || payload.error) {
+      throw new Error(`Field ledger store command failed (${response.status}).`)
+    }
+    return payload.result ?? null
+  }
+
+  async getCachedResponse(cacheKey: string, now: number): Promise<FieldLedgerCacheEntry | null> {
+    const serialized = await this.command<string>(['GET', buildCacheStorageKey(cacheKey)])
+    if (!serialized) {
+      return null
+    }
+    let entry: unknown
+    try {
+      entry = JSON.parse(serialized)
+    } catch {
+      return null
+    }
+    if (!isFieldLedgerCacheEntry(entry)) {
+      return null
+    }
+    if (entry.expiresAt <= now) {
+      await this.command(['DEL', buildCacheStorageKey(cacheKey)])
+      return null
+    }
+    return entry
+  }
+
+  async setCachedResponse(cacheKey: string, entry: FieldLedgerCacheEntry): Promise<void> {
+    const ttlMs = Math.max(1, entry.expiresAt - Date.now())
+    await this.command([
+      'SET',
+      buildCacheStorageKey(cacheKey),
+      JSON.stringify(entry),
+      'PX',
+      ttlMs,
+    ])
+  }
+
+  async getBudgetSnapshot(date: string, cap: number): Promise<FieldLedgerBudgetSnapshot> {
+    const used = parseRedisNumber(await this.command<string | number>(['GET', buildBudgetKey(date)]))
+    return {
+      date,
+      cap,
+      used,
+      remaining: Math.max(0, cap - used),
+    }
+  }
+
+  async reserveCall(date: string, cap: number): Promise<
+    | {
+        ok: true
+        budget: FieldLedgerBudgetSnapshot
+      }
+    | {
+        ok: false
+        budget: FieldLedgerBudgetSnapshot
+        blockedReason: 'daily_cap_exhausted'
+      }
+  > {
+    const reservation = parseReserveCallResult(
+      await this.command<unknown>([
+        'EVAL',
+        [
+          "local used = tonumber(redis.call('GET', KEYS[1]) or '0')",
+          "local cap = tonumber(ARGV[1])",
+          'if used >= cap then return {0, used} end',
+          "used = redis.call('INCR', KEYS[1])",
+          "redis.call('EXPIRE', KEYS[1], ARGV[2])",
+          'return {1, used}',
+        ].join('\n'),
+        1,
+        buildBudgetKey(date),
+        cap,
+        fieldBudgetTtlSeconds,
+      ]),
+    )
+    const budget = {
+      date,
+      cap,
+      used: reservation.used,
+      remaining: Math.max(0, cap - reservation.used),
+    }
+    if (!reservation.allowed) {
+      return {
+        ok: false,
+        budget,
+        blockedReason: 'daily_cap_exhausted',
+      }
+    }
+    return {
+      ok: true,
+      budget,
+    }
+  }
+
+  async logCall(entry: FieldLedgerCallLogEntry): Promise<void> {
+    const logKey = buildLogKey(entry.date)
+    await this.command(['RPUSH', logKey, JSON.stringify(entry)])
+    await this.command(['EXPIRE', logKey, fieldCallLogTtlSeconds])
+  }
+}
+
+export const fieldLedgerStoreConfig = {
+  budgetTtlSeconds: fieldBudgetTtlSeconds,
+  cacheTtlMs: fieldCacheTtlMs,
+  keyPrefix: fieldLedgerKeyPrefix,
 }
