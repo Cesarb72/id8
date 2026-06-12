@@ -134,13 +134,23 @@ function parseReserveCallResult(value: unknown): { allowed: boolean; used: numbe
   }
 }
 
+function isSupportedRestUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' || url.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
 export function createFieldLedgerStoreFromEnv(): FieldLedgerStore | null {
   const url = process.env.KV_REST_API_URL?.trim()
   const token = process.env.KV_REST_API_TOKEN?.trim()
-  if (!url || !token) {
+  if (!url || !token || !isSupportedRestUrl(url) || typeof fetch !== 'function') {
     return null
   }
   return new UpstashFieldLedgerStore({
+    fetchImpl: fetch,
     token,
     url,
   })
@@ -297,7 +307,11 @@ export class UpstashFieldLedgerStore implements FieldLedgerStore {
     token: string
     url: string
   }) {
-    this.fetchImpl = params.fetchImpl ?? fetch
+    const fetchImpl = params.fetchImpl ?? (typeof fetch === 'function' ? fetch : undefined)
+    if (!fetchImpl) {
+      throw new Error('Field ledger store fetch runtime is unavailable.')
+    }
+    this.fetchImpl = fetchImpl
     this.token = params.token
     this.url = normalizeUpstashUrl(params.url)
   }

@@ -36,7 +36,7 @@ function sendBlockedResponse(
   )
 }
 
-export default async function handler(
+async function handleFieldTextSearchRequest(
   request: FieldProxyRequest,
   response: FieldProxyResponse,
 ): Promise<void> {
@@ -178,4 +178,25 @@ export default async function handler(
     return
   }
   response.status(200).json(providerResponse)
+}
+
+function logFieldProxyFailClosed(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error)
+  console.error(`[field-proxy] fail-closed response emitted: ${message}`)
+}
+
+export default async function handler(
+  request: FieldProxyRequest,
+  response: FieldProxyResponse,
+): Promise<void> {
+  try {
+    await handleFieldTextSearchRequest(request, response)
+  } catch (error) {
+    logFieldProxyFailClosed(error)
+    response.status(503).json(
+      buildFieldProxyBlockedResponse({
+        reason: 'durable_store_unavailable',
+      }),
+    )
+  }
 }

@@ -2,6 +2,7 @@ import {
   buildFieldTextSearchCacheKey,
   buildFieldQueryHash,
 } from '../api/field/_lib/fieldCacheKeys.ts'
+import fieldTextSearchHandler from '../api/field/text-search.ts'
 import {
   MockFieldLedgerStore,
   UpstashFieldLedgerStore,
@@ -17,6 +18,7 @@ import type {
 const originalFetch = globalThis.fetch
 const originalKvRestApiUrl = process.env.KV_REST_API_URL
 const originalKvRestApiToken = process.env.KV_REST_API_TOKEN
+const originalVercelEnv = process.env.VERCEL_ENV
 let fetchCallCount = 0
 
 const fetchTrap: typeof fetch = async () => {
@@ -81,6 +83,11 @@ function restoreEnv(): void {
     delete process.env.KV_REST_API_TOKEN
   } else {
     process.env.KV_REST_API_TOKEN = originalKvRestApiToken
+  }
+  if (originalVercelEnv === undefined) {
+    delete process.env.VERCEL_ENV
+  } else {
+    process.env.VERCEL_ENV = originalVercelEnv
   }
 }
 
@@ -243,6 +250,73 @@ function createMockUpstashFetch() {
   }
 }
 
+function createResponse() {
+  return {
+    statusCode: null as number | null,
+    payload: null as FieldTextSearchResponse | null,
+    headers: {} as Record<string, string>,
+    status(statusCode: number) {
+      this.statusCode = statusCode
+      return this
+    },
+    json(payload: unknown) {
+      this.payload = payload as FieldTextSearchResponse
+    },
+    setHeader(name: string, value: string) {
+      this.headers[name] = value
+    },
+  }
+}
+
+async function assertHostedStyleProviderInactiveWithKv(): Promise<void> {
+  const mockUpstash = createMockUpstashFetch()
+  process.env.KV_REST_API_URL = 'https://example-upstash.invalid/'
+  process.env.KV_REST_API_TOKEN = 'test-token-not-a-provider-key'
+  process.env.VERCEL_ENV = 'preview'
+  globalThis.fetch = mockUpstash.fetchImpl as typeof fetch
+
+  const response = createResponse()
+  await fieldTextSearchHandler(
+    {
+      method: 'POST',
+      body: request,
+    },
+    response,
+  )
+
+  assert(response.statusCode === 503, 'Hosted-style KV-backed inactive provider must return 503.')
+  assert(response.payload?.ok === false, 'Hosted-style inactive provider must return JSON ok:false.')
+  assert(
+    response.payload?.diagnostics.blockedReason === 'field_proxy_not_activated',
+    'Hosted-style inactive provider must fail closed with field_proxy_not_activated.',
+  )
+  assert(
+    mockUpstash.commands.some((command) => command[0] === 'GET') &&
+      mockUpstash.commands.some((command) => command[0] === 'EVAL') &&
+      mockUpstash.commands.some((command) => command[0] === 'RPUSH'),
+    'Hosted-style inactive provider must validate KV cache, budget, and logging commands.',
+  )
+  process.stdout.write('hosted-style KV provider inactive response: passed\n')
+}
+
+function assertStoreFactoryRuntimeGuards(): void {
+  process.env.KV_REST_API_URL = 'rediss://not-a-rest-url'
+  process.env.KV_REST_API_TOKEN = 'test-token-not-a-provider-key'
+  assert(
+    createFieldLedgerStoreFromEnv() === null,
+    'Non-HTTP KV_REST_API_URL must fail closed as unavailable durable store.',
+  )
+
+  process.env.KV_REST_API_URL = 'https://example-upstash.invalid'
+  globalThis.fetch = undefined as unknown as typeof fetch
+  assert(
+    createFieldLedgerStoreFromEnv() === null,
+    'Missing hosted fetch runtime must fail closed as unavailable durable store.',
+  )
+  globalThis.fetch = fetchTrap
+  process.stdout.write('durable store factory runtime guards: passed\n')
+}
+
 async function assertRealStoreFactoryAndRestBehavior(): Promise<void> {
   delete process.env.KV_REST_API_URL
   delete process.env.KV_REST_API_TOKEN
@@ -314,7 +388,9 @@ async function main(): Promise<void> {
   await assertCacheHitCostsZeroCalls()
   await assertCacheMissReservesBudget()
   await assertDailyCapExhausted()
+  assertStoreFactoryRuntimeGuards()
   await assertRealStoreFactoryAndRestBehavior()
+  await assertHostedStyleProviderInactiveWithKv()
 
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
   process.stdout.write('field proxy ledger/cache: passed\n')
