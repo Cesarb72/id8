@@ -1,4 +1,4 @@
-import type { FieldTextSearchResponse } from '../../../src/domain/field/fieldProxyTypes'
+import type { FieldTextSearchResponse } from '../../../src/domain/field/fieldProxyTypes.js'
 
 const fieldLedgerKeyPrefix = 'id8:field:v1'
 const fieldCacheTtlMs = 24 * 60 * 60 * 1000
@@ -193,23 +193,32 @@ export async function checkFieldCacheAndBudget(params: {
   }
 
   const reservation = await params.store.reserveCall(params.date, params.cap)
-  await params.store.logCall({
-    date: params.date,
-    queryHash: params.queryHash,
-    purpose: params.purpose,
-    cache: 'miss',
-    callConsumed: reservation.ok,
-    blockedReason: reservation.ok ? undefined : reservation.blockedReason,
-    resultCount: 0,
-    requestedAt: params.now,
-  })
-
   if (!reservation.ok) {
+    await params.store.logCall({
+      date: params.date,
+      queryHash: params.queryHash,
+      purpose: params.purpose,
+      cache: 'miss',
+      callConsumed: false,
+      blockedReason: reservation.blockedReason,
+      resultCount: 0,
+      requestedAt: params.now,
+    })
     return {
       status: 'cap_exhausted',
       budget: reservation.budget,
     }
   }
+
+  await params.store.logCall({
+    date: params.date,
+    queryHash: params.queryHash,
+    purpose: params.purpose,
+    cache: 'miss',
+    callConsumed: true,
+    resultCount: 0,
+    requestedAt: params.now,
+  })
 
   return {
     status: 'miss',

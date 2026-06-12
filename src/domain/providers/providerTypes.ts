@@ -1,5 +1,5 @@
-import type { HoursPeriod } from '../types/hours'
-import type { EngineSourceMode } from '../types/sourceMode'
+import type { HoursPeriod } from '../types/hours.js'
+import type { EngineSourceMode } from '../types/sourceMode.js'
 
 export interface ProviderVenueLocation {
   latitude: number

@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true
+  },
+  "include": [
+    "api/field/**/*.ts",
+    "src/domain/field/fieldProxyTypes.ts",
+    "src/domain/providers/providerTypes.ts",
+    "src/domain/types/hours.ts",
+    "src/domain/types/sourceMode.ts"
+  ]
+}

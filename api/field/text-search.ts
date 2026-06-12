@@ -5,13 +5,13 @@ import {
   validateFieldProxyMethod,
   validateFieldTextSearchRequestBody,
   type FieldRequestValidationFailureReason,
-} from './_lib/fieldRequestValidation'
-import { buildFieldTextSearchCacheKey, buildFieldQueryHash } from './_lib/fieldCacheKeys'
-import { checkFieldCacheAndBudget, createFieldLedgerStoreFromEnv } from './_lib/fieldLedgerStore'
+} from './_lib/fieldRequestValidation.js'
+import { buildFieldTextSearchCacheKey, buildFieldQueryHash } from './_lib/fieldCacheKeys.js'
+import { checkFieldCacheAndBudget, createFieldLedgerStoreFromEnv } from './_lib/fieldLedgerStore.js'
 import {
   createFieldTextSearchProviderFromEnv,
   mapProviderErrorToBlockedReason,
-} from './_lib/fieldTextSearchProvider'
+} from './_lib/fieldTextSearchProvider.js'
 
 interface FieldProxyRequest {
   method?: string

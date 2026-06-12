@@ -1,4 +1,4 @@
-import type { ProviderVenue } from '../providers/providerTypes'
+import type { ProviderVenue } from '../providers/providerTypes.js'
 
 export type FieldProxyPurpose =
   | 'retrieval_supply'

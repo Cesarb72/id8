@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { FieldTextSearchRequest } from '../../../src/domain/field/fieldProxyTypes'
+import type { FieldTextSearchRequest } from '../../../src/domain/field/fieldProxyTypes.js'
 
 export interface FieldCacheKeyInput {
   date: string

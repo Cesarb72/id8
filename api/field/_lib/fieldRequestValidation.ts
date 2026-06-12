@@ -3,8 +3,8 @@ import type {
   FieldProxyPurpose,
   FieldTextSearchRequest,
   FieldTextSearchResponse,
-} from '../../../src/domain/field/fieldProxyTypes'
-import { buildFieldQueryHash } from './fieldCacheKeys'
+} from '../../../src/domain/field/fieldProxyTypes.js'
+import { buildFieldQueryHash } from './fieldCacheKeys.js'
 
 export type FieldRequestValidationFailureReason =
   | 'invalid_method'
@@ -38,6 +38,8 @@ export type FieldRequestValidationResult =
       reason: FieldRequestValidationFailureReason
       statusCode: number
     }
+
+export type FieldRequestValidationFailure = Extract<FieldRequestValidationResult, { ok: false }>
 
 const allowedPurposes = new Set<FieldProxyPurpose>([
   'retrieval_supply',
@@ -141,18 +143,18 @@ function sanitizeOptionalContext(
 function validationFailure(
   reason: FieldRequestValidationFailureReason,
   statusCode: number,
-): FieldRequestValidationResult {
+): FieldRequestValidationFailure {
   return { ok: false, reason, statusCode }
 }
 
-export function validateFieldProxyMethod(method: string | undefined): FieldRequestValidationResult | null {
+export function validateFieldProxyMethod(method: string | undefined): FieldRequestValidationFailure | null {
   if (method !== 'POST') {
     return validationFailure('invalid_method', 405)
   }
   return null
 }
 
-export function parseFieldProxyJsonBody(body: unknown): FieldRequestValidationResult | { ok: true; body: unknown } {
+export function parseFieldProxyJsonBody(body: unknown): FieldRequestValidationFailure | { ok: true; body: unknown } {
   if (typeof body !== 'string') {
     return { ok: true, body }
   }

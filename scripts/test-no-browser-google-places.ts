@@ -1,6 +1,16 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
+const nodeNextApiCompileFiles = [
+  'api/field/text-search.ts',
+  'api/field/_lib/fieldCacheKeys.ts',
+  'api/field/_lib/fieldLedgerStore.ts',
+  'api/field/_lib/fieldRequestValidation.ts',
+  'api/field/_lib/fieldTextSearchProvider.ts',
+  'src/domain/field/fieldProxyTypes.ts',
+  'src/domain/providers/providerTypes.ts',
+] as const
+
 const forbiddenBrowserPatterns = [
   'places.googleapis.com',
   'VITE_GOOGLE_PLACES_API_KEY',
@@ -61,6 +71,24 @@ function assertNoPatternInFiles(input: {
   assert(hits.length === 0, `${input.label}: forbidden browser/provider patterns found: ${hits.join(', ')}`)
 }
 
+function assertNodeNextRelativeImportsUseJsExtensions(files: readonly string[]): void {
+  const hits: string[] = []
+  const relativeImportPattern = /\bfrom\s+['"](\.{1,2}\/[^'"]+)['"]|import\s*\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g
+  for (const file of files) {
+    const source = readFileSync(file, 'utf8')
+    for (const match of source.matchAll(relativeImportPattern)) {
+      const specifier = match[1] ?? match[2] ?? ''
+      if (!specifier.endsWith('.js')) {
+        hits.push(`${normalizePath(file)}:${specifier}`)
+      }
+    }
+  }
+  assert(
+    hits.length === 0,
+    `NodeNext API compile scan: relative imports must use .js extensions: ${hits.join(', ')}`,
+  )
+}
+
 function main(): void {
   const sourceFiles = [
     ...findFiles('src', new Set(['.ts', '.tsx'])),
@@ -77,6 +105,7 @@ function main(): void {
     label: 'server key source scan',
     allow: (relativePath) => allowedServerGoogleKeyFiles.has(relativePath),
   })
+  assertNodeNextRelativeImportsUseJsExtensions(nodeNextApiCompileFiles)
 
   const providerAdapterSource = readFileSync('src/domain/providers/ProviderAdapter.ts', 'utf8')
   assert(

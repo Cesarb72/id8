@@ -1,6 +1,6 @@
-import type { FieldTextSearchRequest } from '../../../src/domain/field/fieldProxyTypes'
-import type { ProviderVenue } from '../../../src/domain/providers/providerTypes'
-import type { FieldRequestValidationFailureReason } from './fieldRequestValidation'
+import type { FieldTextSearchRequest } from '../../../src/domain/field/fieldProxyTypes.js'
+import type { ProviderVenue } from '../../../src/domain/providers/providerTypes.js'
+import type { FieldRequestValidationFailureReason } from './fieldRequestValidation.js'
 
 export type FieldTextSearchProviderErrorCode =
   | 'provider_key_missing'
@@ -29,7 +29,7 @@ export interface ServerGooglePlacesKeyState {
 }
 
 export function readServerGooglePlacesKeyState(
-  env: Pick<NodeJS.ProcessEnv, 'GOOGLE_PLACES_API_KEY'> = process.env,
+  env: Partial<Pick<NodeJS.ProcessEnv, 'GOOGLE_PLACES_API_KEY'>> = process.env,
 ): ServerGooglePlacesKeyState {
   return {
     keyPresent: Boolean(env.GOOGLE_PLACES_API_KEY?.trim()),
