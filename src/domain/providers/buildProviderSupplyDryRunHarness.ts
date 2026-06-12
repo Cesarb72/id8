@@ -252,7 +252,8 @@ function resolveStaticAnchor(): Venue | null {
 }
 
 function detectMissingProviderConfig(): boolean {
-  return !getGooglePlacesConfig().apiKey
+  getGooglePlacesConfig()
+  return true
 }
 
 function buildAnchorSearchQuery(): ProviderTextSearchQuery {

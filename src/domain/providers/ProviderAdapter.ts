@@ -1,7 +1,6 @@
 import { normalizeRawPlace } from '../normalize/normalizeRawPlace'
 import {
   createBlockedProviderTrace,
-  createProviderCallTrace,
   summarizeProviderCallLedger,
   type ProviderCallLedger,
   type ProviderCallPurpose,
@@ -10,11 +9,9 @@ import {
 import type { ProviderVenue } from './providerTypes'
 import {
   getGooglePlacesConfig,
-  hasGooglePlacesConfig,
   isDevOrSandboxCloseoutFlow,
 } from '../sources/getSourceMode'
 import { mapLivePlaceToRawPlace } from '../sources/mapLivePlaceToRawPlace'
-import { evaluateProviderGovernancePreflight } from './providerGovernance'
 import type { LivePlaceKind } from '../sources/buildLiveQueryPlan'
 import type { SourceMode } from '../types/sourceMode'
 import type { Venue } from '../types/venue'
@@ -176,175 +173,6 @@ function buildBlockedDiagnostics(
   }
 }
 
-async function queryGoogleTextSearch(
-  query: ProviderTextSearchQuery,
-  apiKey: string,
-  endpoint: string,
-  languageCode: string,
-  regionCode: string,
-): Promise<GooglePlaceRecord[]> {
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': apiKey,
-      'X-Goog-FieldMask': query.fieldMask,
-    },
-    body: JSON.stringify({
-      textQuery: query.textQuery,
-      pageSize: query.pageSize,
-      languageCode,
-      regionCode,
-      rankPreference: query.rankPreference,
-      locationBias: query.locationBias,
-    }),
-  })
-
-  if (!response.ok) {
-    let providerStatus: string | undefined
-    let providerMessage: string | undefined
-
-    try {
-      const errorPayload = (await response.json()) as {
-        error?: {
-          status?: string
-          message?: string
-          code?: number
-        }
-      }
-      providerStatus = errorPayload.error?.status
-      providerMessage = errorPayload.error?.message?.trim()
-    } catch {
-      providerStatus = undefined
-      providerMessage = undefined
-    }
-
-    const diagnosticParts = [`${query.queryLabel} query failed (${response.status})`]
-    if (providerStatus) {
-      diagnosticParts.push(`provider_status=${providerStatus}`)
-    }
-    if (providerMessage) {
-      diagnosticParts.push(`provider_message=${providerMessage}`)
-    }
-
-    throw new Error(diagnosticParts.join(' | '))
-  }
-
-  const payload = (await response.json()) as { places?: GooglePlaceRecord[] }
-  return (payload.places ?? []).filter(
-    (place) => place.businessStatus !== 'CLOSED_PERMANENTLY',
-  )
-}
-
-function mapGooglePlaceRecordToProviderVenue(
-  place: GooglePlaceRecord,
-  fetchedAt: number,
-): ProviderVenue | undefined {
-  const providerRecordId = place.id?.trim()
-  const displayName = place.displayName?.text?.trim()
-  if (!providerRecordId || !displayName) {
-    return undefined
-  }
-
-  const currentPeriods = place.currentOpeningHours?.periods?.map((period) => ({
-    close:
-      period.close?.day === undefined ||
-      period.close.hour === undefined ||
-      period.close.minute === undefined
-        ? undefined
-        : {
-            day: period.close.day,
-            hour: period.close.hour,
-            minute: period.close.minute,
-          },
-    open:
-      period.open?.day === undefined ||
-      period.open.hour === undefined ||
-      period.open.minute === undefined
-        ? undefined
-        : {
-            day: period.open.day,
-            hour: period.open.hour,
-            minute: period.open.minute,
-          },
-  }))
-  const regularPeriods = place.regularOpeningHours?.periods?.map((period) => ({
-    close:
-      period.close?.day === undefined ||
-      period.close.hour === undefined ||
-      period.close.minute === undefined
-        ? undefined
-        : {
-            day: period.close.day,
-            hour: period.close.hour,
-            minute: period.close.minute,
-          },
-    open:
-      period.open?.day === undefined ||
-      period.open.hour === undefined ||
-      period.open.minute === undefined
-        ? undefined
-        : {
-            day: period.open.day,
-            hour: period.open.hour,
-            minute: period.open.minute,
-          },
-  }))
-  const location =
-    typeof place.location?.latitude === 'number' &&
-    typeof place.location?.longitude === 'number'
-      ? {
-          latitude: place.location.latitude,
-          longitude: place.location.longitude,
-        }
-      : undefined
-
-  return {
-    businessStatus: place.businessStatus,
-    completenessHints: {
-      hasAddress: Boolean(place.formattedAddress?.trim()),
-      hasHours:
-        Boolean(place.currentOpeningHours?.weekdayDescriptions?.length) ||
-        Boolean(place.regularOpeningHours?.weekdayDescriptions?.length),
-      hasLocation: Boolean(location),
-      hasPrimaryType: Boolean(place.primaryType?.trim()),
-      hasRating: typeof place.rating === 'number',
-    },
-    currentOpeningHours: {
-      openNow: place.currentOpeningHours?.openNow,
-      periods: currentPeriods,
-      weekdayDescriptions: place.currentOpeningHours?.weekdayDescriptions,
-    },
-    liveMusic: place.liveMusic,
-    displayName,
-    editorialSummary: place.editorialSummary?.text?.trim(),
-    fetchedAt,
-    formattedAddress: place.formattedAddress,
-    goodForChildren: place.goodForChildren,
-    goodForGroups: place.goodForGroups,
-    location,
-    primaryType: place.primaryType,
-    provider: 'google_places',
-    providerRecordId,
-    rating: place.rating,
-    rawPayloadAvailable: false,
-    regularOpeningHours: {
-      periods: regularPeriods,
-      weekdayDescriptions: place.regularOpeningHours?.weekdayDescriptions,
-    },
-    allowsDogs: place.allowsDogs,
-    servesBeer: place.servesBeer,
-    servesVegetarianFood: place.servesVegetarianFood,
-    servesWine: place.servesWine,
-    shortFormattedAddress: place.shortFormattedAddress,
-    sourceMode: 'live',
-    types: place.types,
-    userRatingCount: place.userRatingCount,
-    utcOffsetMinutes: place.utcOffsetMinutes,
-    websiteUri: place.websiteUri,
-  }
-}
-
 function mapProviderVenueToGooglePlaceRecord(place: ProviderVenue): GooglePlaceRecord {
   return {
     businessStatus: place.businessStatus,
@@ -398,16 +226,14 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
   queries: TQuery[]
   sourceMode?: SourceMode
 }): Promise<ProviderTextSearchResult<T>> {
-  const requestedAt = Date.now()
   const config = getGooglePlacesConfig()
-  const keyPresent = hasGooglePlacesConfig() && Boolean(config.apiKey)
 
   if (isDevOrSandboxCloseoutFlow()) {
     return {
       diagnostics: buildBlockedDiagnostics(
         input.callPurpose,
-        config.endpoint,
-        keyPresent,
+        config.requestPath,
+        false,
         'Live provider disabled in dev/sandbox closeout flow.',
         input.sourceMode,
       ),
@@ -417,18 +243,13 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
     }
   }
 
-  const governance = evaluateProviderGovernancePreflight({
-    purpose: input.callPurpose,
-    queryCount: input.queries.length,
-    sourceMode: input.sourceMode,
-  })
-  if (!governance.allowed) {
+  if (input.sourceMode === 'curated') {
     return {
       diagnostics: buildBlockedDiagnostics(
         input.callPurpose,
-        config.endpoint,
-        keyPresent,
-        governance.blockedReason ?? 'Provider call blocked by provider governance.',
+        config.requestPath,
+        false,
+        'Live provider disabled because sourceMode is curated.',
         input.sourceMode,
       ),
       errors: [],
@@ -436,134 +257,18 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
       results: [],
     }
   }
-
-  if (!keyPresent || !config.apiKey) {
-    return {
-      diagnostics: buildBlockedDiagnostics(
-        input.callPurpose,
-        config.endpoint,
-        keyPresent,
-        'Live provider disabled because the Google Places API key is missing.',
-        input.sourceMode,
-      ),
-      errors: [],
-      queryCounts: [],
-      results: [],
-    }
-  }
-
-  const settled = await Promise.all(
-    input.queries.map(async (query) => {
-      try {
-        const places = await queryGoogleTextSearch(
-          query,
-          config.apiKey!,
-          config.endpoint,
-          config.languageCode,
-          config.regionCode,
-        )
-        return {
-          attemptedHttpRequestCount: 1,
-          places,
-          query,
-          status: 'fulfilled' as const,
-        }
-      } catch (error) {
-        return {
-          attemptedHttpRequestCount: 1,
-          error:
-            error instanceof Error
-              ? error.message
-              : String(error),
-          query,
-          status: 'rejected' as const,
-        }
-      }
-    }),
-  )
-
-  const errors: string[] = []
-  const queryCounts: Array<{ queryLabel: string; resultCount: number }> = []
-  const results: T[] = []
-  let resultCount = 0
-  let attemptedHttpRequestCount = 0
-  const fetchedAt = Date.now()
-
-  for (const settledResult of settled) {
-    attemptedHttpRequestCount += settledResult.attemptedHttpRequestCount
-
-    if (settledResult.status === 'rejected') {
-      errors.push(settledResult.error)
-      continue
-    }
-
-    const { places, query } = settledResult
-    queryCounts.push({
-      queryLabel: query.queryLabel,
-      resultCount: places.length,
-    })
-    resultCount += places.length
-    places.forEach((place, index) => {
-      const providerVenue = mapGooglePlaceRecordToProviderVenue(place, fetchedAt)
-      if (!providerVenue) {
-        return
-      }
-      const mapped = input.mapPlace(providerVenue, { index, query })
-      if (mapped) {
-        results.push(mapped)
-      }
-    })
-  }
-
-  const trace = createProviderCallTrace({
-    purpose: input.callPurpose,
-    status:
-      errors.length > 0 && results.length === 0
-        ? 'failed'
-        : 'succeeded',
-    attempted: true,
-    blockedByEnv: false,
-    fallbackUsed: false,
-    queryCount: input.queries.length,
-    resultCount,
-    mappedCount: results.length,
-    suppressedCount: Math.max(0, resultCount - results.length),
-    // Preserve the existing "fulfilled provider query" semantics for now.
-    billableCallCount: queryCounts.length,
-    // Count every outbound fetch attempt, including failed/non-OK responses.
-    attemptedHttpRequestCount,
-    requestedAt,
-    failureReason:
-      results.length === 0 && errors.length > 0
-        ? errors[0]
-        : undefined,
-    sourceMode: input.sourceMode,
-  })
 
   return {
-    diagnostics: {
-      attempted: true,
-      blockedByEnv: false,
-      provider: 'google-places',
-      callPurpose: input.callPurpose,
-      queryCount: input.queries.length,
-      resultCount,
-      mappedCount: results.length,
-      suppressedCount: Math.max(0, resultCount - results.length),
-      failureReason:
-        results.length === 0 && errors.length > 0
-          ? errors[0]
-          : undefined,
-      fallbackUsed: false,
-      keyPresent,
-      requestPath: config.endpoint,
-      sourceMode: input.sourceMode,
-      trace,
-      ledger: summarizeProviderCallLedger([trace]),
-    },
-    errors,
-    queryCounts,
-    results,
+    diagnostics: buildBlockedDiagnostics(
+      input.callPurpose,
+      config.requestPath,
+      false,
+      'Browser Google Places provider path is disabled; use the server Field proxy.',
+      input.sourceMode,
+    ),
+    errors: [],
+    queryCounts: [],
+    results: [],
   }
 }
 
@@ -679,8 +384,8 @@ export async function getPlaceDetails(input: {
   return {
     diagnostics: buildBlockedDiagnostics(
       'details_lookup',
-      config.endpoint,
-      Boolean(config.apiKey),
+      config.requestPath,
+      false,
       `Place details lookup is not activated for provider id "${input.providerId}".`,
       input.sourceMode,
     ),

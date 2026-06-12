@@ -1,0 +1,105 @@
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { join, relative } from 'node:path'
+
+const forbiddenBrowserPatterns = [
+  'places.googleapis.com',
+  'VITE_GOOGLE_PLACES_API_KEY',
+  'VITE_PROVIDER_API_KEY',
+  'X-Goog-Api-Key',
+  'X-Goog-FieldMask',
+] as const
+
+const forbiddenBundlePatterns = [
+  ...forbiddenBrowserPatterns,
+  'GOOGLE_PLACES_API_KEY',
+] as const
+
+const allowedServerGoogleKeyFiles = new Set([
+  'api/field/_lib/fieldTextSearchProvider.ts',
+])
+
+function assert(condition: boolean, message: string): asserts condition {
+  if (!condition) {
+    throw new Error(message)
+  }
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, '/')
+}
+
+function findFiles(root: string, extensions: Set<string>): string[] {
+  if (!existsSync(root)) {
+    return []
+  }
+  return readdirSync(root).flatMap((name) => {
+    const fullPath = join(root, name)
+    const stats = statSync(fullPath)
+    if (stats.isDirectory()) {
+      return findFiles(fullPath, extensions)
+    }
+    return extensions.has(fullPath.slice(fullPath.lastIndexOf('.'))) ? [fullPath] : []
+  })
+}
+
+function assertNoPatternInFiles(input: {
+  files: string[]
+  patterns: readonly string[]
+  label: string
+  allow?: (relativePath: string, pattern: string) => boolean
+}): void {
+  const hits: string[] = []
+  for (const file of input.files) {
+    const relativePath = normalizePath(relative(process.cwd(), file))
+    const source = readFileSync(file, 'utf8')
+    for (const pattern of input.patterns) {
+      if (source.includes(pattern) && input.allow?.(relativePath, pattern) !== true) {
+        hits.push(`${relativePath}:${pattern}`)
+      }
+    }
+  }
+  assert(hits.length === 0, `${input.label}: forbidden browser/provider patterns found: ${hits.join(', ')}`)
+}
+
+function main(): void {
+  const sourceFiles = [
+    ...findFiles('src', new Set(['.ts', '.tsx'])),
+    ...findFiles('api', new Set(['.ts'])),
+  ]
+  assertNoPatternInFiles({
+    files: sourceFiles,
+    patterns: forbiddenBrowserPatterns,
+    label: 'source scan',
+  })
+  assertNoPatternInFiles({
+    files: sourceFiles,
+    patterns: ['GOOGLE_PLACES_API_KEY'],
+    label: 'server key source scan',
+    allow: (relativePath) => allowedServerGoogleKeyFiles.has(relativePath),
+  })
+
+  const providerAdapterSource = readFileSync('src/domain/providers/ProviderAdapter.ts', 'utf8')
+  assert(
+    !providerAdapterSource.includes('fetch('),
+    'ProviderAdapter must not contain a direct browser fetch path.',
+  )
+
+  const distFiles = findFiles('dist', new Set(['.js', '.html', '.css']))
+  if (distFiles.length > 0) {
+    assertNoPatternInFiles({
+      files: distFiles,
+      patterns: forbiddenBundlePatterns,
+      label: 'bundle scan',
+    })
+  }
+
+  process.stdout.write('no browser Google Places path: passed\n')
+}
+
+try {
+  main()
+} catch (error: unknown) {
+  const message = error instanceof Error ? error.stack ?? error.message : String(error)
+  process.stderr.write(`${message}\n`)
+  process.exitCode = 1
+}

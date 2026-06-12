@@ -2,9 +2,6 @@ import {
   searchPlaces,
   type ProviderTextSearchQuery,
 } from '../src/domain/providers/ProviderAdapter.ts'
-import {
-  providerGovernanceConfig,
-} from '../src/domain/providers/providerGovernance.ts'
 import type { ProviderCallPurpose } from '../src/domain/providers/providerCallTrace.ts'
 import type { SourceMode } from '../src/domain/types/sourceMode.ts'
 
@@ -12,18 +9,10 @@ type NoCallResult = {
   ok: true
 }
 
-const googleKeyEnvKey = 'VITE_GOOGLE_PLACES_API_KEY'
-const anchorActivationEnvKey = providerGovernanceConfig.activationEnvKeys.anchor_search
-const globalBudgetCapEnvKey = providerGovernanceConfig.budgetCapEnvKeys.global
-
-if (!anchorActivationEnvKey) {
-  throw new Error('Expected anchor_search activation env key to be configured.')
-}
-
 const managedEnvKeys = [
-  googleKeyEnvKey,
-  anchorActivationEnvKey,
-  globalBudgetCapEnvKey,
+  'VITE_GOOGLE_PLACES_API_KEY',
+  'VITE_PROVIDER_API_KEY',
+  'GOOGLE_PLACES_API_KEY',
 ]
 
 const originalEnvValues = new Map(
@@ -75,12 +64,6 @@ function setRoute(pathname: string | null): void {
   })
 }
 
-function setProviderReadyEnv(): void {
-  process.env[googleKeyEnvKey] = 'test-key-not-used'
-  process.env[anchorActivationEnvKey] = '1'
-  process.env[globalBudgetCapEnvKey] = '1'
-}
-
 function buildQueries(count: number): ProviderTextSearchQuery[] {
   return Array.from({ length: count }, (_, index) => ({
     fieldMask: 'places.id,places.displayName',
@@ -129,17 +112,14 @@ async function main(): Promise<void> {
 
   resetEnv()
   setRoute('/')
-  process.env[googleKeyEnvKey] = 'test-key-not-used'
-  process.env[globalBudgetCapEnvKey] = '1'
   await expectBlockedWithoutFetch({
-    name: 'activation flags absent',
-    expectedReason: anchorActivationEnvKey,
+    name: 'browser provider path disabled',
+    expectedReason: 'Browser Google Places provider path is disabled',
     run: () => runSearch({ sourceMode: 'live' }),
   })
 
   resetEnv()
   setRoute('/')
-  setProviderReadyEnv()
   await expectBlockedWithoutFetch({
     name: 'sourceMode curated',
     expectedReason: 'sourceMode is curated',
@@ -148,17 +128,14 @@ async function main(): Promise<void> {
 
   resetEnv()
   setRoute('/')
-  process.env[googleKeyEnvKey] = 'test-key-not-used'
-  process.env[anchorActivationEnvKey] = '1'
   await expectBlockedWithoutFetch({
-    name: 'budget exceeded',
-    expectedReason: 'Provider call budget blocked',
-    run: () => runSearch({ sourceMode: 'live' }),
+    name: 'browser provider path disabled with multiple queries',
+    expectedReason: 'Browser Google Places provider path is disabled',
+    run: () => runSearch({ queryCount: 2, sourceMode: 'live' }),
   })
 
   resetEnv()
   setRoute('/dev/start/build')
-  setProviderReadyEnv()
   await expectBlockedWithoutFetch({
     name: 'dev route hard block',
     expectedReason: 'dev/sandbox closeout flow',
@@ -167,7 +144,6 @@ async function main(): Promise<void> {
 
   resetEnv()
   setRoute('/sandbox/start/build')
-  setProviderReadyEnv()
   await expectBlockedWithoutFetch({
     name: 'sandbox route hard block',
     expectedReason: 'dev/sandbox closeout flow',

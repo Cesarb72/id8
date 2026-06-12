@@ -15,8 +15,7 @@ export interface SourceModeResolution {
 }
 
 export interface GooglePlacesConfig {
-  apiKey?: string
-  endpoint: string
+  requestPath: string
   languageCode: string
   regionCode: string
   pageSize: number
@@ -31,12 +30,6 @@ export function isDevOrSandboxCloseoutFlow(): boolean {
   }
   const path = window.location.pathname.toLowerCase()
   return path.startsWith('/dev') || path.startsWith('/sandbox')
-}
-
-function getProcessEnvValue(key: string): string | undefined {
-  const processEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
-    .process?.env
-  return processEnv?.[key]
 }
 
 export function getSourceMode(input?: {
@@ -62,42 +55,26 @@ export function getGooglePlacesConfig(): GooglePlacesConfig {
     env?: Record<string, string | undefined>
   }).env ?? {}
   return {
-    apiKey: env.VITE_GOOGLE_PLACES_API_KEY ?? getProcessEnvValue('VITE_GOOGLE_PLACES_API_KEY'),
-    endpoint:
-      env.VITE_GOOGLE_PLACES_ENDPOINT ??
-      getProcessEnvValue('VITE_GOOGLE_PLACES_ENDPOINT') ??
-      'https://places.googleapis.com/v1/places:searchText',
+    requestPath: '/api/field/text-search',
     languageCode:
-      env.VITE_GOOGLE_PLACES_LANGUAGE_CODE ??
-      getProcessEnvValue('VITE_GOOGLE_PLACES_LANGUAGE_CODE') ??
-      'en',
+      env.VITE_ID8_FIELD_LANGUAGE_CODE ?? 'en',
     regionCode:
-      env.VITE_GOOGLE_PLACES_REGION_CODE ??
-      getProcessEnvValue('VITE_GOOGLE_PLACES_REGION_CODE') ??
-      'US',
+      env.VITE_ID8_FIELD_REGION_CODE ?? 'US',
     pageSize: Number(
-      env.VITE_GOOGLE_PLACES_PAGE_SIZE ??
-        getProcessEnvValue('VITE_GOOGLE_PLACES_PAGE_SIZE') ??
-        8,
+      env.VITE_ID8_FIELD_PAGE_SIZE ?? 8,
     ),
     queryRadiusM: Number(
-      env.VITE_GOOGLE_PLACES_QUERY_RADIUS_M ??
-        getProcessEnvValue('VITE_GOOGLE_PLACES_QUERY_RADIUS_M') ??
-        3200,
+      env.VITE_ID8_FIELD_QUERY_RADIUS_M ?? 3200,
     ),
     centerOffsetM: Number(
-      env.VITE_GOOGLE_PLACES_CENTER_OFFSET_M ??
-        getProcessEnvValue('VITE_GOOGLE_PLACES_CENTER_OFFSET_M') ??
-        2400,
+      env.VITE_ID8_FIELD_CENTER_OFFSET_M ?? 2400,
     ),
     maxCenters: Number(
-      env.VITE_GOOGLE_PLACES_MAX_CENTERS ??
-        getProcessEnvValue('VITE_GOOGLE_PLACES_MAX_CENTERS') ??
-        3,
+      env.VITE_ID8_FIELD_MAX_CENTERS ?? 3,
     ),
   }
 }
 
 export function hasGooglePlacesConfig(): boolean {
-  return Boolean(getGooglePlacesConfig().apiKey)
+  return false
 }
