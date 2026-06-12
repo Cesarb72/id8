@@ -7,7 +7,11 @@ import {
   type FieldRequestValidationFailureReason,
 } from './_lib/fieldRequestValidation.js'
 import { buildFieldTextSearchCacheKey, buildFieldQueryHash } from './_lib/fieldCacheKeys.js'
-import { checkFieldCacheAndBudget, createFieldLedgerStoreFromEnv } from './_lib/fieldLedgerStore.js'
+import {
+  createFieldLedgerStoreFromEnv,
+  readFieldCachedResponse,
+  reserveFieldProviderCallBudget,
+} from './_lib/fieldLedgerStore.js'
 import {
   createFieldTextSearchProviderFromEnv,
   mapProviderErrorToBlockedReason,
@@ -78,9 +82,9 @@ async function handleFieldTextSearchRequest(
     environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? 'local',
     request: validation.request,
   })
-  let cacheResult: Awaited<ReturnType<typeof checkFieldCacheAndBudget>>
+  let cacheResult: Awaited<ReturnType<typeof readFieldCachedResponse>>
   try {
-    cacheResult = await checkFieldCacheAndBudget({
+    cacheResult = await readFieldCachedResponse({
       store,
       cacheKey,
       date: budget.date,
@@ -88,6 +92,7 @@ async function handleFieldTextSearchRequest(
       now: Date.now(),
       queryHash,
       purpose: validation.request.purpose,
+      logCacheHit: true,
     })
   } catch {
     response.status(503).json(
@@ -104,17 +109,6 @@ async function handleFieldTextSearchRequest(
     return
   }
 
-  if (cacheResult.status === 'cap_exhausted') {
-    response.status(429).json(
-      buildFieldProxyBlockedResponse({
-        request: validation.request,
-        reason: 'daily_cap_exhausted',
-        budget: cacheResult.budget,
-      }),
-    )
-    return
-  }
-
   const provider = createFieldTextSearchProviderFromEnv()
   if (!provider) {
     response.status(503).json(
@@ -127,13 +121,45 @@ async function handleFieldTextSearchRequest(
     return
   }
 
+  let reservation: Awaited<ReturnType<typeof reserveFieldProviderCallBudget>>
+  try {
+    reservation = await reserveFieldProviderCallBudget({
+      store,
+      date: budget.date,
+      cap: budget.cap,
+      now: Date.now(),
+      queryHash,
+      purpose: validation.request.purpose,
+    })
+  } catch {
+    response.status(503).json(
+      buildFieldProxyBlockedResponse({
+        request: validation.request,
+        reason: 'durable_store_unavailable',
+        budget: cacheResult.budget,
+      }),
+    )
+    return
+  }
+
+  if (reservation.status === 'cap_exhausted') {
+    response.status(429).json(
+      buildFieldProxyBlockedResponse({
+        request: validation.request,
+        reason: 'daily_cap_exhausted',
+        budget: reservation.budget,
+      }),
+    )
+    return
+  }
+
   const providerResult = await provider.searchText(validation.request)
   if (!providerResult.ok) {
     const reason = mapProviderErrorToBlockedReason(providerResult.errorCode)
     const blockedResponse = buildFieldProxyBlockedResponse({
       request: validation.request,
       reason,
-      budget: cacheResult.budget,
+      budget: reservation.budget,
     })
     response.status(reason === 'provider_rate_limited' ? 429 : 503).json({
       ...blockedResponse,
@@ -149,7 +175,7 @@ async function handleFieldTextSearchRequest(
   const providerResponse = {
     ok: true,
     cache: 'miss' as const,
-    budget: cacheResult.budget,
+    budget: reservation.budget,
     results: providerResult.results,
     diagnostics: {
       purpose: validation.request.purpose,
@@ -172,7 +198,7 @@ async function handleFieldTextSearchRequest(
       buildFieldProxyBlockedResponse({
         request: validation.request,
         reason: 'durable_store_unavailable',
-        budget: cacheResult.budget,
+        budget: reservation.budget,
       }),
     )
     return

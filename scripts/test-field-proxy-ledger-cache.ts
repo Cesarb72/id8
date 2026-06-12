@@ -291,10 +291,18 @@ async function assertHostedStyleProviderInactiveWithKv(): Promise<void> {
     'Hosted-style inactive provider must fail closed with field_proxy_not_activated.',
   )
   assert(
-    mockUpstash.commands.some((command) => command[0] === 'GET') &&
-      mockUpstash.commands.some((command) => command[0] === 'EVAL') &&
-      mockUpstash.commands.some((command) => command[0] === 'RPUSH'),
-    'Hosted-style inactive provider must validate KV cache, budget, and logging commands.',
+    response.payload?.budget.used === 0 && response.payload.budget.remaining === cap,
+    'Hosted-style inactive provider must not decrement the provider-call budget.',
+  )
+  assert(
+    response.payload?.diagnostics.callConsumed === false,
+    'Hosted-style inactive provider must report no provider call consumed.',
+  )
+  assert(
+    mockUpstash.commands.filter((command) => command[0] === 'GET').length >= 2 &&
+      !mockUpstash.commands.some((command) => command[0] === 'EVAL') &&
+      !mockUpstash.commands.some((command) => command[0] === 'RPUSH'),
+    'Hosted-style inactive provider must read cache/budget without reserving or logging a provider call.',
   )
   process.stdout.write('hosted-style KV provider inactive response: passed\n')
 }

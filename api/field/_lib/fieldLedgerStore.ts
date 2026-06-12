@@ -82,6 +82,27 @@ export type FieldLedgerCacheCheckResult =
       budget: FieldLedgerBudgetSnapshot
     }
 
+export type FieldLedgerCacheReadResult =
+  | {
+      status: 'hit'
+      response: FieldTextSearchResponse
+      budget: FieldLedgerBudgetSnapshot
+    }
+  | {
+      status: 'miss'
+      budget: FieldLedgerBudgetSnapshot
+    }
+
+export type FieldLedgerReservationResult =
+  | {
+      status: 'reserved'
+      budget: FieldLedgerBudgetSnapshot
+    }
+  | {
+      status: 'cap_exhausted'
+      budget: FieldLedgerBudgetSnapshot
+    }
+
 function normalizeUpstashUrl(url: string): string {
   return url.trim().replace(/\/+$/g, '')
 }
@@ -165,18 +186,55 @@ export async function checkFieldCacheAndBudget(params: {
   queryHash: string
   purpose: string
 }): Promise<FieldLedgerCacheCheckResult> {
+  const cached = await readFieldCachedResponse({
+    store: params.store,
+    cacheKey: params.cacheKey,
+    date: params.date,
+    cap: params.cap,
+    now: params.now,
+    queryHash: params.queryHash,
+    purpose: params.purpose,
+    logCacheHit: true,
+  })
+  if (cached.status === 'hit') {
+    return cached
+  }
+
+  const reservation = await reserveFieldProviderCallBudget(params)
+  if (reservation.status === 'cap_exhausted') {
+    return reservation
+  }
+
+  return {
+    status: 'miss',
+    budget: reservation.budget,
+  }
+}
+
+export async function readFieldCachedResponse(params: {
+  store: FieldLedgerStore
+  cacheKey: string
+  date: string
+  cap: number
+  now: number
+  queryHash: string
+  purpose: string
+  logCacheHit: boolean
+}): Promise<FieldLedgerCacheReadResult> {
   const cached = await params.store.getCachedResponse(params.cacheKey, params.now)
   if (cached) {
     const budget = await params.store.getBudgetSnapshot(params.date, params.cap)
-    await params.store.logCall({
-      date: params.date,
-      queryHash: params.queryHash,
-      purpose: params.purpose,
-      cache: 'hit',
-      callConsumed: false,
-      resultCount: cached.response.diagnostics.resultCount,
-      requestedAt: params.now,
-    })
+    if (params.logCacheHit) {
+      await params.store.logCall({
+        date: params.date,
+        queryHash: params.queryHash,
+        purpose: params.purpose,
+        cache: 'hit',
+        callConsumed: false,
+        resultCount: cached.response.diagnostics.resultCount,
+        requestedAt: params.now,
+      })
+    }
     return {
       status: 'hit',
       response: {
@@ -192,6 +250,20 @@ export async function checkFieldCacheAndBudget(params: {
     }
   }
 
+  return {
+    status: 'miss',
+    budget: await params.store.getBudgetSnapshot(params.date, params.cap),
+  }
+}
+
+export async function reserveFieldProviderCallBudget(params: {
+  store: FieldLedgerStore
+  date: string
+  cap: number
+  now: number
+  queryHash: string
+  purpose: string
+}): Promise<FieldLedgerReservationResult> {
   const reservation = await params.store.reserveCall(params.date, params.cap)
   if (!reservation.ok) {
     await params.store.logCall({
@@ -221,7 +293,7 @@ export async function checkFieldCacheAndBudget(params: {
   })
 
   return {
-    status: 'miss',
+    status: 'reserved',
     budget: reservation.budget,
   }
 }
