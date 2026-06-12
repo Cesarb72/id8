@@ -23,6 +23,10 @@ export type FieldRequestValidationFailureReason =
   | 'field_proxy_not_activated'
   | 'durable_store_unavailable'
   | 'daily_cap_exhausted'
+  | 'provider_key_missing'
+  | 'provider_rate_limited'
+  | 'provider_unavailable'
+  | 'provider_error'
 
 export type FieldRequestValidationResult =
   | {

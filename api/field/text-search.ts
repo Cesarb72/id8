@@ -8,6 +8,10 @@ import {
 } from './_lib/fieldRequestValidation'
 import { buildFieldTextSearchCacheKey, buildFieldQueryHash } from './_lib/fieldCacheKeys'
 import { checkFieldCacheAndBudget, createFieldLedgerStoreFromEnv } from './_lib/fieldLedgerStore'
+import {
+  createFieldTextSearchProviderFromEnv,
+  mapProviderErrorToBlockedReason,
+} from './_lib/fieldTextSearchProvider'
 
 interface FieldProxyRequest {
   method?: string
@@ -69,13 +73,14 @@ export default async function handler(
 
   const budget = getFieldProxyBudgetSnapshot()
   const queryHash = buildFieldQueryHash(validation.request.textQuery)
+  const cacheKey = buildFieldTextSearchCacheKey({
+    date: budget.date,
+    environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? 'local',
+    request: validation.request,
+  })
   const cacheResult = await checkFieldCacheAndBudget({
     store,
-    cacheKey: buildFieldTextSearchCacheKey({
-      date: budget.date,
-      environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? 'local',
-      request: validation.request,
-    }),
+    cacheKey,
     date: budget.date,
     cap: budget.cap,
     now: Date.now(),
@@ -99,11 +104,56 @@ export default async function handler(
     return
   }
 
-  response.status(503).json(
-    buildFieldProxyBlockedResponse({
+  const provider = createFieldTextSearchProviderFromEnv()
+  if (!provider) {
+    response.status(503).json(
+      buildFieldProxyBlockedResponse({
+        request: validation.request,
+        reason: 'field_proxy_not_activated',
+        budget: cacheResult.budget,
+      }),
+    )
+    return
+  }
+
+  const providerResult = await provider.searchText(validation.request)
+  if (!providerResult.ok) {
+    const reason = mapProviderErrorToBlockedReason(providerResult.errorCode)
+    const blockedResponse = buildFieldProxyBlockedResponse({
       request: validation.request,
-      reason: 'field_proxy_not_activated',
+      reason,
       budget: cacheResult.budget,
-    }),
+    })
+    response.status(reason === 'provider_rate_limited' ? 429 : 503).json({
+      ...blockedResponse,
+      diagnostics: {
+        ...blockedResponse.diagnostics,
+        providerStatus: providerResult.providerStatus,
+        callConsumed: true,
+      },
+    })
+    return
+  }
+
+  const providerResponse = {
+    ok: true,
+    cache: 'miss' as const,
+    budget: cacheResult.budget,
+    results: providerResult.results,
+    diagnostics: {
+      purpose: validation.request.purpose,
+      queryHash,
+      providerStatus: providerResult.providerStatus,
+      resultCount: providerResult.results.length,
+      callConsumed: true,
+    },
+  }
+  await store.setCachedResponse(
+    cacheKey,
+    {
+      response: providerResponse,
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+    },
   )
+  response.status(200).json(providerResponse)
 }
