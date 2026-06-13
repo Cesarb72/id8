@@ -1467,6 +1467,7 @@ function AppShellContent({
           actions.setGeneration(
             result.itinerary,
             result.selectedArc,
+            result.contractEntryArtifact,
             persistedAuthoredRoute.scoredVenues,
             result.intentProfile,
             result.lens,
@@ -2454,6 +2455,7 @@ function AppShellContent({
         actions.setGeneration(
           result.itinerary,
           result.selectedArc,
+          result.contractEntryArtifact,
           persistedAuthoredRoute.scoredVenues,
           result.intentProfile,
           result.lens,

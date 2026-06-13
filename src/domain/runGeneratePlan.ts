@@ -67,7 +67,11 @@ import type { RankedPocket } from '../engines/district/types/districtTypes'
 import type { ContractGateWorld } from './bearings/buildContractGateWorld'
 import { createId } from '../lib/ids'
 import { starterPacks } from '../data/starterPacks'
-import type { ContractEntryArtifactLineage } from './artifacts/contractEntryArtifact'
+import { buildContractEntryArtifactFromGeneration } from './artifacts/buildContractEntryArtifactFromGeneration'
+import type {
+  ContractEntryArtifact,
+  ContractEntryArtifactLineage,
+} from './artifacts/contractEntryArtifact'
 import type {
   ArcAssemblySurpriseDiagnostics,
   ArcCandidate,
@@ -119,6 +123,7 @@ export interface GeneratePlanResult {
   itinerary: Itinerary
   selectedArc: ArcCandidate
   scoredVenues: ScoredVenue[]
+  contractEntryArtifact: ContractEntryArtifact
   intentProfile: IntentProfile
   lens: ExperienceLens
   trace: GenerationTrace
@@ -3148,22 +3153,36 @@ export async function runGeneratePlan(
         : undefined,
   }
 
-  return {
+  const trace: GenerationTrace = {
+    ...diagnostics,
+    intent: planningIntent,
+    lens: {
+      tone: lens.tone,
+      discoveryBias: lens.discoveryBias,
+      movementTolerance: lens.movementTolerance,
+    },
+    rankingEngine: ranking.engine,
+    ...(selectedArtifactLineage ? { selectedArtifactLineage } : {}),
+  }
+  const contractEntryArtifact = buildContractEntryArtifactFromGeneration({
     itinerary,
     selectedArc,
     scoredVenues,
     intentProfile: planningIntent,
     lens,
-    trace: {
-      ...diagnostics,
-      intent: planningIntent,
-      lens: {
-        tone: lens.tone,
-        discoveryBias: lens.discoveryBias,
-        movementTolerance: lens.movementTolerance,
-      },
-      rankingEngine: ranking.engine,
-      ...(selectedArtifactLineage ? { selectedArtifactLineage } : {}),
-    },
+    diagnostics,
+    rankingEngine: ranking.engine,
+    starterPack: options.starterPack,
+    selectedArtifactLineage,
+  })
+
+  return {
+    itinerary,
+    selectedArc,
+    scoredVenues,
+    contractEntryArtifact,
+    intentProfile: planningIntent,
+    lens,
+    trace,
   }
 }

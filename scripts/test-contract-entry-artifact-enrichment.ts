@@ -240,6 +240,12 @@ function main(): void {
       contextKey: 'live-music-loop:sofa',
       rejectionReasons: [],
     },
+    modeContextFit: {
+      status: 'passed',
+      mode: 'curate',
+      contextKey: 'mode:curate',
+      rejectionReasons: [],
+    },
     runtimeLockEligibility: {
       eligible: true,
       status: 'eligible',
@@ -269,6 +275,19 @@ function main(): void {
   assert(
     rejectedValidation.rejectionReasons.includes('card_promise_mismatch'),
     'Starter mismatch reason must be preserved.',
+  )
+
+  const modeRejectedArtifact = enrichContractEntryArtifact(baseArtifact, {
+    modeContextFit: {
+      status: 'rejected',
+      rejectionReasons: ['mode_context_mismatch'],
+    },
+  })
+  const modeRejectedValidation = validateContractEntryArtifactPreCommitTruth(modeRejectedArtifact)
+  assert(modeRejectedValidation.status === 'rejected', 'Mode mismatch must reject artifact truth.')
+  assert(
+    modeRejectedValidation.rejectionReasons.includes('mode_context_mismatch'),
+    'Mode mismatch reason must be preserved.',
   )
 
   const incompleteArtifact = enrichContractEntryArtifact(baseArtifact, {

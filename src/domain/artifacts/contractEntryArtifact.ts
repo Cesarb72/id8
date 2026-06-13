@@ -116,6 +116,13 @@ export interface ContractEntryArtifactStarterContextFit {
   rejectionReasons?: string[]
 }
 
+export interface ContractEntryArtifactModeContextFit {
+  status: 'passed' | 'rejected' | 'not_run'
+  mode?: ContractEntryArtifactMode
+  contextKey?: string
+  rejectionReasons?: string[]
+}
+
 export interface ContractEntryArtifactRuntimeLockEligibility {
   eligible: boolean
   status?: 'eligible' | 'ineligible' | 'not_evaluated'
@@ -142,6 +149,7 @@ export interface ContractEntryArtifactEnrichment {
   validationStatus?: ContractEntryArtifactValidationStatus
   rejectionReasons?: string[]
   starterContextFit?: ContractEntryArtifactStarterContextFit
+  modeContextFit?: ContractEntryArtifactModeContextFit
   runtimeLockEligibility?: ContractEntryArtifactRuntimeLockEligibility
 }
 
@@ -254,6 +262,7 @@ function collectMissingEnrichmentReasons(
     enrichment.waypointSequenceProof ? null : 'missing_waypoint_sequence_proof',
     enrichment.canonicalRouteRoleCoverage ? null : 'missing_canonical_route_role_coverage',
     enrichment.starterContextFit ? null : 'missing_starter_context_fit',
+    enrichment.modeContextFit ? null : 'missing_mode_context_fit',
     enrichment.runtimeLockEligibility ? null : 'missing_runtime_lock_eligibility',
   ].filter((reason): reason is string => Boolean(reason))
 }
@@ -290,6 +299,14 @@ export function validateContractEntryArtifactPreCommitTruth(
     rejectionReasons.add('starter_context_fit_rejected')
   }
   for (const reason of artifact.enrichment?.starterContextFit?.rejectionReasons ?? []) {
+    if (reason.trim()) {
+      rejectionReasons.add(reason)
+    }
+  }
+  if (artifact.enrichment?.modeContextFit?.status === 'rejected') {
+    rejectionReasons.add('mode_context_fit_rejected')
+  }
+  for (const reason of artifact.enrichment?.modeContextFit?.rejectionReasons ?? []) {
     if (reason.trim()) {
       rejectionReasons.add(reason)
     }

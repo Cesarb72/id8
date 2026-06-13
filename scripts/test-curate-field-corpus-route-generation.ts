@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { starterPacks } from '../src/data/starterPacks.ts'
+import { validateContractEntryArtifactPreCommitTruth } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import { FIELD_STATIC_PROVIDER_CORPUS_CURATE_ENV_KEY } from '../src/domain/field/corpus/fieldStaticProviderCorpusConfig.ts'
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
 import type { IntentInput } from '../src/domain/types/intent.ts'
@@ -149,9 +150,57 @@ async function main(): Promise<void> {
     })
     const liveSource = result.trace.retrievalDiagnostics.liveSource
     const selectedHighlight = result.selectedArc.stops.find((stop) => stop.role === 'peak')
+    const artifactValidation = validateContractEntryArtifactPreCommitTruth(
+      result.contractEntryArtifact,
+      { requireEnrichment: true },
+    )
 
     assert(selectedHighlight, `${starterId}: generated route must include a highlight.`)
     assert(result.selectedArc.stops.length >= 2, `${starterId}: generated route must include at least two stops.`)
+    const artifactRejectionReasons = artifactValidation.rejectionReasons
+    const missingEnrichmentReasons = artifactRejectionReasons.filter((reason) =>
+      reason.startsWith('missing_') &&
+      reason !== 'missing_start_role' &&
+      reason !== 'missing_highlight_role' &&
+      reason !== 'missing_wind_down_role',
+    )
+    assert(
+      missingEnrichmentReasons.length === 0,
+      `${starterId}: enriched ContractEntryArtifact must not miss enrichment fields: ${missingEnrichmentReasons.join(', ')}`,
+    )
+    if (artifactValidation.fullPlanVisible) {
+      assert(artifactValidation.status === 'valid', `${starterId}: full-plan artifact must be valid.`)
+    } else {
+      assert(
+        artifactValidation.status === 'incomplete',
+        `${starterId}: partial-route artifact must be truthfully incomplete.`,
+      )
+      assert(
+        artifactRejectionReasons.some((reason) => reason.endsWith('_role')),
+        `${starterId}: incomplete artifact must preserve missing role reasons.`,
+      )
+    }
+    assert(
+      result.contractEntryArtifact.enrichment?.mode === 'curate',
+      `${starterId}: ContractEntryArtifact mode must be curate.`,
+    )
+    assert(
+      result.contractEntryArtifact.enrichment?.starterContextFit?.starterPackId === starterId,
+      `${starterId}: ContractEntryArtifact must carry starter context fit.`,
+    )
+    assert(
+      result.contractEntryArtifact.enrichment?.modeContextFit?.status === 'passed',
+      `${starterId}: ContractEntryArtifact must carry passed mode context fit.`,
+    )
+    assert(
+      result.contractEntryArtifact.enrichment?.fieldProvenanceSummary?.liveProviderUsed === false,
+      `${starterId}: ContractEntryArtifact must not mark live provider usage.`,
+    )
+    assert(
+      result.contractEntryArtifact.enrichment?.runtimeLockEligibility?.eligible ===
+        artifactValidation.fullPlanVisible,
+      `${starterId}: ContractEntryArtifact lock eligibility must match full-plan visibility.`,
+    )
     assert(liveSource.requestedMode === 'curated', `${starterId}: requested sourceMode must remain curated.`)
     assert(liveSource.effectiveMode === 'curated', `${starterId}: effective sourceMode must remain curated.`)
     assert(!liveSource.liveFetchAttempted, `${starterId}: live fetch must not be attempted.`)

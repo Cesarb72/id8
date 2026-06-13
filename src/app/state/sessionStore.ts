@@ -9,6 +9,7 @@ import {
 } from 'react'
 import type { DiscoveryDirection } from '../../domain/discovery/getDiscoveryCandidates'
 import { nowIso } from '../../lib/time'
+import type { ContractEntryArtifact } from '../../domain/artifacts/contractEntryArtifact'
 import type { ExplorationPlan } from '../../domain/exploration/types'
 import type { GenerationTrace } from '../../domain/runGeneratePlan'
 import type {
@@ -92,6 +93,7 @@ export interface SessionState {
   selectedAnchorVenue?: Venue
   generatedItinerary?: Itinerary
   generatedArc?: ArcCandidate
+  generatedContractEntryArtifact?: ContractEntryArtifact
   scoredVenues?: ScoredVenue[]
   lastIntentProfile?: IntentProfile
   experienceLens?: ExperienceLens
@@ -140,6 +142,7 @@ type SessionAction =
       payload: {
         itinerary: Itinerary
         arc: ArcCandidate
+        contractEntryArtifact: ContractEntryArtifact
         scoredVenues: ScoredVenue[]
         intentProfile: IntentProfile
         lens: ExperienceLens
@@ -254,6 +257,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       selectedAnchorVenue: undefined,
       generatedItinerary: undefined,
       generatedArc: undefined,
+      generatedContractEntryArtifact: undefined,
       scoredVenues: undefined,
       lastIntentProfile: undefined,
       experienceLens: undefined,
@@ -433,6 +437,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       selectedDiscoveryDirectionContext: action.payload.intentProfile.selectedDirectionContext,
       generatedItinerary: action.payload.itinerary,
       generatedArc: action.payload.arc,
+      generatedContractEntryArtifact: action.payload.contractEntryArtifact,
       scoredVenues: action.payload.scoredVenues,
       lastIntentProfile: action.payload.intentProfile,
       experienceLens: action.payload.lens,
@@ -452,6 +457,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       ...state,
       generatedItinerary: action.payload.itinerary,
       generatedArc: action.payload.arc,
+      generatedContractEntryArtifact: undefined,
       generationTrace: state.generationTrace
         ? {
             ...state.generationTrace,
@@ -573,6 +579,7 @@ interface SessionActions {
   setGeneration: (
     itinerary: Itinerary,
     arc: ArcCandidate,
+    contractEntryArtifact: ContractEntryArtifact,
     scoredVenues: ScoredVenue[],
     intentProfile: IntentProfile,
     lens: ExperienceLens,
@@ -673,12 +680,13 @@ function buildActions(dispatch: Dispatch<SessionAction>): SessionActions {
     clearExplorationPlan() {
       dispatch({ type: 'CLEAR_EXPLORATION_PLAN' })
     },
-    setGeneration(itinerary, arc, scoredVenues, intentProfile, lens, trace) {
+    setGeneration(itinerary, arc, contractEntryArtifact, scoredVenues, intentProfile, lens, trace) {
       dispatch({
         type: 'SET_GENERATION',
         payload: {
           itinerary,
           arc,
+          contractEntryArtifact,
           scoredVenues,
           intentProfile,
           lens,
