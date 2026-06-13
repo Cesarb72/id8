@@ -9,6 +9,7 @@ import {
   buildPublicCurateCandidateConstructionDiagnostics,
   classifyArcadeAndDrinksCandidateState,
   parsePublicCurateRouteStops,
+  validatePublicCurateStarterFit,
   type PublicCurateCandidateConstructionDiagnostics,
 } from '../src/app/services/curate/publicCurateCardTruthService.ts'
 import { FIELD_STATIC_PROVIDER_CORPUS_CURATE_ENV_KEY } from '../src/domain/field/corpus/fieldStaticProviderCorpusConfig.ts'
@@ -299,9 +300,9 @@ async function main(): Promise<void> {
       `${starterId} ${mode}: service truth source count must be the minimum load-bearing target.`,
     )
     assert(
-      serviceModel.diagnostics.publicRenderMigrated === false &&
-        PUBLIC_CURATE_CARD_TRUTH_RENDER_MIGRATED === false,
-      `${starterId} ${mode}: public render must not be migrated to the service in Patch 3L.`,
+      serviceModel.diagnostics.publicRenderMigrated === true &&
+        PUBLIC_CURATE_CARD_TRUTH_RENDER_MIGRATED === true,
+      `${starterId} ${mode}: public render must be migrated to ContractEntryArtifact truth.`,
     )
     assert(
       serviceModel.diagnostics.committedRouteFallbackRenderEnabled === false,
@@ -320,9 +321,9 @@ async function main(): Promise<void> {
       `${starterId} ${mode}: service candidate cache key scope must include the selected starter.`,
     )
     assert(
-      serviceCandidateDiagnostics.publicRenderMigrated === false &&
+      serviceCandidateDiagnostics.publicRenderMigrated === true &&
         serviceCandidateDiagnostics.pageRenderMigrated === false,
-      `${starterId} ${mode}: service candidate diagnostics must remain non-render-migrated.`,
+      `${starterId} ${mode}: service candidate diagnostics must report artifact render migration without page-local authorship.`,
     )
     assert(
       serviceCandidateDiagnostics.fetchCallCount === fetchCallCount,
@@ -336,8 +337,8 @@ async function main(): Promise<void> {
     )
     if (starterId === 'arcade-and-drinks') {
       assert(
-        serviceModel.diagnostics.rejectionReasons.includes('missing_required_role'),
-        `${starterId} ${mode}: service must classify incomplete arcade route as missing_required_role.`,
+        serviceModel.visibleCards.length === 0 && serviceModel.selectedCard === null,
+        `${starterId} ${mode}: service must not render incomplete arcade route.`,
       )
       assert(
         serviceCandidateDiagnostics.rejectionReasons.includes('missing_required_role'),
@@ -496,10 +497,20 @@ async function main(): Promise<void> {
     'Previous-starter approved payload must not pass current-starter service validation.',
   )
   assert(
-    previousStarterApprovedPayloadProbe.diagnostics.rejectionReasons.includes(
-      'approved_payload_starter_mismatch',
-    ),
-    'Previous-starter approved payload must reject with approved_payload_starter_mismatch.',
+    previousStarterApprovedPayloadProbe.diagnostics.cardTruthStatus === 'no_candidate',
+    'Previous-starter approved payload probe must be blocked before public render without an artifact.',
+  )
+  const previousStarterApprovedPayloadFit = validatePublicCurateStarterFit({
+    selectedStarterPack: findStarterPack('live-music-loop'),
+    routeStops: starterADiagnostics.routeStops,
+    approvedRefinementEntryPayload: {
+      starterPackId: 'hidden-cocktail-corners',
+      artifactId: starterASelectedArtifactId,
+    },
+  })
+  assert(
+    previousStarterApprovedPayloadFit.rejectionReasons.includes('approved_payload_starter_mismatch'),
+    'Previous-starter approved payload fit must reject with approved_payload_starter_mismatch.',
   )
   assert(arcadeClassification, 'Arcade classification must be produced.')
   assert(
@@ -535,9 +546,17 @@ async function main(): Promise<void> {
     'live-music-loop known mismatch probe must not be allowed to render.',
   )
   assert(
-    liveMusicMismatchProbe.diagnostics.rejectionReasons.includes('card_promise_mismatch') ||
-      liveMusicMismatchProbe.diagnostics.rejectionReasons.includes('category_family_mismatch'),
-    'live-music-loop known mismatch probe must reject card-promise or category-family mismatch.',
+    liveMusicMismatchProbe.diagnostics.cardTruthStatus === 'no_candidate',
+    'live-music-loop known mismatch public model must be blocked before render without an artifact.',
+  )
+  const liveMusicMismatchFit = validatePublicCurateStarterFit({
+    selectedStarterPack: findStarterPack('live-music-loop'),
+    routeStops: parsePublicCurateRouteStops(liveMusicLoopKnownMismatchStops),
+  })
+  assert(
+    liveMusicMismatchFit.rejectionReasons.includes('card_promise_mismatch') ||
+      liveMusicMismatchFit.rejectionReasons.includes('category_family_mismatch'),
+    'live-music-loop known mismatch fit must reject card-promise or category-family mismatch.',
   )
   serviceProbeRows.push({
     probe: 'live-music-loop-known-mismatch',

@@ -325,8 +325,22 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       discoveryLoading: false,
       selectedDiscoveryVenueIds: [],
       selectedDiscoveryDirectionContext: undefined,
+      selectedAnchorVenue: undefined,
+      generatedItinerary: undefined,
+      generatedArc: undefined,
+      generatedContractEntryArtifact: undefined,
+      scoredVenues: undefined,
+      lastIntentProfile: undefined,
+      experienceLens: undefined,
+      generationTrace: undefined,
       explorationPlan: undefined,
       explorationLoading: false,
+      routeEditedByUser: false,
+      userComposedStopsByRole: {},
+      compositionConflictMessage: undefined,
+      alternativesByRole: {},
+      alternativeKindsByRole: {},
+      lockedAt: undefined,
     }
   }
   if (action.type === 'BEGIN_DISTRICT_PREVIEW') {
@@ -403,6 +417,21 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
     return {
       ...state,
       selectedAnchorVenue: action.payload,
+      generatedItinerary: undefined,
+      generatedArc: undefined,
+      generatedContractEntryArtifact: undefined,
+      scoredVenues: undefined,
+      lastIntentProfile: undefined,
+      experienceLens: undefined,
+      generationTrace: undefined,
+      explorationPlan: undefined,
+      explorationLoading: false,
+      routeEditedByUser: false,
+      userComposedStopsByRole: {},
+      compositionConflictMessage: undefined,
+      alternativesByRole: {},
+      alternativeKindsByRole: {},
+      lockedAt: undefined,
     }
   }
   if (action.type === 'BEGIN_EXPLORATION') {

@@ -39,7 +39,6 @@ import { buildContinuationPreviewContract } from '../domain/lce/continuationCont
 import { normalizeRawPlace } from '../domain/normalize/normalizeRawPlace'
 import { getNearbyAlternatives } from '../domain/retrieval/getNearbyAlternatives'
 import { scoreVenueFit } from '../domain/retrieval/scoreVenueFit'
-import { buildFinalRoute } from '../domain/artifacts/runtimeRouteProjection'
 import {
   generatePlanAdjustmentFeedback,
 } from '../domain/interpretation/adjustment/generatePlanAdjustmentFeedback'
@@ -79,6 +78,11 @@ import {
   type LiveArtifactExitNotice,
 } from '../domain/live/liveArtifactSession'
 import { saveLockedLiveArtifactSession } from './services/live/liveSessionHandoff'
+import { buildContractEntryRuntimeRouteLockTruth } from './services/live/contractEntryLockHandoff'
+import {
+  buildArtifactBackedVisibleItinerary,
+  validatePublicContractEntryArtifactTruth,
+} from './services/canonicalPublicRouteTruthService'
 import {
   getVibeLabel,
   type ExperienceMode,
@@ -967,148 +971,6 @@ function hasPublicLockStopRouteTruth(stop: Itinerary['stops'][number] | undefine
   )
 }
 
-function buildPublicLockRuntimeRouteTruth(params: {
-  itinerary: Itinerary
-  scoredVenues: ScoredVenue[]
-  selectedDirectionId: string
-  selectedClusterConfirmation: string
-  city: string
-  persona: PersonaMode
-  vibe: VibeAnchor
-  mode: ExperienceMode
-}):
-  | {
-      ok: true
-      selectedClusterConfirmation: string
-      itinerary: Itinerary
-      finalRoute: NonNullable<ReturnType<typeof buildFinalRoute>>
-      lockSafeItineraryStops: Itinerary['stops']
-    }
-  | {
-      ok: false
-      reason: string
-    } {
-  const { itinerary, scoredVenues, selectedDirectionId, selectedClusterConfirmation } = params
-  if (!selectedDirectionId.trim()) {
-    return { ok: false, reason: 'missing_selected_direction_id' }
-  }
-  if (!selectedClusterConfirmation.trim()) {
-    return { ok: false, reason: 'missing_selected_cluster_confirmation' }
-  }
-
-  const lockSafeItineraryStops = itinerary.stops.filter(
-    (stop) => stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown',
-  )
-  const startStop = lockSafeItineraryStops.find((stop) => stop.role === 'start')
-  if (!startStop) {
-    return { ok: false, reason: 'missing_core_stop:start' }
-  }
-  const highlightStop = lockSafeItineraryStops.find((stop) => stop.role === 'highlight')
-  if (!highlightStop) {
-    return { ok: false, reason: 'missing_core_stop:highlight' }
-  }
-  const windDownStop = lockSafeItineraryStops.find((stop) => stop.role === 'windDown')
-  if (!windDownStop) {
-    return { ok: false, reason: 'missing_core_stop:windDown' }
-  }
-
-  const scoredVenueByVenueId = new Map(scoredVenues.map((item) => [item.venue.id, item] as const))
-  type LockCanonicalStopIdentity = {
-    displayName: string
-    providerRecordId: string
-    latitude: number
-    longitude: number
-    addressLine: string
-    neighborhood: string
-  }
-  const canonicalStopResult = lockSafeItineraryStops.reduce<{
-    stopsByRole: Partial<Record<UserStopRole, LockCanonicalStopIdentity>>
-    failureReason?: string
-  }>((next, stop) => {
-    const scoredVenue = scoredVenueByVenueId.get(stop.venueId)
-    if (!scoredVenue) {
-      next.failureReason = `missing_scored_venue:${stop.role}:${stop.venueId}`
-      return next
-    }
-    const venue = scoredVenue.venue
-    const source = venue.source
-    const providerRecordId =
-      source.providerRecordId?.trim() ||
-      (source.sourceOrigin === 'curated' ? venue.id.trim() : '')
-    const addressLine = scoredVenue?.venue.source.formattedAddress?.trim()
-    const latitude = scoredVenue?.venue.source.latitude
-    const longitude = scoredVenue?.venue.source.longitude
-    if (!providerRecordId) {
-      next.failureReason = `missing_provider_record_id:${stop.role}:${stop.venueId}`
-      return next
-    }
-    if (!addressLine) {
-      next.failureReason = `missing_formatted_address:${stop.role}:${stop.venueId}`
-      return next
-    }
-    if (
-      typeof latitude !== 'number' ||
-      !Number.isFinite(latitude) ||
-      typeof longitude !== 'number' ||
-      !Number.isFinite(longitude)
-    ) {
-      next.failureReason = `missing_coordinates:${stop.role}:${stop.venueId}`
-      return next
-    }
-    next.stopsByRole[stop.role] = {
-      displayName: venue.name,
-      providerRecordId,
-      latitude,
-      longitude,
-      addressLine,
-      neighborhood: venue.neighborhood || stop.neighborhood,
-    }
-    return next
-  }, { stopsByRole: {} })
-  if (canonicalStopResult.failureReason) {
-    return { ok: false, reason: canonicalStopResult.failureReason }
-  }
-  const canonicalStopByRole = canonicalStopResult.stopsByRole
-
-  if (
-    !canonicalStopByRole.start ||
-    !canonicalStopByRole.highlight ||
-    !canonicalStopByRole.windDown
-  ) {
-    return { ok: false, reason: 'missing_canonical_stop_identity' }
-  }
-
-  const finalRoute = buildFinalRoute({
-    itinerary: {
-      ...itinerary,
-      stops: lockSafeItineraryStops,
-    },
-    canonicalStopByRole,
-    selectedDirectionId,
-    city: params.city,
-    persona: params.persona,
-    vibe: params.vibe,
-    activeRole: 'start',
-    mode: params.mode,
-    routeHeadline: itinerary.story.headline,
-    routeSummary: itinerary.storySpine?.routeSummary ?? itinerary.shareSummary,
-  })
-  if (!finalRoute) {
-    return { ok: false, reason: 'build_final_route_failed' }
-  }
-
-  return {
-    ok: true,
-    selectedClusterConfirmation,
-    itinerary: {
-      ...itinerary,
-      stops: lockSafeItineraryStops,
-    },
-    finalRoute,
-    lockSafeItineraryStops,
-  }
-}
-
 function normalizeModeSet(values: string[] | undefined): string {
   if (!values || values.length === 0) {
     return ''
@@ -1189,12 +1051,12 @@ function AppShellContent({
         hasBuildAnchorSelection: Boolean(
           state.selectedAnchorVenue?.id ?? state.intentDraft.anchor?.venueId,
         ),
-        hasCommittedRoute: Boolean(state.generatedItinerary && state.currentStep === 'reveal'),
+        hasCommittedRoute: Boolean(state.generatedContractEntryArtifact && state.currentStep === 'reveal'),
         isLockingLivePlan: Boolean(state.lockedAt && state.currentStep === 'ticket'),
       }),
     [
       state.currentStep,
-      state.generatedItinerary,
+      state.generatedContractEntryArtifact,
       state.intentDraft.anchor?.venueId,
       state.lockedAt,
       state.mode,
@@ -1217,7 +1079,7 @@ function AppShellContent({
     ],
   )
   const previewDirty =
-    Boolean(state.generatedItinerary) &&
+    Boolean(state.generatedContractEntryArtifact) &&
     Boolean(state.lastIntentProfile) &&
     (
       (effectiveDraftInput.district ?? '') !== (state.lastIntentProfile?.district ?? '') ||
@@ -1234,9 +1096,29 @@ function AppShellContent({
     }
     return buildBaselineVisibleItinerary(state.generatedItinerary)
   }, [state.generatedItinerary])
-  const publicLockStartStop = baselineVisibleItinerary?.stops.find((stop) => stop.role === 'start')
-  const publicLockHighlightStop = baselineVisibleItinerary?.stops.find((stop) => stop.role === 'highlight')
-  const publicLockWindDownStop = baselineVisibleItinerary?.stops.find((stop) => stop.role === 'windDown')
+  const publicArtifactTruth = useMemo(
+    () =>
+      validatePublicContractEntryArtifactTruth(state.generatedContractEntryArtifact, {
+        mode: state.mode,
+        starterPack: activeStarterPack,
+      }),
+    [activeStarterPack, state.generatedContractEntryArtifact, state.mode],
+  )
+  const artifactBackedVisibleItinerary = useMemo(
+    () =>
+      buildArtifactBackedVisibleItinerary({
+        artifact: state.generatedContractEntryArtifact,
+        itinerary: baselineVisibleItinerary,
+        context: {
+          mode: state.mode,
+          starterPack: activeStarterPack,
+        },
+      }),
+    [activeStarterPack, baselineVisibleItinerary, state.generatedContractEntryArtifact, state.mode],
+  )
+  const publicLockStartStop = artifactBackedVisibleItinerary?.stops.find((stop) => stop.role === 'start')
+  const publicLockHighlightStop = artifactBackedVisibleItinerary?.stops.find((stop) => stop.role === 'highlight')
+  const publicLockWindDownStop = artifactBackedVisibleItinerary?.stops.find((stop) => stop.role === 'windDown')
   const hasPublicLockStart = Boolean(publicLockStartStop)
   const hasPublicLockHighlight = Boolean(publicLockHighlightStop)
   const hasPublicLockWindDown = Boolean(publicLockWindDownStop)
@@ -1247,7 +1129,8 @@ function AppShellContent({
   const publicLockHasCoreStops =
     hasPublicLockStart && hasPublicLockHighlight && hasPublicLockWindDown
   const publicLockEligible =
-    environment !== 'default' || (publicLockHasCoreStops && hasPublicLockRouteTruth)
+    environment !== 'default' ||
+    (publicArtifactTruth.allowedToRender && publicLockHasCoreStops && hasPublicLockRouteTruth)
   const publicLockIneligibleMessage =
     environment === 'default' && !publicLockEligible
       ? publicLockHasCoreStops
@@ -1255,6 +1138,7 @@ function AppShellContent({
         : 'Locking needs a full Start, Highlight, and Wind-down route. Try refining or starting over.'
       : null
   const publicLockSelectedDirectionId =
+    state.generatedContractEntryArtifact?.selection.directionId?.trim() ||
     state.selectedDiscoveryDirectionContext?.directionId?.trim() ||
     state.lastIntentProfile?.selectedDirectionContext?.directionId?.trim() ||
     (environment === 'default' && state.generatedArc?.id
@@ -1268,9 +1152,9 @@ function AppShellContent({
   const publicLockSelectedClusterConfirmation =
     state.selectedDiscoveryDirectionContext?.label?.trim() ||
     state.lastIntentProfile?.selectedDirectionContext?.label?.trim() ||
-    baselineVisibleItinerary?.storySpine?.routeSummary?.trim() ||
-    baselineVisibleItinerary?.shareSummary?.trim() ||
-    baselineVisibleItinerary?.story.subtitle?.trim() ||
+    artifactBackedVisibleItinerary?.storySpine?.routeSummary?.trim() ||
+    artifactBackedVisibleItinerary?.shareSummary?.trim() ||
+    artifactBackedVisibleItinerary?.story.subtitle?.trim() ||
     ''
   const baselineVisibleAlternativesByRole = useMemo(
     () => filterRoleRecord<StopAlternative[]>(state.alternativesByRole, BASELINE_VISIBLE_ROLES),
@@ -1330,33 +1214,38 @@ function AppShellContent({
     setLockFailureDiagnostic(null)
     if (
       environment !== 'default' ||
-      !baselineVisibleItinerary ||
+      !artifactBackedVisibleItinerary ||
+      !state.generatedContractEntryArtifact ||
       !state.generatedArc ||
       !state.scoredVenues ||
       !publicLockPersona ||
       !publicLockVibe
     ) {
+      const failureReason = !baselineVisibleItinerary
+        ? 'missing_itinerary'
+        : !artifactBackedVisibleItinerary
+          ? publicArtifactTruth.rejectionReasons[0] ?? 'missing_artifact_backed_visible_itinerary'
+          : !state.generatedContractEntryArtifact
+            ? 'missing_contract_entry_artifact'
+            : !state.generatedArc
+              ? 'missing_generated_arc'
+              : !state.scoredVenues
+                ? 'missing_scored_venues'
+                : !publicLockPersona
+                  ? 'missing_persona'
+                  : 'missing_vibe'
       setLockFailureMessage(buildPublicLockFailureMessage())
-      setLockFailureDiagnostic(
-        !baselineVisibleItinerary
-          ? 'missing_itinerary'
-          : !state.generatedArc
-            ? 'missing_generated_arc'
-            : !state.scoredVenues
-              ? 'missing_scored_venues'
-              : !publicLockPersona
-                ? 'missing_persona'
-                : 'missing_vibe',
-      )
+      setLockFailureDiagnostic(failureReason)
       return
     }
 
-    const routeTruth = buildPublicLockRuntimeRouteTruth({
-      itinerary: baselineVisibleItinerary,
+    const routeTruth = buildContractEntryRuntimeRouteLockTruth({
+      artifact: state.generatedContractEntryArtifact,
+      itinerary: artifactBackedVisibleItinerary,
       scoredVenues: state.scoredVenues,
       selectedDirectionId: publicLockSelectedDirectionId,
       selectedClusterConfirmation: publicLockSelectedClusterConfirmation,
-      city: baselineVisibleItinerary.city,
+      city: artifactBackedVisibleItinerary.city,
       persona: publicLockPersona,
       vibe: publicLockVibe,
       mode: state.mode ?? state.lastIntentProfile?.mode ?? 'build',
@@ -1375,7 +1264,7 @@ function AppShellContent({
       },
       lockSafeItineraryStops: routeTruth.lockSafeItineraryStops,
       activeRole: 'start',
-      fallbackCity: baselineVisibleItinerary.city,
+      fallbackCity: artifactBackedVisibleItinerary.city,
     })
     if (!lockSaveResult.ok) {
       setLockFailureMessage(buildPublicLockFailureMessage())
@@ -2565,7 +2454,7 @@ function AppShellContent({
     if (!initialStep) {
       return
     }
-    if ((initialStep === 'preview' || initialStep === 'reveal') && !state.generatedItinerary) {
+    if ((initialStep === 'preview' || initialStep === 'reveal') && !artifactBackedVisibleItinerary) {
       if (environment === 'dev') {
         const restoredMode = devStartMode ?? readDevOriginMode() ?? initialDevStartMode ?? null
         if (initialStep === 'preview') {
@@ -2800,9 +2689,9 @@ function AppShellContent({
         />
       )}
 
-      {state.currentStep === 'preview' && state.generatedItinerary && (
+      {state.currentStep === 'preview' && artifactBackedVisibleItinerary && (
         <PreviewPage
-          itinerary={baselineVisibleItinerary ?? state.generatedItinerary}
+          itinerary={artifactBackedVisibleItinerary}
           generationTrace={state.generationTrace}
           planAdjustmentFeedback={previewDirty ? undefined : planAdjustmentFeedback}
           neighborhood={effectiveDraftInput.neighborhood}
@@ -2882,10 +2771,10 @@ function AppShellContent({
               actions.setStep('generating')
               return
             }
-            if (state.generatedItinerary && state.generationTrace) {
+            if (artifactBackedVisibleItinerary && state.generationTrace) {
               setPendingPlanAdjustment({
                 previousPlan: {
-                  itinerary: state.generatedItinerary,
+                  itinerary: artifactBackedVisibleItinerary,
                   trace: state.generationTrace,
                 },
                 controls: { ...state.previewControls },
@@ -2912,7 +2801,7 @@ function AppShellContent({
         <GeneratingPage headline={generatingCopy.headline} detail={generatingCopy.detail} />
       )}
 
-      {state.currentStep === 'reveal' && state.generatedItinerary && (
+      {state.currentStep === 'reveal' && artifactBackedVisibleItinerary && (
         <>
           {publicLockIneligibleMessage && (
             <div className="preview-notice draft-feedback">
@@ -2930,7 +2819,7 @@ function AppShellContent({
             </div>
           )}
           <RevealPage
-            itinerary={baselineVisibleItinerary ?? state.generatedItinerary}
+            itinerary={artifactBackedVisibleItinerary}
             selectedRefinements={state.selectedRefinements}
             generationTrace={state.generationTrace}
             compositionConflictMessage={state.compositionConflictMessage}
@@ -2980,9 +2869,9 @@ function AppShellContent({
         </>
       )}
 
-      {state.currentStep === 'ticket' && state.generatedItinerary && (
+      {state.currentStep === 'ticket' && artifactBackedVisibleItinerary && (
         <TicketPage
-          itinerary={baselineVisibleItinerary ?? state.generatedItinerary}
+          itinerary={artifactBackedVisibleItinerary}
           lightNearbyExtensions={legacyContinuationPreviewContract.options.map(
             ({ payload }) => payload,
           )}

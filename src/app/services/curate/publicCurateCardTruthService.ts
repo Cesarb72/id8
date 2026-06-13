@@ -1,9 +1,10 @@
 import type { ContractEntryArtifact } from '../../../domain/artifacts/contractEntryArtifact'
+import { validateContractEntryArtifactPreCommitTruth } from '../../../domain/artifacts/contractEntryArtifact'
 import type { StarterPack } from '../../../domain/types/starterPack'
 
 export const PUBLIC_CURATE_CARD_TRUTH_CURRENT_SOURCE_COUNT = 34
 export const PUBLIC_CURATE_CARD_TRUTH_MINIMUM_LOAD_BEARING_SOURCE_COUNT = 9
-export const PUBLIC_CURATE_CARD_TRUTH_RENDER_MIGRATED = false
+export const PUBLIC_CURATE_CARD_TRUTH_RENDER_MIGRATED = true
 
 export type PublicCurateCardTruthStatus =
   | 'allowed'
@@ -465,6 +466,27 @@ export function validatePublicCurateStarterFit(params: {
   if (params.artifact?.sourceMode && params.artifact.sourceMode !== 'curated') {
     rejectionReasons.add('invalid_source_provenance')
   }
+  if (params.artifact) {
+    const artifactValidation = validateContractEntryArtifactPreCommitTruth(params.artifact, {
+      requireEnrichment: true,
+    })
+    if (!artifactValidation.fullPlanVisible || artifactValidation.status !== 'valid') {
+      rejectionReasons.add('missing_required_role')
+    }
+    if (params.artifact.enrichment?.mode && params.artifact.enrichment.mode !== 'curate') {
+      rejectionReasons.add('scenario_intent_mismatch')
+    }
+    const artifactStarterPackId =
+      params.artifact.enrichment?.starterContextFit?.starterPackId ??
+      params.artifact.enrichment?.userInputContext?.starterPackId
+    if (
+      params.selectedStarterPack &&
+      artifactStarterPackId &&
+      artifactStarterPackId !== params.selectedStarterPack.id
+    ) {
+      rejectionReasons.add('starter_id_mismatch')
+    }
+  }
 
   return {
     status: rejectionReasons.size > 0 ? 'rejected' : routeStops.length > 0 ? 'passed' : 'not_run',
@@ -482,17 +504,21 @@ export function buildPublicCurateCardTruthModel(
     input.artifactCandidates?.find((artifact) => artifact.id === input.selectedArtifactId) ??
     input.artifactCandidates?.[0] ??
     null
-  const routeStops = input.routeStops?.length
-    ? input.routeStops
-    : selectedArtifact
-      ? routeStopsFromArtifact(selectedArtifact)
-      : []
-  const selectedStarterFit = validatePublicCurateStarterFit({
-    selectedStarterPack: input.selectedStarterPack,
-    artifact: selectedArtifact,
-    routeStops,
-    approvedRefinementEntryPayload: input.approvedRefinementEntryPayload,
-  })
+  const routeStops = selectedArtifact ? routeStopsFromArtifact(selectedArtifact) : []
+  const selectedStarterFit = selectedArtifact
+    ? validatePublicCurateStarterFit({
+        selectedStarterPack: input.selectedStarterPack,
+        artifact: selectedArtifact,
+        routeStops,
+        approvedRefinementEntryPayload: input.approvedRefinementEntryPayload,
+      })
+    : {
+        status: 'not_run' as const,
+        allowedToRender: false,
+        rejectionReasons: [] as PublicCurateStarterFitRejectionReason[],
+        routeStops: [],
+        normalizedRoles: {},
+      }
   const starterFitByArtifactId = Object.fromEntries(
     (input.artifactCandidates ?? []).map((artifact) => [
       artifact.id,
@@ -571,10 +597,10 @@ export function buildPublicCurateCardTruthModel(
       ),
     },
     actionsAllowed: {
-      review: false,
-      revealJourneyMap: false,
-      lockLive: false,
-      plansHubSave: false,
+      review: Boolean(projection),
+      revealJourneyMap: Boolean(projection),
+      lockLive: Boolean(projection),
+      plansHubSave: Boolean(projection),
     },
   }
 }
