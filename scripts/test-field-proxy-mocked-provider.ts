@@ -1,6 +1,8 @@
 import {
+  createFieldTextSearchProviderActivationFromEnv,
   createFieldTextSearchProviderFromEnv,
   createMockFieldTextSearchProvider,
+  fieldTextSearchProviderActivationValue,
   mapProviderErrorToBlockedReason,
   readServerGooglePlacesKeyState,
 } from '../api/field/_lib/fieldTextSearchProvider.ts'
@@ -8,6 +10,7 @@ import type { FieldTextSearchRequest } from '../src/domain/field/fieldProxyTypes
 
 const originalFetch = globalThis.fetch
 const originalGooglePlacesApiKey = process.env.GOOGLE_PLACES_API_KEY
+const originalId8FieldProvider = process.env.ID8_FIELD_PROVIDER
 let fetchCallCount = 0
 
 const fetchTrap: typeof fetch = async () => {
@@ -93,12 +96,23 @@ function assertServerOnlyKeyReadPath(): void {
     'Injected server key state must report present without mutating process env.',
   )
   assert(
+    readServerGooglePlacesKeyState({ ID8_FIELD_PROVIDER: fieldTextSearchProviderActivationValue })
+      .providerActivationPresent === true,
+    'Injected server provider activation state must report present without mutating process env.',
+  )
+  assert(
     process.env.GOOGLE_PLACES_API_KEY === originalGooglePlacesApiKey,
     'Injected key-state checks must not mutate process GOOGLE_PLACES_API_KEY.',
   )
   assert(
-    createFieldTextSearchProviderFromEnv() === null,
-    'Default hosted provider factory must stay inactive in P0-B3.',
+    createFieldTextSearchProviderFromEnv({ GOOGLE_PLACES_API_KEY: 'server-only-test-value' }) === null,
+    'Key alone must not activate the hosted provider.',
+  )
+  assert(
+    createFieldTextSearchProviderActivationFromEnv({
+      ID8_FIELD_PROVIDER: fieldTextSearchProviderActivationValue,
+    }).status === 'missing_key',
+    'Activation flag alone must fail closed as provider_key_missing.',
   )
   process.stdout.write('server-only key read path: passed\n')
 }
@@ -126,5 +140,10 @@ main()
       delete process.env.GOOGLE_PLACES_API_KEY
     } else {
       process.env.GOOGLE_PLACES_API_KEY = originalGooglePlacesApiKey
+    }
+    if (originalId8FieldProvider === undefined) {
+      delete process.env.ID8_FIELD_PROVIDER
+    } else {
+      process.env.ID8_FIELD_PROVIDER = originalId8FieldProvider
     }
   })

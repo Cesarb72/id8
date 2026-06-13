@@ -19,6 +19,8 @@ const originalFetch = globalThis.fetch
 const originalKvRestApiUrl = process.env.KV_REST_API_URL
 const originalKvRestApiToken = process.env.KV_REST_API_TOKEN
 const originalVercelEnv = process.env.VERCEL_ENV
+const originalGooglePlacesApiKey = process.env.GOOGLE_PLACES_API_KEY
+const originalId8FieldProvider = process.env.ID8_FIELD_PROVIDER
 let fetchCallCount = 0
 
 const fetchTrap: typeof fetch = async () => {
@@ -88,6 +90,16 @@ function restoreEnv(): void {
     delete process.env.VERCEL_ENV
   } else {
     process.env.VERCEL_ENV = originalVercelEnv
+  }
+  if (originalGooglePlacesApiKey === undefined) {
+    delete process.env.GOOGLE_PLACES_API_KEY
+  } else {
+    process.env.GOOGLE_PLACES_API_KEY = originalGooglePlacesApiKey
+  }
+  if (originalId8FieldProvider === undefined) {
+    delete process.env.ID8_FIELD_PROVIDER
+  } else {
+    process.env.ID8_FIELD_PROVIDER = originalId8FieldProvider
   }
 }
 
@@ -273,6 +285,8 @@ async function assertHostedStyleProviderInactiveWithKv(): Promise<void> {
   process.env.KV_REST_API_URL = 'https://example-upstash.invalid/'
   process.env.KV_REST_API_TOKEN = 'test-token-not-a-provider-key'
   process.env.VERCEL_ENV = 'preview'
+  delete process.env.GOOGLE_PLACES_API_KEY
+  delete process.env.ID8_FIELD_PROVIDER
   globalThis.fetch = mockUpstash.fetchImpl as typeof fetch
 
   const response = createResponse()

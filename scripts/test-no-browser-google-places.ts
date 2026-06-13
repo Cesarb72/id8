@@ -28,6 +28,16 @@ const allowedServerGoogleKeyFiles = new Set([
   'api/field/_lib/fieldTextSearchProvider.ts',
 ])
 
+const allowedServerProviderPatternFiles = new Set([
+  'api/field/_lib/fieldTextSearchProvider.ts',
+])
+
+const allowedServerProviderPatterns = new Set([
+  'places.googleapis.com',
+  'X-Goog-Api-Key',
+  'X-Goog-FieldMask',
+])
+
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) {
     throw new Error(message)
@@ -98,6 +108,9 @@ function main(): void {
     files: sourceFiles,
     patterns: forbiddenBrowserPatterns,
     label: 'source scan',
+    allow: (relativePath, pattern) =>
+      allowedServerProviderPatterns.has(pattern) &&
+      allowedServerProviderPatternFiles.has(relativePath),
   })
   assertNoPatternInFiles({
     files: sourceFiles,

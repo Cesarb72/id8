@@ -13,7 +13,7 @@ import {
   reserveFieldProviderCallBudget,
 } from './_lib/fieldLedgerStore.js'
 import {
-  createFieldTextSearchProviderFromEnv,
+  createFieldTextSearchProviderActivationFromEnv,
   mapProviderErrorToBlockedReason,
 } from './_lib/fieldTextSearchProvider.js'
 
@@ -109,8 +109,8 @@ async function handleFieldTextSearchRequest(
     return
   }
 
-  const provider = createFieldTextSearchProviderFromEnv()
-  if (!provider) {
+  const providerActivation = createFieldTextSearchProviderActivationFromEnv()
+  if (providerActivation.status === 'inactive') {
     response.status(503).json(
       buildFieldProxyBlockedResponse({
         request: validation.request,
@@ -120,6 +120,18 @@ async function handleFieldTextSearchRequest(
     )
     return
   }
+  if (providerActivation.status === 'missing_key') {
+    response.status(503).json(
+      buildFieldProxyBlockedResponse({
+        request: validation.request,
+        reason: providerActivation.errorCode,
+        budget: cacheResult.budget,
+      }),
+    )
+    return
+  }
+
+  const provider = providerActivation.provider
 
   let reservation: Awaited<ReturnType<typeof reserveFieldProviderCallBudget>>
   try {
