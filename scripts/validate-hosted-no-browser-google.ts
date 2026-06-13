@@ -5,6 +5,7 @@ import {
   buildHostedValidationManifest,
   printValidationManifest,
   readTrackedTextFiles,
+  readVercelBypassSecretValues,
 } from './hostedValidationKit.js'
 
 const forbiddenClientPatterns = [
@@ -56,14 +57,16 @@ function scanForbiddenClientPatterns(files: Array<{ path: string; source: string
 
 function scanSecretLiterals(files: Array<{ path: string; source: string }>): string[] {
   const hits: string[] = []
-  const bypassSecret = process.env.VERCEL_PROTECTION_BYPASS_SECRET?.trim()
+  const bypassSecrets = readVercelBypassSecretValues()
   const googleApiKeyPattern = /AIza[0-9A-Za-z_-]{35}/g
   const vercelTokenPattern = /\bvercel_[0-9A-Za-z]{20,}\b/g
   const upstashTokenAssignmentPattern = /\b(?:KV_REST_API_TOKEN|UPSTASH_REDIS_REST_TOKEN)\s*[:=]\s*['"]?([A-Za-z0-9._-]{24,})/g
 
   for (const file of files) {
-    if (bypassSecret && file.source.includes(bypassSecret)) {
-      hits.push(`${file.path}:<redacted Vercel bypass secret>`)
+    for (const bypassSecret of bypassSecrets) {
+      if (file.source.includes(bypassSecret)) {
+        hits.push(`${file.path}:<redacted Vercel bypass secret>`)
+      }
     }
     if (googleApiKeyPattern.test(file.source)) {
       hits.push(`${file.path}:<redacted Google API key pattern>`)

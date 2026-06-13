@@ -2,6 +2,7 @@ import {
   assert,
   buildHostedValidationManifest,
   printValidationManifest,
+  readVercelProtectionBypassSecret,
 } from './hostedValidationKit.js'
 
 const approvedBlockedReasons = new Set([
@@ -110,7 +111,7 @@ async function main(): Promise<void> {
   printValidationManifest(manifest)
   process.stdout.write(`Testing hosted commit: ${manifest.expectedHead}\n`)
 
-  const bypassSecret = process.env.VERCEL_PROTECTION_BYPASS_SECRET?.trim()
+  const bypassSecret = readVercelProtectionBypassSecret()
   if (!bypassSecret) {
     process.stdout.write(
       'Hosted script implemented, but hosted bypass validation not run because bypass secret was unavailable.\n',

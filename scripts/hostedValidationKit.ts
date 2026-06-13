@@ -41,6 +41,21 @@ export function readRequiredEnv(name: string): string {
   return value
 }
 
+export function readVercelProtectionBypassSecret(): string | null {
+  return (
+    process.env.VERCEL_PROTECTION_BYPASS_SECRET?.trim() ||
+    process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim() ||
+    null
+  )
+}
+
+export function readVercelBypassSecretValues(): string[] {
+  return [
+    process.env.VERCEL_PROTECTION_BYPASS_SECRET?.trim(),
+    process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim(),
+  ].filter((value): value is string => Boolean(value))
+}
+
 export function getHostedValidationUrl(): string {
   const url = stripTrailingSlash(readRequiredEnv('ID8_HOSTED_VALIDATION_URL'))
   assert(
