@@ -265,7 +265,7 @@ export async function reserveFieldProviderCallBudget(params: {
   purpose: string
 }): Promise<FieldLedgerReservationResult> {
   const reservation = await params.store.reserveCall(params.date, params.cap)
-  if (!reservation.ok) {
+  if (reservation.ok === false) {
     await params.store.logCall({
       date: params.date,
       queryHash: params.queryHash,

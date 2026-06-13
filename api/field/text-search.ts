@@ -47,19 +47,19 @@ async function handleFieldTextSearchRequest(
   response.setHeader?.('Cache-Control', 'no-store')
 
   const methodFailure = validateFieldProxyMethod(request.method)
-  if (methodFailure && !methodFailure.ok) {
+  if (methodFailure !== null) {
     sendBlockedResponse(response, methodFailure.statusCode, methodFailure.reason)
     return
   }
 
   const parsedBody = parseFieldProxyJsonBody(request.body)
-  if (!parsedBody.ok) {
+  if (parsedBody.ok === false) {
     sendBlockedResponse(response, parsedBody.statusCode, parsedBody.reason)
     return
   }
 
   const validation = validateFieldTextSearchRequestBody(parsedBody.body)
-  if (!validation.ok) {
+  if (validation.ok === false) {
     sendBlockedResponse(response, validation.statusCode, validation.reason)
     return
   }
@@ -166,7 +166,7 @@ async function handleFieldTextSearchRequest(
   }
 
   const providerResult = await provider.searchText(validation.request)
-  if (!providerResult.ok) {
+  if (providerResult.ok === false) {
     const reason = mapProviderErrorToBlockedReason(providerResult.errorCode)
     const blockedResponse = buildFieldProxyBlockedResponse({
       request: validation.request,
