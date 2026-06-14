@@ -146,7 +146,7 @@ async function main(): Promise<void> {
     const result = await runGeneratePlan(buildStarterInput(starterPack), {
       starterPack,
       sourceMode: 'curated',
-      sourceModeOverrideApplied: false,
+      sourceModeOverrideApplied: true,
     })
     const liveSource = result.trace.retrievalDiagnostics.liveSource
     const selectedHighlight = result.selectedArc.stops.find((stop) => stop.role === 'peak')

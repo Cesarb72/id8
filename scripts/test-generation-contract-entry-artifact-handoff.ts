@@ -106,7 +106,7 @@ async function main(): Promise<void> {
     const result = await runGeneratePlan(scenario.input, {
       starterPack: scenario.starterPack,
       sourceMode: 'curated',
-      sourceModeOverrideApplied: false,
+      sourceModeOverrideApplied: true,
     })
     const artifact = result.contractEntryArtifact
     const validation = validateContractEntryArtifactPreCommitTruth(artifact, {

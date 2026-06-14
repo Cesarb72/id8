@@ -396,6 +396,14 @@ export async function fetchLivePlaces(
 
   const providerResults = await searchPlaces({
     callPurpose: 'retrieval_supply',
+    city: intent.city,
+    context: {
+      ...(starterPack?.id ? { starterId: starterPack.id } : {}),
+      ...(intent.primaryAnchor ? { vibe: intent.primaryAnchor } : {}),
+      ...(intent.persona ? { persona: intent.persona } : {}),
+      ...(intent.timeWindow ? { timeWindow: intent.timeWindow } : {}),
+      ...(intent.neighborhood ? { neighborhood: intent.neighborhood } : {}),
+    },
     mapPlace: (place, { index, query }) => {
       const mapped = mapLivePlaceToRawPlaceWithDiagnostics(
         adaptProviderVenueToLivePlaceMapperInput(place),
@@ -426,10 +434,11 @@ export async function fetchLivePlaces(
         },
       },
       pageSize: config.pageSize,
-      queryLabel: query.label,
-      rankPreference: 'RELEVANCE',
-      ...query,
-    })),
+        queryLabel: query.label,
+        rankPreference: 'RELEVANCE',
+        ...query,
+      })),
+    mode: intent.mode,
     sourceMode: options.sourceMode,
   })
 

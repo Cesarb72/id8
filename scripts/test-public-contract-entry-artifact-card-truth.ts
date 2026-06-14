@@ -111,7 +111,7 @@ async function main(): Promise<void> {
   const result = await runGeneratePlan(buildStarterInput(coffeeBooks), {
     starterPack: coffeeBooks,
     sourceMode: 'curated',
-    sourceModeOverrideApplied: false,
+    sourceModeOverrideApplied: true,
   })
   const artifact = result.contractEntryArtifact
 

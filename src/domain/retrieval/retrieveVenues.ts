@@ -4,6 +4,7 @@ import {
   getFieldAuthorityTargets,
   resolveAllowCuratedFallback,
   resolveDefaultCityFallback,
+  resolveFieldRetrievalSourceMode,
   resolveFieldGovernancePolicy,
   sanitizeCityKey,
 } from './fieldPolicy'
@@ -665,9 +666,14 @@ export async function retrieveVenues(
     requestedSourceMode,
     starterPack: options.starterPack,
   })
+  const policySourceMode = resolveFieldRetrievalSourceMode({
+    cityQuery,
+    requestedSourceMode,
+    sourceModeOverrideApplied: Boolean(options.sourceModeOverrideApplied),
+  })
   const retrievalSourceMode: SourceMode = providerProof.allowed
     ? providerProof.effectiveSourceMode
-    : 'curated'
+    : policySourceMode
   const curatedCoverageForCity = hasCuratedCityCoverage(curatedVenues, cityQuery)
   const normalizedNeighborhood = intent.neighborhood
     ? sanitize(intent.neighborhood)
@@ -726,8 +732,8 @@ export async function retrieveVenues(
           },
         }
       : await fetchLivePlaces(intent, options.starterPack, {
-          liveQueryLabels: providerProof.liveQueryLabels,
-          maxQueryCenters: providerProof.maxQueryCenters,
+          liveQueryLabels: providerProof.allowed ? providerProof.liveQueryLabels : undefined,
+          maxQueryCenters: providerProof.allowed ? providerProof.maxQueryCenters : undefined,
           sourceMode: retrievalSourceMode,
         })
 

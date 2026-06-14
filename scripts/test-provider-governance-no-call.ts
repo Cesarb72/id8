@@ -27,6 +27,39 @@ const blockedFetch: typeof fetch = async () => {
   throw new Error('fetch should not be called by provider governance no-call tests.')
 }
 
+const fieldProxyFailClosedFetch: typeof fetch = async (input, init) => {
+  fetchCallCount += 1
+  const url = String(input)
+  assert(url === '/api/field/text-search', `Expected Field proxy path, received ${url}.`)
+  assert(!url.includes('places.googleapis.com'), 'Browser must not call Google Places.')
+  const body = JSON.parse(String(init?.body)) as { purpose?: string }
+  return {
+    ok: false,
+    status: 503,
+    async json() {
+      return {
+        ok: false,
+        cache: 'miss',
+        budget: {
+          date: '2026-06-13',
+          cap: 32,
+          used: 0,
+          remaining: 32,
+        },
+        results: [],
+        diagnostics: {
+          purpose: body.purpose ?? 'retrieval_supply',
+          queryHash: 'mock-query-hash',
+          blockedReason: 'field_proxy_not_activated',
+          errorCode: 'field_proxy_not_activated',
+          resultCount: 0,
+          callConsumed: false,
+        },
+      }
+    },
+  } as Response
+}
+
 function restoreEnv(): void {
   for (const key of managedEnvKeys) {
     const original = originalEnvValues.get(key)
@@ -107,14 +140,36 @@ async function expectBlockedWithoutFetch(params: {
   process.stdout.write(`${params.name}: passed\n`)
 }
 
+async function expectFieldProxyOnly(params: {
+  name: string
+  expectedReason: string
+  expectedFetchCount: number
+  run: () => Promise<string | undefined>
+}): Promise<void> {
+  fetchCallCount = 0
+  globalThis.fetch = fieldProxyFailClosedFetch
+  const failureReason = await params.run()
+  assert(
+    failureReason?.includes(params.expectedReason) === true,
+    `${params.name}: expected reason to include "${params.expectedReason}", received "${failureReason ?? 'none'}".`,
+  )
+  assert(
+    fetchCallCount === params.expectedFetchCount,
+    `${params.name}: expected ${params.expectedFetchCount} Field proxy fetch(es), received ${fetchCallCount}.`,
+  )
+  process.stdout.write(`${params.name}: passed\n`)
+  globalThis.fetch = blockedFetch
+}
+
 async function main(): Promise<void> {
   globalThis.fetch = blockedFetch
 
   resetEnv()
   setRoute('/')
-  await expectBlockedWithoutFetch({
-    name: 'browser provider path disabled',
-    expectedReason: 'Browser Google Places provider path is disabled',
+  await expectFieldProxyOnly({
+    name: 'browser provider path uses Field proxy',
+    expectedReason: 'field_proxy_not_activated',
+    expectedFetchCount: 1,
     run: () => runSearch({ sourceMode: 'live' }),
   })
 
@@ -128,9 +183,10 @@ async function main(): Promise<void> {
 
   resetEnv()
   setRoute('/')
-  await expectBlockedWithoutFetch({
-    name: 'browser provider path disabled with multiple queries',
-    expectedReason: 'Browser Google Places provider path is disabled',
+  await expectFieldProxyOnly({
+    name: 'browser provider path uses Field proxy with multiple queries',
+    expectedReason: 'field_proxy_not_activated',
+    expectedFetchCount: 2,
     run: () => runSearch({ queryCount: 2, sourceMode: 'live' }),
   })
 

@@ -1,6 +1,13 @@
 import { normalizeRawPlace } from '../normalize/normalizeRawPlace'
+import type {
+  FieldProxyMode,
+  FieldProxyPurpose,
+  FieldTextSearchRequest,
+  FieldTextSearchResponse,
+} from '../field/fieldProxyTypes'
 import {
   createBlockedProviderTrace,
+  createProviderCallTrace,
   summarizeProviderCallLedger,
   type ProviderCallLedger,
   type ProviderCallPurpose,
@@ -128,6 +135,8 @@ export interface ProviderTextSearchResult<T> {
   results: T[]
 }
 
+type FieldProxyRequestContext = FieldTextSearchRequest['context']
+
 export interface ProviderAnchorSearchResult {
   subtitle: string
   venue: Venue
@@ -168,6 +177,96 @@ function buildBlockedDiagnostics(
     keyPresent,
     requestPath,
     sourceMode,
+    trace,
+    ledger: summarizeProviderCallLedger([trace]),
+  }
+}
+
+function mapProviderPurposeToFieldPurpose(
+  purpose: ProviderCallPurpose,
+): FieldProxyPurpose | null {
+  if (
+    purpose === 'retrieval_supply' ||
+    purpose === 'anchor_search' ||
+    purpose === 'waypoint_nearby'
+  ) {
+    return purpose
+  }
+  if (purpose === 'build_anchor_nearby') {
+    return 'waypoint_nearby'
+  }
+  return null
+}
+
+function buildFieldRequest<TQuery extends ProviderTextSearchQuery>(input: {
+  city?: string
+  context?: FieldProxyRequestContext
+  mode?: FieldProxyMode
+  purpose: FieldProxyPurpose
+  query: TQuery
+}): FieldTextSearchRequest {
+  const circle = input.query.locationBias?.circle
+  return {
+    purpose: input.purpose,
+    city: input.city ?? 'San Jose',
+    mode: input.mode ?? 'build',
+    queryLabel: input.query.queryLabel,
+    textQuery: input.query.textQuery,
+    ...(circle
+      ? {
+          center: {
+            lat: circle.center.latitude,
+            lng: circle.center.longitude,
+          },
+          radiusMeters: circle.radius,
+        }
+      : {}),
+    ...(input.query.pageSize ? { pageSize: input.query.pageSize } : {}),
+    ...(input.context ? { context: input.context } : {}),
+  }
+}
+
+function buildFieldProxyDiagnostics(input: {
+  attemptedHttpRequestCount: number
+  blockedByEnv: boolean
+  failureReason?: string
+  mappedCount: number
+  purpose: ProviderCallPurpose
+  queryCount: number
+  requestPath: string
+  resultCount: number
+  sourceMode?: SourceMode
+  status: 'succeeded' | 'failed'
+}): ProviderAdapterDiagnostics {
+  const trace = createProviderCallTrace({
+    purpose: input.purpose,
+    status: input.status,
+    attempted: true,
+    blockedByEnv: input.blockedByEnv,
+    fallbackUsed: input.status === 'failed',
+    queryCount: input.queryCount,
+    resultCount: input.resultCount,
+    mappedCount: input.mappedCount,
+    suppressedCount: 0,
+    billableCallCount: input.status === 'succeeded' ? input.queryCount : 0,
+    attemptedHttpRequestCount: input.attemptedHttpRequestCount,
+    failureReason: input.failureReason,
+    sourceMode: input.sourceMode,
+  })
+  return {
+    attempted: true,
+    blockedByEnv: input.blockedByEnv,
+    provider: 'google-places',
+    callPurpose: input.purpose,
+    queryCount: input.queryCount,
+    resultCount: input.resultCount,
+    mappedCount: input.mappedCount,
+    suppressedCount: 0,
+    failureReason: input.failureReason,
+    fallbackUsed: input.status === 'failed',
+    keyPresent: false,
+    requestPath: input.requestPath,
+    sourceMode: input.sourceMode,
     trace,
     ledger: summarizeProviderCallLedger([trace]),
   }
@@ -219,10 +318,13 @@ function mapProviderVenueToGooglePlaceRecord(place: ProviderVenue): GooglePlaceR
 
 export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(input: {
   callPurpose: ProviderCallPurpose
+  city?: string
+  context?: FieldProxyRequestContext
   mapPlace: (
     place: ProviderVenue,
     context: { index: number; query: TQuery },
   ) => T | undefined
+  mode?: FieldProxyMode
   queries: TQuery[]
   sourceMode?: SourceMode
 }): Promise<ProviderTextSearchResult<T>> {
@@ -258,15 +360,130 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
     }
   }
 
+  const fieldPurpose = mapProviderPurposeToFieldPurpose(input.callPurpose)
+  if (!fieldPurpose) {
+    return {
+      diagnostics: buildBlockedDiagnostics(
+        input.callPurpose,
+        config.requestPath,
+        false,
+        `Field proxy does not support provider purpose "${input.callPurpose}".`,
+        input.sourceMode,
+      ),
+      errors: [],
+      queryCounts: [],
+      results: [],
+    }
+  }
+
+  if (typeof fetch !== 'function') {
+    return {
+      diagnostics: buildBlockedDiagnostics(
+        input.callPurpose,
+        config.requestPath,
+        false,
+        'Field proxy fetch runtime is unavailable.',
+        input.sourceMode,
+      ),
+      errors: [],
+      queryCounts: [],
+      results: [],
+    }
+  }
+
+  const results: T[] = []
+  const queryCounts: ProviderTextSearchResult<T>['queryCounts'] = []
+  const errors: string[] = []
+  let fetchedCount = 0
+  let attemptedHttpRequestCount = 0
+
+  for (const query of input.queries) {
+    attemptedHttpRequestCount += 1
+    let response: Response
+    try {
+      response = await fetch(config.requestPath, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(
+          buildFieldRequest({
+            city: input.city,
+            context: input.context,
+            mode: input.mode,
+            purpose: fieldPurpose,
+            query,
+          }),
+        ),
+      })
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : 'Field proxy request failed.')
+      continue
+    }
+
+    let payload: FieldTextSearchResponse
+    try {
+      payload = (await response.json()) as FieldTextSearchResponse
+    } catch {
+      errors.push(`Field proxy returned non-JSON response (${response.status}).`)
+      continue
+    }
+
+    if (!response.ok || payload.ok !== true) {
+      errors.push(
+        payload.diagnostics.errorCode ??
+          payload.diagnostics.blockedReason ??
+          `field_proxy_http_${response.status}`,
+      )
+      continue
+    }
+
+    queryCounts.push({
+      queryLabel: query.queryLabel,
+      resultCount: payload.results.length,
+    })
+    fetchedCount += payload.results.length
+    payload.results.forEach((place, index) => {
+      const mapped = input.mapPlace(place, { index, query })
+      if (mapped) {
+        results.push(mapped)
+      }
+    })
+  }
+
+  if (queryCounts.length > 0) {
+    return {
+      diagnostics: buildFieldProxyDiagnostics({
+        attemptedHttpRequestCount,
+        blockedByEnv: false,
+        mappedCount: results.length,
+        purpose: input.callPurpose,
+        queryCount: input.queries.length,
+        requestPath: config.requestPath,
+        resultCount: fetchedCount,
+        sourceMode: input.sourceMode,
+        status: errors.length > 0 ? 'failed' : 'succeeded',
+      }),
+      errors,
+      queryCounts,
+      results,
+    }
+  }
+
   return {
-    diagnostics: buildBlockedDiagnostics(
-      input.callPurpose,
-      config.requestPath,
-      false,
-      'Browser Google Places provider path is disabled; use the server Field proxy.',
-      input.sourceMode,
-    ),
-    errors: [],
+    diagnostics: buildFieldProxyDiagnostics({
+      attemptedHttpRequestCount,
+      blockedByEnv: false,
+      failureReason: errors[0] ?? 'Field proxy returned no usable results.',
+      mappedCount: 0,
+      purpose: input.callPurpose,
+      queryCount: input.queries.length,
+      requestPath: config.requestPath,
+      resultCount: 0,
+      sourceMode: input.sourceMode,
+      status: 'failed',
+    }),
+    errors,
     queryCounts: [],
     results: [],
   }
@@ -284,6 +501,7 @@ export async function searchAnchorPlaces(input: {
 }): Promise<ProviderTextSearchResult<ProviderAnchorSearchResult>> {
   return searchPlaces({
     callPurpose: 'anchor_search',
+    city: input.city,
     mapPlace: (place, { index }) => {
       const rawPlace = mapLivePlaceToRawPlace(mapProviderVenueToGooglePlaceRecord(place), {
         city: input.city,
@@ -314,6 +532,7 @@ export async function searchAnchorPlaces(input: {
           input.city,
       }
     },
+    mode: 'build',
     sourceMode: input.sourceMode,
     queries: [
       {

@@ -121,9 +121,15 @@ function main(): void {
   assertNodeNextRelativeImportsUseJsExtensions(nodeNextApiCompileFiles)
 
   const providerAdapterSource = readFileSync('src/domain/providers/ProviderAdapter.ts', 'utf8')
+  const sourceModeSource = readFileSync('src/domain/sources/getSourceMode.ts', 'utf8')
   assert(
-    !providerAdapterSource.includes('fetch('),
-    'ProviderAdapter must not contain a direct browser fetch path.',
+    sourceModeSource.includes("requestPath: '/api/field/text-search'") ||
+      sourceModeSource.includes('requestPath: "/api/field/text-search"'),
+    'Field provider config must route browser provider requests through /api/field/text-search.',
+  )
+  assert(
+    !providerAdapterSource.includes('places.googleapis.com'),
+    'ProviderAdapter must not contain a direct Google Places fetch path.',
   )
 
   const distFiles = findFiles('dist', new Set(['.js', '.html', '.css']))

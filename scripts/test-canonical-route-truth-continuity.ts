@@ -197,7 +197,7 @@ async function main(): Promise<void> {
       const result = await runGeneratePlan(scenario.input, {
         starterPack: scenario.starterPack,
         sourceMode: 'curated',
-        sourceModeOverrideApplied: false,
+        sourceModeOverrideApplied: true,
       })
       const dryLockSafeItinerary = buildDryLockSafeItinerary(result.itinerary)
       const dryLockSafeScoredVenues = buildDryLockSafeScoredVenues(result)

@@ -157,12 +157,12 @@ export interface RunGeneratePlanOptions {
 
 function shouldBlockGovernedPlannerIngress(retrieval: RetrieveVenuesResult): boolean {
   const runtimeMode = retrieval.sourceMode.runtimeMode
-  const requestedMode = retrieval.sourceMode.requestedMode
+  const activeMode = retrieval.sourceMode.effectiveMode
 
   if (runtimeMode !== 'api_governed') {
     return false
   }
-  if (requestedMode !== 'live' && requestedMode !== 'hybrid') {
+  if (activeMode !== 'live' && activeMode !== 'hybrid') {
     return false
   }
 
@@ -171,6 +171,7 @@ function shouldBlockGovernedPlannerIngress(retrieval: RetrieveVenuesResult): boo
 
 function buildGovernedPlannerIngressFailureMessage(retrieval: RetrieveVenuesResult): string {
   const requestedMode = retrieval.sourceMode.requestedMode
+  const effectiveMode = retrieval.sourceMode.effectiveMode
   const inventoryTruth = retrieval.sourceMode.inventoryTruth ?? 'unknown'
   const fallbackSources = retrieval.sourceMode.fallbackSources?.join(', ') ?? 'none'
   const reason =
@@ -178,7 +179,7 @@ function buildGovernedPlannerIngressFailureMessage(retrieval: RetrieveVenuesResu
     retrieval.sourceMode.failureReason ??
     'No usable live inventory was admitted for this run.'
 
-  return `Planner ingress blocked for governed ${requestedMode} mode. inventoryTruth=${inventoryTruth}. fallbackSources=${fallbackSources}. ${reason}`
+  return `Planner ingress blocked for governed ${effectiveMode} mode. requestedMode=${requestedMode}. inventoryTruth=${inventoryTruth}. fallbackSources=${fallbackSources}. ${reason}`
 }
 
 function normalizeSelectedArtifactLineage(input: {
