@@ -85,6 +85,10 @@ export interface FetchLivePlacesOptions {
   liveQueryLabels?: string[]
   maxQueryCenters?: number
   sourceMode?: SourceMode
+  envelope?: {
+    maxProviderCalls?: number
+    maxQueryLabels?: number
+  }
 }
 
 const googleFieldMask = [
@@ -434,12 +438,13 @@ export async function fetchLivePlaces(
         },
       },
       pageSize: config.pageSize,
-        queryLabel: query.label,
-        rankPreference: 'RELEVANCE',
-        ...query,
-      })),
+      queryLabel: query.label,
+      rankPreference: 'RELEVANCE',
+      ...query,
+    })),
     mode: intent.mode,
     sourceMode: options.sourceMode,
+    envelope: options.envelope,
   })
 
   if (providerResults.diagnostics.blockedByEnv) {

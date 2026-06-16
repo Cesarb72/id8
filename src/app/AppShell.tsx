@@ -1914,6 +1914,12 @@ function AppShellContent({
         strictShape: debugFlags.strictShape,
         sourceMode: debugFlags.sourceMode,
         sourceModeOverrideApplied: debugFlags.sourceModeOverrideApplied,
+        liveEnvelope: {
+          liveProviderAllowed: false,
+          maxProviderCalls: 0,
+          maxQueryLabels: 0,
+          maxCenters: 0,
+        },
       })
       actions.setDiscoveryPreview(groups)
     } catch (error) {

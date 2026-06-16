@@ -93,6 +93,12 @@ interface RetrieveVenuesOptions {
   seedVenues?: Venue[]
   requestedSourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
+  liveEnvelope?: {
+    liveProviderAllowed?: boolean
+    maxProviderCalls?: number
+    maxQueryLabels?: number
+    maxCenters?: number
+  }
   starterPack?: StarterPack
 }
 
@@ -671,9 +677,14 @@ export async function retrieveVenues(
     requestedSourceMode,
     sourceModeOverrideApplied: Boolean(options.sourceModeOverrideApplied),
   })
-  const retrievalSourceMode: SourceMode = providerProof.allowed
+  let retrievalSourceMode: SourceMode = providerProof.allowed
     ? providerProof.effectiveSourceMode
     : policySourceMode
+
+  // Enforce live envelope: disallow live provider access for preview/dry runs
+  if (options.liveEnvelope && options.liveEnvelope.liveProviderAllowed === false) {
+    retrievalSourceMode = 'curated'
+  }
   const curatedCoverageForCity = hasCuratedCityCoverage(curatedVenues, cityQuery)
   const normalizedNeighborhood = intent.neighborhood
     ? sanitize(intent.neighborhood)
@@ -735,6 +746,10 @@ export async function retrieveVenues(
           liveQueryLabels: providerProof.allowed ? providerProof.liveQueryLabels : undefined,
           maxQueryCenters: providerProof.allowed ? providerProof.maxQueryCenters : undefined,
           sourceMode: retrievalSourceMode,
+          envelope: {
+            maxProviderCalls: options.liveEnvelope?.maxProviderCalls,
+            maxQueryLabels: options.liveEnvelope?.maxQueryLabels,
+          },
         })
 
   const hybridPortable =

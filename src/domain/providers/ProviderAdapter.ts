@@ -327,6 +327,10 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
   mode?: FieldProxyMode
   queries: TQuery[]
   sourceMode?: SourceMode
+  envelope?: {
+    maxProviderCalls?: number
+    maxQueryLabels?: number
+  }
 }): Promise<ProviderTextSearchResult<T>> {
   const config = getGooglePlacesConfig()
 
@@ -397,8 +401,26 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
   let fetchedCount = 0
   let attemptedHttpRequestCount = 0
 
-  for (const query of input.queries) {
+  // Apply envelope caps: trim queries if maxProviderCalls provided
+  let queries = input.queries.slice()
+  if (input.envelope?.maxQueryLabels && input.envelope.maxQueryLabels > 0) {
+    const allowedLabels = new Set(queries.map((q) => q.queryLabel).slice(0, input.envelope.maxQueryLabels))
+    queries = queries.filter((q) => allowedLabels.has(q.queryLabel))
+  }
+  if (input.envelope?.maxProviderCalls && input.envelope.maxProviderCalls >= 0) {
+    queries = queries.slice(0, input.envelope.maxProviderCalls)
+  }
+
+  // Deduplicate identical queries in-flight to avoid overlapping proxy calls
+  const seen = new Set<string>()
+
+  for (const query of queries) {
     attemptedHttpRequestCount += 1
+    const dedupeKey = JSON.stringify({ label: query.queryLabel, query: query.textQuery })
+    if (seen.has(dedupeKey)) {
+      continue
+    }
+    seen.add(dedupeKey)
     let response: Response
     try {
       response = await fetch(config.requestPath, {
@@ -429,6 +451,14 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
       continue
     }
 
+    // Fail-fast on budget exhaustion or provider rate limit signals
+    const fatalCodes = new Set(['daily_cap_exhausted', 'provider_rate_limited'])
+    if (response.status === 429 || fatalCodes.has(payload.diagnostics.errorCode ?? '') || fatalCodes.has(payload.diagnostics.blockedReason ?? '')) {
+      const reason = payload.diagnostics.errorCode ?? payload.diagnostics.blockedReason ?? `field_proxy_http_${response.status}`
+      errors.push(reason)
+      // stop immediately to avoid further budget consumption
+      break
+    }
     if (!response.ok || payload.ok !== true) {
       errors.push(
         payload.diagnostics.errorCode ??

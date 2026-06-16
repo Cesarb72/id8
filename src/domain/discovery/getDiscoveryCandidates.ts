@@ -50,6 +50,12 @@ interface GetDiscoveryCandidatesOptions {
   strictShape?: boolean
   sourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
+  liveEnvelope?: {
+    liveProviderAllowed?: boolean
+    maxProviderCalls?: number
+    maxQueryLabels?: number
+    maxCenters?: number
+  }
 }
 
 interface DirectionStrategy {
@@ -606,6 +612,7 @@ export async function getDiscoveryCandidates(
   const retrieval = await retrieveVenues(intent, lens, {
     requestedSourceMode: options.sourceMode,
     sourceModeOverrideApplied: options.sourceModeOverrideApplied,
+    liveEnvelope: options.liveEnvelope,
     starterPack: options.starterPack,
   })
   const scoredVenues = scoreVenueCollection(
