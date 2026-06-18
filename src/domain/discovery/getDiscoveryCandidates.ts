@@ -6,6 +6,7 @@ import { buildExperienceLens } from '../intent/buildExperienceLens'
 import { getCrewPolicy } from '../intent/getCrewPolicy'
 import { normalizeIntent } from '../intent/normalizeIntent'
 import { retrieveVenues } from '../retrieval/retrieveVenues'
+import type { LiveProviderEnvelope } from '../retrieval/liveEnvelope'
 import { scoreVenueCollection } from '../retrieval/scoreVenueFit'
 import type { RolePools } from '../arc/buildRolePools'
 import type { ScoredVenue } from '../types/arc'
@@ -50,12 +51,7 @@ interface GetDiscoveryCandidatesOptions {
   strictShape?: boolean
   sourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
-  liveEnvelope?: {
-    liveProviderAllowed?: boolean
-    maxProviderCalls?: number
-    maxQueryLabels?: number
-    maxCenters?: number
-  }
+  liveEnvelope?: LiveProviderEnvelope
 }
 
 interface DirectionStrategy {

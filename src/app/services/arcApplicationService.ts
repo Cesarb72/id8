@@ -52,6 +52,7 @@ export async function searchAnchorVenueOptions(
 
 export async function previewDistrictRecommendationsForPlanBuild(
   input: Parameters<typeof previewDistrictRecommendations>[0],
+  options?: Parameters<typeof previewDistrictRecommendations>[1],
 ): Promise<DistrictPreviewResult> {
-  return previewDistrictRecommendations(input)
+  return previewDistrictRecommendations(input, options)
 }

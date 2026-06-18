@@ -50,6 +50,37 @@ async function main(): Promise<void> {
   if (result.errors.length === 0) {
     throw new Error('Expected errors on 429 stop condition')
   }
+
+  fetchCount = 0
+  await searchPlaces({
+    callPurpose: 'retrieval_supply',
+    city: 'San Jose',
+    context: {},
+    mapPlace: () => undefined,
+    queries,
+    sourceMode: 'live',
+    envelope: {
+      maxProviderCalls: 0,
+    },
+  })
+  if (fetchCount !== 0) {
+    throw new Error(`Expected maxProviderCalls=0 to prevent fetch, got ${fetchCount}`)
+  }
+
+  await searchPlaces({
+    callPurpose: 'retrieval_supply',
+    city: 'San Jose',
+    context: {},
+    mapPlace: () => undefined,
+    queries,
+    sourceMode: 'live',
+    envelope: {
+      maxQueryLabels: 0,
+    },
+  })
+  if (fetchCount !== 0) {
+    throw new Error(`Expected maxQueryLabels=0 to prevent fetch, got ${fetchCount}`)
+  }
   process.stdout.write('provider adapter stop-on-429: passed\n')
 }
 

@@ -403,11 +403,17 @@ export async function searchPlaces<T, TQuery extends ProviderTextSearchQuery>(in
 
   // Apply envelope caps: trim queries if maxProviderCalls provided
   let queries = input.queries.slice()
-  if (input.envelope?.maxQueryLabels && input.envelope.maxQueryLabels > 0) {
-    const allowedLabels = new Set(queries.map((q) => q.queryLabel).slice(0, input.envelope.maxQueryLabels))
-    queries = queries.filter((q) => allowedLabels.has(q.queryLabel))
+  if (input.envelope?.maxQueryLabels != null) {
+    if (input.envelope.maxQueryLabels <= 0) {
+      queries = []
+    } else {
+      const allowedLabels = new Set(
+        queries.map((q) => q.queryLabel).slice(0, input.envelope.maxQueryLabels),
+      )
+      queries = queries.filter((q) => allowedLabels.has(q.queryLabel))
+    }
   }
-  if (input.envelope?.maxProviderCalls && input.envelope.maxProviderCalls >= 0) {
+  if (input.envelope?.maxProviderCalls != null && input.envelope.maxProviderCalls >= 0) {
     queries = queries.slice(0, input.envelope.maxProviderCalls)
   }
 

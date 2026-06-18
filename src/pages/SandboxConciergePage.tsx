@@ -182,6 +182,7 @@ import {
 } from '../domain/sources/devGreatStopFixtures'
 import { isDevOrSandboxCloseoutFlow } from '../domain/sources/getSourceMode'
 import { resolveCurateProofSourceMode } from '../domain/providers/providerProofGate'
+import { CLOSED_PREVIEW_LIVE_ENVELOPE } from '../domain/retrieval/liveEnvelope'
 import { mapVenueToTasteInput } from '../domain/interpretation/taste/mapVenueToTasteInput'
 import { interpretVenueTaste } from '../domain/interpretation/taste/interpretVenueTaste'
 import { resolveVibeTasteProfile } from '../domain/taste/resolveVibeTasteProfile'
@@ -10104,6 +10105,7 @@ export function SandboxConciergePage({
           persona,
           vibe: primaryVibe,
           sourceMode: 'curated',
+          liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
         })
         if (cancelled) {
           return
@@ -10134,6 +10136,7 @@ export function SandboxConciergePage({
               persona,
               vibe: contrastVibe,
               sourceMode: 'curated',
+              liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
             })
             if (cancelled) {
               return
@@ -10156,6 +10159,7 @@ export function SandboxConciergePage({
               vibe: primaryVibe,
               scenarioFamilyOverride: surpriseCrossPersonaScenarioFamily,
               sourceMode: 'curated',
+              liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
             })
             if (cancelled) {
               return
@@ -12947,6 +12951,7 @@ export function SandboxConciergePage({
             sourceMode: 'curated',
             sourceModeOverrideApplied: false,
             debugMode: false,
+            liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
           },
         )
         if (cancelled) {
@@ -14644,8 +14649,12 @@ export function SandboxConciergePage({
                     ? {
                         ...options,
                         starterPack: selectedStarterPack ?? undefined,
+                        liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
                       }
-                    : undefined,
+                    : {
+                        liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
+                        starterPack: selectedStarterPack ?? undefined,
+                      },
                 ),
               enforceSelectedDirectionLineage,
               runPostPlannerCommitParityStages: (params) =>
@@ -15120,6 +15129,8 @@ export function SandboxConciergePage({
             primaryVibe,
             city: districtLocationQuery,
             distanceMode: 'nearby',
+          }, {
+            liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
           })
           if (!cancelled) {
             setDistrictRecommendations(previewResult.recommendedDistricts)

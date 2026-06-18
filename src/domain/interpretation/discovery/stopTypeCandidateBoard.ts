@@ -3,6 +3,7 @@ import { getCrewPolicy } from '../../intent/getCrewPolicy'
 import { buildExperienceLens } from '../../intent/buildExperienceLens'
 import { normalizeIntent } from '../../intent/normalizeIntent'
 import { retrieveVenues } from '../../retrieval/retrieveVenues'
+import type { LiveProviderEnvelope } from '../../retrieval/liveEnvelope'
 import { scoreVenueCollection } from '../../retrieval/scoreVenueFit'
 import {
   devGreatStopFixtureVenueIds,
@@ -141,6 +142,7 @@ type BuildStopTypeCandidateBoardFromIntentInput = {
   distanceMode?: DistanceMode
   budget?: BudgetPreference
   sourceMode?: SourceMode
+  liveEnvelope?: LiveProviderEnvelope
 }
 
 type StopTypeFitResult = {
@@ -1554,6 +1556,7 @@ export async function buildStopTypeCandidateBoardFromIntent(
   const lens = buildExperienceLens({ intent })
   const retrieval = await retrieveVenues(intent, lens, {
     requestedSourceMode: input.sourceMode ?? 'curated',
+    liveEnvelope: input.liveEnvelope,
   })
   const scoredVenues = scoreVenueCollection(
     retrieval.venues,

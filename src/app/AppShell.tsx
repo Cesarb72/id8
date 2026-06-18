@@ -38,6 +38,7 @@ import type {
 import { buildContinuationPreviewContract } from '../domain/lce/continuationContract'
 import { normalizeRawPlace } from '../domain/normalize/normalizeRawPlace'
 import { getNearbyAlternatives } from '../domain/retrieval/getNearbyAlternatives'
+import { CLOSED_PREVIEW_LIVE_ENVELOPE } from '../domain/retrieval/liveEnvelope'
 import { scoreVenueFit } from '../domain/retrieval/scoreVenueFit'
 import {
   generatePlanAdjustmentFeedback,
@@ -1308,6 +1309,8 @@ function AppShellContent({
             strictShape: debugFlags.strictShape,
             sourceMode: debugFlags.sourceMode,
             sourceModeOverrideApplied: debugFlags.sourceModeOverrideApplied,
+            liveEnvelope:
+              generationTarget === 'preview' ? CLOSED_PREVIEW_LIVE_ENVELOPE : undefined,
             seedVenues: state.selectedAnchorVenue ? [state.selectedAnchorVenue] : undefined,
           })
           if (cancelled) {
@@ -1914,12 +1917,7 @@ function AppShellContent({
         strictShape: debugFlags.strictShape,
         sourceMode: debugFlags.sourceMode,
         sourceModeOverrideApplied: debugFlags.sourceModeOverrideApplied,
-        liveEnvelope: {
-          liveProviderAllowed: false,
-          maxProviderCalls: 0,
-          maxQueryLabels: 0,
-          maxCenters: 0,
-        },
+        liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
       })
       actions.setDiscoveryPreview(groups)
     } catch (error) {
@@ -2339,6 +2337,7 @@ function AppShellContent({
           strictShape: debugFlags.strictShape,
           sourceMode: debugFlags.sourceMode,
           sourceModeOverrideApplied: debugFlags.sourceModeOverrideApplied,
+          liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
           seedVenues: state.selectedAnchorVenue ? [state.selectedAnchorVenue] : undefined,
         })
         const persistedAuthoredRoute = applyPersistedAuthoredRoute({

@@ -51,6 +51,7 @@ import { computeLiveCompetitiveness } from './retrieval/computeLiveCompetitivene
 import { getNearbyAlternatives } from './retrieval/getNearbyAlternatives'
 import { applyContractRetrievalPressure } from './retrieval/applyContractRetrievalPressure'
 import { retrieveVenues, type RetrieveVenuesResult } from './retrieval/retrieveVenues'
+import type { LiveProviderEnvelope } from './retrieval/liveEnvelope'
 import {
   scoreVenueCollection,
   type OccasionScoringMode,
@@ -146,6 +147,7 @@ export interface RunGeneratePlanOptions {
   strictShape?: boolean
   sourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
+  liveEnvelope?: LiveProviderEnvelope
   vibeTasteProfileScoring?: VibeTasteProfileScoringMode
   occasionScoring?: OccasionScoringMode
   whenSpatialScoring?: WhenSpatialScoringMode
@@ -1608,6 +1610,7 @@ export async function runGeneratePlan(
     seedVenues: options.seedVenues,
     requestedSourceMode: options.sourceMode,
     sourceModeOverrideApplied: options.sourceModeOverrideApplied,
+    liveEnvelope: options.liveEnvelope,
     starterPack: options.starterPack,
   })
   if (options.debugMode && typeof window !== 'undefined') {

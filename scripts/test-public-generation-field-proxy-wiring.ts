@@ -256,23 +256,65 @@ function createFailClosedFieldProxyFetch(calls: CapturedFieldRequest[]): typeof 
   }
 }
 
-async function assertModeUsesFieldProxy(scenario: Scenario): Promise<void> {
+async function assertPublicDefaultGenerationStaysDry(scenario: Scenario): Promise<number> {
   resetEnv()
   setPublicRoute()
   const calls: CapturedFieldRequest[] = []
-  globalThis.fetch = createFieldProxyFetch(calls)
+  globalThis.fetch = (async (input) => {
+    const url = String(input)
+    if (url.includes('/api/field/text-search')) {
+      throw new Error(`${scenario.mode}: public default generation must not call the Field proxy.`)
+    }
+    throw new Error(`${scenario.mode}: unexpected fetch during public default generation: ${url}`)
+  }) as typeof fetch
 
   const result = await runGeneratePlan(scenario.input, {
     starterPack: scenario.starterPack,
     sourceMode: 'curated',
     sourceModeOverrideApplied: false,
   })
+  const validation = validateContractEntryArtifactPreCommitTruth(result.contractEntryArtifact, {
+    requireEnrichment: true,
+  })
+
+  assert(calls.length === 0, `${scenario.mode}: default generation must make zero proxy calls.`)
+  assert(
+    result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted === false,
+    `${scenario.mode}: default generation must not attempt live Field retrieval.`,
+  )
+  assert(validation.status === 'valid', `${scenario.mode}: dry artifact must validate.`)
+  process.stdout.write(`${scenario.mode} public default generation Field proxy calls: 0\n`)
+  return calls.length
+}
+
+async function assertModeUsesExplicitLiveEnvelope(scenario: Scenario): Promise<number> {
+  resetEnv()
+  setPublicRoute()
+  const calls: CapturedFieldRequest[] = []
+  globalThis.fetch = createFieldProxyFetch(calls)
+  const maxProviderCalls = 2
+
+  const result = await runGeneratePlan(scenario.input, {
+    starterPack: scenario.starterPack,
+    sourceMode: 'curated',
+    sourceModeOverrideApplied: false,
+    liveEnvelope: {
+      liveProviderAllowed: true,
+      maxProviderCalls,
+      maxQueryLabels: maxProviderCalls,
+      maxCenters: 1,
+    },
+  })
   const artifact = result.contractEntryArtifact
   const validation = validateContractEntryArtifactPreCommitTruth(artifact, {
     requireEnrichment: true,
   })
 
-  assert(calls.length > 0, `${scenario.mode}: generation must call the Field proxy.`)
+  assert(calls.length > 0, `${scenario.mode}: explicit live generation must call the Field proxy.`)
+  assert(
+    calls.length <= maxProviderCalls,
+    `${scenario.mode}: explicit live generation must respect maxProviderCalls=${maxProviderCalls}; received ${calls.length}.`,
+  )
   assert(
     calls.every((call) => call.url === '/api/field/text-search'),
     `${scenario.mode}: generation must only call /api/field/text-search.`,
@@ -306,7 +348,10 @@ async function assertModeUsesFieldProxy(scenario: Scenario): Promise<void> {
     artifact.enrichment?.modeContextFit?.status === 'passed',
     `${scenario.mode}: generated artifact must preserve mode context fit.`,
   )
-  process.stdout.write(`${scenario.mode} public generation Field proxy wiring: passed\n`)
+  process.stdout.write(
+    `${scenario.mode} explicit live-envelope generation Field proxy calls: ${calls.length} <= ${maxProviderCalls}\n`,
+  )
+  return calls.length
 }
 
 async function assertFailClosedDoesNotRenderFalseCard(): Promise<void> {
@@ -324,6 +369,12 @@ async function assertFailClosedDoesNotRenderFalseCard(): Promise<void> {
       starterPack: scenario.starterPack,
       sourceMode: 'curated',
       sourceModeOverrideApplied: false,
+      liveEnvelope: {
+        liveProviderAllowed: true,
+        maxProviderCalls: 1,
+        maxQueryLabels: 1,
+        maxCenters: 1,
+      },
     })
   } catch {
     thrown = true
@@ -342,10 +393,19 @@ async function assertFailClosedDoesNotRenderFalseCard(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  let defaultGenerationProxyCalls = 0
+  let explicitLiveEnvelopeProxyCalls = 0
   for (const scenario of buildScenarios()) {
-    await assertModeUsesFieldProxy(scenario)
+    defaultGenerationProxyCalls += await assertPublicDefaultGenerationStaysDry(scenario)
+    explicitLiveEnvelopeProxyCalls += await assertModeUsesExplicitLiveEnvelope(scenario)
   }
   await assertFailClosedDoesNotRenderFalseCard()
+  process.stdout.write(
+    `Public default final generation without explicit live envelope proxy calls: ${defaultGenerationProxyCalls}\n`,
+  )
+  process.stdout.write(
+    `Explicit live-envelope generation proxy calls: ${explicitLiveEnvelopeProxyCalls}\n`,
+  )
   process.stdout.write('public generation Field proxy wiring: passed\n')
 }
 

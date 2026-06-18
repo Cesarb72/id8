@@ -28,6 +28,7 @@ import {
 import { fetchLivePlaces } from '../sources/fetchLivePlaces'
 import { isDevOrSandboxCloseoutFlow } from '../sources/getSourceMode'
 import { resolveDessertConversationProviderProof } from '../providers/providerProofGate'
+import type { LiveProviderEnvelope } from './liveEnvelope'
 import type { LiveDedupeLossDiagnostics } from '../types/diagnostics'
 import type { LiveTrustBreakdownDiagnostics } from '../types/diagnostics'
 import type { FallbackRelaxationLevel } from '../types/diagnostics'
@@ -93,12 +94,7 @@ interface RetrieveVenuesOptions {
   seedVenues?: Venue[]
   requestedSourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
-  liveEnvelope?: {
-    liveProviderAllowed?: boolean
-    maxProviderCalls?: number
-    maxQueryLabels?: number
-    maxCenters?: number
-  }
+  liveEnvelope?: LiveProviderEnvelope
   starterPack?: StarterPack
 }
 
@@ -681,8 +677,9 @@ export async function retrieveVenues(
     ? providerProof.effectiveSourceMode
     : policySourceMode
 
-  // Enforce live envelope: disallow live provider access for preview/dry runs
-  if (options.liveEnvelope && options.liveEnvelope.liveProviderAllowed === false) {
+  // Live provider access is opt-in. Public render/preview/default-generation paths
+  // must stay curated unless a caller supplies an explicit live envelope.
+  if (options.liveEnvelope?.liveProviderAllowed !== true) {
     retrievalSourceMode = 'curated'
   }
   const curatedCoverageForCity = hasCuratedCityCoverage(curatedVenues, cityQuery)
@@ -744,7 +741,9 @@ export async function retrieveVenues(
         }
       : await fetchLivePlaces(intent, options.starterPack, {
           liveQueryLabels: providerProof.allowed ? providerProof.liveQueryLabels : undefined,
-          maxQueryCenters: providerProof.allowed ? providerProof.maxQueryCenters : undefined,
+          maxQueryCenters:
+            options.liveEnvelope?.maxCenters ??
+            (providerProof.allowed ? providerProof.maxQueryCenters : undefined),
           sourceMode: retrievalSourceMode,
           envelope: {
             maxProviderCalls: options.liveEnvelope?.maxProviderCalls,

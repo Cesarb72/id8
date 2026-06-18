@@ -12,6 +12,7 @@ import { buildExperienceLens } from './intent/buildExperienceLens'
 import { getCrewPolicy } from './intent/getCrewPolicy'
 import { normalizeIntent } from './intent/normalizeIntent'
 import { retrieveVenues } from './retrieval/retrieveVenues'
+import type { LiveProviderEnvelope } from './retrieval/liveEnvelope'
 import { scoreVenueCollection } from './retrieval/scoreVenueFit'
 import { getVenueClusterId } from './spatial/getVenueClusterId'
 import type { ScoredVenue } from './types/arc'
@@ -25,6 +26,7 @@ interface PreviewDistrictRecommendationsOptions {
   strictShape?: boolean
   sourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
+  liveEnvelope?: LiveProviderEnvelope
 }
 
 export interface DistrictPreviewResult {
@@ -128,6 +130,7 @@ export async function previewDistrictRecommendations(
   const retrieval = await retrieveVenues(intent, lens, {
     requestedSourceMode: options.sourceMode,
     sourceModeOverrideApplied: options.sourceModeOverrideApplied,
+    liveEnvelope: options.liveEnvelope,
     starterPack: options.starterPack,
   })
   const scoredVenues = scoreVenueCollection(
