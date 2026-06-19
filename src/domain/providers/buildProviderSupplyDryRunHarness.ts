@@ -616,6 +616,12 @@ export async function runBuildProviderSupplyDryRunHarness(): Promise<BuildProvid
   try {
     const nearbyResult = await buildProviderSourceOpportunity({
       anchorVenue: resolvedAnchorVenue,
+      liveEnvelope: {
+        liveProviderAllowed: true,
+        maxProviderCalls: 1,
+        maxQueryLabels: 1,
+        maxCenters: 1,
+      },
       pageSize: buildProviderSourceOpportunityConfig.pageSize,
       radiusM: buildProviderSourceOpportunityConfig.radiusM,
     })

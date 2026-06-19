@@ -6,6 +6,11 @@ import {
   type ProviderTextSearchQuery,
 } from '../providers/ProviderAdapter'
 import type { ProviderVenue } from '../providers/providerTypes'
+import {
+  CLOSED_RUNTIME_LIVE_ENVELOPE,
+  type LiveProviderEnvelope,
+} from '../retrieval/liveEnvelope'
+import { getGooglePlacesConfig } from '../sources/getSourceMode'
 
 export interface NearbyPlaceSource {
   normalizedFromRawType: 'raw-place'
@@ -67,6 +72,7 @@ export interface NearbyFetchDiagnostic {
     | 'ok'
     | 'dev-closeout-offline-mode'
     | 'missing-api-key'
+    | 'runtime-provider-disabled'
     | 'request-error'
     | 'zero-results'
     | 'filtered-out'
@@ -355,7 +361,27 @@ function evaluateNearbyFreshness(
 
 export async function fetchNearbyPlacesForWaypoint(
   waypoint: NearbyWaypointInput,
+  options: { runtimeLiveEnvelope?: LiveProviderEnvelope } = {},
 ): Promise<NearbyFetchDiagnostic> {
+  const runtimeLiveEnvelope = options.runtimeLiveEnvelope ?? CLOSED_RUNTIME_LIVE_ENVELOPE
+  if (runtimeLiveEnvelope.liveProviderAllowed !== true) {
+    return {
+      places: [],
+      reason: 'runtime-provider-disabled',
+      requestPath: getGooglePlacesConfig().requestPath,
+      keyPresent: false,
+      role: waypoint.role,
+      waypointName: waypoint.name,
+      queryDiagnostics: [],
+      rawResultCount: 0,
+      parsedCount: 0,
+      nearbyFreshnessSuppressedCount: 0,
+      nearbyFreshnessUnknownCount: 0,
+      nearbyFreshnessOpenCount: 0,
+      nearbyFreshnessSuppressionReasons: [],
+    }
+  }
+
   const fieldMask = [
     'places.id',
     'places.displayName',
@@ -418,6 +444,10 @@ export async function fetchNearbyPlacesForWaypoint(
       rankPreference: 'DISTANCE',
       textQuery: `${queryText} near ${waypoint.name}, San Jose`,
     })),
+    envelope: {
+      maxProviderCalls: runtimeLiveEnvelope.maxProviderCalls,
+      maxQueryLabels: runtimeLiveEnvelope.maxQueryLabels,
+    },
   })
   const { diagnostics } = providerResults
   const requestPath = diagnostics.requestPath

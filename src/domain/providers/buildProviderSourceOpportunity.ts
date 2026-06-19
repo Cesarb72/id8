@@ -29,6 +29,10 @@ import type {
   ProviderCallTrace,
 } from './providerCallTrace'
 import type { ProviderVenue } from './providerTypes'
+import {
+  CLOSED_RUNTIME_LIVE_ENVELOPE,
+  type LiveProviderEnvelope,
+} from '../retrieval/liveEnvelope'
 
 const BUILD_PROVIDER_SUPPLY_ENV_FLAG = 'VITE_ID8_BUILD_PROVIDER_SUPPLY'
 const DEFAULT_NEARBY_RADIUS_M = 900
@@ -183,6 +187,7 @@ export interface BuildProviderSourceOpportunityResult {
 
 export interface BuildProviderSourceOpportunityInput {
   anchorVenue: Venue
+  liveEnvelope?: LiveProviderEnvelope
   pageSize?: number
   radiusM?: number
 }
@@ -628,6 +633,7 @@ export async function buildProviderSourceOpportunity(
   input: BuildProviderSourceOpportunityInput,
 ): Promise<BuildProviderSourceOpportunityResult> {
   const enabled = isBuildProviderSupplyEnabled()
+  const liveEnvelope = input.liveEnvelope ?? CLOSED_RUNTIME_LIVE_ENVELOPE
   const anchorCanonicalVenueId = input.anchorVenue.id?.trim() || null
   const anchorProviderRecordId = anchorCanonicalVenueId
     ? resolveAnchorProviderRecordId(anchorCanonicalVenueId)
@@ -682,6 +688,18 @@ export async function buildProviderSourceOpportunity(
     }
   }
 
+  if (liveEnvelope.liveProviderAllowed !== true) {
+    return {
+      diagnostics: buildBaseDiagnostics({
+        anchorCanonicalVenueId,
+        anchorProviderRecordId,
+        blockedReason: 'provider_request_blocked',
+        enabled,
+      }),
+      opportunity: null,
+    }
+  }
+
   const providerSearch = await searchPlaces<BuildProviderMappedVenue, ProviderTextSearchQuery>({
     callPurpose: 'build_anchor_nearby',
     mapPlace: (providerVenue) => ({
@@ -701,6 +719,10 @@ export async function buildProviderSourceOpportunity(
       }),
     ],
     sourceMode: 'live',
+    envelope: {
+      maxProviderCalls: liveEnvelope.maxProviderCalls,
+      maxQueryLabels: liveEnvelope.maxQueryLabels,
+    },
   })
 
   const trace = getRequiredTrace(providerSearch.diagnostics)

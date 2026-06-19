@@ -1,4 +1,8 @@
 import { normalizeVenue } from '../normalize/normalizeVenue'
+import {
+  CLOSED_RUNTIME_LIVE_ENVELOPE,
+  type LiveProviderEnvelope,
+} from './liveEnvelope'
 import { fetchLivePlaces } from '../sources/fetchLivePlaces'
 import type { CrewProfile, IntentProfile, VibeAnchor } from '../types/intent'
 import type { Venue } from '../types/venue'
@@ -646,6 +650,7 @@ export function buildPortableBootstrapVenues(city: string): Venue[] {
 
 export async function fetchHybridPortableVenues(
   city: string,
+  options: { liveEnvelope?: LiveProviderEnvelope } = {},
 ): Promise<{ venues: Venue[]; diagnostics: HybridPortableDiagnostics }> {
   const normalizedCity = toTitleCase(normalizeCity(city) || city)
   if (!normalizedCity) {
@@ -688,7 +693,34 @@ export async function fetchHybridPortableVenues(
     buildIntent(normalizedCity, 'cultured', 'curator'),
   ]
 
-  const liveResults = await Promise.all(liveIntents.map((intent) => fetchLivePlaces(intent)))
+  const liveEnvelope = options.liveEnvelope ?? CLOSED_RUNTIME_LIVE_ENVELOPE
+  const liveProviderAllowed = liveEnvelope.liveProviderAllowed === true
+  const liveIntentLimit =
+    typeof liveEnvelope.maxProviderCalls === 'number'
+      ? Math.max(0, Math.min(liveIntents.length, liveEnvelope.maxProviderCalls))
+      : liveIntents.length
+  const cappedLiveIntents = liveProviderAllowed ? liveIntents.slice(0, liveIntentLimit) : []
+  const liveResults = await Promise.all(
+    cappedLiveIntents.map((intent) =>
+      fetchLivePlaces(intent, undefined, {
+        envelope:
+          typeof liveEnvelope.maxProviderCalls === 'number' ||
+          typeof liveEnvelope.maxQueryLabels === 'number'
+            ? {
+                maxProviderCalls:
+                  typeof liveEnvelope.maxProviderCalls === 'number' ? 1 : undefined,
+                maxQueryLabels:
+                  typeof liveEnvelope.maxQueryLabels === 'number' ? 1 : undefined,
+              }
+            : undefined,
+        maxQueryCenters:
+          typeof liveEnvelope.maxCenters === 'number'
+            ? Math.max(0, Math.min(1, liveEnvelope.maxCenters))
+            : undefined,
+        sourceMode: 'hybrid',
+      }),
+    ),
+  )
   const liveAcceptedBeforeDedupe = liveResults
     .flatMap((entry) => entry.venues)
     .filter((venue) => venue.source.qualityGateStatus !== 'suppressed')

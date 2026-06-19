@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef } from 'react'
 import mapboxgl from 'mapbox-gl'
-import 'mapbox-gl/dist/mapbox-gl.css'
 import type { UserStopRole } from '../../domain/types/itinerary'
 import {
   fetchNearbyPlacesForWaypoint,
   type NearbyPlaceRecord,
 } from '../../domain/nearby/fetchNearbyPlacesForWaypoint'
+import {
+  CLOSED_RUNTIME_LIVE_ENVELOPE,
+  type LiveProviderEnvelope,
+} from '../../domain/retrieval/liveEnvelope'
 
-const MAPBOX_ACCESS_TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN
+const MAPBOX_ACCESS_TOKEN = (import.meta as ImportMeta & {
+  env?: Record<string, string | undefined>
+}).env?.VITE_MAPBOX_ACCESS_TOKEN
 interface JourneyMapRealProps {
   activeRole: UserStopRole
   onNearbySummaryChange?: (role: UserStopRole, summary: string | null) => void
@@ -21,6 +26,7 @@ interface JourneyMapRealProps {
   continuationStops?: JourneyContinuationStop[]
   alertActive?: boolean
   alertRole?: UserStopRole | null
+  runtimeLiveEnvelope?: LiveProviderEnvelope
 }
 
 export interface JourneyMapRouteStop {
@@ -373,6 +379,7 @@ export function JourneyMapReal({
   continuationStops = [],
   alertActive = false,
   alertRole = null,
+  runtimeLiveEnvelope = CLOSED_RUNTIME_LIVE_ENVELOPE,
 }: JourneyMapRealProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
@@ -965,10 +972,17 @@ export function JourneyMapReal({
         onNearbyOptionsChange?.(activeWaypoint.role, [])
       }
 
+      if (runtimeLiveEnvelope.liveProviderAllowed !== true) {
+        nearbyCacheRef.current[activeWaypoint.role] = []
+        applyRouteEmphasis(map)
+        applyAlertRouteEmphasis(map, alertActive, alertRole)
+        return
+      }
+
       const epoch = nearbyEpochRef.current + 1
       nearbyEpochRef.current = epoch
 
-      fetchNearbyPlacesForWaypoint(activeWaypoint)
+      fetchNearbyPlacesForWaypoint(activeWaypoint, { runtimeLiveEnvelope })
         .then((diagnostic) => {
           if (nearbyEpochRef.current !== epoch) {
             return
@@ -1040,6 +1054,7 @@ export function JourneyMapReal({
     alertActive,
     alertRole,
     selectedNearbyPlaceIdByRole,
+    runtimeLiveEnvelope,
   ])
 
   return (

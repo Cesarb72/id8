@@ -753,7 +753,7 @@ export async function retrieveVenues(
 
   const hybridPortable =
     retrievalSourceMode !== 'curated' && cityQuery.length > 0 && !curatedCoverageForCity
-      ? await fetchHybridPortableVenues(intent.city)
+      ? await fetchHybridPortableVenues(intent.city, { liveEnvelope: options.liveEnvelope })
       : undefined
   const hybridPortableVenues = hybridPortable?.venues ?? []
   const bootstrapPortableVenues = hybridPortableVenues.filter(
