@@ -64,7 +64,9 @@ import {
 } from './wrapper/arcFlowPhase'
 import {
   runPlanBuild,
+  runStepBCurateLiveSmokePlanBuild,
   searchAnchorVenueOptions,
+  shouldApplyStepBCurateLiveSmoke,
   type GenerationTrace,
 } from './services/arcApplicationService'
 import { CurateExperiencePage } from '../pages/CurateExperiencePage'
@@ -722,6 +724,13 @@ function getDebugQueryFlags(): {
   }
 }
 
+function readStepBCurateLiveSmokeEnabled(): boolean {
+  const env = (import.meta as ImportMeta & {
+    env?: Record<string, string | undefined>
+  }).env ?? {}
+  return env.VITE_ID8_STEP_B_CURATE_LIVE_SMOKE === '1'
+}
+
 function applyDiscoveryPreferences({
   selectedVenueIds,
   discoveryGroups,
@@ -1303,16 +1312,31 @@ function AppShellContent({
             input,
             selectedAnchorVenueId: state.selectedAnchorVenue?.id,
           })
-          const result = await runPlanBuild(input, {
+          const planBuildOptions = {
             starterPack: selectedPack,
             debugMode: debugFlags.debugMode,
             strictShape: debugFlags.strictShape,
             sourceMode: debugFlags.sourceMode,
             sourceModeOverrideApplied: debugFlags.sourceModeOverrideApplied,
-            liveEnvelope:
-              generationTarget === 'preview' ? CLOSED_PREVIEW_LIVE_ENVELOPE : undefined,
             seedVenues: state.selectedAnchorVenue ? [state.selectedAnchorVenue] : undefined,
-          })
+          }
+          const stepBLiveSmokeGate = {
+            environment,
+            pathname: typeof window === 'undefined' ? '' : window.location.pathname,
+            mode: state.mode,
+            inputMode: input.mode,
+            generationTarget,
+            selectedStarterPackPresent: Boolean(selectedPack),
+            sourceModeOverrideApplied: debugFlags.sourceModeOverrideApplied,
+            smokeSwitchEnabled: readStepBCurateLiveSmokeEnabled(),
+          } as const
+          const result = shouldApplyStepBCurateLiveSmoke(stepBLiveSmokeGate)
+            ? await runStepBCurateLiveSmokePlanBuild({
+                gate: stepBLiveSmokeGate,
+                input,
+                options: planBuildOptions,
+              })
+            : await runPlanBuild(input, planBuildOptions)
           if (cancelled) {
             return
           }
@@ -2337,7 +2361,6 @@ function AppShellContent({
           strictShape: debugFlags.strictShape,
           sourceMode: debugFlags.sourceMode,
           sourceModeOverrideApplied: debugFlags.sourceModeOverrideApplied,
-          liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
           seedVenues: state.selectedAnchorVenue ? [state.selectedAnchorVenue] : undefined,
         })
         const persistedAuthoredRoute = applyPersistedAuthoredRoute({

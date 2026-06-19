@@ -1,4 +1,5 @@
 import { buildCurateStarterPlannerInput } from '../src/app/services/curate/buildCurateCommittedRouteFallback.ts'
+import { runStepBCurateLiveSmokePlanBuild } from '../src/app/services/arcApplicationService.ts'
 import { starterPacks } from '../src/data/starterPacks.ts'
 import { getDiscoveryCandidates } from '../src/domain/discovery/getDiscoveryCandidates.ts'
 import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
@@ -167,7 +168,6 @@ async function runRestoredPreselectedStarterPreview(starterPack: StarterPack): P
     sourceMode: 'curated',
     sourceModeOverrideApplied: false,
     debugMode: false,
-    liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
   })
   await runGeneratePlan(
     {
@@ -184,7 +184,6 @@ async function runRestoredPreselectedStarterPreview(starterPack: StarterPack): P
       sourceModeOverrideApplied: true,
       debugMode: false,
       curateCommitSemantics: 'seed_guided',
-      liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
     },
   )
 }
@@ -223,16 +222,16 @@ async function runDefaultFinalGenerationDry(starterPack: StarterPack): Promise<n
   )
 }
 
-async function runExplicitLiveEnvelopeGeneration(starterPack: StarterPack): Promise<{
+async function runStepBCurateLiveSmokeGeneration(starterPack: StarterPack): Promise<{
   calls: number
   maxProviderCalls: number
 }> {
-  const maxProviderCalls = 2
+  const maxProviderCalls = 3
   let proxyCalls = 0
   globalThis.fetch = (async (input, init) => {
     const url = String(input)
     if (!url.includes(FIELD_PROXY_PATH)) {
-      throw new Error(`Explicit live-envelope generation: unexpected fetch to ${url}`)
+      throw new Error(`Step B Curate live smoke generation: unexpected fetch to ${url}`)
     }
     proxyCalls += 1
     const body = JSON.parse(String(init?.body)) as FieldTextSearchRequest
@@ -245,22 +244,33 @@ async function runExplicitLiveEnvelopeGeneration(starterPack: StarterPack): Prom
     } as Response
   }) as typeof fetch
 
-  await runGeneratePlan(buildCoffeeBooksInput(starterPack), {
-    starterPack,
-    sourceMode: 'curated',
-    sourceModeOverrideApplied: false,
-    liveEnvelope: {
-      liveProviderAllowed: true,
-      maxProviderCalls,
-      maxQueryLabels: maxProviderCalls,
-      maxCenters: 1,
+  const result = await runStepBCurateLiveSmokePlanBuild({
+    gate: {
+      environment: 'default',
+      pathname: '/start/curate',
+      mode: 'curate',
+      inputMode: 'curate',
+      generationTarget: 'final',
+      selectedStarterPackPresent: true,
+      sourceModeOverrideApplied: false,
+      smokeSwitchEnabled: true,
+    },
+    input: buildCoffeeBooksInput(starterPack),
+    options: {
+      starterPack,
+      sourceMode: 'curated',
+      sourceModeOverrideApplied: false,
     },
   })
 
-  assert(proxyCalls > 0, 'Explicit live-envelope generation must exercise the Field proxy.')
+  assert(proxyCalls > 0, 'Step B Curate live smoke generation must exercise the Field proxy.')
   assert(
     proxyCalls <= maxProviderCalls,
-    `Explicit live-envelope generation exceeded maxProviderCalls=${maxProviderCalls}; received ${proxyCalls}.`,
+    `Step B Curate live smoke generation exceeded maxProviderCalls=${maxProviderCalls}; received ${proxyCalls}.`,
+  )
+  assert(
+    result.trace.retrievalDiagnostics.liveSource.dispatchQueriesPlanned <= maxProviderCalls,
+    'Step B Curate live smoke generation must cap dispatch planning before provider calls.',
   )
   return {
     calls: proxyCalls,
@@ -293,7 +303,7 @@ async function main(): Promise<void> {
     () => runRestoredPreselectedStarterPreview(coffeeBooks),
   )
   const defaultFinalGenerationCalls = await runDefaultFinalGenerationDry(coffeeBooks)
-  const explicitLiveGeneration = await runExplicitLiveEnvelopeGeneration(coffeeBooks)
+  const stepBLiveGeneration = await runStepBCurateLiveSmokeGeneration(coffeeBooks)
 
   process.stdout.write(`Curate entry render proxy calls: ${entryRenderCalls}\n`)
   process.stdout.write(`Starter list render proxy calls: ${starterListCalls}\n`)
@@ -304,7 +314,7 @@ async function main(): Promise<void> {
     `Public default final generation without explicit live envelope proxy calls: ${defaultFinalGenerationCalls}\n`,
   )
   process.stdout.write(
-    `Explicit live-envelope generation proxy calls: ${explicitLiveGeneration.calls} <= ${explicitLiveGeneration.maxProviderCalls}\n`,
+    `Step B Curate live smoke generation proxy calls: ${stepBLiveGeneration.calls} <= ${stepBLiveGeneration.maxProviderCalls}\n`,
   )
   process.stdout.write('curate entry no field proxy: passed\n')
 }

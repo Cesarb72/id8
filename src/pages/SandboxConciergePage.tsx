@@ -12951,7 +12951,6 @@ export function SandboxConciergePage({
             sourceMode: 'curated',
             sourceModeOverrideApplied: false,
             debugMode: false,
-            liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
           },
         )
         if (cancelled) {
@@ -14649,10 +14648,8 @@ export function SandboxConciergePage({
                     ? {
                         ...options,
                         starterPack: selectedStarterPack ?? undefined,
-                        liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
                       }
                     : {
-                        liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
                         starterPack: selectedStarterPack ?? undefined,
                       },
                 ),

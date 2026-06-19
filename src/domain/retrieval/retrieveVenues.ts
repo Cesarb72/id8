@@ -95,6 +95,7 @@ interface RetrieveVenuesOptions {
   requestedSourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
   liveEnvelope?: LiveProviderEnvelope
+  stepBCurateLiveSmokeActive?: boolean
   starterPack?: StarterPack
 }
 
@@ -120,6 +121,13 @@ export interface RetrieveVenuesResult {
     queryCentersUsed?: Array<{ id: string; lat: number; lng: number }>
     queryRadiusM?: number
     queryCount: number
+    labelsConsidered: number
+    labelsAdmitted: number
+    centersConsidered: number
+    centersAdmitted: number
+    dispatchQueriesPlanned: number
+    dispatchQueriesAttempted: number
+    dispatchQueriesPlannedWithinCap: boolean
     liveQueryTemplatesUsed: string[]
     liveQueryLabelsUsed: string[]
     liveCandidatesByQuery: Array<{
@@ -702,6 +710,13 @@ export async function retrieveVenues(
             queryRadiusM: 0,
             requestedKinds: ['restaurant', 'bar', 'cafe'] as const,
             queryCount: 0,
+            labelsConsidered: 0,
+            labelsAdmitted: 0,
+            centersConsidered: 0,
+            centersAdmitted: 0,
+            dispatchQueriesPlanned: 0,
+            dispatchQueriesAttempted: 0,
+            dispatchQueriesPlannedWithinCap: true,
             liveQueryTemplatesUsed: [] as string[],
             liveQueryLabelsUsed: [] as string[],
             liveCandidatesByQuery: [] as Array<{
@@ -749,6 +764,7 @@ export async function retrieveVenues(
             maxProviderCalls: options.liveEnvelope?.maxProviderCalls,
             maxQueryLabels: options.liveEnvelope?.maxQueryLabels,
           },
+          stepBCurateLiveSmokeActive: options.stepBCurateLiveSmokeActive,
         })
 
   const hybridPortable =
@@ -985,6 +1001,13 @@ export async function retrieveVenues(
         queryCentersUsed: liveFetch.diagnostics.queryCentersUsed,
         queryRadiusM: liveFetch.diagnostics.queryRadiusM,
         queryCount: liveFetch.diagnostics.queryCount,
+        labelsConsidered: liveFetch.diagnostics.labelsConsidered,
+        labelsAdmitted: liveFetch.diagnostics.labelsAdmitted,
+        centersConsidered: liveFetch.diagnostics.centersConsidered,
+        centersAdmitted: liveFetch.diagnostics.centersAdmitted,
+        dispatchQueriesPlanned: liveFetch.diagnostics.dispatchQueriesPlanned,
+        dispatchQueriesAttempted: liveFetch.diagnostics.dispatchQueriesAttempted,
+        dispatchQueriesPlannedWithinCap: liveFetch.diagnostics.dispatchQueriesPlannedWithinCap,
         liveQueryTemplatesUsed: liveFetch.diagnostics.liveQueryTemplatesUsed,
         liveQueryLabelsUsed: liveFetch.diagnostics.liveQueryLabelsUsed,
         liveCandidatesByQuery: liveFetch.diagnostics.liveCandidatesByQuery,

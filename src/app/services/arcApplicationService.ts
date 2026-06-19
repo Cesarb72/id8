@@ -4,6 +4,7 @@ import {
 } from '../../domain/previewDistrictRecommendations'
 import {
   runGeneratePlan,
+  runStepBCurateLiveSmokeGeneratePlan,
   type GeneratePlanResult,
   type GenerationTrace,
   type RunGeneratePlanOptions,
@@ -15,6 +16,17 @@ import {
 } from '../../domain/search/searchAnchorVenues'
 import type { IntentInput } from '../../domain/types/intent'
 import type { ContractEntryArtifactLineage } from '../../domain/artifacts/contractEntryArtifact'
+
+export interface StepBCurateLiveSmokeGate {
+  environment: 'default' | 'dev' | 'archive'
+  pathname: string
+  mode: IntentInput['mode'] | null
+  inputMode: IntentInput['mode']
+  generationTarget: 'preview' | 'final'
+  selectedStarterPackPresent: boolean
+  sourceModeOverrideApplied: boolean
+  smokeSwitchEnabled: boolean
+}
 
 /**
  * ARC BOUNDARY: application-service ingress for provider-backed and plan-build entrypoints.
@@ -42,6 +54,45 @@ export async function runPlanBuild(
     })
   }
   return runGeneratePlan(input, options)
+}
+
+export function shouldApplyStepBCurateLiveSmoke(gate: StepBCurateLiveSmokeGate): boolean {
+  const normalizedPathname = gate.pathname.toLowerCase()
+  const publicSurface =
+    normalizedPathname.length === 0 ||
+    (!normalizedPathname.startsWith('/dev') && !normalizedPathname.startsWith('/sandbox'))
+
+  return (
+    gate.environment === 'default' &&
+    publicSurface &&
+    gate.mode === 'curate' &&
+    gate.inputMode === 'curate' &&
+    gate.generationTarget === 'final' &&
+    gate.selectedStarterPackPresent &&
+    gate.sourceModeOverrideApplied === false &&
+    gate.smokeSwitchEnabled
+  )
+}
+
+export async function runStepBCurateLiveSmokePlanBuild(params: {
+  gate: StepBCurateLiveSmokeGate
+  input: IntentInput
+  options: RunGeneratePlanOptions
+}): Promise<GeneratePlanResult> {
+  if (!shouldApplyStepBCurateLiveSmoke(params.gate)) {
+    return runGeneratePlan(params.input, params.options)
+  }
+
+  console.info('[ID8 STEP B] Curate live smoke wrapper active', {
+    maxProviderCalls: 3,
+    maxQueryLabels: 3,
+    maxCenters: 1,
+    mode: params.gate.mode,
+    generationTarget: params.gate.generationTarget,
+    pathname: params.gate.pathname,
+  })
+
+  return runStepBCurateLiveSmokeGeneratePlan(params.input, params.options)
 }
 
 export async function searchAnchorVenueOptions(

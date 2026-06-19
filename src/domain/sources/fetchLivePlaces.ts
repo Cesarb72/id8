@@ -44,6 +44,13 @@ export interface LiveSourceDiagnostics {
   queryRadiusM: number
   requestedKinds: LivePlaceKind[]
   queryCount: number
+  labelsConsidered: number
+  labelsAdmitted: number
+  centersConsidered: number
+  centersAdmitted: number
+  dispatchQueriesPlanned: number
+  dispatchQueriesAttempted: number
+  dispatchQueriesPlannedWithinCap: boolean
   liveQueryTemplatesUsed: string[]
   liveQueryLabelsUsed: string[]
   liveCandidatesByQuery: LiveCandidatesByQueryDiagnostics[]
@@ -89,6 +96,7 @@ export interface FetchLivePlacesOptions {
     maxProviderCalls?: number
     maxQueryLabels?: number
   }
+  stepBCurateLiveSmokeActive?: boolean
 }
 
 const googleFieldMask = [
@@ -376,23 +384,56 @@ export async function fetchLivePlaces(
   const queryLocationLabel = formatLocationLabel(intent)
   const allBaseQueryPlan = buildLiveQueryPlan(intent, starterPack)
   const allowedLabels = new Set(options.liveQueryLabels ?? [])
-  const baseQueryPlan =
+  const baseQueryPlanBeforeEnvelope =
     allowedLabels.size > 0
       ? allBaseQueryPlan.filter((entry) => allowedLabels.has(entry.label))
       : allBaseQueryPlan
-  const queryCenters = deriveQueryCenters(
+  const maxQueryLabels =
+    typeof options.envelope?.maxQueryLabels === 'number'
+      ? Math.max(0, options.envelope.maxQueryLabels)
+      : baseQueryPlanBeforeEnvelope.length
+  const baseQueryPlan = baseQueryPlanBeforeEnvelope.slice(0, maxQueryLabels)
+  const queryCentersBeforeEnvelope = deriveQueryCenters(
     intent.city,
-    options.maxQueryCenters ?? config.maxCenters,
+    config.maxCenters,
     config.centerOffsetM,
   )
-  const queryPlan = baseQueryPlan.flatMap((entry) =>
-    queryCenters.map((center) => ({
-      ...entry,
-      label: `${entry.label}@${center.id}`,
-      center,
-      radiusM: config.queryRadiusM,
-    })),
-  )
+  const maxQueryCenters =
+    typeof options.maxQueryCenters === 'number'
+      ? Math.max(0, options.maxQueryCenters)
+      : queryCentersBeforeEnvelope.length
+  const queryCenters = queryCentersBeforeEnvelope.slice(0, maxQueryCenters)
+  const maxProviderCalls =
+    typeof options.envelope?.maxProviderCalls === 'number'
+      ? Math.max(0, options.envelope.maxProviderCalls)
+      : Number.POSITIVE_INFINITY
+  const queryPlan: Array<
+    (typeof baseQueryPlan)[number] & {
+      center: QueryCenter
+      label: string
+      radiusM: number
+    }
+  > = []
+  for (const entry of baseQueryPlan) {
+    for (const center of queryCenters) {
+      if (queryPlan.length >= maxProviderCalls) {
+        break
+      }
+      queryPlan.push({
+        ...entry,
+        label: `${entry.label}@${center.id}`,
+        center,
+        radiusM: config.queryRadiusM,
+      })
+    }
+    if (queryPlan.length >= maxProviderCalls) {
+      break
+    }
+  }
+  const dispatchQueriesPlannedWithinCap =
+    typeof options.envelope?.maxProviderCalls === 'number'
+      ? queryPlan.length <= Math.max(0, options.envelope.maxProviderCalls)
+      : true
   const queryTemplatesUsed = [...new Set(queryPlan.map((entry) => entry.template))]
   const queryLabelsUsed = queryPlan.map((entry) => entry.label)
   const roleIntentQueryNotes = [...new Set(baseQueryPlan.flatMap((entry) => entry.notes))]
@@ -446,6 +487,23 @@ export async function fetchLivePlaces(
     sourceMode: options.sourceMode,
     envelope: options.envelope,
   })
+  const dispatchQueriesAttempted =
+    providerResults.diagnostics.trace?.attemptedHttpRequestCount ?? 0
+  if (options.stepBCurateLiveSmokeActive) {
+    console.info('[ID8 STEP B] Curate live dispatch cap', {
+      maxProviderCalls: options.envelope?.maxProviderCalls,
+      maxQueryLabels: options.envelope?.maxQueryLabels,
+      maxCenters: options.maxQueryCenters,
+      labelsConsidered: baseQueryPlanBeforeEnvelope.length,
+      labelsAdmitted: baseQueryPlan.length,
+      centersConsidered: queryCentersBeforeEnvelope.length,
+      centersAdmitted: queryCenters.length,
+      dispatchQueriesPlanned: queryPlan.length,
+      dispatchQueriesAttempted,
+      assertion: `dispatch queries planned <= ${options.envelope?.maxProviderCalls ?? 'unbounded'}`,
+      dispatchQueriesPlannedWithinCap,
+    })
+  }
 
   if (providerResults.diagnostics.blockedByEnv) {
     return {
@@ -459,6 +517,13 @@ export async function fetchLivePlaces(
         queryRadiusM: config.queryRadiusM,
         requestedKinds: requestedKindsForPlan,
         queryCount: 0,
+        labelsConsidered: baseQueryPlanBeforeEnvelope.length,
+        labelsAdmitted: baseQueryPlan.length,
+        centersConsidered: queryCentersBeforeEnvelope.length,
+        centersAdmitted: queryCenters.length,
+        dispatchQueriesPlanned: queryPlan.length,
+        dispatchQueriesAttempted,
+        dispatchQueriesPlannedWithinCap,
         liveQueryTemplatesUsed: queryTemplatesUsed,
         liveQueryLabelsUsed: queryLabelsUsed,
         liveCandidatesByQuery: [],
@@ -549,6 +614,13 @@ export async function fetchLivePlaces(
       queryRadiusM: config.queryRadiusM,
       requestedKinds: requestedKindsForPlan,
       queryCount: queryPlan.length,
+      labelsConsidered: baseQueryPlanBeforeEnvelope.length,
+      labelsAdmitted: baseQueryPlan.length,
+      centersConsidered: queryCentersBeforeEnvelope.length,
+      centersAdmitted: queryCenters.length,
+      dispatchQueriesPlanned: queryPlan.length,
+      dispatchQueriesAttempted,
+      dispatchQueriesPlannedWithinCap,
       liveQueryTemplatesUsed: queryTemplatesUsed,
       liveQueryLabelsUsed: queryLabelsUsed,
       liveCandidatesByQuery,

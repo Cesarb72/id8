@@ -147,7 +147,6 @@ export interface RunGeneratePlanOptions {
   strictShape?: boolean
   sourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
-  liveEnvelope?: LiveProviderEnvelope
   vibeTasteProfileScoring?: VibeTasteProfileScoringMode
   occasionScoring?: OccasionScoringMode
   whenSpatialScoring?: WhenSpatialScoringMode
@@ -155,6 +154,18 @@ export interface RunGeneratePlanOptions {
   // Narrow planner handoff around selected candidate artifact lineage when present.
   selectedArtifactLineage?: ContractEntryArtifactLineage
   curateCommitSemantics?: 'seed_guided' | 'approved_route_hard_commit'
+}
+
+interface RunGeneratePlanInternalOptions extends RunGeneratePlanOptions {
+  liveEnvelope?: LiveProviderEnvelope
+  stepBCurateLiveSmokeActive?: boolean
+}
+
+const STEP_B_CURATE_LIVE_SMOKE_ENVELOPE: LiveProviderEnvelope = {
+  liveProviderAllowed: true,
+  maxProviderCalls: 3,
+  maxQueryLabels: 3,
+  maxCenters: 1,
 }
 
 function shouldBlockGovernedPlannerIngress(retrieval: RetrieveVenuesResult): boolean {
@@ -1565,6 +1576,36 @@ export async function runGeneratePlan(
   input: IntentInput,
   options: RunGeneratePlanOptions = {},
 ): Promise<GeneratePlanResult> {
+  const {
+    liveEnvelope: _ignoredLiveEnvelope,
+    stepBCurateLiveSmokeActive: _ignoredStepBCurateLiveSmokeActive,
+    ...safeOptions
+  } = options as RunGeneratePlanInternalOptions
+  return runGeneratePlanInternal(input, safeOptions)
+}
+
+export async function runStepBCurateLiveSmokeGeneratePlan(
+  input: IntentInput,
+  options: RunGeneratePlanOptions = {},
+): Promise<GeneratePlanResult> {
+  if (
+    input.mode !== 'curate' ||
+    !options.starterPack ||
+    options.sourceModeOverrideApplied !== false
+  ) {
+    return runGeneratePlan(input, options)
+  }
+  return runGeneratePlanInternal(input, {
+    ...options,
+    liveEnvelope: STEP_B_CURATE_LIVE_SMOKE_ENVELOPE,
+    stepBCurateLiveSmokeActive: true,
+  })
+}
+
+async function runGeneratePlanInternal(
+  input: IntentInput,
+  options: RunGeneratePlanInternalOptions = {},
+): Promise<GeneratePlanResult> {
   // Wrapper seam: by the time execution reaches this function, wrappers should have already
   // assembled a canonical `IntentInput` plus any canonical constraints/options. From here on,
   // `runGeneratePlan` owns plan-build execution order and engine-stage handoff.
@@ -1611,6 +1652,7 @@ export async function runGeneratePlan(
     requestedSourceMode: options.sourceMode,
     sourceModeOverrideApplied: options.sourceModeOverrideApplied,
     liveEnvelope: options.liveEnvelope,
+    stepBCurateLiveSmokeActive: options.stepBCurateLiveSmokeActive,
     starterPack: options.starterPack,
   })
   if (options.debugMode && typeof window !== 'undefined') {
@@ -2572,6 +2614,13 @@ export async function runGeneratePlan(
       failureReason: retrieval.sourceMode.failureReason,
       queryLocationLabel: retrieval.sourceMode.queryLocationLabel,
       queryCount: retrieval.sourceMode.queryCount,
+      labelsConsidered: retrieval.sourceMode.labelsConsidered,
+      labelsAdmitted: retrieval.sourceMode.labelsAdmitted,
+      centersConsidered: retrieval.sourceMode.centersConsidered,
+      centersAdmitted: retrieval.sourceMode.centersAdmitted,
+      dispatchQueriesPlanned: retrieval.sourceMode.dispatchQueriesPlanned,
+      dispatchQueriesAttempted: retrieval.sourceMode.dispatchQueriesAttempted,
+      dispatchQueriesPlannedWithinCap: retrieval.sourceMode.dispatchQueriesPlannedWithinCap,
       liveQueryTemplatesUsed: retrieval.sourceMode.liveQueryTemplatesUsed,
       liveQueryLabelsUsed: retrieval.sourceMode.liveQueryLabelsUsed,
       liveCandidatesByQuery: retrieval.sourceMode.liveCandidatesByQuery,

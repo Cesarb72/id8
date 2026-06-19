@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 
 interface ProviderCallSiteClassification {
   filePath: string
@@ -16,13 +17,15 @@ const callSites: ProviderCallSiteClassification[] = [
     filePath: 'src/domain/sources/fetchLivePlaces.ts',
     functionName: 'fetchLivePlaces',
     callPurpose: 'retrieval_supply',
-    trigger: 'final generation through retrieveVenues; explicit live envelope required',
+    trigger: 'Step B Curate final generation through private live smoke wrapper',
     envelope: 'yes',
     pageRenderSurface: false,
     classification: 'intentionally-explicit-final-generation',
     evidence: [
       'retrieveVenues passes options.liveEnvelope caps into fetchLivePlaces',
       'retrieveVenues forces curated retrieval unless liveEnvelope.liveProviderAllowed === true',
+      'runGeneratePlan strips raw caller liveEnvelope before internal retrieval',
+      'Step B Curate wrapper owns the private 3/3/1 envelope path',
       'fetchLivePlaces forwards options.envelope to ProviderAdapter.searchPlaces',
     ],
   },
@@ -97,6 +100,17 @@ function assertSourceContains(filePath: string, needle: string): void {
   assert(source.includes(needle), `${filePath}: expected source to contain ${needle}`)
 }
 
+function listSourceFiles(directory: string): string[] {
+  return readdirSync(directory).flatMap((entry) => {
+    const path = join(directory, entry)
+    const stats = statSync(path)
+    if (stats.isDirectory()) {
+      return listSourceFiles(path)
+    }
+    return path.endsWith('.ts') || path.endsWith('.tsx') ? [path] : []
+  })
+}
+
 function assertDirectSearchPlacesInventory(): void {
   const srcFiles = [
     'src/domain/sources/fetchLivePlaces.ts',
@@ -148,9 +162,64 @@ function assertNoUnclassifiedWrapperCallers(): void {
   )
 }
 
+function assertStepBCuratePrivateEnvelopeBoundary(): void {
+  const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf8')
+  const appServiceSource = readFileSync('src/app/services/arcApplicationService.ts', 'utf8')
+  const appShellSource = readFileSync('src/app/AppShell.tsx', 'utf8')
+  const runGeneratePlanOptionsMatch = runGeneratePlanSource.match(
+    /export interface RunGeneratePlanOptions \{[\s\S]*?\n\}/,
+  )
+  assert(runGeneratePlanOptionsMatch, 'Expected exported RunGeneratePlanOptions interface.')
+  assert(
+    !runGeneratePlanOptionsMatch[0].includes('liveEnvelope'),
+    'RunGeneratePlanOptions must not expose liveEnvelope.',
+  )
+  assert(
+    runGeneratePlanSource.includes('liveEnvelope: _ignoredLiveEnvelope'),
+    'runGeneratePlan must strip raw caller liveEnvelope values.',
+  )
+  assert(
+    runGeneratePlanSource.includes('const STEP_B_CURATE_LIVE_SMOKE_ENVELOPE: LiveProviderEnvelope = {') &&
+      runGeneratePlanSource.includes('maxProviderCalls: 3') &&
+      runGeneratePlanSource.includes('maxQueryLabels: 3') &&
+      runGeneratePlanSource.includes('maxCenters: 1'),
+    'Step B Curate live smoke envelope must remain private and fixed at 3/3/1.',
+  )
+  assert(
+    appServiceSource.includes('gate.environment === \'default\'') &&
+      appServiceSource.includes('gate.mode === \'curate\'') &&
+      appServiceSource.includes('gate.inputMode === \'curate\'') &&
+      appServiceSource.includes('gate.generationTarget === \'final\'') &&
+      appServiceSource.includes('gate.selectedStarterPackPresent') &&
+      appServiceSource.includes('gate.sourceModeOverrideApplied === false') &&
+      appServiceSource.includes('gate.smokeSwitchEnabled'),
+    'Step B Curate app-service gate must include every approved predicate.',
+  )
+  assert(
+    countMatches(appShellSource, /\brunStepBCurateLiveSmokePlanBuild\(\{/g) === 1,
+    'AppShell must have exactly one Step B Curate wrapper call site.',
+  )
+  assert(
+    appShellSource.includes('readStepBCurateLiveSmokeEnabled()') &&
+      !appShellSource.includes('URLSearchParams(window.location.search).get(\'VITE_ID8_STEP_B_CURATE_LIVE_SMOKE\')'),
+    'Step B smoke switch must be deployment/app env driven, not URL-param driven.',
+  )
+
+  const importingFiles = listSourceFiles('src').filter((filePath) =>
+    readFileSync(filePath, 'utf8').includes('runStepBCurateLiveSmokeGeneratePlan'),
+  )
+  assert(
+    importingFiles.length === 2 &&
+      importingFiles.includes(join('src', 'domain', 'runGeneratePlan.ts')) &&
+      importingFiles.includes(join('src', 'app', 'services', 'arcApplicationService.ts')),
+    `Only arcApplicationService may import the internal Step B generator; found ${importingFiles.join(', ')}.`,
+  )
+}
+
 function main(): void {
   assertDirectSearchPlacesInventory()
   assertNoUnclassifiedWrapperCallers()
+  assertStepBCuratePrivateEnvelopeBoundary()
   assertSourceContains(
     'src/domain/retrieval/liveEnvelope.ts',
     'export const CLOSED_RUNTIME_LIVE_ENVELOPE',

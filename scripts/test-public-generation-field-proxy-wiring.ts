@@ -1,4 +1,8 @@
 import { buildPublicCurateCardTruthModel } from '../src/app/services/curate/publicCurateCardTruthService.ts'
+import {
+  runStepBCurateLiveSmokePlanBuild,
+  type StepBCurateLiveSmokeGate,
+} from '../src/app/services/arcApplicationService.ts'
 import { starterPacks } from '../src/data/starterPacks.ts'
 import { validateContractEntryArtifactPreCommitTruth } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
@@ -29,6 +33,23 @@ interface Scenario {
   mode: ExperienceMode
   input: IntentInput
   starterPack?: StarterPack
+}
+
+function buildStepBGate(
+  scenario: Scenario,
+  overrides: Partial<StepBCurateLiveSmokeGate> = {},
+): StepBCurateLiveSmokeGate {
+  return {
+    environment: 'default',
+    pathname: '/',
+    mode: scenario.mode,
+    inputMode: scenario.input.mode,
+    generationTarget: 'final',
+    selectedStarterPackPresent: Boolean(scenario.starterPack),
+    sourceModeOverrideApplied: false,
+    smokeSwitchEnabled: true,
+    ...overrides,
+  }
 }
 
 interface CapturedFieldRequest {
@@ -287,22 +308,20 @@ async function assertPublicDefaultGenerationStaysDry(scenario: Scenario): Promis
   return calls.length
 }
 
-async function assertModeUsesExplicitLiveEnvelope(scenario: Scenario): Promise<number> {
+async function assertStepBCurateWrapperUsesPrivateLiveEnvelope(scenario: Scenario): Promise<number> {
   resetEnv()
   setPublicRoute()
   const calls: CapturedFieldRequest[] = []
   globalThis.fetch = createFieldProxyFetch(calls)
-  const maxProviderCalls = 2
+  const maxProviderCalls = 3
 
-  const result = await runGeneratePlan(scenario.input, {
-    starterPack: scenario.starterPack,
-    sourceMode: 'curated',
-    sourceModeOverrideApplied: false,
-    liveEnvelope: {
-      liveProviderAllowed: true,
-      maxProviderCalls,
-      maxQueryLabels: maxProviderCalls,
-      maxCenters: 1,
+  const result = await runStepBCurateLiveSmokePlanBuild({
+    gate: buildStepBGate(scenario),
+    input: scenario.input,
+    options: {
+      starterPack: scenario.starterPack,
+      sourceMode: 'curated',
+      sourceModeOverrideApplied: false,
     },
   })
   const artifact = result.contractEntryArtifact
@@ -310,10 +329,10 @@ async function assertModeUsesExplicitLiveEnvelope(scenario: Scenario): Promise<n
     requireEnrichment: true,
   })
 
-  assert(calls.length > 0, `${scenario.mode}: explicit live generation must call the Field proxy.`)
+  assert(calls.length > 0, `${scenario.mode}: Step B Curate wrapper must call the Field proxy.`)
   assert(
     calls.length <= maxProviderCalls,
-    `${scenario.mode}: explicit live generation must respect maxProviderCalls=${maxProviderCalls}; received ${calls.length}.`,
+    `${scenario.mode}: Step B Curate wrapper must respect maxProviderCalls=${maxProviderCalls}; received ${calls.length}.`,
   )
   assert(
     calls.every((call) => call.url === '/api/field/text-search'),
@@ -329,7 +348,15 @@ async function assertModeUsesExplicitLiveEnvelope(scenario: Scenario): Promise<n
   )
   assert(
     result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted === true,
-    `${scenario.mode}: runGeneratePlan must attempt live Field retrieval.`,
+    `${scenario.mode}: Step B Curate wrapper must attempt live Field retrieval.`,
+  )
+  assert(
+    result.trace.retrievalDiagnostics.liveSource.dispatchQueriesPlanned <= maxProviderCalls,
+    `${scenario.mode}: Step B dispatch plan must be capped before fetch.`,
+  )
+  assert(
+    result.trace.retrievalDiagnostics.liveSource.dispatchQueriesPlannedWithinCap,
+    `${scenario.mode}: Step B dispatch plan must assert cap compliance.`,
   )
   assert(
     result.trace.retrievalDiagnostics.liveSource.fetchedCount > 0,
@@ -349,9 +376,41 @@ async function assertModeUsesExplicitLiveEnvelope(scenario: Scenario): Promise<n
     `${scenario.mode}: generated artifact must preserve mode context fit.`,
   )
   process.stdout.write(
-    `${scenario.mode} explicit live-envelope generation Field proxy calls: ${calls.length} <= ${maxProviderCalls}\n`,
+    `${scenario.mode} Step B Curate wrapper Field proxy calls: ${calls.length} <= ${maxProviderCalls}\n`,
   )
   return calls.length
+}
+
+async function assertSmokeSwitchWrongModeStaysDry(scenario: Scenario): Promise<number> {
+  resetEnv()
+  setPublicRoute()
+  let proxyCalls = 0
+  globalThis.fetch = (async (input) => {
+    const url = String(input)
+    if (url.includes('/api/field/text-search')) {
+      proxyCalls += 1
+      throw new Error(`${scenario.mode}: smoke switch must not call Field proxy outside Curate final.`)
+    }
+    throw new Error(`${scenario.mode}: unexpected fetch during smoke switch dry fallback: ${url}`)
+  }) as typeof fetch
+
+  const result = await runStepBCurateLiveSmokePlanBuild({
+    gate: buildStepBGate(scenario),
+    input: scenario.input,
+    options: {
+      starterPack: scenario.starterPack,
+      sourceMode: 'curated',
+      sourceModeOverrideApplied: false,
+    },
+  })
+
+  assert(proxyCalls === 0, `${scenario.mode}: smoke switch fallback must make zero proxy calls.`)
+  assert(
+    result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted === false,
+    `${scenario.mode}: smoke switch fallback must not attempt live retrieval.`,
+  )
+  process.stdout.write(`${scenario.mode} smoke switch Field proxy calls: 0\n`)
+  return proxyCalls
 }
 
 async function assertFailClosedDoesNotRenderFalseCard(): Promise<void> {
@@ -365,15 +424,13 @@ async function assertFailClosedDoesNotRenderFalseCard(): Promise<void> {
 
   let thrown = false
   try {
-    await runGeneratePlan(scenario.input, {
-      starterPack: scenario.starterPack,
-      sourceMode: 'curated',
-      sourceModeOverrideApplied: false,
-      liveEnvelope: {
-        liveProviderAllowed: true,
-        maxProviderCalls: 1,
-        maxQueryLabels: 1,
-        maxCenters: 1,
+    await runStepBCurateLiveSmokePlanBuild({
+      gate: buildStepBGate(scenario),
+      input: scenario.input,
+      options: {
+        starterPack: scenario.starterPack,
+        sourceMode: 'curated',
+        sourceModeOverrideApplied: false,
       },
     })
   } catch {
@@ -394,17 +451,25 @@ async function assertFailClosedDoesNotRenderFalseCard(): Promise<void> {
 
 async function main(): Promise<void> {
   let defaultGenerationProxyCalls = 0
-  let explicitLiveEnvelopeProxyCalls = 0
+  let stepBProxyCalls = 0
+  let wrongModeSmokeProxyCalls = 0
   for (const scenario of buildScenarios()) {
     defaultGenerationProxyCalls += await assertPublicDefaultGenerationStaysDry(scenario)
-    explicitLiveEnvelopeProxyCalls += await assertModeUsesExplicitLiveEnvelope(scenario)
+    if (scenario.mode === 'curate') {
+      stepBProxyCalls += await assertStepBCurateWrapperUsesPrivateLiveEnvelope(scenario)
+    } else {
+      wrongModeSmokeProxyCalls += await assertSmokeSwitchWrongModeStaysDry(scenario)
+    }
   }
   await assertFailClosedDoesNotRenderFalseCard()
   process.stdout.write(
     `Public default final generation without explicit live envelope proxy calls: ${defaultGenerationProxyCalls}\n`,
   )
   process.stdout.write(
-    `Explicit live-envelope generation proxy calls: ${explicitLiveEnvelopeProxyCalls}\n`,
+    `Step B Curate wrapper proxy calls: ${stepBProxyCalls}\n`,
+  )
+  process.stdout.write(
+    `Wrong-mode smoke switch proxy calls: ${wrongModeSmokeProxyCalls}\n`,
   )
   process.stdout.write('public generation Field proxy wiring: passed\n')
 }

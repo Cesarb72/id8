@@ -452,6 +452,13 @@ export interface RetrievalDiagnostics {
     failureReason?: string
     queryLocationLabel?: string
     queryCount: number
+    labelsConsidered: number
+    labelsAdmitted: number
+    centersConsidered: number
+    centersAdmitted: number
+    dispatchQueriesPlanned: number
+    dispatchQueriesAttempted: number
+    dispatchQueriesPlannedWithinCap: boolean
     liveQueryTemplatesUsed: string[]
     liveQueryLabelsUsed: string[]
     liveCandidatesByQuery: LiveQueryCandidateDiagnostics[]
