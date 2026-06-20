@@ -203,10 +203,12 @@ import {
 import {
   previewDistrictRecommendationsForPlanBuild,
   runPlanBuild,
+  runStepBCurateLiveSmokePlanBuild,
   searchAnchorVenueOptions,
   type AnchorSearchChip,
   type AnchorSearchResult,
   type GenerationTrace,
+  type StepBCurateLiveSmokeGate,
 } from '../app/services/arcApplicationService'
 import {
   buildAnchorSelectionFromSearchResult,
@@ -268,6 +270,13 @@ const DEV_CLOSEOUT_BUILD_READY_KEY = 'id8.dev.closeout.buildReady'
 const DEV_CLOSEOUT_BUILD_QUERY_KEY = 'id8.dev.closeout.buildQuery'
 const PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED = false
 const PUBLIC_CURATE_COMMITTED_ROUTE_FALLBACK_ENABLED: boolean = false
+
+function readStepBCurateLiveSmokeEnabled(): boolean {
+  const env = (import.meta as ImportMeta & {
+    env?: Record<string, string | undefined>
+  }).env ?? {}
+  return env.VITE_ID8_STEP_B_CURATE_LIVE_SMOKE === '1'
+}
 
 function readSessionStorageValue(key: string): string | null {
   if (typeof window === 'undefined') {
@@ -13191,6 +13200,7 @@ export function SandboxConciergePage({
     async (
       directionIdOverride?: string | unknown,
       selectedRouteArtifactIdOverride?: string | null,
+      invocation: StepBCurateLiveSmokeGate['invocation'] = 'other',
     ) => {
       const selectionEpochAtStart = selectionEpochRef.current
       const normalizedDirectionOverride =
@@ -13449,43 +13459,59 @@ export function SandboxConciergePage({
           mode: generationMode,
           starterPack: generationStarterPack,
         })
-        const result = await runPlanBuild(
-          {
-            mode: generationMode,
-            planningMode: plannerMode,
-            persona,
-            primaryVibe,
-            city: districtLocationQuery,
-            district: activeDirectionContract.pocketLabel,
-            distanceMode: 'nearby',
-            refinementModes: clusterRefinementMap[activeCluster],
-            selectedDirectionContext: activeIntentSelectedDirectionContext,
-            discoveryPreferences: selectedArtifactDiscoveryPreferences,
-            anchor: buildPlannerAnchor,
-          },
-          {
-              sourceMode: generationSourceMode,
-              sourceModeOverrideApplied: true,
-              debugMode: false,
-              vibeTasteProfileScoring: isCurateWrapperActive ? 'soft_planner_scoring' : 'off',
-              occasionScoring: isCurateWrapperActive ? 'soft_curate_scoring' : 'off',
-              whenSpatialScoring: isCurateWrapperActive ? 'soft_curate_spatial' : 'off',
-              whenSignalProfile: isCurateWrapperActive
-                ? canonicalCardInputDraft.whenSignalProfile
-                : undefined,
-              curateCommitSemantics: isCurateWrapperActive
-                ? 'approved_route_hard_commit'
-                : undefined,
-              starterPack: generationStarterPack,
-              experienceContract: canonicalExperienceContract,
-              contractConstraints: canonicalContractConstraints,
-              canonicalInterpretationBundle,
-              rankedDistrictPockets: districtPreviewResult?.ranked,
-              districtTasteBridgeArtifacts: plannerDistrictTasteBridgeArtifacts,
-              contractGateWorld,
-            selectedArtifactLineage: activeSelectedArtifactLineage,
-          },
-        )
+        const planBuildInput = {
+          mode: generationMode,
+          planningMode: plannerMode,
+          persona,
+          primaryVibe,
+          city: districtLocationQuery,
+          district: activeDirectionContract.pocketLabel,
+          distanceMode: 'nearby',
+          refinementModes: clusterRefinementMap[activeCluster],
+          selectedDirectionContext: activeIntentSelectedDirectionContext,
+          discoveryPreferences: selectedArtifactDiscoveryPreferences,
+          anchor: buildPlannerAnchor,
+        } satisfies IntentInput
+        const planBuildOptions: Parameters<typeof runPlanBuild>[1] = {
+          sourceMode: generationSourceMode,
+          sourceModeOverrideApplied: true,
+          debugMode: false,
+          vibeTasteProfileScoring: isCurateWrapperActive ? 'soft_planner_scoring' : 'off',
+          occasionScoring: isCurateWrapperActive ? 'soft_curate_scoring' : 'off',
+          whenSpatialScoring: isCurateWrapperActive ? 'soft_curate_spatial' : 'off',
+          whenSignalProfile: isCurateWrapperActive
+            ? canonicalCardInputDraft.whenSignalProfile
+            : undefined,
+          curateCommitSemantics: isCurateWrapperActive
+            ? 'approved_route_hard_commit'
+            : undefined,
+          starterPack: generationStarterPack,
+          experienceContract: canonicalExperienceContract,
+          contractConstraints: canonicalContractConstraints,
+          canonicalInterpretationBundle,
+          rankedDistrictPockets: districtPreviewResult?.ranked,
+          districtTasteBridgeArtifacts: plannerDistrictTasteBridgeArtifacts,
+          contractGateWorld,
+          selectedArtifactLineage: activeSelectedArtifactLineage,
+        }
+        const result =
+          invocation === 'public_selected_curate_review_route'
+            ? await runStepBCurateLiveSmokePlanBuild({
+                gate: {
+                  environment: 'default',
+                  pathname: typeof window === 'undefined' ? '' : window.location.pathname,
+                  invocation,
+                  mode: generationMode,
+                  inputMode: planBuildInput.mode,
+                  generationTarget: 'final',
+                  selectedStarterPackPresent: Boolean(generationStarterPack),
+                  userSourceModeOverrideApplied: false,
+                  smokeSwitchEnabled: readStepBCurateLiveSmokeEnabled(),
+                },
+                input: planBuildInput,
+                options: planBuildOptions,
+              })
+            : await runPlanBuild(planBuildInput, planBuildOptions)
         const requiredBuildAnchorForPostPlanner = deriveRequiredBuildAnchorForPostPlanner({
           isBuildWrapperActive,
           selectedBuildAnchor,
@@ -19685,9 +19711,14 @@ export function SandboxConciergePage({
       setHasRevealed(true)
       return
     }
+    const generationInvocation: StepBCurateLiveSmokeGate['invocation'] =
+      isPublicSurface && isCurateWrapperActive
+        ? 'public_selected_curate_review_route'
+        : 'other'
     const generated = await generatePlan(
       previewGenerateDirectionId,
       selectedRouteArtifactIdForGeneration,
+      generationInvocation,
     )
     if (generated) {
       setHasRevealed(true)
@@ -19695,6 +19726,7 @@ export function SandboxConciergePage({
   }, [
     generatePlan,
     isBuildWrapperActive,
+    isCurateWrapperActive,
     loading,
     applyCurateRefinementEntryPayload,
     committedPlanMatchesGenerateDirection,

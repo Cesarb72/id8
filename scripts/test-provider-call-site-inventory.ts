@@ -166,6 +166,7 @@ function assertStepBCuratePrivateEnvelopeBoundary(): void {
   const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf8')
   const appServiceSource = readFileSync('src/app/services/arcApplicationService.ts', 'utf8')
   const appShellSource = readFileSync('src/app/AppShell.tsx', 'utf8')
+  const sandboxConciergeSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   const runGeneratePlanOptionsMatch = runGeneratePlanSource.match(
     /export interface RunGeneratePlanOptions \{[\s\S]*?\n\}/,
   )
@@ -191,17 +192,29 @@ function assertStepBCuratePrivateEnvelopeBoundary(): void {
       appServiceSource.includes('gate.inputMode === \'curate\'') &&
       appServiceSource.includes('gate.generationTarget === \'final\'') &&
       appServiceSource.includes('gate.selectedStarterPackPresent') &&
-      appServiceSource.includes('gate.sourceModeOverrideApplied === false') &&
+      appServiceSource.includes('gate.invocation === \'public_selected_curate_review_route\'') &&
+      appServiceSource.includes('gate.userSourceModeOverrideApplied === false') &&
       appServiceSource.includes('gate.smokeSwitchEnabled'),
     'Step B Curate app-service gate must include every approved predicate.',
   )
   assert(
-    countMatches(appShellSource, /\brunStepBCurateLiveSmokePlanBuild\(\{/g) === 1,
-    'AppShell must have exactly one Step B Curate wrapper call site.',
+    countMatches(appShellSource, /\brunStepBCurateLiveSmokePlanBuild\(\{/g) === 0 &&
+      !appShellSource.includes('readStepBCurateLiveSmokeEnabled()'),
+    'AppShell is archive-mounted and must not remain a Step B Curate wrapper entry point.',
   )
   assert(
-    appShellSource.includes('readStepBCurateLiveSmokeEnabled()') &&
-      !appShellSource.includes('URLSearchParams(window.location.search).get(\'VITE_ID8_STEP_B_CURATE_LIVE_SMOKE\')'),
+    countMatches(sandboxConciergeSource, /\brunStepBCurateLiveSmokePlanBuild\(\{/g) === 1,
+    'SandboxConciergePage must have the only runtime Step B Curate wrapper call site.',
+  )
+  assert(
+    sandboxConciergeSource.includes("invocation === 'public_selected_curate_review_route'") &&
+      sandboxConciergeSource.includes("'public_selected_curate_review_route'") &&
+      sandboxConciergeSource.includes('userSourceModeOverrideApplied: false'),
+    'Public selected Curate review-route invocation must be explicit and not authorized by broad sourceModeOverrideApplied.',
+  )
+  assert(
+    sandboxConciergeSource.includes('readStepBCurateLiveSmokeEnabled()') &&
+      !sandboxConciergeSource.includes('URLSearchParams(window.location.search).get(\'VITE_ID8_STEP_B_CURATE_LIVE_SMOKE\')'),
     'Step B smoke switch must be deployment/app env driven, not URL-param driven.',
   )
 

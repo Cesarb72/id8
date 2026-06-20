@@ -46,7 +46,8 @@ function buildStepBGate(
     inputMode: scenario.input.mode,
     generationTarget: 'final',
     selectedStarterPackPresent: Boolean(scenario.starterPack),
-    sourceModeOverrideApplied: false,
+    invocation: scenario.mode === 'curate' ? 'public_selected_curate_review_route' : 'other',
+    userSourceModeOverrideApplied: false,
     smokeSwitchEnabled: true,
     ...overrides,
   }
@@ -308,7 +309,45 @@ async function assertPublicDefaultGenerationStaysDry(scenario: Scenario): Promis
   return calls.length
 }
 
-async function assertStepBCurateWrapperUsesPrivateLiveEnvelope(scenario: Scenario): Promise<number> {
+async function assertPublicSelectedCurateReviewRouteSmokeOffStaysDry(
+  scenario: Scenario,
+): Promise<number> {
+  resetEnv()
+  setPublicRoute()
+  let proxyCalls = 0
+  globalThis.fetch = (async (input) => {
+    const url = String(input)
+    if (url.includes('/api/field/text-search')) {
+      proxyCalls += 1
+      throw new Error(`${scenario.mode}: smoke-off public review route must not call Field proxy.`)
+    }
+    throw new Error(`${scenario.mode}: unexpected fetch during smoke-off public review route: ${url}`)
+  }) as typeof fetch
+
+  const result = await runStepBCurateLiveSmokePlanBuild({
+    gate: buildStepBGate(scenario, {
+      smokeSwitchEnabled: false,
+    }),
+    input: scenario.input,
+    options: {
+      starterPack: scenario.starterPack,
+      sourceMode: 'curated',
+      sourceModeOverrideApplied: true,
+    },
+  })
+
+  assert(proxyCalls === 0, `${scenario.mode}: smoke-off public review route must make zero proxy calls.`)
+  assert(
+    result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted === false,
+    `${scenario.mode}: smoke-off public review route must not attempt live Field retrieval.`,
+  )
+  process.stdout.write(`${scenario.mode} public review route smoke-off Field proxy calls: 0\n`)
+  return proxyCalls
+}
+
+async function assertPublicSelectedCurateReviewRouteUsesPrivateLiveEnvelope(
+  scenario: Scenario,
+): Promise<number> {
   resetEnv()
   setPublicRoute()
   const calls: CapturedFieldRequest[] = []
@@ -321,7 +360,7 @@ async function assertStepBCurateWrapperUsesPrivateLiveEnvelope(scenario: Scenari
     options: {
       starterPack: scenario.starterPack,
       sourceMode: 'curated',
-      sourceModeOverrideApplied: false,
+      sourceModeOverrideApplied: true,
     },
   })
   const artifact = result.contractEntryArtifact
@@ -329,10 +368,10 @@ async function assertStepBCurateWrapperUsesPrivateLiveEnvelope(scenario: Scenari
     requireEnrichment: true,
   })
 
-  assert(calls.length > 0, `${scenario.mode}: Step B Curate wrapper must call the Field proxy.`)
+  assert(calls.length > 0, `${scenario.mode}: public review route must call the Field proxy.`)
   assert(
     calls.length <= maxProviderCalls,
-    `${scenario.mode}: Step B Curate wrapper must respect maxProviderCalls=${maxProviderCalls}; received ${calls.length}.`,
+    `${scenario.mode}: public review route must respect maxProviderCalls=${maxProviderCalls}; received ${calls.length}.`,
   )
   assert(
     calls.every((call) => call.url === '/api/field/text-search'),
@@ -348,7 +387,7 @@ async function assertStepBCurateWrapperUsesPrivateLiveEnvelope(scenario: Scenari
   )
   assert(
     result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted === true,
-    `${scenario.mode}: Step B Curate wrapper must attempt live Field retrieval.`,
+    `${scenario.mode}: public review route must attempt live Field retrieval.`,
   )
   assert(
     result.trace.retrievalDiagnostics.liveSource.dispatchQueriesPlanned <= maxProviderCalls,
@@ -376,9 +415,43 @@ async function assertStepBCurateWrapperUsesPrivateLiveEnvelope(scenario: Scenari
     `${scenario.mode}: generated artifact must preserve mode context fit.`,
   )
   process.stdout.write(
-    `${scenario.mode} Step B Curate wrapper Field proxy calls: ${calls.length} <= ${maxProviderCalls}\n`,
+    `${scenario.mode} public selected Curate review route Field proxy calls: ${calls.length} <= ${maxProviderCalls}\n`,
   )
   return calls.length
+}
+
+async function assertUserSourceOverrideStillBlocksStepB(scenario: Scenario): Promise<number> {
+  resetEnv()
+  setPublicRoute()
+  let proxyCalls = 0
+  globalThis.fetch = (async (input) => {
+    const url = String(input)
+    if (url.includes('/api/field/text-search')) {
+      proxyCalls += 1
+      throw new Error(`${scenario.mode}: user source override must not enter Step B.`)
+    }
+    throw new Error(`${scenario.mode}: unexpected fetch during user source override fallback: ${url}`)
+  }) as typeof fetch
+
+  const result = await runStepBCurateLiveSmokePlanBuild({
+    gate: buildStepBGate(scenario, {
+      userSourceModeOverrideApplied: true,
+    }),
+    input: scenario.input,
+    options: {
+      starterPack: scenario.starterPack,
+      sourceMode: 'curated',
+      sourceModeOverrideApplied: true,
+    },
+  })
+
+  assert(proxyCalls === 0, `${scenario.mode}: user source override must make zero proxy calls.`)
+  assert(
+    result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted === false,
+    `${scenario.mode}: user source override must not attempt live Field retrieval.`,
+  )
+  process.stdout.write(`${scenario.mode} user-source-override smoke Field proxy calls: 0\n`)
+  return proxyCalls
 }
 
 async function assertSmokeSwitchWrongModeStaysDry(scenario: Scenario): Promise<number> {
@@ -451,12 +524,17 @@ async function assertFailClosedDoesNotRenderFalseCard(): Promise<void> {
 
 async function main(): Promise<void> {
   let defaultGenerationProxyCalls = 0
+  let smokeOffReviewRouteProxyCalls = 0
   let stepBProxyCalls = 0
+  let userSourceOverrideProxyCalls = 0
   let wrongModeSmokeProxyCalls = 0
   for (const scenario of buildScenarios()) {
     defaultGenerationProxyCalls += await assertPublicDefaultGenerationStaysDry(scenario)
     if (scenario.mode === 'curate') {
-      stepBProxyCalls += await assertStepBCurateWrapperUsesPrivateLiveEnvelope(scenario)
+      smokeOffReviewRouteProxyCalls +=
+        await assertPublicSelectedCurateReviewRouteSmokeOffStaysDry(scenario)
+      stepBProxyCalls += await assertPublicSelectedCurateReviewRouteUsesPrivateLiveEnvelope(scenario)
+      userSourceOverrideProxyCalls += await assertUserSourceOverrideStillBlocksStepB(scenario)
     } else {
       wrongModeSmokeProxyCalls += await assertSmokeSwitchWrongModeStaysDry(scenario)
     }
@@ -466,7 +544,13 @@ async function main(): Promise<void> {
     `Public default final generation without explicit live envelope proxy calls: ${defaultGenerationProxyCalls}\n`,
   )
   process.stdout.write(
+    `Public selected Curate review route smoke-off proxy calls: ${smokeOffReviewRouteProxyCalls}\n`,
+  )
+  process.stdout.write(
     `Step B Curate wrapper proxy calls: ${stepBProxyCalls}\n`,
+  )
+  process.stdout.write(
+    `User source override smoke proxy calls: ${userSourceOverrideProxyCalls}\n`,
   )
   process.stdout.write(
     `Wrong-mode smoke switch proxy calls: ${wrongModeSmokeProxyCalls}\n`,

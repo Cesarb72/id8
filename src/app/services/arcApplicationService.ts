@@ -20,11 +20,12 @@ import type { ContractEntryArtifactLineage } from '../../domain/artifacts/contra
 export interface StepBCurateLiveSmokeGate {
   environment: 'default' | 'dev' | 'archive'
   pathname: string
+  invocation: 'public_selected_curate_review_route' | 'other'
   mode: IntentInput['mode'] | null
   inputMode: IntentInput['mode']
   generationTarget: 'preview' | 'final'
   selectedStarterPackPresent: boolean
-  sourceModeOverrideApplied: boolean
+  userSourceModeOverrideApplied: boolean
   smokeSwitchEnabled: boolean
 }
 
@@ -65,11 +66,12 @@ export function shouldApplyStepBCurateLiveSmoke(gate: StepBCurateLiveSmokeGate):
   return (
     gate.environment === 'default' &&
     publicSurface &&
+    gate.invocation === 'public_selected_curate_review_route' &&
     gate.mode === 'curate' &&
     gate.inputMode === 'curate' &&
     gate.generationTarget === 'final' &&
     gate.selectedStarterPackPresent &&
-    gate.sourceModeOverrideApplied === false &&
+    gate.userSourceModeOverrideApplied === false &&
     gate.smokeSwitchEnabled
   )
 }
@@ -89,10 +91,14 @@ export async function runStepBCurateLiveSmokePlanBuild(params: {
     maxCenters: 1,
     mode: params.gate.mode,
     generationTarget: params.gate.generationTarget,
+    invocation: params.gate.invocation,
     pathname: params.gate.pathname,
   })
 
-  return runStepBCurateLiveSmokeGeneratePlan(params.input, params.options)
+  return runStepBCurateLiveSmokeGeneratePlan(params.input, {
+    ...params.options,
+    sourceModeOverrideApplied: false,
+  })
 }
 
 export async function searchAnchorVenueOptions(
