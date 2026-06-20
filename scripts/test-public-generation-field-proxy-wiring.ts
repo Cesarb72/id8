@@ -1,6 +1,7 @@
 import { buildPublicCurateCardTruthModel } from '../src/app/services/curate/publicCurateCardTruthService.ts'
 import {
   runStepBCurateLiveSmokePlanBuild,
+  shouldApplyStepBCurateLiveSmoke,
   type StepBCurateLiveSmokeGate,
 } from '../src/app/services/arcApplicationService.ts'
 import { starterPacks } from '../src/data/starterPacks.ts'
@@ -420,6 +421,180 @@ async function assertPublicSelectedCurateReviewRouteUsesPrivateLiveEnvelope(
   return calls.length
 }
 
+interface PreparedRouteReviewHandlerParams {
+  scenario: Scenario
+  smokeSwitchEnabled: boolean
+  isPublicSurface: boolean
+  isCurateWrapperActive: boolean
+  isBuildWrapperActive: boolean
+  committedPlanMatchesGenerateDirection: boolean
+  planPresent: boolean
+  previewSynced: boolean
+}
+
+async function runPreparedRouteReviewHandlerSimulation(
+  params: PreparedRouteReviewHandlerParams,
+): Promise<{
+  earlyReveal: boolean
+  generated: boolean
+  fieldProxyCalls: number
+  liveFetchAttempted: boolean
+}> {
+  const {
+    scenario,
+    smokeSwitchEnabled,
+    isPublicSurface,
+    isCurateWrapperActive,
+    isBuildWrapperActive,
+    committedPlanMatchesGenerateDirection,
+    planPresent,
+    previewSynced,
+  } = params
+  const calls: CapturedFieldRequest[] = []
+  globalThis.fetch = createFieldProxyFetch(calls)
+  const generationInvocation: StepBCurateLiveSmokeGate['invocation'] =
+    isPublicSurface && isCurateWrapperActive
+      ? 'public_selected_curate_review_route'
+      : 'other'
+  const forceStepBGeneration = shouldApplyStepBCurateLiveSmoke({
+    environment: 'default',
+    pathname: '/',
+    invocation: generationInvocation,
+    mode: isCurateWrapperActive ? 'curate' : null,
+    inputMode: isCurateWrapperActive ? 'curate' : isBuildWrapperActive ? 'build' : 'surprise',
+    generationTarget: 'final',
+    selectedStarterPackPresent: Boolean(scenario.starterPack),
+    userSourceModeOverrideApplied: false,
+    smokeSwitchEnabled,
+  })
+
+  if (
+    !forceStepBGeneration &&
+    (committedPlanMatchesGenerateDirection || (planPresent && previewSynced))
+  ) {
+    return {
+      earlyReveal: true,
+      generated: false,
+      fieldProxyCalls: calls.length,
+      liveFetchAttempted: false,
+    }
+  }
+
+  const result = await runStepBCurateLiveSmokePlanBuild({
+    gate: buildStepBGate(scenario, {
+      invocation: generationInvocation,
+      mode: isCurateWrapperActive ? 'curate' : null,
+      inputMode: isCurateWrapperActive ? 'curate' : isBuildWrapperActive ? 'build' : 'surprise',
+      selectedStarterPackPresent: Boolean(scenario.starterPack),
+      smokeSwitchEnabled,
+    }),
+    input: scenario.input,
+    options: {
+      starterPack: scenario.starterPack,
+      sourceMode: 'curated',
+      sourceModeOverrideApplied: true,
+    },
+  })
+
+  return {
+    earlyReveal: false,
+    generated: true,
+    fieldProxyCalls: calls.length,
+    liveFetchAttempted: result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted,
+  }
+}
+
+async function assertPreparedRouteSmokeOffPreservesEarlyReveal(
+  scenario: Scenario,
+): Promise<number> {
+  resetEnv()
+  setPublicRoute()
+  globalThis.fetch = (async (input) => {
+    const url = String(input)
+    if (url.includes('/api/field/text-search')) {
+      throw new Error(`${scenario.mode}: smoke-off prepared route reveal must not call Field proxy.`)
+    }
+    throw new Error(`${scenario.mode}: unexpected fetch during prepared route reveal: ${url}`)
+  }) as typeof fetch
+
+  const result = await runPreparedRouteReviewHandlerSimulation({
+    scenario,
+    smokeSwitchEnabled: false,
+    isPublicSurface: true,
+    isCurateWrapperActive: true,
+    isBuildWrapperActive: false,
+    committedPlanMatchesGenerateDirection: true,
+    planPresent: true,
+    previewSynced: true,
+  })
+
+  assert(result.earlyReveal, `${scenario.mode}: smoke-off prepared route must reveal early.`)
+  assert(!result.generated, `${scenario.mode}: smoke-off prepared route must not generate.`)
+  assert(result.fieldProxyCalls === 0, `${scenario.mode}: smoke-off prepared route must stay dry.`)
+  assert(!result.liveFetchAttempted, `${scenario.mode}: smoke-off prepared route must not attempt live.`)
+  process.stdout.write(`${scenario.mode} prepared route smoke-off early reveal Field proxy calls: 0\n`)
+  return result.fieldProxyCalls
+}
+
+async function assertPreparedRouteSmokeOnBypassesEarlyReveal(
+  scenario: Scenario,
+): Promise<number> {
+  resetEnv()
+  setPublicRoute()
+  const result = await runPreparedRouteReviewHandlerSimulation({
+    scenario,
+    smokeSwitchEnabled: true,
+    isPublicSurface: true,
+    isCurateWrapperActive: true,
+    isBuildWrapperActive: false,
+    committedPlanMatchesGenerateDirection: true,
+    planPresent: true,
+    previewSynced: true,
+  })
+
+  assert(!result.earlyReveal, `${scenario.mode}: smoke-on prepared route must bypass early reveal.`)
+  assert(result.generated, `${scenario.mode}: smoke-on prepared route must generate.`)
+  assert(result.fieldProxyCalls > 0, `${scenario.mode}: smoke-on prepared route must call Field proxy.`)
+  assert(
+    result.fieldProxyCalls <= 3,
+    `${scenario.mode}: smoke-on prepared route exceeded maxProviderCalls=3; received ${result.fieldProxyCalls}.`,
+  )
+  assert(result.liveFetchAttempted, `${scenario.mode}: smoke-on prepared route must attempt live.`)
+  process.stdout.write(
+    `${scenario.mode} prepared route smoke-on Field proxy calls: ${result.fieldProxyCalls} <= 3\n`,
+  )
+  return result.fieldProxyCalls
+}
+
+async function assertPreparedRouteWrongModeSmokeStaysDry(scenario: Scenario): Promise<number> {
+  resetEnv()
+  setPublicRoute()
+  globalThis.fetch = (async (input) => {
+    const url = String(input)
+    if (url.includes('/api/field/text-search')) {
+      throw new Error(`${scenario.mode}: prepared wrong-mode smoke must not call Field proxy.`)
+    }
+    throw new Error(`${scenario.mode}: unexpected fetch during prepared wrong-mode smoke: ${url}`)
+  }) as typeof fetch
+
+  const result = await runPreparedRouteReviewHandlerSimulation({
+    scenario,
+    smokeSwitchEnabled: true,
+    isPublicSurface: true,
+    isCurateWrapperActive: false,
+    isBuildWrapperActive: scenario.mode === 'build',
+    committedPlanMatchesGenerateDirection: true,
+    planPresent: true,
+    previewSynced: true,
+  })
+
+  assert(result.earlyReveal, `${scenario.mode}: wrong-mode prepared route must preserve early reveal.`)
+  assert(!result.generated, `${scenario.mode}: wrong-mode prepared route must not generate.`)
+  assert(result.fieldProxyCalls === 0, `${scenario.mode}: wrong-mode prepared route must stay dry.`)
+  process.stdout.write(`${scenario.mode} prepared wrong-mode smoke Field proxy calls: 0\n`)
+  return result.fieldProxyCalls
+}
+
 async function assertUserSourceOverrideStillBlocksStepB(scenario: Scenario): Promise<number> {
   resetEnv()
   setPublicRoute()
@@ -525,17 +700,23 @@ async function assertFailClosedDoesNotRenderFalseCard(): Promise<void> {
 async function main(): Promise<void> {
   let defaultGenerationProxyCalls = 0
   let smokeOffReviewRouteProxyCalls = 0
+  let preparedSmokeOffProxyCalls = 0
+  let preparedSmokeOnProxyCalls = 0
   let stepBProxyCalls = 0
   let userSourceOverrideProxyCalls = 0
   let wrongModeSmokeProxyCalls = 0
+  let wrongModePreparedSmokeProxyCalls = 0
   for (const scenario of buildScenarios()) {
     defaultGenerationProxyCalls += await assertPublicDefaultGenerationStaysDry(scenario)
     if (scenario.mode === 'curate') {
       smokeOffReviewRouteProxyCalls +=
         await assertPublicSelectedCurateReviewRouteSmokeOffStaysDry(scenario)
+      preparedSmokeOffProxyCalls += await assertPreparedRouteSmokeOffPreservesEarlyReveal(scenario)
+      preparedSmokeOnProxyCalls += await assertPreparedRouteSmokeOnBypassesEarlyReveal(scenario)
       stepBProxyCalls += await assertPublicSelectedCurateReviewRouteUsesPrivateLiveEnvelope(scenario)
       userSourceOverrideProxyCalls += await assertUserSourceOverrideStillBlocksStepB(scenario)
     } else {
+      wrongModePreparedSmokeProxyCalls += await assertPreparedRouteWrongModeSmokeStaysDry(scenario)
       wrongModeSmokeProxyCalls += await assertSmokeSwitchWrongModeStaysDry(scenario)
     }
   }
@@ -547,6 +728,12 @@ async function main(): Promise<void> {
     `Public selected Curate review route smoke-off proxy calls: ${smokeOffReviewRouteProxyCalls}\n`,
   )
   process.stdout.write(
+    `Prepared public selected Curate review route smoke-off proxy calls: ${preparedSmokeOffProxyCalls}\n`,
+  )
+  process.stdout.write(
+    `Prepared public selected Curate review route smoke-on proxy calls: ${preparedSmokeOnProxyCalls}\n`,
+  )
+  process.stdout.write(
     `Step B Curate wrapper proxy calls: ${stepBProxyCalls}\n`,
   )
   process.stdout.write(
@@ -554,6 +741,9 @@ async function main(): Promise<void> {
   )
   process.stdout.write(
     `Wrong-mode smoke switch proxy calls: ${wrongModeSmokeProxyCalls}\n`,
+  )
+  process.stdout.write(
+    `Wrong-mode prepared smoke switch proxy calls: ${wrongModePreparedSmokeProxyCalls}\n`,
   )
   process.stdout.write('public generation Field proxy wiring: passed\n')
 }

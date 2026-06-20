@@ -213,6 +213,12 @@ function assertStepBCuratePrivateEnvelopeBoundary(): void {
     'Public selected Curate review-route invocation must be explicit and not authorized by broad sourceModeOverrideApplied.',
   )
   assert(
+    sandboxConciergeSource.includes('const stepBCurateReviewRouteForceGeneration = shouldApplyStepBCurateLiveSmoke({') &&
+      sandboxConciergeSource.includes('!stepBCurateReviewRouteForceGeneration &&') &&
+      sandboxConciergeSource.includes('committedPlanMatchesGenerateDirection || (plan && previewSynced)'),
+    'Prepared-route reveal early return may only be bypassed by the exact Step B Curate review-route gate.',
+  )
+  assert(
     sandboxConciergeSource.includes('readStepBCurateLiveSmokeEnabled()') &&
       !sandboxConciergeSource.includes('URLSearchParams(window.location.search).get(\'VITE_ID8_STEP_B_CURATE_LIVE_SMOKE\')'),
     'Step B smoke switch must be deployment/app env driven, not URL-param driven.',

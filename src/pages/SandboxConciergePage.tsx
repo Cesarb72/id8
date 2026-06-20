@@ -205,6 +205,7 @@ import {
   runPlanBuild,
   runStepBCurateLiveSmokePlanBuild,
   searchAnchorVenueOptions,
+  shouldApplyStepBCurateLiveSmoke,
   type AnchorSearchChip,
   type AnchorSearchResult,
   type GenerationTrace,
@@ -19687,7 +19688,25 @@ export function SandboxConciergePage({
       )
       return
     }
-    if (committedPlanMatchesGenerateDirection || (plan && previewSynced)) {
+    const generationInvocation: StepBCurateLiveSmokeGate['invocation'] =
+      isPublicSurface && isCurateWrapperActive
+        ? 'public_selected_curate_review_route'
+        : 'other'
+    const stepBCurateReviewRouteForceGeneration = shouldApplyStepBCurateLiveSmoke({
+      environment: 'default',
+      pathname: currentPath,
+      invocation: generationInvocation,
+      mode: isCurateWrapperActive ? 'curate' : null,
+      inputMode: isCurateWrapperActive ? 'curate' : isBuildWrapperActive ? 'build' : 'surprise',
+      generationTarget: 'final',
+      selectedStarterPackPresent: Boolean(selectedStarterPack),
+      userSourceModeOverrideApplied: false,
+      smokeSwitchEnabled: readStepBCurateLiveSmokeEnabled(),
+    })
+    if (
+      !stepBCurateReviewRouteForceGeneration &&
+      (committedPlanMatchesGenerateDirection || (plan && previewSynced))
+    ) {
       setError(undefined)
       setHasRevealed(true)
       return
@@ -19711,10 +19730,6 @@ export function SandboxConciergePage({
       setHasRevealed(true)
       return
     }
-    const generationInvocation: StepBCurateLiveSmokeGate['invocation'] =
-      isPublicSurface && isCurateWrapperActive
-        ? 'public_selected_curate_review_route'
-        : 'other'
     const generated = await generatePlan(
       previewGenerateDirectionId,
       selectedRouteArtifactIdForGeneration,
@@ -19725,6 +19740,7 @@ export function SandboxConciergePage({
     }
   }, [
     generatePlan,
+    currentPath,
     isBuildWrapperActive,
     isCurateWrapperActive,
     loading,
@@ -19740,6 +19756,7 @@ export function SandboxConciergePage({
     selectedRouteArtifactIdForGeneration,
     selectedBuildAnchor,
     selectedCandidateRouteArtifact,
+    selectedStarterPack,
   ])
   const handleRetrySurpriseGeneration = useCallback(() => {
     if (loading) {
