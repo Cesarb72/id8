@@ -430,6 +430,8 @@ interface PreparedRouteReviewHandlerParams {
   committedPlanMatchesGenerateDirection: boolean
   planPresent: boolean
   previewSynced: boolean
+  approvedRefinementEntryPayloadPresent?: boolean
+  approvedPayloadArtifactMatchesSelected?: boolean
 }
 
 async function runPreparedRouteReviewHandlerSimulation(
@@ -439,6 +441,7 @@ async function runPreparedRouteReviewHandlerSimulation(
   generated: boolean
   fieldProxyCalls: number
   liveFetchAttempted: boolean
+  approvedPayloadReveal: boolean
 }> {
   const {
     scenario,
@@ -449,6 +452,8 @@ async function runPreparedRouteReviewHandlerSimulation(
     committedPlanMatchesGenerateDirection,
     planPresent,
     previewSynced,
+    approvedRefinementEntryPayloadPresent = false,
+    approvedPayloadArtifactMatchesSelected = false,
   } = params
   const calls: CapturedFieldRequest[] = []
   globalThis.fetch = createFieldProxyFetch(calls)
@@ -477,6 +482,22 @@ async function runPreparedRouteReviewHandlerSimulation(
       generated: false,
       fieldProxyCalls: calls.length,
       liveFetchAttempted: false,
+      approvedPayloadReveal: false,
+    }
+  }
+
+  if (
+    !forceStepBGeneration &&
+    isCurateWrapperActive &&
+    approvedRefinementEntryPayloadPresent &&
+    approvedPayloadArtifactMatchesSelected
+  ) {
+    return {
+      earlyReveal: true,
+      generated: false,
+      fieldProxyCalls: calls.length,
+      liveFetchAttempted: false,
+      approvedPayloadReveal: true,
     }
   }
 
@@ -501,6 +522,7 @@ async function runPreparedRouteReviewHandlerSimulation(
     generated: true,
     fieldProxyCalls: calls.length,
     liveFetchAttempted: result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted,
+    approvedPayloadReveal: false,
   }
 }
 
@@ -562,6 +584,80 @@ async function assertPreparedRouteSmokeOnBypassesEarlyReveal(
   assert(result.liveFetchAttempted, `${scenario.mode}: smoke-on prepared route must attempt live.`)
   process.stdout.write(
     `${scenario.mode} prepared route smoke-on Field proxy calls: ${result.fieldProxyCalls} <= 3\n`,
+  )
+  return result.fieldProxyCalls
+}
+
+async function assertApprovedPayloadSmokeOffPreservesReveal(
+  scenario: Scenario,
+): Promise<number> {
+  resetEnv()
+  setPublicRoute()
+  globalThis.fetch = (async (input) => {
+    const url = String(input)
+    if (url.includes('/api/field/text-search')) {
+      throw new Error(`${scenario.mode}: smoke-off approved payload reveal must not call Field proxy.`)
+    }
+    throw new Error(`${scenario.mode}: unexpected fetch during approved payload reveal: ${url}`)
+  }) as typeof fetch
+
+  const result = await runPreparedRouteReviewHandlerSimulation({
+    scenario,
+    smokeSwitchEnabled: false,
+    isPublicSurface: true,
+    isCurateWrapperActive: true,
+    isBuildWrapperActive: false,
+    committedPlanMatchesGenerateDirection: false,
+    planPresent: false,
+    previewSynced: false,
+    approvedRefinementEntryPayloadPresent: true,
+    approvedPayloadArtifactMatchesSelected: true,
+  })
+
+  assert(result.earlyReveal, `${scenario.mode}: smoke-off approved payload must reveal early.`)
+  assert(
+    result.approvedPayloadReveal,
+    `${scenario.mode}: smoke-off approved payload branch must remain active.`,
+  )
+  assert(!result.generated, `${scenario.mode}: smoke-off approved payload must not generate.`)
+  assert(result.fieldProxyCalls === 0, `${scenario.mode}: smoke-off approved payload must stay dry.`)
+  assert(!result.liveFetchAttempted, `${scenario.mode}: smoke-off approved payload must not attempt live.`)
+  process.stdout.write(`${scenario.mode} approved-payload smoke-off reveal Field proxy calls: 0\n`)
+  return result.fieldProxyCalls
+}
+
+async function assertApprovedPayloadSmokeOnBypassesReveal(
+  scenario: Scenario,
+): Promise<number> {
+  resetEnv()
+  setPublicRoute()
+  const result = await runPreparedRouteReviewHandlerSimulation({
+    scenario,
+    smokeSwitchEnabled: true,
+    isPublicSurface: true,
+    isCurateWrapperActive: true,
+    isBuildWrapperActive: false,
+    committedPlanMatchesGenerateDirection: false,
+    planPresent: false,
+    previewSynced: false,
+    approvedRefinementEntryPayloadPresent: true,
+    approvedPayloadArtifactMatchesSelected: true,
+  })
+
+  assert(!result.earlyReveal, `${scenario.mode}: smoke-on approved payload must bypass reveal.`)
+  assert(
+    !result.approvedPayloadReveal,
+    `${scenario.mode}: smoke-on approved payload branch must not short-circuit generation.`,
+  )
+  assert(result.generated, `${scenario.mode}: smoke-on approved payload must generate.`)
+  assert(result.fieldProxyCalls > 0, `${scenario.mode}: smoke-on approved payload must call Field proxy.`)
+  assert(
+    result.fieldProxyCalls <= 3,
+    `${scenario.mode}: smoke-on approved payload exceeded maxProviderCalls=3; received ${result.fieldProxyCalls}.`,
+  )
+  assert(result.liveFetchAttempted, `${scenario.mode}: smoke-on approved payload must attempt live.`)
+  process.stdout.write(
+    `${scenario.mode} approved-payload smoke-on Field proxy calls: ${result.fieldProxyCalls} <= 3\n`,
   )
   return result.fieldProxyCalls
 }
@@ -702,6 +798,8 @@ async function main(): Promise<void> {
   let smokeOffReviewRouteProxyCalls = 0
   let preparedSmokeOffProxyCalls = 0
   let preparedSmokeOnProxyCalls = 0
+  let approvedPayloadSmokeOffProxyCalls = 0
+  let approvedPayloadSmokeOnProxyCalls = 0
   let stepBProxyCalls = 0
   let userSourceOverrideProxyCalls = 0
   let wrongModeSmokeProxyCalls = 0
@@ -713,6 +811,9 @@ async function main(): Promise<void> {
         await assertPublicSelectedCurateReviewRouteSmokeOffStaysDry(scenario)
       preparedSmokeOffProxyCalls += await assertPreparedRouteSmokeOffPreservesEarlyReveal(scenario)
       preparedSmokeOnProxyCalls += await assertPreparedRouteSmokeOnBypassesEarlyReveal(scenario)
+      approvedPayloadSmokeOffProxyCalls +=
+        await assertApprovedPayloadSmokeOffPreservesReveal(scenario)
+      approvedPayloadSmokeOnProxyCalls += await assertApprovedPayloadSmokeOnBypassesReveal(scenario)
       stepBProxyCalls += await assertPublicSelectedCurateReviewRouteUsesPrivateLiveEnvelope(scenario)
       userSourceOverrideProxyCalls += await assertUserSourceOverrideStillBlocksStepB(scenario)
     } else {
@@ -732,6 +833,12 @@ async function main(): Promise<void> {
   )
   process.stdout.write(
     `Prepared public selected Curate review route smoke-on proxy calls: ${preparedSmokeOnProxyCalls}\n`,
+  )
+  process.stdout.write(
+    `Approved-payload public selected Curate review route smoke-off proxy calls: ${approvedPayloadSmokeOffProxyCalls}\n`,
+  )
+  process.stdout.write(
+    `Approved-payload public selected Curate review route smoke-on proxy calls: ${approvedPayloadSmokeOnProxyCalls}\n`,
   )
   process.stdout.write(
     `Step B Curate wrapper proxy calls: ${stepBProxyCalls}\n`,

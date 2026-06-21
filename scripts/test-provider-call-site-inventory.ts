@@ -219,6 +219,11 @@ function assertStepBCuratePrivateEnvelopeBoundary(): void {
     'Prepared-route reveal early return may only be bypassed by the exact Step B Curate review-route gate.',
   )
   assert(
+    sandboxConciergeSource.includes('!stepBCurateReviewRouteForceGeneration &&\n      isCurateWrapperActive &&\n      selectedCuratePreviewCommitability?.status === \'committable\'') &&
+      sandboxConciergeSource.includes('selectedCuratePreviewCommitability.approvedRefinementEntryPayload'),
+    'Curate approved-payload reveal branch may only be bypassed by the exact Step B Curate review-route gate.',
+  )
+  assert(
     sandboxConciergeSource.includes('readStepBCurateLiveSmokeEnabled()') &&
       !sandboxConciergeSource.includes('URLSearchParams(window.location.search).get(\'VITE_ID8_STEP_B_CURATE_LIVE_SMOKE\')'),
     'Step B smoke switch must be deployment/app env driven, not URL-param driven.',

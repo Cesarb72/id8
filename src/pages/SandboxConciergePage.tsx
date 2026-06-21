@@ -19712,6 +19712,7 @@ export function SandboxConciergePage({
       return
     }
     if (
+      !stepBCurateReviewRouteForceGeneration &&
       isCurateWrapperActive &&
       selectedCuratePreviewCommitability?.status === 'committable' &&
       selectedCuratePreviewCommitability.approvedRefinementEntryPayload &&
