@@ -85,6 +85,25 @@ export async function runStepBCurateLiveSmokePlanBuild(params: {
     return runGeneratePlan(params.input, params.options)
   }
 
+  // P0-G diagnostic-only: remove after hosted Step B predicate/branch audit is complete.
+  console.info('[ID8 STEP B TRACE]', {
+    event: 'runStepBCurateLiveSmokePlanBuild',
+    branch: 'step_b_wrapper_called',
+    currentPath: params.gate.pathname,
+    isPublicSurface:
+      params.gate.pathname.length === 0 ||
+      (!params.gate.pathname.toLowerCase().startsWith('/dev') &&
+        !params.gate.pathname.toLowerCase().startsWith('/sandbox')),
+    isCurateWrapperActive: params.gate.mode === 'curate',
+    stepBSmokeSwitchEnabled: params.gate.smokeSwitchEnabled,
+    selectedStarterPackPresent: params.gate.selectedStarterPackPresent,
+    stepBCurateReviewRouteForceGeneration: true,
+    generationInvocation: params.gate.invocation,
+    generationTarget: params.gate.generationTarget,
+    inputMode: params.gate.inputMode,
+    userSourceModeOverrideApplied: params.gate.userSourceModeOverrideApplied,
+  })
+
   console.info('[ID8 STEP B] Curate live smoke wrapper active', {
     maxProviderCalls: 3,
     maxQueryLabels: 3,

@@ -19674,24 +19674,11 @@ export function SandboxConciergePage({
     setError(undefined)
   }, [isCurateWrapperActive])
   const handleBuildFullPlan = useCallback(async () => {
-    if (!previewGenerateDirectionId || loading) {
-      return
-    }
-    if (isPublicSurface && isSurpriseWrapperActive && !committedRevealReady) {
-      setHasRevealed(false)
-      setError('Route review is still preparing. Try again in a moment.')
-      return
-    }
-    if (isBuildWrapperActive && selectedBuildAnchor && !selectedCandidateRouteArtifact) {
-      setError(
-        `No anchor-valid route is selected for "${selectedBuildAnchor.name}". Choose an anchor-valid direction first.`,
-      )
-      return
-    }
     const generationInvocation: StepBCurateLiveSmokeGate['invocation'] =
       isPublicSurface && isCurateWrapperActive
         ? 'public_selected_curate_review_route'
         : 'other'
+    const stepBSmokeSwitchEnabled = readStepBCurateLiveSmokeEnabled()
     const stepBCurateReviewRouteForceGeneration = shouldApplyStepBCurateLiveSmoke({
       environment: 'default',
       pathname: currentPath,
@@ -19701,12 +19688,81 @@ export function SandboxConciergePage({
       generationTarget: 'final',
       selectedStarterPackPresent: Boolean(selectedStarterPack),
       userSourceModeOverrideApplied: false,
-      smokeSwitchEnabled: readStepBCurateLiveSmokeEnabled(),
+      smokeSwitchEnabled: stepBSmokeSwitchEnabled,
     })
+    const stepBTraceEnabled = Boolean(
+      stepBSmokeSwitchEnabled &&
+        isPublicSurface &&
+        isCurateWrapperActive &&
+        generationInvocation === 'public_selected_curate_review_route',
+    )
+    // P0-G diagnostic-only: remove after hosted Step B predicate/branch audit is complete.
+    const traceStepBHandleBuildFullPlan = (
+      branch: string,
+      extra?: Record<string, boolean | string | null>,
+    ) => {
+      if (!stepBTraceEnabled) {
+        return
+      }
+      console.info('[ID8 STEP B TRACE]', {
+        event: 'handleBuildFullPlan',
+        branch,
+        currentPath,
+        isPublicSurface,
+        isCurateWrapperActive,
+        stepBSmokeSwitchEnabled,
+        selectedStarterPackPresent: Boolean(selectedStarterPack),
+        previewGenerateDirectionId,
+        selectedRouteArtifactIdForGeneration,
+        selectedCandidateRouteArtifactId: selectedCandidateRouteArtifact?.id ?? null,
+        selectedRouteArtifactSource: selectedRouteArtifact?.source ?? null,
+        committedPlanMatchesGenerateDirection,
+        previewSynced,
+        selectedCuratePreviewCommitabilityStatus:
+          selectedCuratePreviewCommitability?.status ?? null,
+        approvedRefinementEntryPayloadPresent: Boolean(
+          selectedCuratePreviewCommitability?.approvedRefinementEntryPayload,
+        ),
+        stepBCurateReviewRouteForceGeneration,
+        generationInvocation,
+        ...extra,
+      })
+    }
+    traceStepBHandleBuildFullPlan('entered')
+    if (!previewGenerateDirectionId || loading) {
+      traceStepBHandleBuildFullPlan('missing_direction_or_loading', {
+        generatePlanCalled: false,
+        runStepBCurateLiveSmokePlanBuildExpected: false,
+      })
+      return
+    }
+    if (isPublicSurface && isSurpriseWrapperActive && !committedRevealReady) {
+      traceStepBHandleBuildFullPlan('public_surprise_not_ready', {
+        generatePlanCalled: false,
+        runStepBCurateLiveSmokePlanBuildExpected: false,
+      })
+      setHasRevealed(false)
+      setError('Route review is still preparing. Try again in a moment.')
+      return
+    }
+    if (isBuildWrapperActive && selectedBuildAnchor && !selectedCandidateRouteArtifact) {
+      traceStepBHandleBuildFullPlan('build_anchor_missing_candidate', {
+        generatePlanCalled: false,
+        runStepBCurateLiveSmokePlanBuildExpected: false,
+      })
+      setError(
+        `No anchor-valid route is selected for "${selectedBuildAnchor.name}". Choose an anchor-valid direction first.`,
+      )
+      return
+    }
     if (
       !stepBCurateReviewRouteForceGeneration &&
       (committedPlanMatchesGenerateDirection || (plan && previewSynced))
     ) {
+      traceStepBHandleBuildFullPlan('prepared_route_reveal', {
+        generatePlanCalled: false,
+        runStepBCurateLiveSmokePlanBuildExpected: false,
+      })
       setError(undefined)
       setHasRevealed(true)
       return
@@ -19719,6 +19775,10 @@ export function SandboxConciergePage({
       selectedCandidateRouteArtifact &&
       selectedCuratePreviewCommitability.artifactId === selectedCandidateRouteArtifact.id
     ) {
+      traceStepBHandleBuildFullPlan('approved_payload_reveal', {
+        generatePlanCalled: false,
+        runStepBCurateLiveSmokePlanBuildExpected: false,
+      })
       applyCurateRefinementEntryPayload(
         selectedCuratePreviewCommitability.approvedRefinementEntryPayload,
       )
@@ -19731,11 +19791,22 @@ export function SandboxConciergePage({
       setHasRevealed(true)
       return
     }
+    traceStepBHandleBuildFullPlan('generatePlan_calling', {
+      generatePlanCalled: true,
+      runStepBCurateLiveSmokePlanBuildExpected:
+        generationInvocation === 'public_selected_curate_review_route',
+    })
     const generated = await generatePlan(
       previewGenerateDirectionId,
       selectedRouteArtifactIdForGeneration,
       generationInvocation,
     )
+    traceStepBHandleBuildFullPlan('generatePlan_completed', {
+      generatePlanCalled: true,
+      generatePlanReturned: generated,
+      runStepBCurateLiveSmokePlanBuildExpected:
+        generationInvocation === 'public_selected_curate_review_route',
+    })
     if (generated) {
       setHasRevealed(true)
     }
@@ -19753,6 +19824,7 @@ export function SandboxConciergePage({
     plan,
     previewSynced,
     previewGenerateDirectionId,
+    selectedRouteArtifact?.source,
     selectedCuratePreviewCommitability,
     selectedRouteArtifactIdForGeneration,
     selectedBuildAnchor,
