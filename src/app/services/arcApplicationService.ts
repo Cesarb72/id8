@@ -4,11 +4,16 @@ import {
 } from '../../domain/previewDistrictRecommendations'
 import {
   runGeneratePlan,
-  runStepBCurateLiveSmokeGeneratePlan,
   type GeneratePlanResult,
   type GenerationTrace,
   type RunGeneratePlanOptions,
 } from '../../domain/runGeneratePlan'
+import {
+  buildStopTypeCandidateBoardFromIntent,
+  type BuildStopTypeCandidateBoardFromIntentInput,
+  type StopTypeCandidateBoard,
+} from '../../domain/interpretation/discovery/stopTypeCandidateBoard'
+import type { LiveProviderEnvelope } from '../../domain/retrieval/liveEnvelope'
 import {
   searchAnchorVenues,
   type AnchorSearchChip,
@@ -16,17 +21,25 @@ import {
 } from '../../domain/search/searchAnchorVenues'
 import type { IntentInput } from '../../domain/types/intent'
 import type { ContractEntryArtifactLineage } from '../../domain/artifacts/contractEntryArtifact'
+import type { StarterPack } from '../../domain/types/starterPack'
 
-export interface StepBCurateLiveSmokeGate {
+export interface StepBCurateLiveSmokeCandidateSupplyGate {
   environment: 'default' | 'dev' | 'archive'
   pathname: string
-  invocation: 'public_selected_curate_review_route' | 'other'
+  isPublicSurface: boolean
   mode: IntentInput['mode'] | null
   inputMode: IntentInput['mode']
-  generationTarget: 'preview' | 'final'
+  phase: 'candidate_supply' | 'other'
   selectedStarterPackPresent: boolean
   userSourceModeOverrideApplied: boolean
   smokeSwitchEnabled: boolean
+}
+
+const STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE: LiveProviderEnvelope = {
+  liveProviderAllowed: true,
+  maxProviderCalls: 3,
+  maxQueryLabels: 3,
+  maxCenters: 1,
 }
 
 /**
@@ -57,67 +70,94 @@ export async function runPlanBuild(
   return runGeneratePlan(input, options)
 }
 
-export function shouldApplyStepBCurateLiveSmoke(gate: StepBCurateLiveSmokeGate): boolean {
+export function shouldApplyStepBCurateLiveSmokeCandidateSupply(
+  gate: StepBCurateLiveSmokeCandidateSupplyGate,
+): boolean {
   const normalizedPathname = gate.pathname.toLowerCase()
-  const publicSurface =
-    normalizedPathname.length === 0 ||
-    (!normalizedPathname.startsWith('/dev') && !normalizedPathname.startsWith('/sandbox'))
-
   return (
     gate.environment === 'default' &&
-    publicSurface &&
-    gate.invocation === 'public_selected_curate_review_route' &&
+    gate.isPublicSurface &&
+    normalizedPathname === '/start/curate' &&
     gate.mode === 'curate' &&
     gate.inputMode === 'curate' &&
-    gate.generationTarget === 'final' &&
+    gate.phase === 'candidate_supply' &&
     gate.selectedStarterPackPresent &&
     gate.userSourceModeOverrideApplied === false &&
     gate.smokeSwitchEnabled
   )
 }
 
-export async function runStepBCurateLiveSmokePlanBuild(params: {
-  gate: StepBCurateLiveSmokeGate
-  input: IntentInput
-  options: RunGeneratePlanOptions
-}): Promise<GeneratePlanResult> {
-  if (!shouldApplyStepBCurateLiveSmoke(params.gate)) {
-    return runGeneratePlan(params.input, params.options)
+type StepBCurateLiveSmokeCandidateSupplyInput =
+  Omit<BuildStopTypeCandidateBoardFromIntentInput, 'liveEnvelope'> & {
+    liveEnvelope?: never
   }
 
-  // P0-G diagnostic-only: remove after hosted Step B predicate/branch audit is complete.
-  console.info('[ID8 STEP B TRACE]', {
-    event: 'runStepBCurateLiveSmokePlanBuild',
-    branch: 'step_b_wrapper_called',
+function countStopTypeBoardCandidates(board: StopTypeCandidateBoard | null): number {
+  if (!board) {
+    return 0
+  }
+  return Object.values(board.candidatesByStopType).reduce(
+    (total, candidates) => total + candidates.length,
+    0,
+  )
+}
+
+export async function runStepBCurateLiveSmokeCandidateSupply(params: {
+  gate: StepBCurateLiveSmokeCandidateSupplyGate
+  input: StepBCurateLiveSmokeCandidateSupplyInput
+  starterPack: StarterPack | null
+}): Promise<StopTypeCandidateBoard | null> {
+  const {
+    liveEnvelope: _ignoredCallerLiveEnvelope,
+    sourceMode: callerSourceMode,
+    ...safeInput
+  } = params.input as BuildStopTypeCandidateBoardFromIntentInput
+  const shouldApply = shouldApplyStepBCurateLiveSmokeCandidateSupply(params.gate)
+  if (!shouldApply) {
+    return buildStopTypeCandidateBoardFromIntent({
+      ...safeInput,
+      sourceMode: callerSourceMode ?? 'curated',
+      starterPack: params.starterPack ?? safeInput.starterPack,
+    })
+  }
+
+  // P0-G diagnostic-only: remove after hosted Step B candidate-supply audit is complete.
+  console.info('[ID8 STEP B SUPPLY TRACE]', {
+    event: 'runStepBCurateLiveSmokeCandidateSupply',
+    branch: 'candidate_supply_wrapper_entered',
     currentPath: params.gate.pathname,
-    isPublicSurface:
-      params.gate.pathname.length === 0 ||
-      (!params.gate.pathname.toLowerCase().startsWith('/dev') &&
-        !params.gate.pathname.toLowerCase().startsWith('/sandbox')),
-    isCurateWrapperActive: params.gate.mode === 'curate',
-    stepBSmokeSwitchEnabled: params.gate.smokeSwitchEnabled,
-    selectedStarterPackPresent: params.gate.selectedStarterPackPresent,
-    stepBCurateReviewRouteForceGeneration: true,
-    generationInvocation: params.gate.invocation,
-    generationTarget: params.gate.generationTarget,
-    inputMode: params.gate.inputMode,
-    userSourceModeOverrideApplied: params.gate.userSourceModeOverrideApplied,
-  })
-
-  console.info('[ID8 STEP B] Curate live smoke wrapper active', {
-    maxProviderCalls: 3,
-    maxQueryLabels: 3,
-    maxCenters: 1,
+    isPublicSurface: params.gate.isPublicSurface,
     mode: params.gate.mode,
-    generationTarget: params.gate.generationTarget,
-    invocation: params.gate.invocation,
-    pathname: params.gate.pathname,
+    inputMode: params.gate.inputMode,
+    phase: params.gate.phase,
+    selectedStarterPackPresent: params.gate.selectedStarterPackPresent,
+    userSourceModeOverrideApplied: params.gate.userSourceModeOverrideApplied,
+    smokeSwitchEnabled: params.gate.smokeSwitchEnabled,
+    sourceMode: 'hybrid',
+    maxProviderCalls: STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE.maxProviderCalls,
+    maxQueryLabels: STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE.maxQueryLabels,
+    maxCenters: STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE.maxCenters,
   })
 
-  return runStepBCurateLiveSmokeGeneratePlan(params.input, {
-    ...params.options,
-    sourceModeOverrideApplied: false,
+  const board = await buildStopTypeCandidateBoardFromIntent({
+    ...safeInput,
+    sourceMode: 'hybrid',
+    liveEnvelope: STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE,
+    starterPack: params.starterPack ?? safeInput.starterPack,
   })
+
+  // P0-G diagnostic-only: remove after hosted Step B candidate-supply audit is complete.
+  console.info('[ID8 STEP B SUPPLY TRACE]', {
+    event: 'runStepBCurateLiveSmokeCandidateSupply',
+    branch: 'candidate_supply_board_built',
+    currentPath: params.gate.pathname,
+    boardPresent: Boolean(board),
+    scenarioFamily: board?.scenarioFamily ?? null,
+    requiredStopTypes: board?.requiredStopTypes.length ?? 0,
+    aggregateCandidateCount: countStopTypeBoardCandidates(board),
+  })
+
+  return board
 }
 
 export async function searchAnchorVenueOptions(

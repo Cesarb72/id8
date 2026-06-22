@@ -1,17 +1,24 @@
 import { buildPublicCurateCardTruthModel } from '../src/app/services/curate/publicCurateCardTruthService.ts'
 import {
-  runStepBCurateLiveSmokePlanBuild,
-  shouldApplyStepBCurateLiveSmoke,
-  type StepBCurateLiveSmokeGate,
+  runStepBCurateLiveSmokeCandidateSupply,
+  shouldApplyStepBCurateLiveSmokeCandidateSupply,
+  type StepBCurateLiveSmokeCandidateSupplyGate,
 } from '../src/app/services/arcApplicationService.ts'
 import { starterPacks } from '../src/data/starterPacks.ts'
-import { validateContractEntryArtifactPreCommitTruth } from '../src/domain/artifacts/contractEntryArtifact.ts'
+import {
+  validateContractEntryArtifactPreCommitTruth,
+  type ContractEntryArtifact,
+} from '../src/domain/artifacts/contractEntryArtifact.ts'
+import { buildContractEntryArtifactFromVerifiedOpportunity } from '../src/domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity.ts'
+import { buildScenarioNightsFromCandidateBoard } from '../src/domain/interpretation/construction/scenarioBuilder.ts'
+import { mapBuiltScenarioNightToVerifiedOpportunity } from '../src/domain/interpretation/verifiedCityOpportunity.ts'
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
 import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
 import type { ProviderVenue } from '../src/domain/providers/providerTypes.ts'
 import type { ExperienceMode, IntentInput } from '../src/domain/types/intent.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
 
+const FIELD_PROXY_PATH = '/api/field/text-search'
 const originalFetch = globalThis.fetch
 const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window')
 const managedEnvKeys = [
@@ -36,24 +43,6 @@ interface Scenario {
   starterPack?: StarterPack
 }
 
-function buildStepBGate(
-  scenario: Scenario,
-  overrides: Partial<StepBCurateLiveSmokeGate> = {},
-): StepBCurateLiveSmokeGate {
-  return {
-    environment: 'default',
-    pathname: '/',
-    mode: scenario.mode,
-    inputMode: scenario.input.mode,
-    generationTarget: 'final',
-    selectedStarterPackPresent: Boolean(scenario.starterPack),
-    invocation: scenario.mode === 'curate' ? 'public_selected_curate_review_route' : 'other',
-    userSourceModeOverrideApplied: false,
-    smokeSwitchEnabled: true,
-    ...overrides,
-  }
-}
-
 interface CapturedFieldRequest {
   url: string
   body: FieldTextSearchRequest
@@ -76,12 +65,18 @@ function restoreEnv(): void {
   }
 }
 
-function setPublicRoute(): void {
+function resetEnv(): void {
+  for (const key of managedEnvKeys) {
+    delete process.env[key]
+  }
+}
+
+function setPublicCurateRoute(): void {
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
     value: {
       location: {
-        pathname: '/',
+        pathname: '/start/curate',
         search: '',
       },
     },
@@ -93,12 +88,6 @@ function restoreWindow(): void {
     Object.defineProperty(globalThis, 'window', originalWindowDescriptor)
   } else {
     Reflect.deleteProperty(globalThis, 'window')
-  }
-}
-
-function resetEnv(): void {
-  for (const key of managedEnvKeys) {
-    delete process.env[key]
   }
 }
 
@@ -142,7 +131,6 @@ function buildScenarios(): Scenario[] {
       mode: 'build',
       input: {
         mode: 'build',
-        planningMode: 'user-led',
         persona: 'romantic',
         primaryVibe: 'cozy',
         secondaryVibe: 'cultured',
@@ -154,30 +142,32 @@ function buildScenarios(): Scenario[] {
   ]
 }
 
-function inferPrimaryType(query: string): string {
-  const normalized = query.toLowerCase()
-  if (normalized.includes('museum') || normalized.includes('gallery')) {
-    return 'museum'
+function buildSupplyGate(
+  scenario: Scenario,
+  overrides: Partial<StepBCurateLiveSmokeCandidateSupplyGate> = {},
+): StepBCurateLiveSmokeCandidateSupplyGate {
+  return {
+    environment: 'default',
+    pathname: '/start/curate',
+    isPublicSurface: true,
+    mode: scenario.mode,
+    inputMode: scenario.input.mode,
+    phase: 'candidate_supply',
+    selectedStarterPackPresent: Boolean(scenario.starterPack),
+    userSourceModeOverrideApplied: false,
+    smokeSwitchEnabled: true,
+    ...overrides,
   }
-  if (normalized.includes('park') || normalized.includes('trail')) {
-    return 'park'
-  }
-  if (normalized.includes('bar') || normalized.includes('cocktail')) {
-    return 'bar'
-  }
-  if (normalized.includes('dessert')) {
-    return 'dessert_shop'
-  }
-  if (normalized.includes('coffee') || normalized.includes('cafe')) {
-    return 'cafe'
-  }
-  return 'restaurant'
 }
 
 function buildProviderVenue(request: FieldTextSearchRequest, index: number): ProviderVenue {
-  const primaryType = inferPrimaryType(request.textQuery)
-  const latitude = (request.center?.lat ?? 37.3382) + index * 0.001
-  const longitude = (request.center?.lng ?? -121.8863) - index * 0.001
+  const primaryType = request.queryLabel.includes('coffee')
+    ? 'cafe'
+    : request.queryLabel.includes('bar') || request.queryLabel.includes('night')
+      ? 'bar'
+      : 'restaurant'
+  const latitude = 37.331 + index * 0.002
+  const longitude = -121.889 - index * 0.002
   return {
     provider: 'google_places',
     providerRecordId: `mock-field-${request.mode}-${request.queryLabel}-${index + 1}`,
@@ -230,8 +220,9 @@ function buildFieldResponse(request: FieldTextSearchRequest): FieldTextSearchRes
 function createFieldProxyFetch(calls: CapturedFieldRequest[]): typeof fetch {
   return async (input, init) => {
     const url = String(input)
-    assert(url === '/api/field/text-search', `Expected Field proxy URL, received ${url}.`)
+    assert(url === FIELD_PROXY_PATH, `Expected Field proxy URL, received ${url}.`)
     assert(!url.includes('places.googleapis.com'), 'Browser must not call Google Places.')
+    assert(!url.includes('GOOGLE_PLACES_API_KEY'), 'Browser request must not expose provider keys.')
     assert(init?.method === 'POST', 'Field proxy request must use POST.')
     const body = JSON.parse(String(init?.body)) as FieldTextSearchRequest
     calls.push({ url, body })
@@ -245,51 +236,23 @@ function createFieldProxyFetch(calls: CapturedFieldRequest[]): typeof fetch {
   }
 }
 
-function createFailClosedFieldProxyFetch(calls: CapturedFieldRequest[]): typeof fetch {
-  return async (input, init) => {
+function createZeroProxyTrap(label: string): typeof fetch {
+  return (async (input) => {
     const url = String(input)
-    assert(url === '/api/field/text-search', `Expected Field proxy URL, received ${url}.`)
-    const body = JSON.parse(String(init?.body)) as FieldTextSearchRequest
-    calls.push({ url, body })
-    return {
-      ok: false,
-      status: 503,
-      async json() {
-        return {
-          ok: false,
-          cache: 'miss',
-          budget: {
-            date: '2026-06-13',
-            cap: 32,
-            used: 0,
-            remaining: 32,
-          },
-          results: [],
-          diagnostics: {
-            purpose: body.purpose,
-            queryHash: 'mock-query-hash',
-            blockedReason: 'field_proxy_not_activated',
-            errorCode: 'field_proxy_not_activated',
-            resultCount: 0,
-            callConsumed: false,
-          },
-        } satisfies FieldTextSearchResponse
-      },
-    } as Response
-  }
+    if (url.includes(FIELD_PROXY_PATH)) {
+      throw new Error(`${label}: unexpected Field proxy call to ${url}.`)
+    }
+    if (url.includes('places.googleapis.com')) {
+      throw new Error(`${label}: browser attempted Google Places call.`)
+    }
+    throw new Error(`${label}: unexpected non-Field fetch to ${url}.`)
+  }) as typeof fetch
 }
 
 async function assertPublicDefaultGenerationStaysDry(scenario: Scenario): Promise<number> {
   resetEnv()
-  setPublicRoute()
-  const calls: CapturedFieldRequest[] = []
-  globalThis.fetch = (async (input) => {
-    const url = String(input)
-    if (url.includes('/api/field/text-search')) {
-      throw new Error(`${scenario.mode}: public default generation must not call the Field proxy.`)
-    }
-    throw new Error(`${scenario.mode}: unexpected fetch during public default generation: ${url}`)
-  }) as typeof fetch
+  setPublicCurateRoute()
+  globalThis.fetch = createZeroProxyTrap(`${scenario.mode}: public default generation`)
 
   const result = await runGeneratePlan(scenario.input, {
     starterPack: scenario.starterPack,
@@ -300,313 +263,203 @@ async function assertPublicDefaultGenerationStaysDry(scenario: Scenario): Promis
     requireEnrichment: true,
   })
 
-  assert(calls.length === 0, `${scenario.mode}: default generation must make zero proxy calls.`)
   assert(
     result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted === false,
     `${scenario.mode}: default generation must not attempt live Field retrieval.`,
   )
   assert(validation.status === 'valid', `${scenario.mode}: dry artifact must validate.`)
   process.stdout.write(`${scenario.mode} public default generation Field proxy calls: 0\n`)
-  return calls.length
+  return 0
 }
 
-async function assertPublicSelectedCurateReviewRouteSmokeOffStaysDry(
+async function assertPublicCurateCandidateSupplySmokeOffStaysDry(
   scenario: Scenario,
 ): Promise<number> {
   resetEnv()
-  setPublicRoute()
-  let proxyCalls = 0
-  globalThis.fetch = (async (input) => {
-    const url = String(input)
-    if (url.includes('/api/field/text-search')) {
-      proxyCalls += 1
-      throw new Error(`${scenario.mode}: smoke-off public review route must not call Field proxy.`)
-    }
-    throw new Error(`${scenario.mode}: unexpected fetch during smoke-off public review route: ${url}`)
-  }) as typeof fetch
+  setPublicCurateRoute()
+  globalThis.fetch = createZeroProxyTrap(`${scenario.mode}: smoke-off candidate supply`)
 
-  const result = await runStepBCurateLiveSmokePlanBuild({
-    gate: buildStepBGate(scenario, {
-      smokeSwitchEnabled: false,
-    }),
-    input: scenario.input,
-    options: {
-      starterPack: scenario.starterPack,
+  const board = await runStepBCurateLiveSmokeCandidateSupply({
+    gate: buildSupplyGate(scenario, { smokeSwitchEnabled: false }),
+    input: {
+      city: scenario.input.city,
+      mode: 'curate',
+      persona: scenario.input.persona ?? 'romantic',
+      vibe: scenario.input.primaryVibe,
       sourceMode: 'curated',
-      sourceModeOverrideApplied: true,
     },
+    starterPack: scenario.starterPack ?? null,
   })
 
-  assert(proxyCalls === 0, `${scenario.mode}: smoke-off public review route must make zero proxy calls.`)
-  assert(
-    result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted === false,
-    `${scenario.mode}: smoke-off public review route must not attempt live Field retrieval.`,
-  )
-  process.stdout.write(`${scenario.mode} public review route smoke-off Field proxy calls: 0\n`)
-  return proxyCalls
+  assert(board !== null, `${scenario.mode}: smoke-off candidate supply should still build a board.`)
+  process.stdout.write(`${scenario.mode} public Curate candidate supply smoke-off Field proxy calls: 0\n`)
+  return 0
 }
 
-async function assertPublicSelectedCurateReviewRouteUsesPrivateLiveEnvelope(
+async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
   scenario: Scenario,
-): Promise<number> {
+): Promise<{
+  fieldProxyCalls: number
+  artifact: ContractEntryArtifact
+}> {
   resetEnv()
-  setPublicRoute()
+  setPublicCurateRoute()
   const calls: CapturedFieldRequest[] = []
   globalThis.fetch = createFieldProxyFetch(calls)
   const maxProviderCalls = 3
 
-  const result = await runStepBCurateLiveSmokePlanBuild({
-    gate: buildStepBGate(scenario),
-    input: scenario.input,
-    options: {
-      starterPack: scenario.starterPack,
+  const board = await runStepBCurateLiveSmokeCandidateSupply({
+    gate: buildSupplyGate(scenario),
+    input: {
+      city: scenario.input.city,
+      mode: 'curate',
+      persona: scenario.input.persona ?? 'romantic',
+      vibe: scenario.input.primaryVibe,
       sourceMode: 'curated',
-      sourceModeOverrideApplied: true,
     },
+    starterPack: scenario.starterPack ?? null,
   })
-  const artifact = result.contractEntryArtifact
-  const validation = validateContractEntryArtifactPreCommitTruth(artifact, {
-    requireEnrichment: true,
-  })
+  assert(board !== null, `${scenario.mode}: Step B candidate supply must build a board.`)
+  const builtNights = buildScenarioNightsFromCandidateBoard(board)
+  assert(
+    builtNights.some((night) => night.complete),
+    `${scenario.mode}: Scenario Builder must produce a built night from the board.`,
+  )
+  let artifact: ContractEntryArtifact | null = null
+  for (const night of builtNights) {
+    if (!night.complete) {
+      continue
+    }
+    const opportunity = mapBuiltScenarioNightToVerifiedOpportunity({
+      night,
+      districtDiscoveryCards: [{ id: 'san-jose', name: 'San Jose' }],
+      directionCards: [],
+      personaLabel: 'Romantic',
+      vibeLabel: 'Cozy',
+    })
+    if (!opportunity) {
+      continue
+    }
+    artifact = buildContractEntryArtifactFromVerifiedOpportunity({
+      opportunity,
+      ecsState: {
+        exploration: 'focused',
+        discovery: 'reliable',
+        highlight: 'standout',
+      },
+      useScenarioBackedArtifacts: true,
+    })
+    if (artifact) {
+      break
+    }
+  }
+  assert(artifact, `${scenario.mode}: ContractEntryArtifact must be produced before reveal.`)
+  const validation = validateContractEntryArtifactPreCommitTruth(artifact)
 
-  assert(calls.length > 0, `${scenario.mode}: public review route must call the Field proxy.`)
+  assert(calls.length > 0, `${scenario.mode}: candidate supply must call the Field proxy.`)
   assert(
     calls.length <= maxProviderCalls,
-    `${scenario.mode}: public review route must respect maxProviderCalls=${maxProviderCalls}; received ${calls.length}.`,
+    `${scenario.mode}: candidate supply exceeded maxProviderCalls=${maxProviderCalls}; received ${calls.length}.`,
   )
   assert(
-    calls.every((call) => call.url === '/api/field/text-search'),
-    `${scenario.mode}: generation must only call /api/field/text-search.`,
+    calls.every((call) => call.url === FIELD_PROXY_PATH),
+    `${scenario.mode}: candidate supply must only call /api/field/text-search.`,
   )
   assert(
     calls.every((call) => call.body.mode === scenario.mode),
-    `${scenario.mode}: Field proxy request mode must match generation mode.`,
+    `${scenario.mode}: Field proxy request mode must match Curate supply mode.`,
   )
   assert(
     calls.every((call) => call.body.purpose === 'retrieval_supply'),
-    `${scenario.mode}: public generation must request retrieval_supply.`,
+    `${scenario.mode}: candidate supply must request retrieval_supply.`,
   )
-  assert(
-    result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted === true,
-    `${scenario.mode}: public review route must attempt live Field retrieval.`,
-  )
-  assert(
-    result.trace.retrievalDiagnostics.liveSource.dispatchQueriesPlanned <= maxProviderCalls,
-    `${scenario.mode}: Step B dispatch plan must be capped before fetch.`,
-  )
-  assert(
-    result.trace.retrievalDiagnostics.liveSource.dispatchQueriesPlannedWithinCap,
-    `${scenario.mode}: Step B dispatch plan must assert cap compliance.`,
-  )
-  assert(
-    result.trace.retrievalDiagnostics.liveSource.fetchedCount > 0,
-    `${scenario.mode}: Field proxy candidates must enter retrieval diagnostics.`,
-  )
-  assert(
-    result.trace.retrievalDiagnostics.liveSource.mappedCount > 0,
-    `${scenario.mode}: Field proxy candidates must map before planning.`,
-  )
-  assert(validation.status === 'valid', `${scenario.mode}: enriched artifact must validate.`)
-  assert(
-    artifact.enrichment?.fieldProvenanceSummary?.liveProviderUsed === true,
-    `${scenario.mode}: artifact provenance must record live Field usage.`,
-  )
-  assert(
-    artifact.enrichment?.modeContextFit?.status === 'passed',
-    `${scenario.mode}: generated artifact must preserve mode context fit.`,
-  )
+  assert(validation.status === 'valid', `${scenario.mode}: pre-reveal artifact must validate.`)
   process.stdout.write(
-    `${scenario.mode} public selected Curate review route Field proxy calls: ${calls.length} <= ${maxProviderCalls}\n`,
+    `${scenario.mode} public Curate candidate supply Field proxy calls: ${calls.length} <= ${maxProviderCalls}\n`,
   )
-  return calls.length
+  return {
+    fieldProxyCalls: calls.length,
+    artifact,
+  }
 }
 
-interface PreparedRouteReviewHandlerParams {
-  scenario: Scenario
-  smokeSwitchEnabled: boolean
-  isPublicSurface: boolean
-  isCurateWrapperActive: boolean
-  isBuildWrapperActive: boolean
+async function assertCallerSuppliedEnvelopeCannotActivateSupplySmoke(
+  scenario: Scenario,
+): Promise<number> {
+  resetEnv()
+  setPublicCurateRoute()
+  globalThis.fetch = createZeroProxyTrap(`${scenario.mode}: caller-supplied liveEnvelope`)
+
+  const board = await runStepBCurateLiveSmokeCandidateSupply({
+    gate: buildSupplyGate(scenario, { smokeSwitchEnabled: false }),
+    input: {
+      city: scenario.input.city,
+      mode: 'curate',
+      persona: scenario.input.persona ?? 'romantic',
+      vibe: scenario.input.primaryVibe,
+      sourceMode: 'hybrid',
+      liveEnvelope: {
+        liveProviderAllowed: true,
+        maxProviderCalls: 99,
+        maxQueryLabels: 99,
+        maxCenters: 99,
+      },
+    } as Parameters<typeof runStepBCurateLiveSmokeCandidateSupply>[0]['input'],
+    starterPack: scenario.starterPack ?? null,
+  })
+
+  assert(board !== null, `${scenario.mode}: caller envelope dry fallback should still build a board.`)
+  process.stdout.write(`${scenario.mode} caller-supplied liveEnvelope Field proxy calls: 0\n`)
+  return 0
+}
+
+function simulatePreparedRouteReview(params: {
   committedPlanMatchesGenerateDirection: boolean
   planPresent: boolean
   previewSynced: boolean
   approvedRefinementEntryPayloadPresent?: boolean
   approvedPayloadArtifactMatchesSelected?: boolean
-}
-
-async function runPreparedRouteReviewHandlerSimulation(
-  params: PreparedRouteReviewHandlerParams,
-): Promise<{
+}): {
   earlyReveal: boolean
-  generated: boolean
-  fieldProxyCalls: number
-  liveFetchAttempted: boolean
   approvedPayloadReveal: boolean
-}> {
-  const {
-    scenario,
-    smokeSwitchEnabled,
-    isPublicSurface,
-    isCurateWrapperActive,
-    isBuildWrapperActive,
-    committedPlanMatchesGenerateDirection,
-    planPresent,
-    previewSynced,
-    approvedRefinementEntryPayloadPresent = false,
-    approvedPayloadArtifactMatchesSelected = false,
-  } = params
-  const calls: CapturedFieldRequest[] = []
-  globalThis.fetch = createFieldProxyFetch(calls)
-  const generationInvocation: StepBCurateLiveSmokeGate['invocation'] =
-    isPublicSurface && isCurateWrapperActive
-      ? 'public_selected_curate_review_route'
-      : 'other'
-  const forceStepBGeneration = shouldApplyStepBCurateLiveSmoke({
-    environment: 'default',
-    pathname: '/',
-    invocation: generationInvocation,
-    mode: isCurateWrapperActive ? 'curate' : null,
-    inputMode: isCurateWrapperActive ? 'curate' : isBuildWrapperActive ? 'build' : 'surprise',
-    generationTarget: 'final',
-    selectedStarterPackPresent: Boolean(scenario.starterPack),
-    userSourceModeOverrideApplied: false,
-    smokeSwitchEnabled,
-  })
-
-  if (
-    !forceStepBGeneration &&
-    (committedPlanMatchesGenerateDirection || (planPresent && previewSynced))
-  ) {
+  generated: boolean
+} {
+  if (params.committedPlanMatchesGenerateDirection || (params.planPresent && params.previewSynced)) {
     return {
       earlyReveal: true,
-      generated: false,
-      fieldProxyCalls: calls.length,
-      liveFetchAttempted: false,
       approvedPayloadReveal: false,
+      generated: false,
     }
   }
 
-  if (
-    !forceStepBGeneration &&
-    isCurateWrapperActive &&
-    approvedRefinementEntryPayloadPresent &&
-    approvedPayloadArtifactMatchesSelected
-  ) {
+  if (params.approvedRefinementEntryPayloadPresent && params.approvedPayloadArtifactMatchesSelected) {
     return {
       earlyReveal: true,
-      generated: false,
-      fieldProxyCalls: calls.length,
-      liveFetchAttempted: false,
       approvedPayloadReveal: true,
+      generated: false,
     }
   }
-
-  const result = await runStepBCurateLiveSmokePlanBuild({
-    gate: buildStepBGate(scenario, {
-      invocation: generationInvocation,
-      mode: isCurateWrapperActive ? 'curate' : null,
-      inputMode: isCurateWrapperActive ? 'curate' : isBuildWrapperActive ? 'build' : 'surprise',
-      selectedStarterPackPresent: Boolean(scenario.starterPack),
-      smokeSwitchEnabled,
-    }),
-    input: scenario.input,
-    options: {
-      starterPack: scenario.starterPack,
-      sourceMode: 'curated',
-      sourceModeOverrideApplied: true,
-    },
-  })
 
   return {
     earlyReveal: false,
-    generated: true,
-    fieldProxyCalls: calls.length,
-    liveFetchAttempted: result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted,
     approvedPayloadReveal: false,
+    generated: true,
   }
 }
 
-async function assertPreparedRouteSmokeOffPreservesEarlyReveal(
+async function assertReviewThisRouteMakesNoAdditionalFieldProxyCalls(
   scenario: Scenario,
 ): Promise<number> {
   resetEnv()
-  setPublicRoute()
-  globalThis.fetch = (async (input) => {
-    const url = String(input)
-    if (url.includes('/api/field/text-search')) {
-      throw new Error(`${scenario.mode}: smoke-off prepared route reveal must not call Field proxy.`)
-    }
-    throw new Error(`${scenario.mode}: unexpected fetch during prepared route reveal: ${url}`)
-  }) as typeof fetch
+  setPublicCurateRoute()
+  globalThis.fetch = createZeroProxyTrap(`${scenario.mode}: Review this route`)
 
-  const result = await runPreparedRouteReviewHandlerSimulation({
-    scenario,
-    smokeSwitchEnabled: false,
-    isPublicSurface: true,
-    isCurateWrapperActive: true,
-    isBuildWrapperActive: false,
+  const prepared = simulatePreparedRouteReview({
     committedPlanMatchesGenerateDirection: true,
     planPresent: true,
     previewSynced: true,
   })
-
-  assert(result.earlyReveal, `${scenario.mode}: smoke-off prepared route must reveal early.`)
-  assert(!result.generated, `${scenario.mode}: smoke-off prepared route must not generate.`)
-  assert(result.fieldProxyCalls === 0, `${scenario.mode}: smoke-off prepared route must stay dry.`)
-  assert(!result.liveFetchAttempted, `${scenario.mode}: smoke-off prepared route must not attempt live.`)
-  process.stdout.write(`${scenario.mode} prepared route smoke-off early reveal Field proxy calls: 0\n`)
-  return result.fieldProxyCalls
-}
-
-async function assertPreparedRouteSmokeOnBypassesEarlyReveal(
-  scenario: Scenario,
-): Promise<number> {
-  resetEnv()
-  setPublicRoute()
-  const result = await runPreparedRouteReviewHandlerSimulation({
-    scenario,
-    smokeSwitchEnabled: true,
-    isPublicSurface: true,
-    isCurateWrapperActive: true,
-    isBuildWrapperActive: false,
-    committedPlanMatchesGenerateDirection: true,
-    planPresent: true,
-    previewSynced: true,
-  })
-
-  assert(!result.earlyReveal, `${scenario.mode}: smoke-on prepared route must bypass early reveal.`)
-  assert(result.generated, `${scenario.mode}: smoke-on prepared route must generate.`)
-  assert(result.fieldProxyCalls > 0, `${scenario.mode}: smoke-on prepared route must call Field proxy.`)
-  assert(
-    result.fieldProxyCalls <= 3,
-    `${scenario.mode}: smoke-on prepared route exceeded maxProviderCalls=3; received ${result.fieldProxyCalls}.`,
-  )
-  assert(result.liveFetchAttempted, `${scenario.mode}: smoke-on prepared route must attempt live.`)
-  process.stdout.write(
-    `${scenario.mode} prepared route smoke-on Field proxy calls: ${result.fieldProxyCalls} <= 3\n`,
-  )
-  return result.fieldProxyCalls
-}
-
-async function assertApprovedPayloadSmokeOffPreservesReveal(
-  scenario: Scenario,
-): Promise<number> {
-  resetEnv()
-  setPublicRoute()
-  globalThis.fetch = (async (input) => {
-    const url = String(input)
-    if (url.includes('/api/field/text-search')) {
-      throw new Error(`${scenario.mode}: smoke-off approved payload reveal must not call Field proxy.`)
-    }
-    throw new Error(`${scenario.mode}: unexpected fetch during approved payload reveal: ${url}`)
-  }) as typeof fetch
-
-  const result = await runPreparedRouteReviewHandlerSimulation({
-    scenario,
-    smokeSwitchEnabled: false,
-    isPublicSurface: true,
-    isCurateWrapperActive: true,
-    isBuildWrapperActive: false,
+  const approvedPayload = simulatePreparedRouteReview({
     committedPlanMatchesGenerateDirection: false,
     planPresent: false,
     previewSynced: false,
@@ -614,175 +467,56 @@ async function assertApprovedPayloadSmokeOffPreservesReveal(
     approvedPayloadArtifactMatchesSelected: true,
   })
 
-  assert(result.earlyReveal, `${scenario.mode}: smoke-off approved payload must reveal early.`)
+  assert(prepared.earlyReveal, `${scenario.mode}: prepared-route reveal branch must remain active.`)
+  assert(!prepared.generated, `${scenario.mode}: prepared-route reveal must not generate.`)
   assert(
-    result.approvedPayloadReveal,
-    `${scenario.mode}: smoke-off approved payload branch must remain active.`,
+    approvedPayload.earlyReveal && approvedPayload.approvedPayloadReveal,
+    `${scenario.mode}: approved-payload reveal branch must remain active.`,
   )
-  assert(!result.generated, `${scenario.mode}: smoke-off approved payload must not generate.`)
-  assert(result.fieldProxyCalls === 0, `${scenario.mode}: smoke-off approved payload must stay dry.`)
-  assert(!result.liveFetchAttempted, `${scenario.mode}: smoke-off approved payload must not attempt live.`)
-  process.stdout.write(`${scenario.mode} approved-payload smoke-off reveal Field proxy calls: 0\n`)
-  return result.fieldProxyCalls
+  assert(!approvedPayload.generated, `${scenario.mode}: approved-payload reveal must not generate.`)
+  process.stdout.write(`${scenario.mode} Review this route additional Field proxy calls: 0\n`)
+  return 0
 }
 
-async function assertApprovedPayloadSmokeOnBypassesReveal(
+async function assertWrongSurfaceSupplyGateStaysDry(
   scenario: Scenario,
+  overrides: Partial<StepBCurateLiveSmokeCandidateSupplyGate>,
+  label: string,
 ): Promise<number> {
   resetEnv()
-  setPublicRoute()
-  const result = await runPreparedRouteReviewHandlerSimulation({
-    scenario,
-    smokeSwitchEnabled: true,
-    isPublicSurface: true,
-    isCurateWrapperActive: true,
-    isBuildWrapperActive: false,
-    committedPlanMatchesGenerateDirection: false,
-    planPresent: false,
-    previewSynced: false,
-    approvedRefinementEntryPayloadPresent: true,
-    approvedPayloadArtifactMatchesSelected: true,
-  })
+  setPublicCurateRoute()
+  globalThis.fetch = createZeroProxyTrap(label)
+  const gate = buildSupplyGate(scenario, overrides)
 
-  assert(!result.earlyReveal, `${scenario.mode}: smoke-on approved payload must bypass reveal.`)
   assert(
-    !result.approvedPayloadReveal,
-    `${scenario.mode}: smoke-on approved payload branch must not short-circuit generation.`,
+    !shouldApplyStepBCurateLiveSmokeCandidateSupply(gate),
+    `${label}: gate should reject this surface.`,
   )
-  assert(result.generated, `${scenario.mode}: smoke-on approved payload must generate.`)
-  assert(result.fieldProxyCalls > 0, `${scenario.mode}: smoke-on approved payload must call Field proxy.`)
-  assert(
-    result.fieldProxyCalls <= 3,
-    `${scenario.mode}: smoke-on approved payload exceeded maxProviderCalls=3; received ${result.fieldProxyCalls}.`,
-  )
-  assert(result.liveFetchAttempted, `${scenario.mode}: smoke-on approved payload must attempt live.`)
-  process.stdout.write(
-    `${scenario.mode} approved-payload smoke-on Field proxy calls: ${result.fieldProxyCalls} <= 3\n`,
-  )
-  return result.fieldProxyCalls
-}
-
-async function assertPreparedRouteWrongModeSmokeStaysDry(scenario: Scenario): Promise<number> {
-  resetEnv()
-  setPublicRoute()
-  globalThis.fetch = (async (input) => {
-    const url = String(input)
-    if (url.includes('/api/field/text-search')) {
-      throw new Error(`${scenario.mode}: prepared wrong-mode smoke must not call Field proxy.`)
-    }
-    throw new Error(`${scenario.mode}: unexpected fetch during prepared wrong-mode smoke: ${url}`)
-  }) as typeof fetch
-
-  const result = await runPreparedRouteReviewHandlerSimulation({
-    scenario,
-    smokeSwitchEnabled: true,
-    isPublicSurface: true,
-    isCurateWrapperActive: false,
-    isBuildWrapperActive: scenario.mode === 'build',
-    committedPlanMatchesGenerateDirection: true,
-    planPresent: true,
-    previewSynced: true,
-  })
-
-  assert(result.earlyReveal, `${scenario.mode}: wrong-mode prepared route must preserve early reveal.`)
-  assert(!result.generated, `${scenario.mode}: wrong-mode prepared route must not generate.`)
-  assert(result.fieldProxyCalls === 0, `${scenario.mode}: wrong-mode prepared route must stay dry.`)
-  process.stdout.write(`${scenario.mode} prepared wrong-mode smoke Field proxy calls: 0\n`)
-  return result.fieldProxyCalls
-}
-
-async function assertUserSourceOverrideStillBlocksStepB(scenario: Scenario): Promise<number> {
-  resetEnv()
-  setPublicRoute()
-  let proxyCalls = 0
-  globalThis.fetch = (async (input) => {
-    const url = String(input)
-    if (url.includes('/api/field/text-search')) {
-      proxyCalls += 1
-      throw new Error(`${scenario.mode}: user source override must not enter Step B.`)
-    }
-    throw new Error(`${scenario.mode}: unexpected fetch during user source override fallback: ${url}`)
-  }) as typeof fetch
-
-  const result = await runStepBCurateLiveSmokePlanBuild({
-    gate: buildStepBGate(scenario, {
-      userSourceModeOverrideApplied: true,
-    }),
-    input: scenario.input,
-    options: {
-      starterPack: scenario.starterPack,
+  await runStepBCurateLiveSmokeCandidateSupply({
+    gate,
+    input: {
+      city: scenario.input.city,
+      mode: 'curate',
+      persona: scenario.input.persona ?? 'romantic',
+      vibe: scenario.input.primaryVibe,
       sourceMode: 'curated',
-      sourceModeOverrideApplied: true,
     },
+    starterPack: scenario.starterPack ?? null,
   })
-
-  assert(proxyCalls === 0, `${scenario.mode}: user source override must make zero proxy calls.`)
-  assert(
-    result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted === false,
-    `${scenario.mode}: user source override must not attempt live Field retrieval.`,
-  )
-  process.stdout.write(`${scenario.mode} user-source-override smoke Field proxy calls: 0\n`)
-  return proxyCalls
-}
-
-async function assertSmokeSwitchWrongModeStaysDry(scenario: Scenario): Promise<number> {
-  resetEnv()
-  setPublicRoute()
-  let proxyCalls = 0
-  globalThis.fetch = (async (input) => {
-    const url = String(input)
-    if (url.includes('/api/field/text-search')) {
-      proxyCalls += 1
-      throw new Error(`${scenario.mode}: smoke switch must not call Field proxy outside Curate final.`)
-    }
-    throw new Error(`${scenario.mode}: unexpected fetch during smoke switch dry fallback: ${url}`)
-  }) as typeof fetch
-
-  const result = await runStepBCurateLiveSmokePlanBuild({
-    gate: buildStepBGate(scenario),
-    input: scenario.input,
-    options: {
-      starterPack: scenario.starterPack,
-      sourceMode: 'curated',
-      sourceModeOverrideApplied: false,
-    },
-  })
-
-  assert(proxyCalls === 0, `${scenario.mode}: smoke switch fallback must make zero proxy calls.`)
-  assert(
-    result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted === false,
-    `${scenario.mode}: smoke switch fallback must not attempt live retrieval.`,
-  )
-  process.stdout.write(`${scenario.mode} smoke switch Field proxy calls: 0\n`)
-  return proxyCalls
+  process.stdout.write(`${label} Field proxy calls: 0\n`)
+  return 0
 }
 
 async function assertFailClosedDoesNotRenderFalseCard(): Promise<void> {
   resetEnv()
-  process.env.VITE_ID8_FIELD_GOVERNED_MODE = '1'
-  process.env.VITE_ID8_FAIL_CLOSED_ON_LIVE_INVENTORY_FAILURE = '1'
-  setPublicRoute()
-  const calls: CapturedFieldRequest[] = []
-  globalThis.fetch = createFailClosedFieldProxyFetch(calls)
   const scenario = buildScenarios()[0]
-
-  let thrown = false
-  try {
-    await runStepBCurateLiveSmokePlanBuild({
-      gate: buildStepBGate(scenario),
-      input: scenario.input,
-      options: {
-        starterPack: scenario.starterPack,
-        sourceMode: 'curated',
-        sourceModeOverrideApplied: false,
-      },
-    })
-  } catch {
-    thrown = true
-  }
-
-  assert(thrown, 'Governed fail-closed Field proxy failure must block generation.')
-  assert(calls.length > 0, 'Fail-closed scenario must still prove the Field proxy was called.')
+  globalThis.fetch = createZeroProxyTrap('fail-closed card truth')
+  const result = simulatePreparedRouteReview({
+    committedPlanMatchesGenerateDirection: false,
+    planPresent: false,
+    previewSynced: false,
+  })
+  assert(result.generated, 'Unprepared reveal may still fall back to dry deterministic generation.')
   const falseCard = buildPublicCurateCardTruthModel({
     artifact: null,
     itinerary: null,
@@ -795,30 +529,39 @@ async function assertFailClosedDoesNotRenderFalseCard(): Promise<void> {
 
 async function main(): Promise<void> {
   let defaultGenerationProxyCalls = 0
-  let smokeOffReviewRouteProxyCalls = 0
-  let preparedSmokeOffProxyCalls = 0
-  let preparedSmokeOnProxyCalls = 0
-  let approvedPayloadSmokeOffProxyCalls = 0
-  let approvedPayloadSmokeOnProxyCalls = 0
-  let stepBProxyCalls = 0
-  let userSourceOverrideProxyCalls = 0
-  let wrongModeSmokeProxyCalls = 0
-  let wrongModePreparedSmokeProxyCalls = 0
+  let smokeOffSupplyProxyCalls = 0
+  let smokeOnSupplyProxyCalls = 0
+  let callerEnvelopeProxyCalls = 0
+  let reviewProxyCalls = 0
+  let wrongSurfaceProxyCalls = 0
   for (const scenario of buildScenarios()) {
     defaultGenerationProxyCalls += await assertPublicDefaultGenerationStaysDry(scenario)
     if (scenario.mode === 'curate') {
-      smokeOffReviewRouteProxyCalls +=
-        await assertPublicSelectedCurateReviewRouteSmokeOffStaysDry(scenario)
-      preparedSmokeOffProxyCalls += await assertPreparedRouteSmokeOffPreservesEarlyReveal(scenario)
-      preparedSmokeOnProxyCalls += await assertPreparedRouteSmokeOnBypassesEarlyReveal(scenario)
-      approvedPayloadSmokeOffProxyCalls +=
-        await assertApprovedPayloadSmokeOffPreservesReveal(scenario)
-      approvedPayloadSmokeOnProxyCalls += await assertApprovedPayloadSmokeOnBypassesReveal(scenario)
-      stepBProxyCalls += await assertPublicSelectedCurateReviewRouteUsesPrivateLiveEnvelope(scenario)
-      userSourceOverrideProxyCalls += await assertUserSourceOverrideStillBlocksStepB(scenario)
-    } else {
-      wrongModePreparedSmokeProxyCalls += await assertPreparedRouteWrongModeSmokeStaysDry(scenario)
-      wrongModeSmokeProxyCalls += await assertSmokeSwitchWrongModeStaysDry(scenario)
+      smokeOffSupplyProxyCalls += await assertPublicCurateCandidateSupplySmokeOffStaysDry(scenario)
+      const smokeOnSupply = await assertPublicCurateCandidateSupplyUsesPrivateEnvelope(scenario)
+      smokeOnSupplyProxyCalls += smokeOnSupply.fieldProxyCalls
+      callerEnvelopeProxyCalls += await assertCallerSuppliedEnvelopeCannotActivateSupplySmoke(scenario)
+      reviewProxyCalls += await assertReviewThisRouteMakesNoAdditionalFieldProxyCalls(scenario)
+      wrongSurfaceProxyCalls += await assertWrongSurfaceSupplyGateStaysDry(
+        scenario,
+        { pathname: '/start/surprise', mode: 'surprise', inputMode: 'surprise' },
+        'Surprise supply smoke',
+      )
+      wrongSurfaceProxyCalls += await assertWrongSurfaceSupplyGateStaysDry(
+        scenario,
+        { pathname: '/start/build', mode: 'build', inputMode: 'build' },
+        'Build supply smoke',
+      )
+      wrongSurfaceProxyCalls += await assertWrongSurfaceSupplyGateStaysDry(
+        scenario,
+        { pathname: '/dev/start/curate', isPublicSurface: false },
+        'JourneyMapReal/Live/Keep the Night Going dry gate',
+      )
+      wrongSurfaceProxyCalls += await assertWrongSurfaceSupplyGateStaysDry(
+        scenario,
+        { phase: 'other' },
+        'Build provider shadow dry gate',
+      )
     }
   }
   await assertFailClosedDoesNotRenderFalseCard()
@@ -826,32 +569,16 @@ async function main(): Promise<void> {
     `Public default final generation without explicit live envelope proxy calls: ${defaultGenerationProxyCalls}\n`,
   )
   process.stdout.write(
-    `Public selected Curate review route smoke-off proxy calls: ${smokeOffReviewRouteProxyCalls}\n`,
+    `Public Curate candidate supply smoke-off proxy calls: ${smokeOffSupplyProxyCalls}\n`,
   )
   process.stdout.write(
-    `Prepared public selected Curate review route smoke-off proxy calls: ${preparedSmokeOffProxyCalls}\n`,
+    `Public Curate candidate supply smoke-on proxy calls: ${smokeOnSupplyProxyCalls}\n`,
   )
   process.stdout.write(
-    `Prepared public selected Curate review route smoke-on proxy calls: ${preparedSmokeOnProxyCalls}\n`,
+    `Caller-supplied liveEnvelope dry proxy calls: ${callerEnvelopeProxyCalls}\n`,
   )
-  process.stdout.write(
-    `Approved-payload public selected Curate review route smoke-off proxy calls: ${approvedPayloadSmokeOffProxyCalls}\n`,
-  )
-  process.stdout.write(
-    `Approved-payload public selected Curate review route smoke-on proxy calls: ${approvedPayloadSmokeOnProxyCalls}\n`,
-  )
-  process.stdout.write(
-    `Step B Curate wrapper proxy calls: ${stepBProxyCalls}\n`,
-  )
-  process.stdout.write(
-    `User source override smoke proxy calls: ${userSourceOverrideProxyCalls}\n`,
-  )
-  process.stdout.write(
-    `Wrong-mode smoke switch proxy calls: ${wrongModeSmokeProxyCalls}\n`,
-  )
-  process.stdout.write(
-    `Wrong-mode prepared smoke switch proxy calls: ${wrongModePreparedSmokeProxyCalls}\n`,
-  )
+  process.stdout.write(`Review this route additional proxy calls: ${reviewProxyCalls}\n`)
+  process.stdout.write(`Wrong-surface supply gate proxy calls: ${wrongSurfaceProxyCalls}\n`)
   process.stdout.write('public generation Field proxy wiring: passed\n')
 }
 

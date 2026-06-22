@@ -10,8 +10,15 @@ import {
   readDevGreatStopFixturesEnabled,
 } from '../../sources/devGreatStopFixtures'
 import type { ScoredVenue } from '../../types/arc'
-import type { BudgetPreference, DistanceMode, PersonaMode, VibeAnchor } from '../../types/intent'
+import type {
+  BudgetPreference,
+  DistanceMode,
+  IntentInput,
+  PersonaMode,
+  VibeAnchor,
+} from '../../types/intent'
 import type { SourceMode } from '../../types/sourceMode'
+import type { StarterPack } from '../../types/starterPack'
 import type { Venue, VenueCategory } from '../../types/venue'
 
 export type ScenarioFamily =
@@ -134,8 +141,9 @@ type BuildStopTypeCandidateBoardInput = {
   scoredVenues: ScoredVenue[]
 }
 
-type BuildStopTypeCandidateBoardFromIntentInput = {
+export type BuildStopTypeCandidateBoardFromIntentInput = {
   city: string
+  mode?: IntentInput['mode']
   persona: PersonaMode | string
   vibe: VibeAnchor | string
   scenarioFamilyOverride?: ScenarioFamily
@@ -143,6 +151,7 @@ type BuildStopTypeCandidateBoardFromIntentInput = {
   budget?: BudgetPreference
   sourceMode?: SourceMode
   liveEnvelope?: LiveProviderEnvelope
+  starterPack?: StarterPack
 }
 
 type StopTypeFitResult = {
@@ -1551,12 +1560,13 @@ export async function buildStopTypeCandidateBoardFromIntent(
     city: input.city,
     distanceMode: input.distanceMode ?? 'nearby',
     budget: input.budget ?? 'balanced',
-    mode: 'build',
+    mode: input.mode ?? 'build',
   })
   const lens = buildExperienceLens({ intent })
   const retrieval = await retrieveVenues(intent, lens, {
     requestedSourceMode: input.sourceMode ?? 'curated',
     liveEnvelope: input.liveEnvelope,
+    starterPack: input.starterPack,
   })
   const scoredVenues = scoreVenueCollection(
     retrieval.venues,

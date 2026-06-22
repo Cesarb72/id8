@@ -8,7 +8,7 @@ interface ProviderCallSiteClassification {
   trigger: string
   envelope: 'yes' | 'blocked-by-source-mode' | 'default-closed-runtime-envelope'
   pageRenderSurface: boolean
-  classification: 'enveloped' | 'blocked' | 'intentionally-explicit-final-generation'
+  classification: 'enveloped' | 'blocked' | 'intentionally-explicit-candidate-supply'
   evidence: string[]
 }
 
@@ -17,15 +17,15 @@ const callSites: ProviderCallSiteClassification[] = [
     filePath: 'src/domain/sources/fetchLivePlaces.ts',
     functionName: 'fetchLivePlaces',
     callPurpose: 'retrieval_supply',
-    trigger: 'Step B Curate final generation through private live smoke wrapper',
+    trigger: 'Step B Curate candidate supply through private live smoke wrapper',
     envelope: 'yes',
     pageRenderSurface: false,
-    classification: 'intentionally-explicit-final-generation',
+    classification: 'intentionally-explicit-candidate-supply',
     evidence: [
       'retrieveVenues passes options.liveEnvelope caps into fetchLivePlaces',
       'retrieveVenues forces curated retrieval unless liveEnvelope.liveProviderAllowed === true',
       'runGeneratePlan strips raw caller liveEnvelope before internal retrieval',
-      'Step B Curate wrapper owns the private 3/3/1 envelope path',
+      'Step B Curate candidate-supply wrapper owns the private 3/3/1 envelope path',
       'fetchLivePlaces forwards options.envelope to ProviderAdapter.searchPlaces',
     ],
   },
@@ -180,63 +180,81 @@ function assertStepBCuratePrivateEnvelopeBoundary(): void {
     'runGeneratePlan must strip raw caller liveEnvelope values.',
   )
   assert(
-    runGeneratePlanSource.includes('const STEP_B_CURATE_LIVE_SMOKE_ENVELOPE: LiveProviderEnvelope = {') &&
-      runGeneratePlanSource.includes('maxProviderCalls: 3') &&
-      runGeneratePlanSource.includes('maxQueryLabels: 3') &&
-      runGeneratePlanSource.includes('maxCenters: 1'),
-    'Step B Curate live smoke envelope must remain private and fixed at 3/3/1.',
+    !runGeneratePlanSource.includes('runStepBCurateLiveSmokeGeneratePlan') &&
+      !runGeneratePlanSource.includes('STEP_B_CURATE_LIVE_SMOKE_ENVELOPE'),
+    'Final-reveal Step B generation corridor must be retired.',
+  )
+  assert(
+    appServiceSource.includes(
+      'const STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE: LiveProviderEnvelope = {',
+    ) &&
+      appServiceSource.includes('maxProviderCalls: 3') &&
+      appServiceSource.includes('maxQueryLabels: 3') &&
+      appServiceSource.includes('maxCenters: 1'),
+    'Step B Curate candidate-supply envelope must remain private and fixed at 3/3/1.',
   )
   assert(
     appServiceSource.includes('gate.environment === \'default\'') &&
+      appServiceSource.includes('gate.isPublicSurface') &&
+      appServiceSource.includes("normalizedPathname === '/start/curate'") &&
       appServiceSource.includes('gate.mode === \'curate\'') &&
       appServiceSource.includes('gate.inputMode === \'curate\'') &&
-      appServiceSource.includes('gate.generationTarget === \'final\'') &&
+      appServiceSource.includes('gate.phase === \'candidate_supply\'') &&
       appServiceSource.includes('gate.selectedStarterPackPresent') &&
-      appServiceSource.includes('gate.invocation === \'public_selected_curate_review_route\'') &&
       appServiceSource.includes('gate.userSourceModeOverrideApplied === false') &&
       appServiceSource.includes('gate.smokeSwitchEnabled'),
-    'Step B Curate app-service gate must include every approved predicate.',
+    'Step B Curate candidate-supply app-service gate must include every approved predicate.',
   )
   assert(
-    countMatches(appShellSource, /\brunStepBCurateLiveSmokePlanBuild\(\{/g) === 0 &&
+    countMatches(appShellSource, /\brunStepBCurateLiveSmokeCandidateSupply\(\{/g) === 0 &&
       !appShellSource.includes('readStepBCurateLiveSmokeEnabled()'),
     'AppShell is archive-mounted and must not remain a Step B Curate wrapper entry point.',
   )
   assert(
-    countMatches(sandboxConciergeSource, /\brunStepBCurateLiveSmokePlanBuild\(\{/g) === 1,
-    'SandboxConciergePage must have the only runtime Step B Curate wrapper call site.',
+    countMatches(sandboxConciergeSource, /\brunStepBCurateLiveSmokeCandidateSupply\(\{/g) === 1,
+    'SandboxConciergePage must have the only runtime Step B Curate candidate-supply wrapper call site.',
   )
   assert(
-    sandboxConciergeSource.includes("invocation === 'public_selected_curate_review_route'") &&
-      sandboxConciergeSource.includes("'public_selected_curate_review_route'") &&
+    sandboxConciergeSource.includes("phase: 'candidate_supply'") &&
+      sandboxConciergeSource.includes('isPublicSurface') &&
       sandboxConciergeSource.includes('userSourceModeOverrideApplied: false'),
-    'Public selected Curate review-route invocation must be explicit and not authorized by broad sourceModeOverrideApplied.',
+    'Public Curate candidate-supply invocation must be explicit and not authorized by broad sourceModeOverrideApplied.',
   )
   assert(
-    sandboxConciergeSource.includes('const stepBCurateReviewRouteForceGeneration = shouldApplyStepBCurateLiveSmoke({') &&
-      sandboxConciergeSource.includes('!stepBCurateReviewRouteForceGeneration &&') &&
-      sandboxConciergeSource.includes('committedPlanMatchesGenerateDirection || (plan && previewSynced)'),
-    'Prepared-route reveal early return may only be bypassed by the exact Step B Curate review-route gate.',
+    !sandboxConciergeSource.includes('stepBCurateReviewRouteForceGeneration') &&
+      sandboxConciergeSource.includes('if (committedPlanMatchesGenerateDirection || (plan && previewSynced))'),
+    'Prepared-route reveal early return must remain deterministic and must not be bypassed by Step B.',
   )
   assert(
-    sandboxConciergeSource.includes('!stepBCurateReviewRouteForceGeneration &&\n      isCurateWrapperActive &&\n      selectedCuratePreviewCommitability?.status === \'committable\'') &&
+    sandboxConciergeSource.includes('isCurateWrapperActive &&\n      selectedCuratePreviewCommitability?.status === \'committable\'') &&
       sandboxConciergeSource.includes('selectedCuratePreviewCommitability.approvedRefinementEntryPayload'),
-    'Curate approved-payload reveal branch may only be bypassed by the exact Step B Curate review-route gate.',
+    'Curate approved-payload reveal branch must remain active and deterministic.',
   )
   assert(
     sandboxConciergeSource.includes('readStepBCurateLiveSmokeEnabled()') &&
       !sandboxConciergeSource.includes('URLSearchParams(window.location.search).get(\'VITE_ID8_STEP_B_CURATE_LIVE_SMOKE\')'),
     'Step B smoke switch must be deployment/app env driven, not URL-param driven.',
   )
+  assert(
+    !sandboxConciergeSource.includes('[ID8 STEP B TRACE]') &&
+      appServiceSource.includes('[ID8 STEP B SUPPLY TRACE]'),
+    'Reveal-path diagnostics must be replaced by supply-stage diagnostics.',
+  )
+  assert(
+    appServiceSource.includes('liveEnvelope: _ignoredCallerLiveEnvelope') &&
+      appServiceSource.includes('sourceMode: \'hybrid\'') &&
+      appServiceSource.includes(
+        'liveEnvelope: STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE',
+      ),
+    'Candidate-supply wrapper must strip caller liveEnvelope and own the live supply envelope.',
+  )
 
   const importingFiles = listSourceFiles('src').filter((filePath) =>
     readFileSync(filePath, 'utf8').includes('runStepBCurateLiveSmokeGeneratePlan'),
   )
   assert(
-    importingFiles.length === 2 &&
-      importingFiles.includes(join('src', 'domain', 'runGeneratePlan.ts')) &&
-      importingFiles.includes(join('src', 'app', 'services', 'arcApplicationService.ts')),
-    `Only arcApplicationService may import the internal Step B generator; found ${importingFiles.join(', ')}.`,
+    importingFiles.length === 0,
+    `Final-reveal Step B generator must not remain in source files; found ${importingFiles.join(', ')}.`,
   )
 }
 

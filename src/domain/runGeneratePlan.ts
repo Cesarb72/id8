@@ -161,13 +161,6 @@ interface RunGeneratePlanInternalOptions extends RunGeneratePlanOptions {
   stepBCurateLiveSmokeActive?: boolean
 }
 
-const STEP_B_CURATE_LIVE_SMOKE_ENVELOPE: LiveProviderEnvelope = {
-  liveProviderAllowed: true,
-  maxProviderCalls: 3,
-  maxQueryLabels: 3,
-  maxCenters: 1,
-}
-
 function shouldBlockGovernedPlannerIngress(retrieval: RetrieveVenuesResult): boolean {
   const runtimeMode = retrieval.sourceMode.runtimeMode
   const activeMode = retrieval.sourceMode.effectiveMode
@@ -1582,24 +1575,6 @@ export async function runGeneratePlan(
     ...safeOptions
   } = options as RunGeneratePlanInternalOptions
   return runGeneratePlanInternal(input, safeOptions)
-}
-
-export async function runStepBCurateLiveSmokeGeneratePlan(
-  input: IntentInput,
-  options: RunGeneratePlanOptions = {},
-): Promise<GeneratePlanResult> {
-  if (
-    input.mode !== 'curate' ||
-    !options.starterPack ||
-    options.sourceModeOverrideApplied !== false
-  ) {
-    return runGeneratePlan(input, options)
-  }
-  return runGeneratePlanInternal(input, {
-    ...options,
-    liveEnvelope: STEP_B_CURATE_LIVE_SMOKE_ENVELOPE,
-    stepBCurateLiveSmokeActive: true,
-  })
 }
 
 async function runGeneratePlanInternal(

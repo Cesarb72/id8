@@ -1,5 +1,5 @@
 import { buildCurateStarterPlannerInput } from '../src/app/services/curate/buildCurateCommittedRouteFallback.ts'
-import { runStepBCurateLiveSmokePlanBuild } from '../src/app/services/arcApplicationService.ts'
+import { runStepBCurateLiveSmokeCandidateSupply } from '../src/app/services/arcApplicationService.ts'
 import { starterPacks } from '../src/data/starterPacks.ts'
 import { getDiscoveryCandidates } from '../src/domain/discovery/getDiscoveryCandidates.ts'
 import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
@@ -222,7 +222,7 @@ async function runDefaultFinalGenerationDry(starterPack: StarterPack): Promise<n
   )
 }
 
-async function runStepBCurateLiveSmokeGeneration(starterPack: StarterPack): Promise<{
+async function runStepBCurateLiveSmokeCandidateSupplyHarness(starterPack: StarterPack): Promise<{
   calls: number
   maxProviderCalls: number
 }> {
@@ -231,7 +231,7 @@ async function runStepBCurateLiveSmokeGeneration(starterPack: StarterPack): Prom
   globalThis.fetch = (async (input, init) => {
     const url = String(input)
     if (!url.includes(FIELD_PROXY_PATH)) {
-      throw new Error(`Step B Curate live smoke generation: unexpected fetch to ${url}`)
+      throw new Error(`Step B Curate live smoke candidate supply: unexpected fetch to ${url}`)
     }
     proxyCalls += 1
     const body = JSON.parse(String(init?.body)) as FieldTextSearchRequest
@@ -244,34 +244,33 @@ async function runStepBCurateLiveSmokeGeneration(starterPack: StarterPack): Prom
     } as Response
   }) as typeof fetch
 
-  const result = await runStepBCurateLiveSmokePlanBuild({
+  const board = await runStepBCurateLiveSmokeCandidateSupply({
     gate: {
       environment: 'default',
       pathname: '/start/curate',
+      isPublicSurface: true,
       mode: 'curate',
       inputMode: 'curate',
-      generationTarget: 'final',
+      phase: 'candidate_supply',
       selectedStarterPackPresent: true,
-      invocation: 'public_selected_curate_review_route',
       userSourceModeOverrideApplied: false,
       smokeSwitchEnabled: true,
     },
-    input: buildCoffeeBooksInput(starterPack),
-    options: {
-      starterPack,
+    input: {
+      city: 'San Jose',
+      mode: 'curate',
+      persona: starterPack.personaBias ?? 'romantic',
+      vibe: starterPack.primaryAnchor,
       sourceMode: 'curated',
-      sourceModeOverrideApplied: false,
     },
+    starterPack,
   })
 
-  assert(proxyCalls > 0, 'Step B Curate live smoke generation must exercise the Field proxy.')
+  assert(board !== null, 'Step B Curate live smoke candidate supply must build a board.')
+  assert(proxyCalls > 0, 'Step B Curate live smoke candidate supply must exercise the Field proxy.')
   assert(
     proxyCalls <= maxProviderCalls,
-    `Step B Curate live smoke generation exceeded maxProviderCalls=${maxProviderCalls}; received ${proxyCalls}.`,
-  )
-  assert(
-    result.trace.retrievalDiagnostics.liveSource.dispatchQueriesPlanned <= maxProviderCalls,
-    'Step B Curate live smoke generation must cap dispatch planning before provider calls.',
+    `Step B Curate live smoke candidate supply exceeded maxProviderCalls=${maxProviderCalls}; received ${proxyCalls}.`,
   )
   return {
     calls: proxyCalls,
@@ -304,7 +303,7 @@ async function main(): Promise<void> {
     () => runRestoredPreselectedStarterPreview(coffeeBooks),
   )
   const defaultFinalGenerationCalls = await runDefaultFinalGenerationDry(coffeeBooks)
-  const stepBLiveGeneration = await runStepBCurateLiveSmokeGeneration(coffeeBooks)
+  const stepBLiveCandidateSupply = await runStepBCurateLiveSmokeCandidateSupplyHarness(coffeeBooks)
 
   process.stdout.write(`Curate entry render proxy calls: ${entryRenderCalls}\n`)
   process.stdout.write(`Starter list render proxy calls: ${starterListCalls}\n`)
@@ -315,7 +314,7 @@ async function main(): Promise<void> {
     `Public default final generation without explicit live envelope proxy calls: ${defaultFinalGenerationCalls}\n`,
   )
   process.stdout.write(
-    `Step B Curate live smoke generation proxy calls: ${stepBLiveGeneration.calls} <= ${stepBLiveGeneration.maxProviderCalls}\n`,
+    `Step B Curate live smoke candidate supply proxy calls: ${stepBLiveCandidateSupply.calls} <= ${stepBLiveCandidateSupply.maxProviderCalls}\n`,
   )
   process.stdout.write('curate entry no field proxy: passed\n')
 }
