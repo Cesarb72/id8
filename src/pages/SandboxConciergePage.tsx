@@ -2928,18 +2928,19 @@ const coffeeBooksScenarioRequiredStopTypes: StopType[] = [
   'atmospheric_nightcap',
 ]
 
-const coffeeBooksRoleCompatibilityDiagnostics: Record<
-  StopType,
-  {
-    rolePurpose: string
-    allowedVenueCategories: string[]
-    allowedSourceTypes: string[]
-    compatibleCoffeeBooksEvidence: string[]
-    bookstoreCompatible: boolean
-    libraryCompatible: boolean
-    literaryCompatible: boolean
-    compatibilityDefinedIn: string
-  }
+type CoffeeBooksRoleCompatibilityDiagnostic = {
+  rolePurpose: string
+  allowedVenueCategories: string[]
+  allowedSourceTypes: string[]
+  compatibleCoffeeBooksEvidence: string[]
+  bookstoreCompatible: boolean
+  libraryCompatible: boolean
+  literaryCompatible: boolean
+  compatibilityDefinedIn: string
+}
+
+const coffeeBooksRoleCompatibilityDiagnostics: Partial<
+  Record<StopType, CoffeeBooksRoleCompatibilityDiagnostic>
 > = {
   cultural_institution: {
     rolePurpose: 'closest cultural anchor role in romantic_cultured',
@@ -2991,16 +2992,7 @@ const coffeeBooksRoleCompatibilityDiagnostics: Record<
     literaryCompatible: false,
     compatibilityDefinedIn: 'scoreStopTypeFit(atmospheric_nightcap)',
   },
-} as Record<StopType, {
-  rolePurpose: string
-  allowedVenueCategories: string[]
-  allowedSourceTypes: string[]
-  compatibleCoffeeBooksEvidence: string[]
-  bookstoreCompatible: boolean
-  libraryCompatible: boolean
-  literaryCompatible: boolean
-  compatibilityDefinedIn: string
-}>
+}
 
 const stepBStarterRoleCompatibilityProbe = {
   coffeeBooks: {
@@ -13090,7 +13082,9 @@ export function SandboxConciergePage({
       'books inc',
       'recycle bookstore west',
     ]
-    const boardDiagnostics = scenarioCandidateBoard?.debug?.candidateDiagnosticsByStopType ?? {}
+    const boardDiagnostics: NonNullable<
+      NonNullable<StopTypeCandidateBoard['debug']>['candidateDiagnosticsByStopType']
+    > = scenarioCandidateBoard?.debug?.candidateDiagnosticsByStopType ?? {}
     const activeScenarioRequiredStopTypes =
       scenarioCandidateBoard?.requiredStopTypes ?? coffeeBooksScenarioRequiredStopTypes
     const scenarioRoleCompatibilityDiagnostics = {
@@ -13237,7 +13231,6 @@ export function SandboxConciergePage({
         qualificationStatus: model?.qualificationStatus ?? getCurateQualificationStatus(preflight),
         hasApprovedPayload: model?.hasApprovedPayload ?? false,
         rejectionReason:
-          preflight?.failedReason ??
           preflight?.failedCheck ??
           (model?.hasApprovedPayload ? null : 'no_approved_payload'),
       }

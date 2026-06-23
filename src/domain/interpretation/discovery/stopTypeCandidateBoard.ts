@@ -131,7 +131,7 @@ export type StopTypeCandidateBoard = {
       score: number
       fixtureBoardDropReason: 'selected'
     }>
-    candidateDiagnosticsByStopType?: Record<
+    candidateDiagnosticsByStopType?: Partial<Record<
       StopType,
       {
         stopType: StopType
@@ -160,7 +160,7 @@ export type StopTypeCandidateBoard = {
           }>
         }>
       }
-    >
+    >>
   }
 }
 
@@ -415,9 +415,15 @@ const coffeeBooksDiagnosticSemanticMatchers: Array<{
   { evidenceType: 'cultural', terms: ['cultural center', 'cultural venue'] },
 ]
 
-function collectCoffeeBooksCandidateDiagnosticEvidence(candidate: StopTypeCandidate): NonNullable<
-  NonNullable<StopTypeCandidateBoard['debug']>['candidateDiagnosticsByStopType']
->[StopType]['topCandidates'][number]['matchedSemanticEvidence'] {
+function collectCoffeeBooksCandidateDiagnosticEvidence(candidate: StopTypeCandidate): Array<{
+  field: string
+  rawValue: string
+  normalizedTerm: string
+  evidenceType: string
+  matchType: 'token' | 'phrase'
+  sourceScope: 'selected_stop_field'
+  admissible: true
+}> {
   const parts: Array<{ field: string; value: string | string[] | undefined }> = [
     { field: 'displayName', value: candidate.name },
     { field: 'venueCategory', value: candidate.venueCategory },
@@ -1621,8 +1627,8 @@ function buildFixtureCandidateBoardDebug(
   }
 
   const candidateDiagnosticsByStopType = {} as NonNullable<
-    StopTypeCandidateBoard['debug']
-  >['candidateDiagnosticsByStopType']
+    NonNullable<StopTypeCandidateBoard['debug']>['candidateDiagnosticsByStopType']
+  >
   ;(Object.keys(rankedBoard) as StopType[]).forEach((stopType) => {
     const ranked = rankedBoard[stopType]
       .slice()
