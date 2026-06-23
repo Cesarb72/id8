@@ -25,6 +25,7 @@
   "include": [
     "vite.config.ts",
     "scripts/run-provider-dry-run.ts",
-    "scripts/run-provider-corpus-build-harness.ts"
+    "scripts/run-provider-corpus-build-harness.ts",
+    "scripts/observe-hosted-step-b-supply.ts"
   ]
 }
