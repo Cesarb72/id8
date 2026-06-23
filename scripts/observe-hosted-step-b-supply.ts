@@ -1183,7 +1183,7 @@ async function runHostedObservation(): Promise<void> {
     )
     await persist('route_source_after_continue')
 
-    await waitUntil('visible route cards after candidate supply', async () => {
+    await waitUntil('visible route cards or no-card diagnostics after candidate supply', async () => {
       if (!cdp) {
         return false
       }
@@ -1191,7 +1191,27 @@ async function runHostedObservation(): Promise<void> {
       evidence.routeCardsBeforeClick = cards
       await recordEvent('route_card_poll', { count: cards.length, cards })
       await persist('route_card_poll')
-      return cards.length > 0
+      if (cards.length > 0) {
+        return true
+      }
+      const fieldProxyCompletedCount = evidence.networkRequests.filter(
+        (request) => request.isFieldProxy && request.status != null,
+      ).length
+      if (fieldProxyCompletedCount < 3) {
+        return false
+      }
+      const noCardDiagnostics = await readStepBCoffeeBooksDiagnostics(cdp)
+      evidence.stepBDiagnosticEvidence.push({
+        timestamp: isoNow(),
+        action: 'after_candidate_supply_no_card_poll',
+        ...noCardDiagnostics,
+      })
+      await recordEvent(
+        'step_b_coffee_books_diagnostics',
+        evidence.stepBDiagnosticEvidence[evidence.stepBDiagnosticEvidence.length - 1],
+      )
+      await persist('no_card_diagnostics_after_candidate_supply')
+      return true
     })
     await checkpoint('before_click_route_card')
     evidence.routeCardsBeforeClick = await readRouteCards(cdp)
@@ -1200,7 +1220,33 @@ async function runHostedObservation(): Promise<void> {
 
     const selectedCard = evidence.routeCardsBeforeClick[0]
     if (!selectedCard) {
-      throw new Error('No visible route card found.')
+      const noCardDiagnostics = await readStepBCoffeeBooksDiagnostics(cdp)
+      evidence.stepBDiagnosticEvidence.push({
+        timestamp: isoNow(),
+        action: 'no_visible_route_card_after_candidate_supply',
+        ...noCardDiagnostics,
+      })
+      await recordEvent(
+        'step_b_coffee_books_diagnostics',
+        evidence.stepBDiagnosticEvidence[evidence.stepBDiagnosticEvidence.length - 1],
+      )
+      const routeSourceNoCard = await readRouteSourceEvidence(cdp)
+      evidence.routeSourceEvidence.push({
+        timestamp: isoNow(),
+        action: 'no_visible_route_card_after_candidate_supply',
+        ...routeSourceNoCard,
+      })
+      await recordEvent(
+        'route_source_evidence',
+        evidence.routeSourceEvidence[evidence.routeSourceEvidence.length - 1],
+      )
+      await persist('no_visible_route_card_after_candidate_supply')
+      if (!noCardDiagnostics.present) {
+        throw new Error(
+          'No visible route card found and Step B Coffee & Books diagnostics were missing after candidate supply.',
+        )
+      }
+      return
     }
     const cardClickResult = await clickRouteCard(cdp, 0)
     evidence.selectedRouteCard = {

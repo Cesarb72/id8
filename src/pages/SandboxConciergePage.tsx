@@ -21143,6 +21143,169 @@ export function SandboxConciergePage({
     !isPublicSurface || (showConfirmBackToReview && isSurpriseWrapperActive)
   const effectiveNavBackLabel = publicNavBackIsSafe ? navBackLabel : undefined
   const effectiveNavBackOnClick = publicNavBackIsSafe ? navBackOnClick : undefined
+  const stepBCoffeeBooksAlwaysMountedDiagnostics = useMemo(() => {
+    if (!stepBCoffeeBooksDiagnosticsActive) {
+      return null
+    }
+    const visibleCardDiagnostics = curateVisibleCardModels.map((model) => {
+      const preflight = getCuratePreviewCommitability(model.artifact.id)
+      return {
+        artifactId: model.artifact.id,
+        sourceOpportunityId: model.artifact.sourceOpportunityId,
+        visibleCardModelProduced: true,
+        qualificationStatus: model.qualificationStatus,
+        hasApprovedPayload: model.hasApprovedPayload,
+        approvedPayloadPresent: Boolean(preflight?.approvedRefinementEntryPayload),
+        approvedFinalRoutePresent: Boolean(preflight?.approvedRefinementEntryPayload?.finalRoute),
+        cardDisplaySource: model.cardDisplaySource,
+        isSelectable: model.isSelectable,
+        directionBackingStatus: model.artifact.directionBacking?.status ?? 'missing',
+      }
+    })
+    const runtimeSummaryVisible = Boolean(selectedRouteSummaryArtifact)
+    const reviewCtaVisible = Boolean(
+      selectedCuratePreviewCommitability?.approvedRefinementEntryPayload &&
+        selectedCuratePreviewCommitability.approvedRefinementEntryPayload.finalRoute,
+    )
+    return {
+      diagnosticMount: 'always_mounted_public_curate_page_level',
+      diagnosticVersion: 'p1h_candidate_to_card_always_mounted_v1',
+      active: true,
+      currentPath,
+      starterPackId: selectedStarterPack?.id ?? null,
+      availability: {
+        candidateSupplyAttemptedOrCompleted: Boolean(
+          scenarioCandidateBoard ||
+            scenarioBuiltNights.length > 0 ||
+            curateScenarioBackedArtifactBridge ||
+            step2CandidateRouteArtifacts.length > 0 ||
+            curateQualificationCandidateArtifacts.length > 0,
+        ),
+        candidateBoardPresent: Boolean(scenarioCandidateBoard),
+        scenarioBackedBridgePresent: Boolean(curateScenarioBackedArtifactBridge),
+        routeCardsVisible: curatePrimaryCardDisplay.models.length > 0,
+        runtimeSummaryVisible,
+        reviewCtaVisible,
+      },
+      diagnosticsUnavailableReason: stepBCoffeeBooksCandidateDiagnostics
+        ? null
+        : !scenarioCandidateBoard
+          ? 'candidate_board_not_available_yet'
+          : 'candidate_diagnostics_not_available',
+      scenarioRoleCompatibility:
+        stepBCoffeeBooksCandidateDiagnostics?.scenarioRoleCompatibility ?? null,
+      oneStarterVsSystemicClassification:
+        stepBCoffeeBooksCandidateDiagnostics?.oneStarterVsSystemicClassification ?? null,
+      candidateBoard:
+        stepBCoffeeBooksCandidateDiagnostics?.candidateBoard ?? {
+          boardPresent: Boolean(scenarioCandidateBoard),
+          stopTypeDiagnostics: [],
+          bookstoreCandidateDisposition: [],
+          unavailableReason: scenarioCandidateBoard
+            ? 'candidate_board_diagnostics_missing'
+            : 'candidate_board_not_available_yet',
+        },
+      scenarioBuilder:
+        stepBCoffeeBooksCandidateDiagnostics?.scenarioBuilder ?? {
+          scenarioNightCount: scenarioBuiltNights.length,
+          scenarioBuiltCount: scenarioBuiltNights.filter((night) => night.complete).length,
+          scenarioRejectedCount:
+            scenarioBuiltNights.length - scenarioBuiltNights.filter((night) => night.complete).length,
+          scenarioNightDiagnostics: [],
+          unavailableReason: scenarioBuiltNights.length > 0
+            ? 'scenario_night_diagnostics_missing'
+            : 'scenario_nights_not_available_yet',
+        },
+      artifactCardAdmission: {
+        ...(stepBCoffeeBooksCandidateDiagnostics?.artifactCardAdmission ?? {
+          verifiedCityOpportunityCount: step2PrimarySourceOpportunities.length,
+          admittedScenarioBackedOpportunityCount:
+            admittedScenarioBackedVerifiedCityOpportunities.length,
+          scenarioBackedArtifactBridgeDiagnostics:
+            curateScenarioBackedArtifactBridge?.diagnostics ?? [],
+          step2CandidateRouteArtifactCount: step2CandidateRouteArtifacts.length,
+          candidateRouteArtifactsForDisplayCount: candidateRouteArtifactsForDisplay.length,
+          visibleCardModelCount: curateVisibleCardModels.length,
+          primaryVisibleQualifiedCount: curatePrimaryCardDisplay.primaryVisibleQualifiedCount,
+          primaryCardDisplayMode: curatePrimaryCardDisplay.primaryCardDisplayMode,
+          qualifiedRouteCardCount: curatePrimaryCardDisplay.qualifiedRouteCardCount,
+          unqualifiedDraftsHiddenCount: curatePrimaryCardDisplay.unqualifiedDraftsHiddenCount,
+          hiddenRejectedFromPrimaryCount: curatePrimaryCardDisplay.hiddenRejectedFromPrimaryCount,
+          artifactDiagnostics: [],
+        }),
+        qualificationDiagnostics: curateQualificationCandidateArtifacts.map((artifact) => {
+          const preflight = getCuratePreviewCommitability(artifact.id)
+          return {
+            artifactId: artifact.id,
+            sourceOpportunityId: artifact.sourceOpportunityId,
+            directionBackingStatus: artifact.directionBacking?.status ?? 'missing',
+            qualificationStatus: getCurateQualificationStatus(preflight),
+            approvedPayloadPresent: Boolean(preflight?.approvedRefinementEntryPayload),
+            approvedFinalRoutePresent: Boolean(preflight?.approvedRefinementEntryPayload?.finalRoute),
+            failedCheck: preflight?.failedCheck ?? null,
+            explicitFallbackReason: preflight?.explicitFallbackReason ?? null,
+          }
+        }),
+        visibleCardDiagnostics,
+      },
+      publicNoCardState:
+        stepBCoffeeBooksCandidateDiagnostics?.publicNoCardState ?? {
+          classification:
+            curatePrimaryCardDisplay.models.length > 0
+              ? 'route_cards_visible'
+              : curatePrimaryCardDisplay.primaryCardDisplayMode === 'checking'
+                ? 'blank_or_stuck_checking'
+                : 'visible_and_honest',
+          reviewCtaExpectedVisible: curatePrimaryCardDisplay.models.length > 0,
+          noCardStateText:
+            curatePrimaryCardDisplay.models.length === 0
+              ? 'Some options need another pass before they’re usable.'
+              : null,
+        },
+      runtimeSummary: {
+        visible: runtimeSummaryVisible,
+        source: selectedRouteSummaryArtifact?.source ?? null,
+        renderedRouteSource: renderedCommittedRouteSummarySource,
+        semanticRepresentationStatus:
+          coffeeBooksCommittedRouteSummaryAdmission.semanticRepresentationStatus ?? null,
+        suppressionReason: coffeeBooksCommittedRouteSummaryAdmission.rejectedReason ?? null,
+        matchedSemanticEvidence: coffeeBooksCommittedRouteSummaryAdmission.matchedEvidence,
+      },
+      reviewCta: {
+        visible: reviewCtaVisible,
+        selectedCuratePreviewCommitabilityStatus:
+          selectedCuratePreviewCommitability?.status ?? null,
+        approvedPayloadPresent: Boolean(
+          selectedCuratePreviewCommitability?.approvedRefinementEntryPayload,
+        ),
+      },
+    }
+  }, [
+    admittedScenarioBackedVerifiedCityOpportunities.length,
+    candidateRouteArtifactsForDisplay.length,
+    coffeeBooksCommittedRouteSummaryAdmission,
+    currentPath,
+    curatePrimaryCardDisplay.hiddenRejectedFromPrimaryCount,
+    curatePrimaryCardDisplay.models.length,
+    curatePrimaryCardDisplay.primaryCardDisplayMode,
+    curatePrimaryCardDisplay.primaryVisibleQualifiedCount,
+    curatePrimaryCardDisplay.qualifiedRouteCardCount,
+    curatePrimaryCardDisplay.unqualifiedDraftsHiddenCount,
+    curateQualificationCandidateArtifacts,
+    curateScenarioBackedArtifactBridge,
+    curateVisibleCardModels,
+    getCuratePreviewCommitability,
+    renderedCommittedRouteSummarySource,
+    scenarioBuiltNights,
+    scenarioCandidateBoard,
+    selectedCuratePreviewCommitability,
+    selectedRouteSummaryArtifact,
+    selectedStarterPack?.id,
+    step2CandidateRouteArtifacts.length,
+    step2PrimarySourceOpportunities.length,
+    stepBCoffeeBooksCandidateDiagnostics,
+    stepBCoffeeBooksDiagnosticsActive,
+  ])
 
   return (
     <PageShell
@@ -21160,6 +21323,14 @@ export function SandboxConciergePage({
       subtitle={undefined}
     >
       <div className="demo-flow-frame concierge-flow">
+      {stepBCoffeeBooksAlwaysMountedDiagnostics && (
+        <div
+          hidden
+          data-id8-step-b-coffee-books-diagnostics={safeJsonForDataAttribute(
+            stepBCoffeeBooksAlwaysMountedDiagnostics,
+          )}
+        />
+      )}
       {isModeWrapperActive && (
         <DevTopNav
           homeHref={navHomeHref}

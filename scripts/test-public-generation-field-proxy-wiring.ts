@@ -1200,7 +1200,15 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
       sandboxSource.includes('scenarioNightDiagnostics') &&
       sandboxSource.includes('artifactDiagnostics') &&
       sandboxSource.includes('publicNoCardState') &&
-      sandboxSource.includes('reviewCtaExpectedVisible'),
+      sandboxSource.includes('reviewCtaExpectedVisible') &&
+      sandboxSource.includes('diagnosticMount: \'always_mounted_public_curate_page_level\'') &&
+      sandboxSource.includes('stepBCoffeeBooksAlwaysMountedDiagnostics') &&
+      sandboxSource.includes('diagnosticsUnavailableReason') &&
+      sandboxSource.includes('scenarioBackedArtifactBridgeDiagnostics') &&
+      sandboxSource.includes('qualificationDiagnostics') &&
+      sandboxSource.includes('visibleCardDiagnostics') &&
+      sandboxSource.includes('runtimeSummary') &&
+      sandboxSource.includes('reviewCta'),
     'Coffee & Books Step B diagnostics must expose role compatibility, board, scenario, artifact/card, and no-card state evidence.',
   )
   process.stdout.write('Coffee & Books committed runtime summary gate: passed\n')
@@ -1245,6 +1253,10 @@ function assertHostedObserverCapturesSuppressedRouteSummaryEvidence(): void {
       observerSource.includes('stepBDiagnosticEvidence') &&
       observerSource.includes('readStepBCoffeeBooksDiagnostics') &&
       observerSource.includes('step_b_coffee_books_diagnostics') &&
+      observerSource.includes('visible route cards or no-card diagnostics after candidate supply') &&
+      observerSource.includes('after_candidate_supply_no_card_poll') &&
+      observerSource.includes('no_visible_route_card_after_candidate_supply') &&
+      observerSource.includes('No visible route card found and Step B Coffee & Books diagnostics were missing after candidate supply.') &&
       observerSource.includes('routeSummaryPassedStarterSemanticRepresentation') &&
       observerSource.includes('reviewCtaVisible') &&
       !observerSource.includes('semanticTermsPresent'),
