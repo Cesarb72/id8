@@ -169,6 +169,7 @@ import {
   buildStopTypeCandidateBoardFromIntent,
   resolveScenarioFamily,
   type ScenarioFamily,
+  type StopType,
   type StopTypeCandidateBoard,
 } from '../domain/interpretation/discovery/stopTypeCandidateBoard'
 import {
@@ -2909,6 +2910,146 @@ function evaluateCoffeeBooksCommittedRouteSummaryAdmission(params: {
     matchedEvidence: representation.matchedEvidence ?? [],
     rejectedReason: coffeeBooksSemanticRepresentationMissingReason,
   }
+}
+
+function safeJsonForDataAttribute(value: unknown): string {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return '{}'
+  }
+}
+
+const coffeeBooksScenarioRequiredStopTypes: StopType[] = [
+  'cultural_institution',
+  'atmospheric_detour',
+  'thoughtful_wine_or_lunch',
+  'performance_or_fine_dining',
+  'atmospheric_nightcap',
+]
+
+const coffeeBooksRoleCompatibilityDiagnostics: Record<
+  StopType,
+  {
+    rolePurpose: string
+    allowedVenueCategories: string[]
+    allowedSourceTypes: string[]
+    compatibleCoffeeBooksEvidence: string[]
+    bookstoreCompatible: boolean
+    libraryCompatible: boolean
+    literaryCompatible: boolean
+    compatibilityDefinedIn: string
+  }
+> = {
+  cultural_institution: {
+    rolePurpose: 'closest cultural anchor role in romantic_cultured',
+    allowedVenueCategories: ['museum', 'activity'],
+    allowedSourceTypes: [],
+    compatibleCoffeeBooksEvidence: ['museum', 'gallery', 'cultural'],
+    bookstoreCompatible: false,
+    libraryCompatible: false,
+    literaryCompatible: false,
+    compatibilityDefinedIn: 'scoreStopTypeFit(cultural_institution)',
+  },
+  atmospheric_detour: {
+    rolePurpose: 'short scenic/hidden-gem detour',
+    allowedVenueCategories: ['park', 'scenic-like venue'],
+    allowedSourceTypes: [],
+    compatibleCoffeeBooksEvidence: [],
+    bookstoreCompatible: false,
+    libraryCompatible: false,
+    literaryCompatible: false,
+    compatibilityDefinedIn: 'scoreStopTypeFit(atmospheric_detour)',
+  },
+  thoughtful_wine_or_lunch: {
+    rolePurpose: 'conversation-friendly wine/lunch support role',
+    allowedVenueCategories: ['bar', 'restaurant'],
+    allowedSourceTypes: [],
+    compatibleCoffeeBooksEvidence: [],
+    bookstoreCompatible: false,
+    libraryCompatible: false,
+    literaryCompatible: false,
+    compatibilityDefinedIn: 'scoreStopTypeFit(thoughtful_wine_or_lunch)',
+  },
+  performance_or_fine_dining: {
+    rolePurpose: 'performance or fine-dining highlight option',
+    allowedVenueCategories: ['live_music', 'event', 'fine-dining restaurant'],
+    allowedSourceTypes: ['performance-capable'],
+    compatibleCoffeeBooksEvidence: [],
+    bookstoreCompatible: false,
+    libraryCompatible: false,
+    literaryCompatible: false,
+    compatibilityDefinedIn: 'scoreStopTypeFit(performance_or_fine_dining)',
+  },
+  atmospheric_nightcap: {
+    rolePurpose: 'quiet bar/park landing role',
+    allowedVenueCategories: ['bar', 'park'],
+    allowedSourceTypes: [],
+    compatibleCoffeeBooksEvidence: [],
+    bookstoreCompatible: false,
+    libraryCompatible: false,
+    literaryCompatible: false,
+    compatibilityDefinedIn: 'scoreStopTypeFit(atmospheric_nightcap)',
+  },
+} as Record<StopType, {
+  rolePurpose: string
+  allowedVenueCategories: string[]
+  allowedSourceTypes: string[]
+  compatibleCoffeeBooksEvidence: string[]
+  bookstoreCompatible: boolean
+  libraryCompatible: boolean
+  literaryCompatible: boolean
+  compatibilityDefinedIn: string
+}>
+
+const stepBStarterRoleCompatibilityProbe = {
+  coffeeBooks: {
+    starterId: 'coffee-books',
+    scenarioFamily: 'romantic_cultured',
+    requiredStopTypes: coffeeBooksScenarioRequiredStopTypes,
+    expectedPromiseRole: 'none_explicit_route_level_gate_only',
+    explicitPromiseRolePresent: false,
+    compatiblePromiseRoles: ['cultural_institution'],
+    missingPromiseEvidence: ['bookstore', 'book_store', 'library', 'literary'],
+    classification: 'scenario_definition_gap',
+  },
+  arcade: {
+    starterId: 'arcade-and-drinks',
+    scenarioFamily: 'friends_lively',
+    requiredStopTypes: [
+      'group_gathering_point',
+      'group_activity_anchor',
+      'cocktail_bar',
+      'late_energy_venue',
+      'late_night_food',
+    ],
+    expectedPromiseRole: 'group_activity_anchor',
+    explicitPromiseRolePresent: true,
+    compatiblePromiseRoles: ['group_activity_anchor', 'late_energy_venue'],
+    missingPromiseEvidence: [],
+    classification: 'has_activity_shaped_role',
+  },
+  liveMusic: {
+    starterId: 'live-music-loop',
+    scenarioFamily: 'friends_cultured',
+    requiredStopTypes: [
+      'cultural_institution',
+      'atmospheric_detour',
+      'wine_or_craft_debrief',
+      'group_dinner',
+      'cultured_closer',
+    ],
+    expectedPromiseRole: 'cultured_closer',
+    explicitPromiseRolePresent: true,
+    compatiblePromiseRoles: ['cultured_closer'],
+    missingPromiseEvidence: ['dedicated_live_music_highlight_role'],
+    classification: 'partial_role_compatibility',
+  },
+  systemicClassification: {
+    classification: 'reusable_starter_to_role_compatibility_risk',
+    rationale:
+      'Coffee & Books lacks an explicit bookstore/library/literary role; Arcade has an activity-shaped role, while Live Music has only partial live-music compatibility through cultured_closer.',
+  },
 }
 
 function buildCurateVisibleCardModelFromArtifact(params: {
@@ -12928,6 +13069,252 @@ export function SandboxConciergePage({
       selectedStep2CandidateArtifactId,
     ],
   )
+  const stepBCoffeeBooksDiagnosticsActive = Boolean(
+    isPublicSurface &&
+      isCurateWrapperActive &&
+      currentPath.toLowerCase() === '/start/curate' &&
+      selectedStarterPack?.id === 'coffee-books' &&
+      readStepBCurateLiveSmokeEnabled(),
+  )
+  const stepBCoffeeBooksCandidateDiagnostics = useMemo(() => {
+    if (!stepBCoffeeBooksDiagnosticsActive) {
+      return null
+    }
+    const selectedScenarioVenueIds = new Set(
+      scenarioBuiltNights.flatMap((night) => night.stops.map((stop) => stop.venueId)),
+    )
+    const namedBookstoreTargets = [
+      'recycle bookstore',
+      'authors bookstore',
+      'kinokuniya bookstore',
+      'books inc',
+      'recycle bookstore west',
+    ]
+    const boardDiagnostics = scenarioCandidateBoard?.debug?.candidateDiagnosticsByStopType ?? {}
+    const activeScenarioRequiredStopTypes =
+      scenarioCandidateBoard?.requiredStopTypes ?? coffeeBooksScenarioRequiredStopTypes
+    const scenarioRoleCompatibilityDiagnostics = {
+      activeStarterId: selectedStarterPack?.id ?? null,
+      selectedScenarioFamily:
+        scenarioCandidateBoard?.scenarioFamily ?? resolvedScenarioFamily ?? 'romantic_cultured',
+      requiredStopTypes: activeScenarioRequiredStopTypes,
+      expectedCoffeeBooksRepresentationRole:
+        stepBStarterRoleCompatibilityProbe.coffeeBooks.expectedPromiseRole,
+      hasExplicitBookstoreCompatibleRole: activeScenarioRequiredStopTypes.some(
+        (stopType) => coffeeBooksRoleCompatibilityDiagnostics[stopType]?.bookstoreCompatible,
+      ),
+      hasExplicitLibraryCompatibleRole: activeScenarioRequiredStopTypes.some(
+        (stopType) => coffeeBooksRoleCompatibilityDiagnostics[stopType]?.libraryCompatible,
+      ),
+      hasExplicitLiteraryCompatibleRole: activeScenarioRequiredStopTypes.some(
+        (stopType) => coffeeBooksRoleCompatibilityDiagnostics[stopType]?.literaryCompatible,
+      ),
+      hasCulturalFallbackCompatibleRole: activeScenarioRequiredStopTypes.some((stopType) =>
+        (coffeeBooksRoleCompatibilityDiagnostics[stopType]?.compatibleCoffeeBooksEvidence ?? [])
+          .some((evidence) => ['museum', 'gallery', 'cultural'].includes(evidence)),
+      ),
+      roleDiagnostics: activeScenarioRequiredStopTypes.map((stopType) => ({
+        stopType,
+        ...(coffeeBooksRoleCompatibilityDiagnostics[stopType] ?? {
+          rolePurpose: 'no Coffee & Books role compatibility diagnostic defined',
+          allowedVenueCategories: [],
+          allowedSourceTypes: [],
+          compatibleCoffeeBooksEvidence: [],
+          bookstoreCompatible: false,
+          libraryCompatible: false,
+          literaryCompatible: false,
+          compatibilityDefinedIn: 'not_defined',
+        }),
+      })),
+      coffeeBooksScenarioDefinitionGap:
+        !activeScenarioRequiredStopTypes.some(
+          (stopType) => coffeeBooksRoleCompatibilityDiagnostics[stopType]?.bookstoreCompatible,
+        ) &&
+        !activeScenarioRequiredStopTypes.some(
+          (stopType) => coffeeBooksRoleCompatibilityDiagnostics[stopType]?.libraryCompatible,
+        ) &&
+        !activeScenarioRequiredStopTypes.some(
+          (stopType) => coffeeBooksRoleCompatibilityDiagnostics[stopType]?.literaryCompatible,
+        ),
+    }
+    const stopTypeDiagnostics = Object.values(boardDiagnostics).map((entry) => ({
+      ...entry,
+      topCandidates: entry.topCandidates.map((candidate) => ({
+        ...candidate,
+        enteredAnyScenarioNight: selectedScenarioVenueIds.has(candidate.venueId),
+      })),
+    }))
+    const allDiagnosticCandidates = stopTypeDiagnostics.flatMap((entry) =>
+      entry.topCandidates.map((candidate) => ({
+        stopType: entry.stopType,
+        ...candidate,
+      })),
+    )
+    const bookstoreCandidateDisposition = namedBookstoreTargets.map((targetName) => {
+      const matches = allDiagnosticCandidates.filter((candidate) =>
+        candidate.name.toLowerCase().includes(targetName),
+      )
+      return {
+        targetName,
+        seenInCandidateBoard: matches.length > 0,
+        appearances: matches.map((candidate) => ({
+          stopType: candidate.stopType,
+          venueId: candidate.venueId,
+          name: candidate.name,
+          boardRank: candidate.boardRank,
+          score: candidate.score,
+          enteredStopTypePool: candidate.enteredStopTypePool,
+          enteredAnyScenarioNight: candidate.enteredAnyScenarioNight,
+          coffeeBooksSemanticEvidencePresent: candidate.coffeeBooksSemanticEvidencePresent,
+          matchedSemanticEvidence: candidate.matchedSemanticEvidence,
+        })),
+      }
+    })
+    const scenarioNightDiagnostics = scenarioBuiltNights.map((night) => {
+      const selectedStops = night.stops.map((stop) => ({
+        venueId: stop.venueId,
+        name: stop.name,
+        position: stop.position,
+        stopType: stop.stopType,
+        venueCategory: stop.venueCategory,
+        venueSubcategory: stop.venueSubcategory,
+        sourceTypes: stop.sourceTypes,
+        evaluationFailedCriteria: stop.evaluation?.failedCriteria ?? [],
+        matchedSemanticEvidence:
+          night.starterSemanticRepresentation?.matchedEvidence?.filter(
+            (match) => match.stopVenueId === stop.venueId,
+          ) ?? [],
+      }))
+      const rejectionReasons = [
+        ...(night.complete ? [] : ['scenario_incomplete']),
+        ...(night.missingStopTypes?.map((stopType) => `missing_stop_type:${stopType}`) ?? []),
+        ...(night.starterSemanticRepresentation?.status === 'missing'
+          ? ['coffee_books_semantic_representation_missing']
+          : []),
+        ...(night.evaluation?.failedStops.map((stopId) => `great_stop_failed:${stopId}`) ?? []),
+      ]
+      return {
+        nightId: night.id,
+        complete: night.complete,
+        scoreKnown: false,
+        selectedStops,
+        includesCoffeeBooksSemanticEvidence:
+          night.starterSemanticRepresentation?.status === 'represented',
+        starterSemanticRepresentation: night.starterSemanticRepresentation ?? null,
+        rejectionReasons,
+        evaluation: night.evaluation ?? null,
+      }
+    })
+    const scenarioBuiltCount = scenarioBuiltNights.filter((night) => night.complete).length
+    const scenarioRejectedCount = scenarioBuiltNights.length - scenarioBuiltCount
+    const artifactDiagnostics = [
+      ...new Map(
+        [
+          ...step2CandidateRouteArtifacts,
+          ...candidateRouteArtifactsForDisplay,
+          ...curateQualificationCandidateArtifacts,
+          ...curatePrimaryCardDisplay.models.map((model) => model.artifact),
+        ].map((artifact) => [artifact.id, artifact] as const),
+      ).values(),
+    ].map((artifact) => {
+      const opportunity = verifiedCityOpportunityById.get(artifact.sourceOpportunityId)
+      const preflight = getCuratePreviewCommitability(artifact.id)
+      const model = curateVisibleCardModels.find((candidate) => candidate.artifact.id === artifact.id)
+      return {
+        artifactId: artifact.id,
+        sourceOpportunityId: artifact.sourceOpportunityId,
+        storySpine: artifact.storySpine,
+        starterSemanticRepresentation:
+          artifact.enrichment?.starterSemanticRepresentation ??
+          opportunity?.starterSemanticRepresentation ??
+          null,
+        opportunityProduced: Boolean(opportunity),
+        contractEntryArtifactProduced: true,
+        inCandidateRouteArtifactsForDisplay: candidateRouteArtifactsForDisplay.some(
+          (candidate) => candidate.id === artifact.id,
+        ),
+        visibleCardModelProduced: Boolean(model),
+        qualificationStatus: model?.qualificationStatus ?? getCurateQualificationStatus(preflight),
+        hasApprovedPayload: model?.hasApprovedPayload ?? false,
+        rejectionReason:
+          preflight?.failedReason ??
+          preflight?.failedCheck ??
+          (model?.hasApprovedPayload ? null : 'no_approved_payload'),
+      }
+    })
+    const noCardStateClassification =
+      curatePrimaryCardDisplay.models.length > 0
+        ? 'route_cards_visible'
+        : curatePrimaryCardDisplay.primaryCardDisplayMode === 'no_qualified_fallback'
+          ? 'visible_and_honest'
+          : curatePrimaryCardDisplay.primaryCardDisplayMode === 'checking'
+            ? 'blank_or_stuck_checking'
+            : 'blank_or_stuck'
+    return {
+      diagnosticVersion: 'p1h_candidate_to_card_v1',
+      active: true,
+      currentPath,
+      starterPackId: selectedStarterPack?.id ?? null,
+      scenarioFamily: scenarioCandidateBoard?.scenarioFamily ?? resolvedScenarioFamily ?? null,
+      scenarioRoleCompatibility: scenarioRoleCompatibilityDiagnostics,
+      starterRoleCompatibilityProbe: stepBStarterRoleCompatibilityProbe,
+      oneStarterVsSystemicClassification:
+        stepBStarterRoleCompatibilityProbe.systemicClassification,
+      candidateBoard: {
+        boardPresent: Boolean(scenarioCandidateBoard),
+        stopTypeDiagnostics,
+        bookstoreCandidateDisposition,
+      },
+      scenarioBuilder: {
+        scenarioNightCount: scenarioBuiltNights.length,
+        scenarioBuiltCount,
+        scenarioRejectedCount,
+        scenarioNightDiagnostics,
+      },
+      artifactCardAdmission: {
+        verifiedCityOpportunityCount: step2PrimarySourceOpportunities.length,
+        admittedScenarioBackedOpportunityCount: admittedScenarioBackedVerifiedCityOpportunities.length,
+        step2CandidateRouteArtifactCount: step2CandidateRouteArtifacts.length,
+        candidateRouteArtifactsForDisplayCount: candidateRouteArtifactsForDisplay.length,
+        visibleCardModelCount: curateVisibleCardModels.length,
+        primaryVisibleQualifiedCount: curatePrimaryCardDisplay.primaryVisibleQualifiedCount,
+        primaryCardDisplayMode: curatePrimaryCardDisplay.primaryCardDisplayMode,
+        qualifiedRouteCardCount: curatePrimaryCardDisplay.qualifiedRouteCardCount,
+        unqualifiedDraftsHiddenCount: curatePrimaryCardDisplay.unqualifiedDraftsHiddenCount,
+        hiddenRejectedFromPrimaryCount: curatePrimaryCardDisplay.hiddenRejectedFromPrimaryCount,
+        artifactDiagnostics,
+      },
+      publicNoCardState: {
+        classification: noCardStateClassification,
+        reviewCtaExpectedVisible: curatePrimaryCardDisplay.models.length > 0,
+        noCardStateText:
+          noCardStateClassification === 'visible_and_honest'
+            ? 'Some options need another pass before they’re usable.'
+            : null,
+      },
+    }
+  }, [
+    admittedScenarioBackedVerifiedCityOpportunities.length,
+    candidateRouteArtifactsForDisplay,
+    curatePrimaryCardDisplay.hiddenRejectedFromPrimaryCount,
+    curatePrimaryCardDisplay.models,
+    curatePrimaryCardDisplay.primaryCardDisplayMode,
+    curatePrimaryCardDisplay.primaryVisibleQualifiedCount,
+    curatePrimaryCardDisplay.qualifiedRouteCardCount,
+    curatePrimaryCardDisplay.unqualifiedDraftsHiddenCount,
+    curateQualificationCandidateArtifacts,
+    curateVisibleCardModels,
+    currentPath,
+    getCuratePreviewCommitability,
+    resolvedScenarioFamily,
+    scenarioBuiltNights,
+    scenarioCandidateBoard,
+    selectedStarterPack?.id,
+    step2CandidateRouteArtifacts,
+    step2PrimarySourceOpportunities.length,
+    stepBCoffeeBooksDiagnosticsActive,
+    verifiedCityOpportunityById,
+  ])
   const fixtureQualificationTraceRows = useMemo<FixtureQualificationTraceRow[]>(() => {
     if (!isCurateWrapperActive) {
       return []
@@ -23937,6 +24324,14 @@ export function SandboxConciergePage({
                 culture promise.
               </p>
             </div>
+          )}
+          {stepBCoffeeBooksDiagnosticsActive && stepBCoffeeBooksCandidateDiagnostics && (
+            <div
+              hidden
+              data-id8-step-b-coffee-books-diagnostics={safeJsonForDataAttribute(
+                stepBCoffeeBooksCandidateDiagnostics,
+              )}
+            />
           )}
           <div className="step2-night-options-grid">
             {(publicSurpriseRouteChoiceVisible

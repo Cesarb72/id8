@@ -68,6 +68,7 @@ interface EvidenceState {
   providerPatternHits: Array<Record<string, JsonValue>>
   routeSourceEvidence: Array<Record<string, JsonValue>>
   candidateEvidence: Array<Record<string, JsonValue>>
+  stepBDiagnosticEvidence: Array<Record<string, JsonValue>>
   routeCardsBeforeClick: Array<Record<string, JsonValue>>
   selectedRouteCard: Record<string, JsonValue> | null
   revealedRouteText: string | null
@@ -684,6 +685,36 @@ async function readRouteSourceEvidence(cdp: CdpClient): Promise<Record<string, J
   )
 }
 
+async function readStepBCoffeeBooksDiagnostics(cdp: CdpClient): Promise<Record<string, JsonValue>> {
+  return evaluate<Record<string, JsonValue>>(
+    cdp,
+    `
+      (() => {
+        const element = document.querySelector('[data-id8-step-b-coffee-books-diagnostics]')
+        if (!element) {
+          return {
+            present: false,
+            diagnostic: null,
+          }
+        }
+        const raw = element.getAttribute('data-id8-step-b-coffee-books-diagnostics') || '{}'
+        try {
+          return {
+            present: true,
+            diagnostic: JSON.parse(raw),
+          }
+        } catch (error) {
+          return {
+            present: true,
+            diagnostic: null,
+            parseError: error instanceof Error ? error.message : String(error),
+          }
+        }
+      })()
+    `,
+  )
+}
+
 async function clickTextButton(cdp: CdpClient, label: string): Promise<Record<string, JsonValue>> {
   return evaluate<Record<string, JsonValue>>(
     cdp,
@@ -858,6 +889,7 @@ async function runDryRun(): Promise<void> {
     providerPatternHits: [],
     routeSourceEvidence: [],
     candidateEvidence: [],
+    stepBDiagnosticEvidence: [],
     routeCardsBeforeClick: [],
     selectedRouteCard: null,
     revealedRouteText: null,
@@ -908,6 +940,7 @@ async function runHostedObservation(): Promise<void> {
     providerPatternHits: [],
     routeSourceEvidence: [],
     candidateEvidence: [],
+    stepBDiagnosticEvidence: [],
     routeCardsBeforeClick: [],
     selectedRouteCard: null,
     revealedRouteText: null,
@@ -1138,6 +1171,16 @@ async function runHostedObservation(): Promise<void> {
       ...routeSourceAfterContinue,
     })
     await recordEvent('route_source_evidence', evidence.routeSourceEvidence[evidence.routeSourceEvidence.length - 1])
+    const diagnosticsAfterContinue = await readStepBCoffeeBooksDiagnostics(cdp)
+    evidence.stepBDiagnosticEvidence.push({
+      timestamp: isoNow(),
+      action: 'after_click_continue',
+      ...diagnosticsAfterContinue,
+    })
+    await recordEvent(
+      'step_b_coffee_books_diagnostics',
+      evidence.stepBDiagnosticEvidence[evidence.stepBDiagnosticEvidence.length - 1],
+    )
     await persist('route_source_after_continue')
 
     await waitUntil('visible route cards after candidate supply', async () => {
@@ -1177,6 +1220,16 @@ async function runHostedObservation(): Promise<void> {
       ...routeSourceAfterCardClick,
     })
     await recordEvent('route_source_evidence', evidence.routeSourceEvidence[evidence.routeSourceEvidence.length - 1])
+    const diagnosticsAfterCardClick = await readStepBCoffeeBooksDiagnostics(cdp)
+    evidence.stepBDiagnosticEvidence.push({
+      timestamp: isoNow(),
+      action: 'after_click_route_card',
+      ...diagnosticsAfterCardClick,
+    })
+    await recordEvent(
+      'step_b_coffee_books_diagnostics',
+      evidence.stepBDiagnosticEvidence[evidence.stepBDiagnosticEvidence.length - 1],
+    )
     await persist('route_source_after_card_click')
 
     await checkpoint('before_click_review_this_route')
@@ -1197,6 +1250,20 @@ async function runHostedObservation(): Promise<void> {
   } finally {
     await Promise.allSettled(pendingWrites)
     if (cdp) {
+      const finalDiagnostics = await readStepBCoffeeBooksDiagnostics(cdp).catch((error: unknown) => ({
+        present: false,
+        diagnostic: null,
+        readError: error instanceof Error ? error.message : String(error),
+      }))
+      evidence.stepBDiagnosticEvidence.push({
+        timestamp: isoNow(),
+        action: 'finally_dump',
+        ...finalDiagnostics,
+      })
+      await recordEvent(
+        'step_b_coffee_books_diagnostics',
+        evidence.stepBDiagnosticEvidence[evidence.stepBDiagnosticEvidence.length - 1],
+      ).catch(() => undefined)
       await checkpoint('finally_dump').catch((error: unknown) =>
         recordEvent('finally_checkpoint_error', String(error)),
       )

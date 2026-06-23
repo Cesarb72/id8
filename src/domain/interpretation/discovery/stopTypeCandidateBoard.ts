@@ -131,6 +131,36 @@ export type StopTypeCandidateBoard = {
       score: number
       fixtureBoardDropReason: 'selected'
     }>
+    candidateDiagnosticsByStopType?: Record<
+      StopType,
+      {
+        stopType: StopType
+        candidateCount: number
+        topCandidates: Array<{
+          venueId: string
+          name: string
+          venueCategory?: VenueCategory
+          venueSubcategory?: string
+          sourceType?: 'venue' | 'event' | 'hybrid'
+          sourceTypes?: string[]
+          roleFit: StopTypeCandidate['roleFit']
+          score: number
+          boardRank: number
+          survivedNormalization: boolean
+          enteredStopTypePool: boolean
+          coffeeBooksSemanticEvidencePresent: boolean
+          matchedSemanticEvidence: Array<{
+            field: string
+            rawValue: string
+            normalizedTerm: string
+            evidenceType: string
+            matchType: 'token' | 'phrase'
+            sourceScope: 'selected_stop_field'
+            admissible: true
+          }>
+        }>
+      }
+    >
   }
 }
 
@@ -367,6 +397,66 @@ function hasAnyTokenOrPhrase(tokens: Set<string>, corpus: string, values: string
 function hasAnyPhrase(value: string, phrases: string[]): boolean {
   const normalized = normalizeToken(value)
   return phrases.some((phrase) => normalized.includes(normalizeToken(phrase)))
+}
+
+const coffeeBooksDiagnosticSemanticMatchers: Array<{
+  evidenceType: string
+  terms: string[]
+}> = [
+  { evidenceType: 'book', terms: ['book', 'books'] },
+  { evidenceType: 'reading', terms: ['reading'] },
+  { evidenceType: 'literary', terms: ['literary'] },
+  { evidenceType: 'library', terms: ['library'] },
+  { evidenceType: 'bookstore', terms: ['bookstore', 'book store', 'book shop', 'bookshop'] },
+  { evidenceType: 'museum', terms: ['museum'] },
+  { evidenceType: 'gallery', terms: ['gallery', 'art gallery'] },
+  { evidenceType: 'art', terms: ['art'] },
+  { evidenceType: 'exhibit', terms: ['exhibit', 'exhibition'] },
+  { evidenceType: 'cultural', terms: ['cultural center', 'cultural venue'] },
+]
+
+function collectCoffeeBooksCandidateDiagnosticEvidence(candidate: StopTypeCandidate): NonNullable<
+  NonNullable<StopTypeCandidateBoard['debug']>['candidateDiagnosticsByStopType']
+>[StopType]['topCandidates'][number]['matchedSemanticEvidence'] {
+  const parts: Array<{ field: string; value: string | string[] | undefined }> = [
+    { field: 'displayName', value: candidate.name },
+    { field: 'venueCategory', value: candidate.venueCategory },
+    { field: 'venueSubcategory', value: candidate.venueSubcategory },
+    { field: 'tag', value: candidate.venueTags },
+    { field: 'sourceType', value: candidate.sourceTypes },
+  ]
+  return parts.flatMap((part) => {
+    const rawValues = Array.isArray(part.value) ? part.value : [part.value]
+    return rawValues
+      .filter((value): value is string => Boolean(value?.trim()))
+      .flatMap((rawValue) => {
+        const normalizedValue = normalizeToken(rawValue).replace(/[_-]+/g, ' ')
+        const tokens = new Set(normalizedValue.split(' ').filter(Boolean))
+        return coffeeBooksDiagnosticSemanticMatchers.flatMap((matcher) =>
+          matcher.terms.flatMap((term) => {
+            const normalizedTerm = normalizeToken(term).replace(/[_-]+/g, ' ')
+            const matchType = normalizedTerm.includes(' ') ? 'phrase' : 'token'
+            const matched =
+              matchType === 'phrase'
+                ? normalizedValue.includes(normalizedTerm)
+                : tokens.has(normalizedTerm)
+            return matched
+              ? [
+                  {
+                    field: part.field,
+                    rawValue,
+                    normalizedTerm,
+                    evidenceType: matcher.evidenceType,
+                    matchType,
+                    sourceScope: 'selected_stop_field' as const,
+                    admissible: true as const,
+                  },
+                ]
+              : []
+          }),
+        )
+      })
+  })
 }
 
 function toSourceType(scoredVenue: ScoredVenue): 'venue' | 'event' | 'hybrid' {
@@ -1530,11 +1620,55 @@ function buildFixtureCandidateBoardDebug(
     }
   }
 
+  const candidateDiagnosticsByStopType = {} as NonNullable<
+    StopTypeCandidateBoard['debug']
+  >['candidateDiagnosticsByStopType']
+  ;(Object.keys(rankedBoard) as StopType[]).forEach((stopType) => {
+    const ranked = rankedBoard[stopType]
+      .slice()
+      .sort((left, right) => {
+        if (right.__rankScore !== left.__rankScore) {
+          return right.__rankScore - left.__rankScore
+        }
+        if (right.authorityScore !== left.authorityScore) {
+          return right.authorityScore - left.authorityScore
+        }
+        if (right.currentRelevance !== left.currentRelevance) {
+          return right.currentRelevance - left.currentRelevance
+        }
+        return left.name.localeCompare(right.name)
+      })
+    const selectedIds = new Set((selectedBoard[stopType] ?? []).map((candidate) => candidate.venueId))
+    candidateDiagnosticsByStopType[stopType] = {
+      stopType,
+      candidateCount: ranked.length,
+      topCandidates: ranked.slice(0, 8).map((candidate, index) => {
+        const matchedSemanticEvidence = collectCoffeeBooksCandidateDiagnosticEvidence(candidate)
+        return {
+          venueId: candidate.venueId,
+          name: candidate.name,
+          venueCategory: candidate.venueCategory,
+          venueSubcategory: candidate.venueSubcategory,
+          sourceType: candidate.sourceType,
+          sourceTypes: candidate.sourceTypes,
+          roleFit: candidate.roleFit,
+          score: Number(candidate.__rankScore.toFixed(3)),
+          boardRank: index + 1,
+          survivedNormalization: true,
+          enteredStopTypePool: selectedIds.has(candidate.venueId),
+          coffeeBooksSemanticEvidencePresent: matchedSemanticEvidence.length > 0,
+          matchedSemanticEvidence,
+        }
+      }),
+    }
+  })
+
   return {
     devGreatStopFixturesEnabled,
     scenarioCandidateBoardFixtureCandidates: [...new Set(scenarioCandidateBoardFixtureCandidates)],
     scenarioCandidateBoardFixtureDrops,
     fixtureStopTypeMembership,
+    candidateDiagnosticsByStopType,
   }
 }
 

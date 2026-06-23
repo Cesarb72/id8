@@ -840,6 +840,29 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
     ),
     'Coffee & Books representative routes must outrank/filter above cafe-only highlight alternatives.',
   )
+  const stopTypeBoardSource = readFileSync(
+    'src/domain/interpretation/discovery/stopTypeCandidateBoard.ts',
+    'utf8',
+  )
+  assert(
+    stopTypeBoardSource.includes('candidateDiagnosticsByStopType') &&
+      stopTypeBoardSource.includes('topCandidates') &&
+      stopTypeBoardSource.includes('boardRank') &&
+      stopTypeBoardSource.includes('enteredStopTypePool') &&
+      stopTypeBoardSource.includes('coffeeBooksSemanticEvidencePresent') &&
+      stopTypeBoardSource.includes('matchedSemanticEvidence'),
+    'StopTypeCandidateBoard diagnostics must expose rank, stop-type pool entry, role/source fields, and Coffee & Books semantic evidence.',
+  )
+  const scenarioBuilderSource = readFileSync(
+    'src/domain/interpretation/construction/scenarioBuilder.ts',
+    'utf8',
+  )
+  assert(
+    scenarioBuilderSource.includes('coffee_books_semantic_incomplete') &&
+      scenarioBuilderSource.includes('coffee_books_semantic_representation') &&
+      scenarioBuilderSource.includes('starterSemanticRepresentation'),
+    'Scenario Builder diagnostics must keep Coffee & Books semantic rejection reasons available.',
+  )
   process.stdout.write('Coffee & Books semantic Scenario Builder gate: passed\n')
 }
 
@@ -1077,6 +1100,20 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
       sandboxSource.includes('!effectiveCurateSelectedArtifact'),
     'Coffee & Books no-card direction fallback summaries must not render without a starter-valid artifact.',
   )
+  assert(
+    sandboxSource.includes('data-id8-step-b-coffee-books-diagnostics') &&
+      sandboxSource.includes('scenarioRoleCompatibility') &&
+      sandboxSource.includes('hasExplicitBookstoreCompatibleRole') &&
+      sandboxSource.includes('coffeeBooksScenarioDefinitionGap') &&
+      sandboxSource.includes('oneStarterVsSystemicClassification') &&
+      sandboxSource.includes('reusable_starter_to_role_compatibility_risk') &&
+      sandboxSource.includes('bookstoreCandidateDisposition') &&
+      sandboxSource.includes('scenarioNightDiagnostics') &&
+      sandboxSource.includes('artifactDiagnostics') &&
+      sandboxSource.includes('publicNoCardState') &&
+      sandboxSource.includes('reviewCtaExpectedVisible'),
+    'Coffee & Books Step B diagnostics must expose role compatibility, board, scenario, artifact/card, and no-card state evidence.',
+  )
   process.stdout.write('Coffee & Books committed runtime summary gate: passed\n')
 }
 
@@ -1116,6 +1153,9 @@ function assertHostedObserverCapturesSuppressedRouteSummaryEvidence(): void {
       observerSource.includes('routeSummarySuppressionReason') &&
       observerSource.includes('matchedSemanticEvidence') &&
       observerSource.includes('bodySemanticSubstringHits') &&
+      observerSource.includes('stepBDiagnosticEvidence') &&
+      observerSource.includes('readStepBCoffeeBooksDiagnostics') &&
+      observerSource.includes('step_b_coffee_books_diagnostics') &&
       observerSource.includes('routeSummaryPassedStarterSemanticRepresentation') &&
       observerSource.includes('reviewCtaVisible') &&
       !observerSource.includes('semanticTermsPresent'),
