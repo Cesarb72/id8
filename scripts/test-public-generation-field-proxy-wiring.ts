@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs'
 import { buildPublicCurateCardTruthModel } from '../src/app/services/curate/publicCurateCardTruthService.ts'
 import { buildCurateCommittedRouteFallbackDecision } from '../src/app/services/curate/buildCurateCommittedRouteFallback.ts'
 import {
+  buildCoffeeBooksSemanticRepresentationFromRouteStops,
+  coffeeBooksSemanticRepresentationMissingReason,
+} from '../src/app/services/curate/coffeeBooksSemanticRepresentation.ts'
+import {
   runStepBCurateLiveSmokeCandidateSupply,
   shouldApplyStepBCurateLiveSmokeCandidateSupply,
   type StepBCurateLiveSmokeCandidateSupplyGate,
@@ -948,6 +952,78 @@ function assertCoffeeBooksCommittedRouteFallbackGate(): void {
   process.stdout.write('Coffee & Books committed-route fallback gate: passed\n')
 }
 
+function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
+  const cafeOnlyRepresentation = buildCoffeeBooksSemanticRepresentationFromRouteStops([
+    {
+      venueId: 'tea',
+      name: 'Willow Glen Tea Atelier',
+      position: 'start',
+      evidenceParts: ['cafe', 'tea-room', 'quiet', 'curated', 'calm'],
+    },
+    {
+      venueId: 'coffee',
+      name: 'Chromatic Coffee Roastery',
+      position: 'highlight',
+      evidenceParts: ['cafe', 'coffee', 'thoughtful', 'quiet'],
+    },
+    {
+      venueId: 'bakery',
+      name: 'Willow Glen Bakehouse',
+      position: 'windDown',
+      evidenceParts: ['dessert', 'bakery', 'calm'],
+    },
+  ])
+  assert(
+    cafeOnlyRepresentation.status === 'missing' &&
+      cafeOnlyRepresentation.rejectionReasons?.includes(
+        coffeeBooksSemanticRepresentationMissingReason,
+      ),
+    'Coffee & Books committed runtime summary must reject tea/coffee/bakery-only routes.',
+  )
+
+  const representedSummary = buildCoffeeBooksSemanticRepresentationFromRouteStops([
+    {
+      venueId: 'tea',
+      name: 'Willow Glen Tea Atelier',
+      position: 'start',
+      evidenceParts: ['cafe', 'tea-room'],
+    },
+    {
+      venueId: 'bookstore',
+      name: 'Recycle Bookstore',
+      position: 'highlight',
+      evidenceParts: ['bookstore', 'books', 'reading', 'literary'],
+    },
+    {
+      venueId: 'bakery',
+      name: 'Willow Glen Bakehouse',
+      position: 'windDown',
+      evidenceParts: ['dessert', 'bakery'],
+    },
+  ])
+  assert(
+    representedSummary.status === 'represented' &&
+      representedSummary.evidence.some((entry) => entry.venueId === 'bookstore'),
+    'Coffee & Books committed runtime summary with explicit bookstore evidence must remain eligible.',
+  )
+
+  const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
+  assert(
+    sandboxSource.includes('evaluateCoffeeBooksCommittedRouteSummaryAdmission') &&
+      sandboxSource.includes('committedSummaryAdmission.status === \'rejected\'') &&
+      sandboxSource.includes('return null') &&
+      sandboxSource.includes('data-id8-route-summary-suppressed="true"') &&
+      sandboxSource.includes('data-id8-route-summary-rejection-reason'),
+    'Coffee & Books committed/runtime summary projection must suppress invalid summaries and expose suppression evidence.',
+  )
+  assert(
+    sandboxSource.includes('selectedStarterPack?.id === \'coffee-books\'') &&
+      sandboxSource.includes('!effectiveCurateSelectedArtifact'),
+    'Coffee & Books no-card direction fallback summaries must not render without a starter-valid artifact.',
+  )
+  process.stdout.write('Coffee & Books committed runtime summary gate: passed\n')
+}
+
 function assertCurateVisibleCardProjectionUsesApprovedRouteTruth(): void {
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   assert(
@@ -970,6 +1046,20 @@ function assertCurateVisibleCardProjectionUsesApprovedRouteTruth(): void {
     'Curate route card render must use cardModel copy fields instead of stale artifact copy.',
   )
   process.stdout.write('Curate visible card approved-route coherence projection: passed\n')
+}
+
+function assertHostedObserverCapturesSuppressedRouteSummaryEvidence(): void {
+  const observerSource = readFileSync('scripts/observe-hosted-step-b-supply.ts', 'utf8')
+  assert(
+    observerSource.includes('visibleRouteSummaryText') &&
+      observerSource.includes('selectedRouteSummaryArtifactSource') &&
+      observerSource.includes('selectedRouteSummaryArtifactProvenance') &&
+      observerSource.includes('routeSummarySuppressed') &&
+      observerSource.includes('routeSummarySuppressionReason') &&
+      observerSource.includes('routeSummaryPassedStarterSemanticRepresentation'),
+    'Hosted observer must persist route summary source/provenance and suppression semantic evidence when no cards exist.',
+  )
+  process.stdout.write('Hosted observer route-summary suppression evidence capture: passed\n')
 }
 
 async function assertWrongSurfaceSupplyGateStaysDry(
@@ -1060,7 +1150,9 @@ async function main(): Promise<void> {
   }
   assertCoffeeBooksScenarioGate(findStarterPack('coffee-books'))
   assertCoffeeBooksCommittedRouteFallbackGate()
+  assertCoffeeBooksCommittedRuntimeSummaryGate()
   assertCurateVisibleCardProjectionUsesApprovedRouteTruth()
+  assertHostedObserverCapturesSuppressedRouteSummaryEvidence()
   await assertFailClosedDoesNotRenderFalseCard()
   process.stdout.write(
     `Public default final generation without explicit live envelope proxy calls: ${defaultGenerationProxyCalls}\n`,

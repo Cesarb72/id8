@@ -626,6 +626,11 @@ async function readRouteSourceEvidence(cdp: CdpClient): Promise<Record<string, J
       (() => {
         const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim()
         const bodyText = normalize(document.body?.innerText)
+        const summaryElement = document.querySelector('[data-id8-route-summary-source], [data-id8-route-summary-suppressed]')
+        const summaryText = summaryElement ? normalize(summaryElement.innerText || summaryElement.textContent) : null
+        const summarySuppressedRaw = summaryElement?.getAttribute('data-id8-route-summary-suppressed') || null
+        const summarySemanticStatus = summaryElement?.getAttribute('data-id8-route-summary-semantic-status') || null
+        const summaryRejectionReason = summaryElement?.getAttribute('data-id8-route-summary-rejection-reason') || null
         const sourceLine = bodyText.match(/Highlight source:[^.]+\\./i)?.[0] || null
         const lineageMatch = bodyText.match(/committed_route_fallback|approved_payload|candidate_draft|committed runtime route|candidate route story spine/i)?.[0] || null
         const routeStopMatches = Array.from(bodyText.matchAll(/\\b(START|HIGHLIGHT|WIND-DOWN)\\s+([^\\n]+?)(?=\\s+(?:cafe|dessert|museum|restaurant|bar|activity|park|live music|WHERE THIS NIGHT LIVES|START|HIGHLIGHT|WIND-DOWN|$))/gi))
@@ -638,6 +643,14 @@ async function readRouteSourceEvidence(cdp: CdpClient): Promise<Record<string, J
         const lowerBody = bodyText.toLowerCase()
         return {
           url: location.href,
+          visibleRouteSummaryText: summaryText,
+          selectedRouteSummaryArtifactSource: summaryElement?.getAttribute('data-id8-route-summary-source') || null,
+          selectedRouteSummaryArtifactProvenance: summaryElement?.getAttribute('data-id8-route-summary-provenance') || null,
+          routeSummarySuppressed: summarySuppressedRaw === 'true',
+          routeSummarySuppressionReason: summaryRejectionReason && summaryRejectionReason !== 'none' ? summaryRejectionReason : null,
+          routeSummarySemanticRepresentationStatus: summarySemanticStatus,
+          routeSummaryPassedStarterSemanticRepresentation:
+            summarySemanticStatus === 'represented' || summarySemanticStatus === 'not_applicable',
           sourceLine,
           lineageHint: lineageMatch,
           routeStops: routeStopMatches,
