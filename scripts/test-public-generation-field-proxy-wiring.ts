@@ -291,12 +291,18 @@ function candidateHasCoffeeBooksSemanticRepresentation(candidate: StopTypeCandid
     candidate.venueCategory === 'museum' ||
     semanticCorpusIncludesAny(corpus, [
       'book',
+      'books',
       'bookstore',
       'book store',
       'library',
       'reading',
       'literary',
+      'museum',
       'gallery',
+      'art',
+      'arts',
+      'exhibit',
+      'exhibition',
       'cultural',
       'culture',
     ])
@@ -322,12 +328,18 @@ function builtNightHasCoffeeBooksSemanticRepresentation(
       stop.venueCategory === 'museum' ||
       semanticCorpusIncludesAny(corpus, [
         'book',
+        'books',
         'bookstore',
         'book store',
         'library',
         'reading',
         'literary',
+        'museum',
         'gallery',
+        'art',
+        'arts',
+        'exhibit',
+        'exhibition',
         'cultural',
         'culture',
       ])
@@ -378,9 +390,13 @@ function createScenarioCandidate(
 function buildCoffeeBooksScenarioBoard(params: {
   starterPack: StarterPack
   includeSemanticCandidate: boolean
+  includeCafeOnlyHighlightAlternative?: boolean
 }): StopTypeCandidateBoard {
   const startCandidate = createScenarioCandidate('generic-start-cafe', 'Generic Start Cafe', {
     stopType: 'cultural_institution',
+    culturalAnchorPotential: 0.9,
+    venueTags: ['quiet', 'curated', 'thoughtful'],
+    reasons: ['quiet curated cafe fit'],
   })
   const highlightCandidate = params.includeSemanticCandidate
     ? createScenarioCandidate('reading-gallery', 'Reading Room Gallery', {
@@ -395,7 +411,25 @@ function buildCoffeeBooksScenarioBoard(params: {
       })
     : createScenarioCandidate('generic-highlight-cafe', 'Generic Highlight Cafe', {
         stopType: 'secondary_cultural_stop',
+        culturalAnchorPotential: 0.9,
+        venueTags: ['quiet', 'curated', 'thoughtful'],
+        reasons: ['quiet curated cafe fit'],
       })
+  const highlightCandidates = [
+    highlightCandidate,
+    ...(params.includeSemanticCandidate && params.includeCafeOnlyHighlightAlternative
+      ? [
+          createScenarioCandidate('generic-highlight-cafe', 'Generic Highlight Cafe', {
+            stopType: 'secondary_cultural_stop',
+            authorityScore: 0.98,
+            currentRelevance: 0.98,
+            culturalAnchorPotential: 0.95,
+            venueTags: ['quiet', 'curated', 'thoughtful'],
+            reasons: ['quiet curated cafe fit'],
+          }),
+        ]
+      : []),
+  ]
   const windDownCandidate = createScenarioCandidate('generic-bakery', 'Generic Bakery', {
     stopType: 'thematic_lunch',
     venueCategory: 'dessert',
@@ -413,7 +447,7 @@ function buildCoffeeBooksScenarioBoard(params: {
     requiredStopTypes: ['cultural_institution', 'secondary_cultural_stop', 'thematic_lunch'],
     candidatesByStopType: {
       cultural_institution: [startCandidate],
-      secondary_cultural_stop: [highlightCandidate],
+      secondary_cultural_stop: highlightCandidates,
       thematic_lunch: [windDownCandidate],
     } as StopTypeCandidateBoard['candidatesByStopType'],
   }
@@ -512,9 +546,17 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     builtNights.some((night) => night.complete),
     `${scenario.mode}: Scenario Builder must produce a built night from the board.`,
   )
+  const representativeBuiltNight = builtNights.find(
+    (night) => night.complete && builtNightHasCoffeeBooksSemanticRepresentation(night),
+  )
   assert(
-    builtNights.some((night) => night.complete && builtNightHasCoffeeBooksSemanticRepresentation(night)),
+    representativeBuiltNight,
     `${scenario.mode}: Scenario Builder must not let cafe/bakery-only Coffee & Books routes win.`,
+  )
+  assert(
+    representativeBuiltNight.starterSemanticRepresentation?.status === 'represented' &&
+      representativeBuiltNight.starterSemanticRepresentation.evidence.length > 0,
+    `${scenario.mode}: built night must preserve Coffee & Books semantic evidence.`,
   )
   let artifact: ContractEntryArtifact | null = null
   for (const night of builtNights) {
@@ -531,6 +573,11 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     if (!opportunity) {
       continue
     }
+    assert(
+      opportunity.starterSemanticRepresentation?.status === 'represented' &&
+        opportunity.starterSemanticRepresentation.evidence.length > 0,
+      `${scenario.mode}: VerifiedCityOpportunity must preserve Coffee & Books semantic evidence.`,
+    )
     artifact = buildContractEntryArtifactFromVerifiedOpportunity({
       opportunity,
       ecsState: {
@@ -545,6 +592,11 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     }
   }
   assert(artifact, `${scenario.mode}: ContractEntryArtifact must be produced before reveal.`)
+  assert(
+    artifact.enrichment?.starterSemanticRepresentation?.status === 'represented' &&
+      artifact.enrichment.starterSemanticRepresentation.evidence.length > 0,
+    `${scenario.mode}: ContractEntryArtifact enrichment must preserve Coffee & Books semantic evidence.`,
+  )
   const validation = validateContractEntryArtifactPreCommitTruth(artifact)
 
   assert(calls.length > 0, `${scenario.mode}: candidate supply must call the Field proxy.`)
@@ -677,7 +729,13 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
   const genericOnlyNights = buildScenarioNightsFromCandidateBoard(genericOnlyBoard)
   assert(
     genericOnlyNights.every((night) => !night.complete),
-    'Coffee & Books cafe/bakery-only Scenario Builder route must fail the semantic representation gate.',
+    'Coffee & Books tea/coffee/bakery-only Scenario Builder route must fail the semantic representation gate.',
+  )
+  assert(
+    genericOnlyNights.every(
+      (night) => night.starterSemanticRepresentation?.status === 'missing',
+    ),
+    'Coffee & Books generic quiet/curated tags and culturalAnchorPotential alone must not satisfy Books.',
   )
 
   const semanticBoard = buildCoffeeBooksScenarioBoard({
@@ -685,9 +743,35 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
     includeSemanticCandidate: true,
   })
   const semanticNights = buildScenarioNightsFromCandidateBoard(semanticBoard)
+  const semanticCompleteNight = semanticNights.find(
+    (night) => night.complete && builtNightHasCoffeeBooksSemanticRepresentation(night),
+  )
   assert(
-    semanticNights.some((night) => night.complete && builtNightHasCoffeeBooksSemanticRepresentation(night)),
+    semanticCompleteNight,
     'Coffee & Books semantically representative Scenario Builder route must remain eligible.',
+  )
+  assert(
+    semanticCompleteNight.starterSemanticRepresentation?.status === 'represented' &&
+      semanticCompleteNight.starterSemanticRepresentation.evidence.length > 0,
+    'Coffee & Books built night must expose which selected stop satisfied representation.',
+  )
+
+  const mixedBoard = buildCoffeeBooksScenarioBoard({
+    starterPack,
+    includeSemanticCandidate: true,
+    includeCafeOnlyHighlightAlternative: true,
+  })
+  const mixedNights = buildScenarioNightsFromCandidateBoard(mixedBoard)
+  const completeMixedNights = mixedNights.filter((night) => night.complete)
+  assert(
+    completeMixedNights.length > 0,
+    'Coffee & Books mixed board must produce at least one representative route.',
+  )
+  assert(
+    completeMixedNights.every((night) =>
+      night.stops.some((stop) => stop.venueId === 'reading-gallery'),
+    ),
+    'Coffee & Books representative routes must outrank/filter above cafe-only highlight alternatives.',
   )
   process.stdout.write('Coffee & Books semantic Scenario Builder gate: passed\n')
 }
@@ -698,6 +782,12 @@ function assertCurateVisibleCardProjectionUsesApprovedRouteTruth(): void {
     sandboxSource.includes('approvedRouteHighlightProof') &&
       sandboxSource.includes('approvedRouteWhyChooseLine'),
     'Curate visible card model must derive approved-route proof copy from final-route stops.',
+  )
+  assert(
+    sandboxSource.includes('resolveFinalRouteStopGeography') &&
+      sandboxSource.includes('resolveFinalRouteDisplayLocation(approvedFinalRoute') &&
+      sandboxSource.includes('buildFinalRouteClusterConfirmation(fallbackFinalRoute'),
+    'Curate visible card/post-selection geography must derive from final-route stops when an approved route exists.',
   )
   assert(
     sandboxSource.includes('{cardModel.districtLine}') &&

@@ -3,7 +3,10 @@ import type {
   ContractEntryArtifact,
 } from '../artifacts/contractEntryArtifact'
 import type { EngineSourceMode } from '../types/sourceMode'
-import type { BuiltScenarioStopPosition } from './construction/scenarioBuilder'
+import type {
+  BuiltScenarioStopPosition,
+  StarterSemanticRepresentation,
+} from './construction/scenarioBuilder'
 
 export interface VerifiedOpportunityArtifactBuilderEcsState {
   exploration: 'focused' | 'exploratory'
@@ -24,6 +27,7 @@ interface VerifiedOpportunityArtifactBuilderScenarioStop {
 interface VerifiedOpportunityArtifactBuilderScenarioNight {
   stops: VerifiedOpportunityArtifactBuilderScenarioStop[]
   evaluation?: ContractEntryArtifact['scenarioEvaluation']
+  starterSemanticRepresentation?: StarterSemanticRepresentation
 }
 
 interface VerifiedOpportunityArtifactBuilderWindDownDebug {
@@ -64,6 +68,7 @@ export interface VerifiedOpportunityArtifactBuilderInput {
   }
   whyTonightProofLine?: string
   scenarioWindDownDebug?: VerifiedOpportunityArtifactBuilderWindDownDebug
+  starterSemanticRepresentation?: StarterSemanticRepresentation
   scenarioNight?: VerifiedOpportunityArtifactBuilderScenarioNight
 }
 
@@ -91,6 +96,8 @@ export function buildContractEntryArtifactFromVerifiedOpportunity(params: {
     const canonicalHighlight = canonicalNight?.stops.find((stop) => stop.position === 'highlight')
     const canonicalWindDownName =
       opportunity.scenarioWindDownDebug?.finalName ?? opportunity.storySpine.windDown
+    const starterSemanticRepresentation =
+      opportunity.starterSemanticRepresentation ?? canonicalNight?.starterSemanticRepresentation
 
     return {
       id: opportunity.id,
@@ -116,6 +123,13 @@ export function buildContractEntryArtifactFromVerifiedOpportunity(params: {
       whyTonightProofLine: opportunity.whyTonightProofLine,
       scenarioEvaluation: canonicalNight?.evaluation,
       selection: opportunity.selection,
+      ...(starterSemanticRepresentation
+        ? {
+            enrichment: {
+              starterSemanticRepresentation,
+            },
+          }
+        : {}),
     }
   }
 

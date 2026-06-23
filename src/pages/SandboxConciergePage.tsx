@@ -2751,6 +2751,58 @@ function selectArtifactResolutionSources(params: {
   }
 }
 
+function resolveFinalRouteStopGeography(finalRoute: RuntimeRouteArtifact | null | undefined): string | null {
+  if (!finalRoute?.stops.length) {
+    return null
+  }
+  const counts = new Map<string, { label: string; count: number }>()
+  finalRoute.stops.forEach((stop) => {
+    const label = stop.neighborhood?.trim()
+    if (!label) {
+      return
+    }
+    const key = label.toLowerCase()
+    const current = counts.get(key)
+    if (current) {
+      current.count += 1
+    } else {
+      counts.set(key, { label, count: 1 })
+    }
+  })
+  return [...counts.values()].sort(
+    (left, right) => right.count - left.count || left.label.localeCompare(right.label),
+  )[0]?.label ?? null
+}
+
+function resolveFinalRouteDisplayLocation(
+  finalRoute: RuntimeRouteArtifact | null | undefined,
+  fallbackLocation?: string | null,
+): string | null {
+  return (
+    resolveFinalRouteStopGeography(finalRoute) ??
+    finalRoute?.location?.trim() ??
+    fallbackLocation?.trim() ??
+    null
+  )
+}
+
+function buildFinalRouteClusterConfirmation(
+  finalRoute: RuntimeRouteArtifact | null | undefined,
+  fallbackLocation?: string | null,
+): string | null {
+  if (!finalRoute) {
+    return null
+  }
+  const location = resolveFinalRouteDisplayLocation(finalRoute, fallbackLocation)
+  const highlight =
+    finalRoute.stops.find((stop) => stop.role === 'highlight')?.displayName?.trim() ??
+    finalRoute.routeHeadline?.trim()
+  if (highlight && location) {
+    return `${highlight} anchors the selected route in ${location}.`
+  }
+  return location ? `Selected route geography: ${location}.` : null
+}
+
 function buildCurateVisibleCardModelFromArtifact(params: {
   artifact: ContractEntryArtifact
   preflight: CuratePreviewCommitabilityState | undefined
@@ -2775,7 +2827,12 @@ function buildCurateVisibleCardModelFromArtifact(params: {
   const qualifiedRouteWindDown =
     approvedFinalRoute?.stops.find((stop) => stop.role === 'windDown')?.displayName ?? null
   const approvedRouteLocation =
-    approvedFinalRoute?.location?.trim() ||
+    resolveFinalRouteDisplayLocation(
+      approvedFinalRoute,
+      artifact.enrichment?.locationContext?.neighborhood?.trim() ||
+        artifact.enrichment?.locationContext?.city?.trim() ||
+        null,
+    ) ||
     artifact.enrichment?.locationContext?.neighborhood?.trim() ||
     artifact.enrichment?.locationContext?.city?.trim() ||
     null
@@ -2924,9 +2981,13 @@ function buildSelectedRouteArtifactProjection(params: {
     const approvedPlanSnapshot = approvedCuratePreviewPayload.planSnapshot
     const approvedHighlightStop =
       approvedFinalRoute.stops.find((stop) => stop.role === 'highlight') ?? null
+    const approvedRouteLocation = resolveFinalRouteDisplayLocation(approvedFinalRoute, city)
+    const approvedRouteConfirmation =
+      buildFinalRouteClusterConfirmation(approvedFinalRoute, city) ??
+      approvedPlanSnapshot.selectedClusterConfirmation
     const approvedCanonicalRouteArtifact: CanonicalRouteArtifact = {
       selectedDirectionId: approvedCuratePreviewPayload.selectedDirectionId,
-      selectedClusterConfirmation: approvedPlanSnapshot.selectedClusterConfirmation,
+      selectedClusterConfirmation: approvedRouteConfirmation,
       itinerary: approvedPlanSnapshot.itinerary,
       finalRoute: approvedFinalRoute,
       canonicalStopByRole: approvedCuratePreviewPayload.canonicalStopByRole,
@@ -2945,11 +3006,11 @@ function buildSelectedRouteArtifactProjection(params: {
       preview: buildPreviewFromFinalRoute(approvedFinalRoute),
       routeTitle: approvedFinalRoute.routeHeadline,
       routeSummary: approvedFinalRoute.routeSummary,
-      districtLine: `Mostly in ${approvedFinalRoute.location || city.trim()}`,
-      districtAnchorLine: `District anchor: ${approvedFinalRoute.location || city.trim()}`,
-      authorityLine: approvedPlanSnapshot.selectedClusterConfirmation,
+      districtLine: `Mostly in ${approvedRouteLocation || city.trim()}`,
+      districtAnchorLine: `District anchor: ${approvedRouteLocation || city.trim()}`,
+      authorityLine: approvedRouteConfirmation,
       happeningsLine: undefined as string | undefined,
-      whyChooseLine: approvedPlanSnapshot.selectedClusterConfirmation,
+      whyChooseLine: approvedRouteConfirmation,
       whyTonightProofLine: undefined as string | undefined,
     }
   }
@@ -13114,7 +13175,9 @@ export function SandboxConciergePage({
         })
         const fallbackSelectedDirectionPreviewContext =
           buildSelectedDirectionPreviewContext(fallbackDirection)
-        const selectedClusterConfirmation = fallbackDirection.card.confirmation
+        const selectedClusterConfirmation =
+          buildFinalRouteClusterConfirmation(fallbackFinalRoute, districtLocationQuery) ??
+          fallbackDirection.card.confirmation
         const approvedPayload = buildCurateRefinementEntryPayload<
           DemoPlanState,
           Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>

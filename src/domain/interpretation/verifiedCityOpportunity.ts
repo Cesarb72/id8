@@ -2,7 +2,12 @@ import { curatedVenues } from '../../data/venues'
 import type { ContractConstraints } from '../types/intent'
 import type { EngineSourceMode } from '../types/sourceMode'
 import { dedupeStringIds } from '../utils/dedupeStringIds'
-import type { BuiltScenarioNight, BuiltScenarioStop, BuiltScenarioStopPosition } from './construction/scenarioBuilder'
+import type {
+  BuiltScenarioNight,
+  BuiltScenarioStop,
+  BuiltScenarioStopPosition,
+  StarterSemanticRepresentation,
+} from './construction/scenarioBuilder'
 import { devGreatStopFixtureVenueIds } from '../sources/devGreatStopFixtures'
 
 export type CityOpportunityStopOption = {
@@ -52,6 +57,7 @@ export type BuiltScenarioNightPreviewModel = {
   flavorLine: string
   whyThisWorks: string
   evaluation?: BuiltScenarioNight['evaluation']
+  starterSemanticRepresentation?: StarterSemanticRepresentation
   stops: BuiltScenarioPreviewStop[]
 }
 
@@ -125,6 +131,7 @@ export type VerifiedCityOpportunity = {
     finalName: string | null
     finalRoleEligible: boolean
   }
+  starterSemanticRepresentation?: StarterSemanticRepresentation
   scenarioNight?: BuiltScenarioNight
   scenarioPreviewModel?: BuiltScenarioNightPreviewModel
 }
@@ -314,6 +321,7 @@ export function mapBuiltScenarioNightToVerifiedOpportunity(params: {
         contractConstraints,
       }),
     },
+    starterSemanticRepresentation: night.starterSemanticRepresentation,
     scenarioNight: night,
     scenarioPreviewModel: mapBuiltScenarioNightToPreviewModel(night),
   }
@@ -383,6 +391,7 @@ function mapBuiltScenarioNightToPreviewModel(
     flavorLine: night.flavorLine,
     whyThisWorks: night.whyThisWorks,
     evaluation: night.evaluation,
+    starterSemanticRepresentation: night.starterSemanticRepresentation,
     stops: night.stops.map(mapBuiltScenarioStopToPreviewStop),
   }
 }

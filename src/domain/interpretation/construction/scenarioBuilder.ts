@@ -42,6 +42,36 @@ export type BuiltScenarioNightEvaluation = {
   notes?: string[]
 }
 
+export type StarterSemanticEvidenceKind =
+  | 'book'
+  | 'reading'
+  | 'literary'
+  | 'library'
+  | 'bookstore'
+  | 'museum'
+  | 'gallery'
+  | 'art'
+  | 'exhibit'
+  | 'cultural'
+
+export type StarterSemanticEvidence = {
+  starterPackId: string
+  venueId: string
+  name: string
+  position: BuiltScenarioStopPosition
+  stopType: StopType
+  evidenceTypes: StarterSemanticEvidenceKind[]
+  matchedTerms: string[]
+  source: 'selected_route_stop'
+}
+
+export type StarterSemanticRepresentation = {
+  starterPackId: string
+  status: 'represented' | 'missing'
+  evidence: StarterSemanticEvidence[]
+  rejectionReasons?: string[]
+}
+
 export type BuiltScenarioStop = {
   position: BuiltScenarioStopPosition
   stopType: StopType
@@ -93,6 +123,7 @@ export type BuiltScenarioNight = {
   complete: boolean
   missingStopTypes?: StopType[]
   evaluation?: BuiltScenarioNightEvaluation
+  starterSemanticRepresentation?: StarterSemanticRepresentation
   selectionDebug?: {
     highlightDiversityApplied: boolean
     selectedScenarioNightHighlightNames: string[]
@@ -115,6 +146,7 @@ type CandidateNight = {
   currentRelevance: number
   districtPlausibility: number
   roleDiscipline: number
+  starterSemanticRepresentation?: StarterSemanticRepresentation
 }
 
 type DistinctNightSelectionResult = {
@@ -280,7 +312,23 @@ function getWhyThisWorks(stops: BuiltScenarioStop[]): string {
   return `Starts at ${start.name}, centers on ${highlight.name}, and lands cleanly at ${closer.name}.`
 }
 
-function hasCoffeeBooksRepresentation(stop: BuiltScenarioStop): boolean {
+const COFFEE_BOOKS_SEMANTIC_MATCHERS: Array<{
+  evidenceType: StarterSemanticEvidenceKind
+  terms: string[]
+}> = [
+  { evidenceType: 'book', terms: ['book', 'books'] },
+  { evidenceType: 'reading', terms: ['reading', 'read'] },
+  { evidenceType: 'literary', terms: ['literary', 'literature'] },
+  { evidenceType: 'library', terms: ['library'] },
+  { evidenceType: 'bookstore', terms: ['bookstore', 'book store'] },
+  { evidenceType: 'museum', terms: ['museum'] },
+  { evidenceType: 'gallery', terms: ['gallery'] },
+  { evidenceType: 'art', terms: ['art', 'arts'] },
+  { evidenceType: 'exhibit', terms: ['exhibit', 'exhibition'] },
+  { evidenceType: 'cultural', terms: ['cultural', 'culture', 'cultural venue'] },
+]
+
+function collectCoffeeBooksSemanticEvidence(stop: BuiltScenarioStop): StarterSemanticEvidence[] {
   const corpus = normalizeCorpus([
     stop.name,
     stop.address,
@@ -294,43 +342,73 @@ function hasCoffeeBooksRepresentation(stop: BuiltScenarioStop): boolean {
     ...(stop.venueFeatures ?? []),
     ...(stop.reasons ?? []),
   ])
-  const directBookOrReadingSignal = corpusIncludesAny(corpus, [
-    'book',
-    'books',
-    'bookstore',
-    'book store',
-    'library',
-    'reading',
-    'literary',
-  ])
-  if (directBookOrReadingSignal) {
-    return true
+  const evidenceTypes: StarterSemanticEvidenceKind[] = []
+  const matchedTerms: string[] = []
+  for (const matcher of COFFEE_BOOKS_SEMANTIC_MATCHERS) {
+    const matches = matcher.terms.filter((term) => corpusIncludesAny(corpus, [term]))
+    if (matches.length === 0) {
+      continue
+    }
+    evidenceTypes.push(matcher.evidenceType)
+    matchedTerms.push(...matches)
+  }
+  if (stop.venueCategory === 'museum' && !evidenceTypes.includes('museum')) {
+    evidenceTypes.push('museum')
+    matchedTerms.push('venueCategory:museum')
   }
 
-  const directCultureSignal =
-    stop.venueCategory === 'museum' ||
-    corpusIncludesAny(corpus, [
-      'museum',
-      'gallery',
-      'art',
-      'arts',
-      'cultural',
-      'culture',
-      'exhibit',
-      'exhibition',
-    ])
-  if (directCultureSignal) {
-    return true
+  if (evidenceTypes.length === 0) {
+    return []
   }
 
-  const quietCuratedSignal = ['quiet', 'thoughtful', 'curated', 'reflective'].filter((token) =>
-    corpusIncludesAny(corpus, [token]),
-  ).length
-  return quietCuratedSignal >= 2 && (stop.culturalAnchorPotential ?? 0) >= 0.45
+  return [
+    {
+      starterPackId: 'coffee-books',
+      venueId: stop.venueId,
+      name: stop.name,
+      position: stop.position,
+      stopType: stop.stopType,
+      evidenceTypes: [...new Set(evidenceTypes)],
+      matchedTerms: [...new Set(matchedTerms)],
+      source: 'selected_route_stop',
+    },
+  ]
+}
+
+function buildCoffeeBooksSemanticRepresentation(
+  stops: BuiltScenarioStop[],
+): StarterSemanticRepresentation {
+  const evidence = stops.flatMap(collectCoffeeBooksSemanticEvidence)
+  if (evidence.length > 0) {
+    return {
+      starterPackId: 'coffee-books',
+      status: 'represented',
+      evidence,
+    }
+  }
+  return {
+    starterPackId: 'coffee-books',
+    status: 'missing',
+    evidence: [],
+    rejectionReasons: ['missing_explicit_book_reading_literary_or_cultural_stop'],
+  }
 }
 
 function hasCoffeeBooksRouteRepresentation(night: CandidateNight): boolean {
-  return night.stops.some(hasCoffeeBooksRepresentation)
+  return buildCoffeeBooksSemanticRepresentation(night.stops).status === 'represented'
+}
+
+function withCoffeeBooksSemanticRepresentation(night: CandidateNight): CandidateNight {
+  const starterSemanticRepresentation = buildCoffeeBooksSemanticRepresentation(night.stops)
+  const evidenceLift =
+    starterSemanticRepresentation.status === 'represented'
+      ? Math.min(0.08, starterSemanticRepresentation.evidence.length * 0.035)
+      : -0.18
+  return {
+    ...night,
+    score: clamp01(night.score + evidenceLift),
+    starterSemanticRepresentation,
+  }
 }
 
 function mapCategoryToVenueTypeLabel(category?: VenueCategory, subcategory?: string): string | undefined {
@@ -1315,10 +1393,14 @@ export function buildScenarioNightsFromCandidateBoard(
     requiredStopTypes,
     pools,
   })
+  const candidateNightsWithStarterSemantics =
+    board.starterPack?.id === 'coffee-books'
+      ? candidateNights.map(withCoffeeBooksSemanticRepresentation)
+      : candidateNights
   const starterRepresentativeCandidates =
     board.starterPack?.id === 'coffee-books'
-      ? candidateNights.filter(hasCoffeeBooksRouteRepresentation)
-      : candidateNights
+      ? candidateNightsWithStarterSemantics.filter(hasCoffeeBooksRouteRepresentation)
+      : candidateNightsWithStarterSemantics
   if (board.starterPack?.id === 'coffee-books' && starterRepresentativeCandidates.length === 0) {
     return [
       {
@@ -1331,14 +1413,20 @@ export function buildScenarioNightsFromCandidateBoard(
         flavorLine: SCENARIO_FLAVOR_LINE[board.scenarioFamily],
         stops: [],
         whyThisWorks:
-          'Coffee & Books requires at least one book, reading, literary, library, bookstore, cultural, gallery, or quiet curated cultural stop.',
+          'Coffee & Books requires at least one selected stop with explicit book, reading, literary, library, bookstore, museum, gallery, art, exhibit, or cultural evidence.',
         complete: false,
         missingStopTypes: requiredStopTypes,
         evaluation: {
           stopEvaluations: [],
           passesGreatStopStandard: false,
           failedStops: ['coffee_books_semantic_representation'],
-          notes: ['Coffee & Books semantic representation gate rejected cafe/bakery-only route supply.'],
+          notes: ['Coffee & Books semantic representation gate rejected route supply without explicit Books/culture evidence.'],
+        },
+        starterSemanticRepresentation: {
+          starterPackId: 'coffee-books',
+          status: 'missing',
+          evidence: [],
+          rejectionReasons: ['missing_explicit_book_reading_literary_or_cultural_stop'],
         },
       },
     ]
@@ -1389,6 +1477,9 @@ export function buildScenarioNightsFromCandidateBoard(
       whyThisWorks: getWhyThisWorks(evaluatedStops),
       complete: true,
       evaluation,
+      ...(night.starterSemanticRepresentation
+        ? { starterSemanticRepresentation: night.starterSemanticRepresentation }
+        : {}),
       selectionDebug: {
         highlightDiversityApplied: distinctSelection.highlightDiversityApplied,
         selectedScenarioNightHighlightNames,

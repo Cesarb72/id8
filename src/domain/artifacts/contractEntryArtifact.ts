@@ -1,4 +1,7 @@
-import type { BuiltScenarioNight } from '../interpretation/construction/scenarioBuilder'
+import type {
+  BuiltScenarioNight,
+  StarterSemanticRepresentation,
+} from '../interpretation/construction/scenarioBuilder'
 import type { DirectionContractBuildability } from '../bearings/assessDirectionContractBuildability'
 import type { UserStopRole } from '../types/itinerary'
 import type { EngineSourceMode } from '../types/sourceMode'
@@ -151,6 +154,7 @@ export interface ContractEntryArtifactEnrichment {
   starterContextFit?: ContractEntryArtifactStarterContextFit
   modeContextFit?: ContractEntryArtifactModeContextFit
   runtimeLockEligibility?: ContractEntryArtifactRuntimeLockEligibility
+  starterSemanticRepresentation?: StarterSemanticRepresentation
 }
 
 export interface ContractEntryArtifactQualification<
