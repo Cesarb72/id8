@@ -10,9 +10,12 @@ import type {
   DirectionPlanningSelection,
 } from '../../../domain/arc/directionPlanning'
 import type { GeneratePlanResult } from '../../../domain/runGeneratePlan'
+import type { RuntimeRouteArtifact } from '../../../domain/artifacts/runtimeRouteArtifact'
+import type { StarterPack } from '../../../domain/types/starterPack'
 import type { ConciergeIntent, ContractConstraints, ExperienceContract, IntentInput, PersonaMode, ResolvedDirectionContext, RouteShapeContract, VibeAnchor } from '../../../domain/types/intent'
 import type { UserStopRole } from '../../../domain/types/itinerary'
 import type { RankedPocket } from '../../../engines/district/types/districtTypes'
+import { validatePublicCurateApprovedPayloadTruth } from '../curate/publicCurateCardTruthService'
 import type {
   CuratePreviewCommitabilityStateLike,
   CurateQualificationRepairState,
@@ -217,6 +220,35 @@ function getPreviewScenarioFamily(opportunity: unknown): string | undefined {
     : undefined
 }
 
+function getSelectedStarterPackForApprovedPayloadTruth(
+  value: unknown,
+): StarterPack | null {
+  if (!value || typeof value !== 'object' || !('id' in value)) {
+    return null
+  }
+  const id = (value as { id?: unknown }).id
+  return typeof id === 'string' && id.trim() ? (value as StarterPack) : null
+}
+
+function getApprovedPayloadTruthFailureReason(params: {
+  artifactId: string
+  artifactToQualify: CanonicalCandidateRouteArtifact
+  nextFinalRoute: RuntimeRouteArtifact
+  selectedStarterPack?: unknown
+}): string | null {
+  const truth = validatePublicCurateApprovedPayloadTruth({
+    selectedStarterPack: getSelectedStarterPackForApprovedPayloadTruth(
+      params.selectedStarterPack,
+    ),
+    artifact: params.artifactToQualify,
+    approvedRefinementEntryPayload: {
+      artifactId: params.artifactId,
+      finalRoute: params.nextFinalRoute,
+    },
+  })
+  return truth.allowedToRender ? null : truth.rejectionReasons[0] ?? 'approved_payload_route_mismatch'
+}
+
 function buildRepairDiagnostics<
   TDirectionCoreRole extends string,
   TApprovedPayload,
@@ -381,15 +413,27 @@ export async function runCuratePreviewQualificationAttempt<
     )
     const exactPreservationSatisfied =
       !hardCommitRequired || hardCommitPreservationSucceeded
-    const commitParitySucceeded = Boolean(
+    const baseCommitParitySucceeded = Boolean(
       exactPreservationSatisfied &&
         parity.directionValidation.valid &&
         parity.nextFinalRoute &&
         parity.nextFinalRoute.selectedDirectionId === params.activeDirectionContract.id,
     )
+    const approvedPayloadTruthFailureReason = baseCommitParitySucceeded
+      ? getApprovedPayloadTruthFailureReason({
+          artifactId: params.artifactId,
+          artifactToQualify: params.artifactToQualify,
+          nextFinalRoute: parity.nextFinalRoute,
+          selectedStarterPack: params.selectedStarterPack,
+        })
+      : null
+    const commitParitySucceeded = Boolean(
+      baseCommitParitySucceeded && !approvedPayloadTruthFailureReason,
+    )
     const failedCheck = commitParitySucceeded
       ? null
-      : hardCommitRequired && !hardCommitPreservationSucceeded
+      : approvedPayloadTruthFailureReason ??
+        (hardCommitRequired && !hardCommitPreservationSucceeded
         ? 'curateHardCommit.hardCommitPreservationSucceeded'
         : !parity.directionValidation.valid
           ? parity.directionValidation.generationDriftReason ??
@@ -397,7 +441,7 @@ export async function runCuratePreviewQualificationAttempt<
           : parity.nextFinalRoute.selectedDirectionId !==
               params.activeDirectionContract.id
             ? 'nextFinalRoute.selectedDirectionId'
-            : 'curate_preflight_commit_parity'
+            : 'curate_preflight_commit_parity')
     const failureKind: CuratePreviewCommitabilityStateLike<
       TDirectionCoreRole,
       TApprovedPayload
@@ -444,6 +488,7 @@ export async function runCuratePreviewQualificationAttempt<
           hardCommitCandidateCount: curateHardCommit?.hardCommitCandidateCount ?? 0,
           rankedCandidateCount: curateHardCommit?.rankedCandidateCount ?? 0,
           explicitFallbackReason: `${
+            approvedPayloadTruthFailureReason ??
             curateHardCommit?.explicitFallbackReason ??
             parity.directionValidation.generationDriftReason ??
             failedCheck ??
@@ -499,6 +544,7 @@ export async function runCuratePreviewQualificationAttempt<
           repairedHardCommitCandidateCount:
             curateHardCommit?.hardCommitCandidateCount ?? 0,
           repairedFailureReason: `${
+            approvedPayloadTruthFailureReason ??
             curateHardCommit?.explicitFallbackReason ??
             parity.directionValidation.generationDriftReason ??
             failedCheck ??
@@ -539,7 +585,8 @@ export async function runCuratePreviewQualificationAttempt<
       rankedCandidateCount: curateHardCommit?.rankedCandidateCount ?? 0,
       explicitFallbackReason: commitParitySucceeded
         ? curateHardCommit?.explicitFallbackReason
-        : curateHardCommit?.explicitFallbackReason ??
+        : approvedPayloadTruthFailureReason ??
+          curateHardCommit?.explicitFallbackReason ??
           parity.directionValidation.generationDriftReason ??
           failedCheck ??
           'curate_preflight_commit_parity_failed',
@@ -594,7 +641,8 @@ export async function runCuratePreviewQualificationAttempt<
       repairedFailureReason: params.repairState?.attempted
         ? commitParitySucceeded
           ? null
-          : curateHardCommit?.explicitFallbackReason ??
+          : approvedPayloadTruthFailureReason ??
+            curateHardCommit?.explicitFallbackReason ??
             parity.directionValidation.generationDriftReason ??
             failedCheck ??
             'curate_preflight_commit_parity_failed'

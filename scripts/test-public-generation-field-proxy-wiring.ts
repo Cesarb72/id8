@@ -4,6 +4,7 @@ import {
   validatePublicCurateApprovedPayloadTruth,
 } from '../src/app/services/curate/publicCurateCardTruthService.ts'
 import { buildCurateCommittedRouteFallbackDecision } from '../src/app/services/curate/buildCurateCommittedRouteFallback.ts'
+import { runCuratePreviewQualificationAttempt } from '../src/app/services/sandbox/curatePreviewQualificationService.ts'
 import {
   buildCoffeeBooksSemanticRepresentationFromRouteStops,
   coffeeBooksSemanticRepresentationMissingReason,
@@ -1458,6 +1459,164 @@ function assertCurateApprovedPayloadVisibleCardTruthInvariant(): void {
   process.stdout.write('Curate approved-payload visible-card truth invariant: passed\n')
 }
 
+async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<void> {
+  const starterPack = findStarterPack('coffee-books')
+  const artifact = createTruthInvariantArtifact()
+  const staleWillowGlenRoute = createTruthInvariantFinalRoute({
+    routeId: 'stale-willow-glen',
+    directionId: 'direction-romantic-cultured',
+    start: 'Willow Glen Tea Atelier',
+    highlight: 'Chromatic Coffee Roastery',
+    windDown: 'Willow Glen Bakehouse',
+  })
+  const alignedRoute = createTruthInvariantFinalRoute({
+    routeId: 'aligned-scenario-backed',
+    directionId: 'direction-romantic-cultured',
+    start: 'Academic Coffee',
+    highlight: 'Rosicrucian Egyptian Museum',
+    windDown: 'Willow Glen Bakehouse',
+  })
+
+  const runAttempt = async (finalRoute: RuntimeRouteArtifact) => {
+    let approvedPayloadBuildCount = 0
+    const result = await runCuratePreviewQualificationAttempt({
+      artifactId: artifact.id,
+      artifactToQualify: artifact,
+      activeDirection: {
+        cluster: 'romantic_cultured',
+        card: { confirmation: 'Cultured Coffee & Books route' },
+      },
+      activeCandidateOpportunity: undefined,
+      selectedStarterPack: starterPack,
+      districtLocationQuery: 'San Jose',
+      persona: 'romantic',
+      primaryVibe: 'cultured',
+      activeDistrictPocketId: 'san-jose',
+      canonicalInterpretationBundle: {} as never,
+      canonicalConciergeIntent: {} as never,
+      canonicalExperienceContract: {} as never,
+      canonicalContractConstraints: {} as never,
+      refinementModes: [],
+      activeDirectionContract: {
+        id: 'direction-romantic-cultured',
+        pocketLabel: 'San Jose',
+      } as never,
+      activeDirectionContextForValidation: {} as never,
+      activeDirectionContractForValidation: {} as never,
+      expectedDirectionIdentityForPreview: 'selection',
+      activeIntentSelectedDirectionContext: {} as never,
+      activeRouteShapeContract: {} as never,
+      selectedArtifactDiscoveryPreferences: [],
+      selectedArtifactLineage: undefined,
+      selectedArtifactLineageSummary: 'scenario_backed_artifact',
+      plannerInputSummary: 'mocked Coffee & Books preflight',
+      selectedDirectionPreviewContext: undefined,
+    }, {
+      runPlanBuild: async () => ({
+        trace: {
+          curateHardCommit: {
+            hardCommitRequired: false,
+            hardCommitPreservationSucceeded: true,
+            hardCommitCandidateCount: 1,
+            rankedCandidateCount: 1,
+            failedRoles: [],
+            exactPreservingCandidateIds: [artifact.id],
+          },
+        },
+        intentProfile: {
+          mode: 'curate',
+          selectedDirectionContext: {},
+        },
+        itinerary: {},
+        selectedArc: {},
+        scoredVenues: [],
+        lens: {},
+      }) as never,
+      enforceSelectedDirectionLineage: () => undefined,
+      runPostPlannerCommitParityStages: async () => ({
+        strongCurationPass: {
+          rolePoolVenueIdsByRole: {
+            start: [],
+            highlight: [],
+            windDown: [],
+          },
+        },
+        anchoredPlan: {},
+        canonicalItinerary: {},
+        contractBuildability: {},
+        directionValidation: {
+          valid: true,
+          generationDriftReason: null,
+          contractBuildabilityStatus: 'buildable',
+          missingRoleForContract: null,
+          candidatePoolSufficiencyByRole: {
+            start: 1,
+            highlight: 1,
+            windDown: 1,
+          },
+        },
+        nextFinalRoute: finalRoute,
+      }) as never,
+      attemptStarterAwareWindDownRepair: () => ({
+        repairedArtifact: null,
+        repairReason: 'not_needed',
+        originalWindDown: null,
+        repairedWindDown: null,
+        repairedWindDownTarget: null,
+        repairSource: null,
+      }),
+      buildApprovedRefinementEntryPayload: () => {
+        approvedPayloadBuildCount += 1
+        return {
+          artifactId: artifact.id,
+          starterPackId: starterPack.id,
+          finalRoute,
+        }
+      },
+      formatCurateSelectedTargetSummary: () => 'selected target',
+      formatCurateFinalWinnerSummary: () => 'final winner',
+      formatCurateHardCommitSampleCandidatesSummary: () => 'sample candidates',
+      getCurateDiscoveryPreferenceVenueId: () => 'n/a',
+      getErrorName: () => 'n/a',
+      getErrorMessageRaw: () => 'n/a',
+      getCuratePreflightRuntimeReason: () => 'n/a',
+    })
+    return { result, approvedPayloadBuildCount }
+  }
+
+  const staleAttempt = await runAttempt(staleWillowGlenRoute)
+  assert(
+    staleAttempt.result.kind === 'infeasible' &&
+      staleAttempt.approvedPayloadBuildCount === 0 &&
+      staleAttempt.result.state.status === 'infeasible' &&
+      staleAttempt.result.state.approvedRefinementEntryPayload === undefined &&
+      staleAttempt.result.state.failedCheck === 'approved_payload_route_mismatch',
+    'Curate preflight must fail closed before approved payload construction when parity finalRoute diverges from the selected artifact.',
+  )
+
+  const alignedAttempt = await runAttempt(alignedRoute)
+  assert(
+    alignedAttempt.result.kind === 'committable' &&
+      alignedAttempt.approvedPayloadBuildCount === 1 &&
+      alignedAttempt.result.state.status === 'committable' &&
+      Boolean(alignedAttempt.result.state.approvedRefinementEntryPayload),
+    'Curate preflight must still approve an aligned scenario-backed Coffee & Books route.',
+  )
+
+  const serviceSource = readFileSync(
+    'src/app/services/sandbox/curatePreviewQualificationService.ts',
+    'utf8',
+  )
+  assert(
+    serviceSource.includes('validatePublicCurateApprovedPayloadTruth') &&
+      serviceSource.includes('getApprovedPayloadTruthFailureReason') &&
+      serviceSource.includes('approvedPayloadTruthFailureReason') &&
+      serviceSource.includes('baseCommitParitySucceeded && !approvedPayloadTruthFailureReason'),
+    'Curate preflight qualification must share the approved-payload truth invariant before payload construction.',
+  )
+  process.stdout.write('Curate preflight approved-payload truth invariant: passed\n')
+}
+
 function assertCurateVisibleCardProjectionUsesApprovedRouteTruth(): void {
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   assert(
@@ -1602,6 +1761,7 @@ async function main(): Promise<void> {
   assertCoffeeBooksCommittedRouteFallbackGate()
   assertCoffeeBooksCommittedRuntimeSummaryGate()
   assertCurateApprovedPayloadVisibleCardTruthInvariant()
+  await assertCuratePreflightApprovedPayloadTruthInvariant()
   assertCurateVisibleCardProjectionUsesApprovedRouteTruth()
   assertHostedObserverCapturesSuppressedRouteSummaryEvidence()
   await assertFailClosedDoesNotRenderFalseCard()
