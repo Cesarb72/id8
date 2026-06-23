@@ -272,11 +272,10 @@ function createZeroProxyTrap(label: string): typeof fetch {
 function semanticCorpusFromCandidate(candidate: StopTypeCandidate): string {
   return [
     candidate.name,
+    candidate.venueCategory,
     candidate.venueSubcategory,
-    candidate.shortDescription,
     ...(candidate.sourceTypes ?? []),
     ...(candidate.venueTags ?? []),
-    ...(candidate.reasons ?? []),
   ]
     .join(' ')
     .toLowerCase()
@@ -308,11 +307,10 @@ function candidateHasCoffeeBooksSemanticRepresentation(candidate: StopTypeCandid
       'museum',
       'gallery',
       'art',
-      'arts',
       'exhibit',
       'exhibition',
-      'cultural',
-      'culture',
+      'cultural center',
+      'cultural venue',
     ])
   )
 }
@@ -320,39 +318,7 @@ function candidateHasCoffeeBooksSemanticRepresentation(candidate: StopTypeCandid
 function builtNightHasCoffeeBooksSemanticRepresentation(
   night: ReturnType<typeof buildScenarioNightsFromCandidateBoard>[number],
 ): boolean {
-  return night.stops.some((stop) => {
-    const corpus = [
-      stop.name,
-      stop.venueSubcategory,
-      stop.factualSummary,
-      ...(stop.venueTags ?? []),
-      ...(stop.sourceTypes ?? []),
-      ...(stop.venueFeatures ?? []),
-      ...(stop.reasons ?? []),
-    ]
-      .join(' ')
-      .toLowerCase()
-    return (
-      stop.venueCategory === 'museum' ||
-      semanticCorpusIncludesAny(corpus, [
-        'book',
-        'books',
-        'bookstore',
-        'book store',
-        'library',
-        'reading',
-        'literary',
-        'museum',
-        'gallery',
-        'art',
-        'arts',
-        'exhibit',
-        'exhibition',
-        'cultural',
-        'culture',
-      ])
-    )
-  })
+  return night.starterSemanticRepresentation?.status === 'represented'
 }
 
 function createScenarioCandidate(
@@ -958,19 +924,34 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
       venueId: 'tea',
       name: 'Willow Glen Tea Atelier',
       position: 'start',
-      evidenceParts: ['cafe', 'tea-room', 'quiet', 'curated', 'calm'],
+      evidenceParts: [
+        { field: 'venueCategory', value: 'cafe' },
+        { field: 'venueSubcategory', value: 'tea-room' },
+        { field: 'vibeTag', value: ['quiet', 'curated', 'calm', 'culture'] },
+      ],
     },
     {
       venueId: 'coffee',
       name: 'Chromatic Coffee Roastery',
       position: 'highlight',
-      evidenceParts: ['cafe', 'coffee', 'thoughtful', 'quiet'],
+      evidenceParts: [
+        { field: 'venueCategory', value: 'cafe' },
+        { field: 'venueSubcategory', value: 'coffee' },
+        { field: 'tag', value: ['thoughtful', 'quiet'] },
+        { field: 'scenarioFamily', value: 'romantic_cultured', sourceScope: 'scenario_family' },
+      ],
     },
     {
       venueId: 'bakery',
       name: 'Willow Glen Bakehouse',
       position: 'windDown',
-      evidenceParts: ['dessert', 'bakery', 'calm'],
+      evidenceParts: [
+        { field: 'venueCategory', value: 'dessert' },
+        { field: 'venueSubcategory', value: 'bakery' },
+        { field: 'tag', value: 'calm' },
+        { field: 'culturalAnchorPotential', value: '0.95', sourceScope: 'derived_signal' },
+        { field: 'bodyText', value: 'Start at an artisan cafe', sourceScope: 'body_text' },
+      ],
     },
   ])
   assert(
@@ -980,31 +961,90 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
       ),
     'Coffee & Books committed runtime summary must reject tea/coffee/bakery-only routes.',
   )
+  assert(
+    (cafeOnlyRepresentation.matchedEvidence ?? []).every((match) => !match.admissible),
+    'Coffee & Books vibe, scenario-family, body text, and derived-signal matches must be diagnostic-only.',
+  )
 
   const representedSummary = buildCoffeeBooksSemanticRepresentationFromRouteStops([
     {
       venueId: 'tea',
       name: 'Willow Glen Tea Atelier',
       position: 'start',
-      evidenceParts: ['cafe', 'tea-room'],
+      evidenceParts: [
+        { field: 'venueCategory', value: 'cafe' },
+        { field: 'venueSubcategory', value: 'tea-room' },
+      ],
     },
     {
       venueId: 'bookstore',
       name: 'Recycle Bookstore',
       position: 'highlight',
-      evidenceParts: ['bookstore', 'books', 'reading', 'literary'],
+      evidenceParts: [
+        { field: 'venueCategory', value: 'bookstore' },
+        { field: 'tag', value: ['books', 'reading', 'literary'] },
+      ],
     },
     {
       venueId: 'bakery',
       name: 'Willow Glen Bakehouse',
       position: 'windDown',
-      evidenceParts: ['dessert', 'bakery'],
+      evidenceParts: [
+        { field: 'venueCategory', value: 'dessert' },
+        { field: 'venueSubcategory', value: 'bakery' },
+      ],
     },
   ])
   assert(
     representedSummary.status === 'represented' &&
       representedSummary.evidence.some((entry) => entry.venueId === 'bookstore'),
     'Coffee & Books committed runtime summary with explicit bookstore evidence must remain eligible.',
+  )
+  assert(
+    representedSummary.matchedEvidence?.some(
+      (entry) =>
+        entry.admissible &&
+        entry.stopName === 'Recycle Bookstore' &&
+        entry.sourceScope === 'selected_stop_field' &&
+        entry.field === 'displayName',
+    ),
+    'Coffee & Books semantic evidence must preserve selected stop name, field, term, match type, and admissibility.',
+  )
+
+  for (const category of [
+    'library',
+    'museum',
+    'gallery',
+    'art_gallery',
+    'cultural_center',
+    'exhibit',
+    'exhibition',
+  ]) {
+    const categoryRepresentation = buildCoffeeBooksSemanticRepresentationFromRouteStops([
+      {
+        venueId: `valid-${category}`,
+        name: category === 'library' ? 'Community Library' : 'Selected cultural stop',
+        position: 'highlight',
+        evidenceParts: [{ field: 'venueSubcategory', value: category }],
+      },
+    ])
+    assert(
+      categoryRepresentation.status === 'represented',
+      `Coffee & Books selected stop category/subcategory "${category}" must satisfy representation.`,
+    )
+  }
+
+  const kinokuniyaRepresentation = buildCoffeeBooksSemanticRepresentationFromRouteStops([
+    {
+      venueId: 'kinokuniya',
+      name: 'Kinokuniya Bookstore - San José',
+      position: 'highlight',
+      evidenceParts: [{ field: 'sourceType', value: 'book_store' }],
+    },
+  ])
+  assert(
+    kinokuniyaRepresentation.status === 'represented',
+    'Coffee & Books explicit bookstore names and provider/source types must remain valid evidence.',
   )
 
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
@@ -1014,7 +1054,8 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
       sandboxSource.includes('renderedCommittedRouteArtifactForSummary?.finalRoute') &&
       sandboxSource.includes('selectedRouteArtifact.canonicalRouteArtifact') &&
       sandboxSource.includes('data-id8-route-summary-suppressed="true"') &&
-      sandboxSource.includes('data-id8-route-summary-rejection-reason'),
+      sandboxSource.includes('data-id8-route-summary-rejection-reason') &&
+      sandboxSource.includes('data-id8-route-summary-semantic-evidence'),
     'Coffee & Books committed/runtime summary admission must evaluate the actual rendered route and expose suppression evidence.',
   )
   assert(
@@ -1073,8 +1114,11 @@ function assertHostedObserverCapturesSuppressedRouteSummaryEvidence(): void {
       observerSource.includes('activeStarterIdForSemanticAdmission') &&
       observerSource.includes('routeSummarySuppressed') &&
       observerSource.includes('routeSummarySuppressionReason') &&
+      observerSource.includes('matchedSemanticEvidence') &&
+      observerSource.includes('bodySemanticSubstringHits') &&
       observerSource.includes('routeSummaryPassedStarterSemanticRepresentation') &&
-      observerSource.includes('reviewCtaVisible'),
+      observerSource.includes('reviewCtaVisible') &&
+      !observerSource.includes('semanticTermsPresent'),
     'Hosted observer must persist route summary source/provenance and suppression semantic evidence when no cards exist.',
   )
   process.stdout.write('Hosted observer route-summary suppression evidence capture: passed\n')

@@ -195,9 +195,10 @@ function hasCoffeeBooksSemanticSignal(entry: unknown): boolean {
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
-  return /\b(book|books|bookshop|bookstore|reading|literary|library|museum|gallery|art|arts|exhibit|exhibition|cultural|culture)\b/.test(
+    .replace(/[_-]+/g, ' ')
+  return /\b(book|books|book shop|bookshop|bookstore|reading|literary|library|museum|gallery|art|exhibit|exhibition)\b/.test(
     corpus,
-  )
+  ) || /\bcultural\s+(center|venue)\b/.test(corpus)
 }
 
 function extractCandidateSummaries(parsed: unknown): JsonValue {
@@ -632,6 +633,14 @@ async function readRouteSourceEvidence(cdp: CdpClient): Promise<Record<string, J
         const summarySemanticStatus = summaryElement?.getAttribute('data-id8-route-summary-semantic-status') || null
         const summaryRejectionReason = summaryElement?.getAttribute('data-id8-route-summary-rejection-reason') || null
         const activeStarterIdForSemanticAdmission = summaryElement?.getAttribute('data-id8-route-summary-active-starter-id') || null
+        const semanticEvidenceRaw = summaryElement?.getAttribute('data-id8-route-summary-semantic-evidence') || '[]'
+        let matchedSemanticEvidence = []
+        try {
+          const parsed = JSON.parse(semanticEvidenceRaw)
+          matchedSemanticEvidence = Array.isArray(parsed) ? parsed : []
+        } catch {
+          matchedSemanticEvidence = []
+        }
         const reviewButtonVisible = Array.from(document.querySelectorAll('button, [role="button"]'))
           .some((element) => {
             const rect = element.getBoundingClientRect()
@@ -647,7 +656,7 @@ async function readRouteSourceEvidence(cdp: CdpClient): Promise<Record<string, J
             role: normalize(match[1]),
             text: normalize(match[2]),
           }))
-        const semanticTerms = ['book', 'books', 'bookshop', 'bookstore', 'reading', 'literary', 'library', 'museum', 'gallery', 'art', 'arts', 'exhibit', 'exhibition', 'cultural', 'culture']
+        const semanticTerms = ['book', 'books', 'bookshop', 'bookstore', 'reading', 'literary', 'library', 'museum', 'gallery', 'art gallery', 'exhibit', 'exhibition', 'cultural center', 'cultural venue']
         const lowerBody = bodyText.toLowerCase()
         return {
           url: location.href,
@@ -666,7 +675,8 @@ async function readRouteSourceEvidence(cdp: CdpClient): Promise<Record<string, J
           sourceLine,
           lineageHint: lineageMatch,
           routeStops: routeStopMatches,
-          semanticTermsPresent: semanticTerms.filter((term) => lowerBody.includes(term)),
+          matchedSemanticEvidence,
+          bodySemanticSubstringHits: semanticTerms.filter((term) => lowerBody.includes(term)),
           bodyExcerpt: bodyText.slice(0, 2500),
         }
       })()

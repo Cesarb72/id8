@@ -2,6 +2,9 @@ import type {
   BuiltScenarioStopPosition,
   StarterSemanticEvidence,
   StarterSemanticEvidenceKind,
+  StarterSemanticEvidenceMatch,
+  StarterSemanticEvidenceMatchType,
+  StarterSemanticEvidenceSourceScope,
   StarterSemanticRepresentation,
 } from '../../../domain/interpretation/construction/scenarioBuilder'
 import type { StopType } from '../../../domain/interpretation/discovery/stopTypeCandidateBoard'
@@ -9,72 +12,170 @@ import type { StopType } from '../../../domain/interpretation/discovery/stopType
 export const coffeeBooksSemanticRepresentationMissingReason =
   'coffee_books_semantic_representation_missing' as const
 
+export type CoffeeBooksSemanticEvidenceField =
+  | 'displayName'
+  | 'name'
+  | 'venueName'
+  | 'category'
+  | 'subcategory'
+  | 'venueCategory'
+  | 'venueSubcategory'
+  | 'providerCategory'
+  | 'providerType'
+  | 'sourceType'
+  | 'sourceLabel'
+  | 'tag'
+  | 'tags'
+  | 'sourceTypes'
+  | 'vibeTag'
+  | 'routeStory'
+  | 'scenarioFamily'
+  | 'starterText'
+  | 'culturalAnchorPotential'
+  | 'bodyText'
+  | string
+
+export interface CoffeeBooksSemanticEvidencePart {
+  field: CoffeeBooksSemanticEvidenceField
+  value: string | string[] | undefined | null
+  sourceScope?: StarterSemanticEvidenceSourceScope
+}
+
 export interface CoffeeBooksSemanticRouteStopInput {
   venueId: string
   name: string
   position: BuiltScenarioStopPosition
   stopType?: StopType
-  evidenceParts: Array<string | string[] | undefined | null>
+  evidenceParts: CoffeeBooksSemanticEvidencePart[]
 }
 
-function normalizeToken(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function normalizeCorpus(parts: Array<string | string[] | undefined | null>): string {
-  return normalizeToken(
-    parts
-      .flatMap((part) => (Array.isArray(part) ? part : [part]))
-      .filter((part): part is string => Boolean(part?.trim()))
-      .join(' '),
-  )
-}
-
-function corpusIncludesAny(corpus: string, terms: string[]): boolean {
-  const tokens = new Set(corpus.split(' ').filter(Boolean))
-  return terms.some((term) => {
-    const normalizedTerm = normalizeToken(term)
-    return normalizedTerm.includes(' ')
-      ? corpus.includes(normalizedTerm)
-      : tokens.has(normalizedTerm)
-  })
-}
+const selectedStopAdmissibleFields = new Set<CoffeeBooksSemanticEvidenceField>([
+  'displayName',
+  'name',
+  'venueName',
+  'category',
+  'subcategory',
+  'venueCategory',
+  'venueSubcategory',
+  'providerCategory',
+  'providerType',
+  'sourceType',
+  'sourceLabel',
+  'tag',
+  'tags',
+  'sourceTypes',
+])
 
 const coffeeBooksExplicitSemanticMatchers: Array<{
   evidenceType: StarterSemanticEvidenceKind
   terms: string[]
 }> = [
-  { evidenceType: 'book', terms: ['book', 'books', 'bookshop'] },
-  { evidenceType: 'reading', terms: ['reading', 'read'] },
-  { evidenceType: 'literary', terms: ['literary', 'literature'] },
+  { evidenceType: 'book', terms: ['book', 'books'] },
+  { evidenceType: 'reading', terms: ['reading'] },
+  { evidenceType: 'literary', terms: ['literary'] },
   { evidenceType: 'library', terms: ['library'] },
-  { evidenceType: 'bookstore', terms: ['bookstore', 'book store', 'bookshop'] },
+  { evidenceType: 'bookstore', terms: ['bookstore', 'book store', 'book shop', 'bookshop'] },
   { evidenceType: 'museum', terms: ['museum'] },
-  { evidenceType: 'gallery', terms: ['gallery'] },
-  { evidenceType: 'art', terms: ['art', 'arts'] },
+  { evidenceType: 'gallery', terms: ['gallery', 'art gallery'] },
+  { evidenceType: 'art', terms: ['art'] },
   { evidenceType: 'exhibit', terms: ['exhibit', 'exhibition'] },
-  { evidenceType: 'cultural', terms: ['cultural', 'culture', 'cultural venue'] },
+  { evidenceType: 'cultural', terms: ['cultural center', 'cultural venue'] },
 ]
+
+function normalizeToken(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function flattenEvidenceValues(value: string | string[] | undefined | null): string[] {
+  const values = Array.isArray(value) ? value : [value]
+  return values.filter((entry): entry is string => Boolean(entry?.trim()))
+}
+
+function findSemanticTermMatch(
+  rawValue: string,
+): {
+  evidenceType: StarterSemanticEvidenceKind
+  normalizedTerm: string
+  matchType: StarterSemanticEvidenceMatchType
+}[] {
+  const normalizedValue = normalizeToken(rawValue)
+  if (!normalizedValue) {
+    return []
+  }
+  const tokens = new Set(normalizedValue.split(' ').filter(Boolean))
+  const matches: {
+    evidenceType: StarterSemanticEvidenceKind
+    normalizedTerm: string
+    matchType: StarterSemanticEvidenceMatchType
+  }[] = []
+  for (const matcher of coffeeBooksExplicitSemanticMatchers) {
+    for (const term of matcher.terms) {
+      const normalizedTerm = normalizeToken(term)
+      const matchType: StarterSemanticEvidenceMatchType = normalizedTerm.includes(' ')
+        ? 'phrase'
+        : 'token'
+      const matched =
+        matchType === 'phrase'
+          ? normalizedValue.includes(normalizedTerm)
+          : tokens.has(normalizedTerm)
+      if (matched) {
+        matches.push({
+          evidenceType: matcher.evidenceType,
+          normalizedTerm,
+          matchType,
+        })
+      }
+    }
+  }
+  return matches
+}
+
+function isAdmissibleSelectedStopField(
+  part: CoffeeBooksSemanticEvidencePart,
+): boolean {
+  const sourceScope = part.sourceScope ?? 'selected_stop_field'
+  return sourceScope === 'selected_stop_field' && selectedStopAdmissibleFields.has(part.field)
+}
+
+export function collectCoffeeBooksSemanticEvidenceMatchesFromRouteStop(
+  stop: CoffeeBooksSemanticRouteStopInput,
+): StarterSemanticEvidenceMatch[] {
+  const explicitStopNamePart: CoffeeBooksSemanticEvidencePart = {
+    field: 'displayName',
+    value: stop.name,
+    sourceScope: 'selected_stop_field',
+  }
+  return [explicitStopNamePart, ...stop.evidenceParts].flatMap((part) => {
+    const sourceScope = part.sourceScope ?? 'selected_stop_field'
+    const admissibleField = isAdmissibleSelectedStopField(part)
+    return flattenEvidenceValues(part.value).flatMap((rawValue) =>
+      findSemanticTermMatch(rawValue).map((match) => ({
+        stopVenueId: stop.venueId,
+        stopName: stop.name,
+        field: part.field,
+        rawValue,
+        normalizedTerm: match.normalizedTerm,
+        evidenceType: match.evidenceType,
+        matchType: match.matchType,
+        sourceScope,
+        admissible: admissibleField,
+      })),
+    )
+  })
+}
 
 export function collectCoffeeBooksSemanticEvidenceFromRouteStop(
   stop: CoffeeBooksSemanticRouteStopInput,
 ): StarterSemanticEvidence[] {
-  const corpus = normalizeCorpus([stop.name, ...stop.evidenceParts])
-  const evidenceTypes: StarterSemanticEvidenceKind[] = []
-  const matchedTerms: string[] = []
-  for (const matcher of coffeeBooksExplicitSemanticMatchers) {
-    const matches = matcher.terms.filter((term) => corpusIncludesAny(corpus, [term]))
-    if (matches.length === 0) {
-      continue
-    }
-    evidenceTypes.push(matcher.evidenceType)
-    matchedTerms.push(...matches)
-  }
-  if (evidenceTypes.length === 0) {
+  const admissibleMatches = collectCoffeeBooksSemanticEvidenceMatchesFromRouteStop(stop).filter(
+    (match) => match.admissible,
+  )
+  if (admissibleMatches.length === 0) {
     return []
   }
   return [
@@ -84,8 +185,9 @@ export function collectCoffeeBooksSemanticEvidenceFromRouteStop(
       name: stop.name,
       position: stop.position,
       stopType: stop.stopType ?? 'atmospheric_experience',
-      evidenceTypes: [...new Set(evidenceTypes)],
-      matchedTerms: [...new Set(matchedTerms)],
+      evidenceTypes: [...new Set(admissibleMatches.map((match) => match.evidenceType))],
+      matchedTerms: [...new Set(admissibleMatches.map((match) => match.normalizedTerm))],
+      matches: admissibleMatches,
       source: 'selected_route_stop',
     },
   ]
@@ -94,18 +196,21 @@ export function collectCoffeeBooksSemanticEvidenceFromRouteStop(
 export function buildCoffeeBooksSemanticRepresentationFromRouteStops(
   stops: CoffeeBooksSemanticRouteStopInput[],
 ): StarterSemanticRepresentation {
+  const matchedEvidence = stops.flatMap(collectCoffeeBooksSemanticEvidenceMatchesFromRouteStop)
   const evidence = stops.flatMap(collectCoffeeBooksSemanticEvidenceFromRouteStop)
   if (evidence.length > 0) {
     return {
       starterPackId: 'coffee-books',
       status: 'represented',
       evidence,
+      matchedEvidence,
     }
   }
   return {
     starterPackId: 'coffee-books',
     status: 'missing',
     evidence: [],
+    matchedEvidence,
     rejectionReasons: [coffeeBooksSemanticRepresentationMissingReason],
   }
 }

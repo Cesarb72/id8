@@ -175,6 +175,7 @@ import {
   buildScenarioNightsFromCandidateBoard,
   type BuiltScenarioNight,
   type BuiltScenarioStop,
+  type StarterSemanticEvidenceMatch,
 } from '../domain/interpretation/construction/scenarioBuilder'
 import type { ExperienceContract as InterpretationExperienceContract } from '../domain/interpretation/contracts/experienceContract'
 import { buildGreatStopAdmissibilitySignal } from '../domain/bearings/buildGreatStopAdmissibilitySignal'
@@ -2812,18 +2813,21 @@ type CoffeeBooksCommittedRouteSummaryAdmission =
       status: 'accepted'
       semanticRepresentationStatus: 'represented'
       evidenceCount: number
+      matchedEvidence: StarterSemanticEvidenceMatch[]
       rejectedReason: null
     }
   | {
       status: 'rejected'
       semanticRepresentationStatus: 'missing'
       evidenceCount: 0
+      matchedEvidence: StarterSemanticEvidenceMatch[]
       rejectedReason: typeof coffeeBooksSemanticRepresentationMissingReason
     }
   | {
       status: 'not_applicable'
       semanticRepresentationStatus: null
       evidenceCount: null
+      matchedEvidence: []
       rejectedReason: null
     }
 
@@ -2856,6 +2860,7 @@ function evaluateCoffeeBooksCommittedRouteSummaryAdmission(params: {
       status: 'not_applicable',
       semanticRepresentationStatus: null,
       evidenceCount: null,
+      matchedEvidence: [],
       rejectedReason: null,
     }
   }
@@ -2864,6 +2869,7 @@ function evaluateCoffeeBooksCommittedRouteSummaryAdmission(params: {
       status: 'rejected',
       semanticRepresentationStatus: 'missing',
       evidenceCount: 0,
+      matchedEvidence: [],
       rejectedReason: coffeeBooksSemanticRepresentationMissingReason,
     }
   }
@@ -2878,19 +2884,11 @@ function evaluateCoffeeBooksCommittedRouteSummaryAdmission(params: {
         name: stop.displayName,
         position: toCoffeeBooksSemanticPosition(stop.role),
         evidenceParts: [
-          stop.title,
-          stop.subtitle,
-          stop.neighborhood,
-          stop.address,
-          itineraryStop?.venueName,
-          itineraryStop?.category,
-          itineraryStop?.subcategory,
-          itineraryStop?.tags,
-          itineraryStop?.vibeTags,
-          itineraryStop?.subtitle,
-          itineraryStop?.note,
-          itineraryStop?.reasonLabels,
-          itineraryStop?.selectedBecause,
+          { field: 'displayName', value: stop.displayName },
+          { field: 'venueName', value: itineraryStop?.venueName },
+          { field: 'venueCategory', value: itineraryStop?.category },
+          { field: 'venueSubcategory', value: itineraryStop?.subcategory },
+          { field: 'tag', value: itineraryStop?.tags },
         ],
       }
     }),
@@ -2900,6 +2898,7 @@ function evaluateCoffeeBooksCommittedRouteSummaryAdmission(params: {
       status: 'accepted',
       semanticRepresentationStatus: 'represented',
       evidenceCount: representation.evidence.length,
+      matchedEvidence: representation.matchedEvidence?.filter((match) => match.admissible) ?? [],
       rejectedReason: null,
     }
   }
@@ -2907,6 +2906,7 @@ function evaluateCoffeeBooksCommittedRouteSummaryAdmission(params: {
     status: 'rejected',
     semanticRepresentationStatus: 'missing',
     evidenceCount: 0,
+    matchedEvidence: representation.matchedEvidence ?? [],
     rejectedReason: coffeeBooksSemanticRepresentationMissingReason,
   }
 }
@@ -23927,6 +23927,9 @@ export function SandboxConciergePage({
               data-id8-route-summary-rejection-reason={
                 coffeeBooksCommittedRouteSummaryAdmission.rejectedReason ?? 'unknown'
               }
+              data-id8-route-summary-semantic-evidence={JSON.stringify(
+                coffeeBooksCommittedRouteSummaryAdmission.matchedEvidence,
+              )}
             >
               <p className="preview-notice-title">No qualified Coffee & Books route is ready yet.</p>
               <p className="preview-notice-copy">
@@ -24292,6 +24295,9 @@ export function SandboxConciergePage({
           data-id8-route-summary-rejection-reason={
             coffeeBooksCommittedRouteSummaryAdmission.rejectedReason ?? 'none'
           }
+          data-id8-route-summary-semantic-evidence={JSON.stringify(
+            coffeeBooksCommittedRouteSummaryAdmission.matchedEvidence,
+          )}
         >
           <p className="preview-bridge-line">{previewBridgeLine}</p>
           <p className="preview-bridge-subline">{previewBridgeSubline}</p>

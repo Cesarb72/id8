@@ -135,13 +135,9 @@ function buildCoffeeBooksFallbackSemanticRepresentation(
         stopType:
           venue.category === 'museum' ? 'cultural_institution' : 'atmospheric_experience',
         evidenceParts: [
-          venue.category,
-          venue.subcategory,
-          venue.neighborhood,
-          venue.shortDescription,
-          venue.narrativeFlavor,
-          venue.tags,
-          venue.vibeTags,
+          { field: 'venueCategory', value: venue.category },
+          { field: 'venueSubcategory', value: venue.subcategory },
+          { field: 'tag', value: venue.tags },
         ],
       }
     }),
