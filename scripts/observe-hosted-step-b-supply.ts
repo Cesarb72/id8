@@ -49,6 +49,7 @@ interface FieldProxyCallSummary extends NetworkRequestSummary {
   budget: JsonValue
   resultCount: JsonValue
   responseQueryLabel: JsonValue
+  candidateSummaries: JsonValue
 }
 
 interface EvidenceState {
@@ -65,6 +66,8 @@ interface EvidenceState {
   fieldProxyCalls: FieldProxyCallSummary[]
   stepBSupplyTraces: Array<Record<string, JsonValue>>
   providerPatternHits: Array<Record<string, JsonValue>>
+  routeSourceEvidence: Array<Record<string, JsonValue>>
+  candidateEvidence: Array<Record<string, JsonValue>>
   routeCardsBeforeClick: Array<Record<string, JsonValue>>
   selectedRouteCard: Record<string, JsonValue> | null
   revealedRouteText: string | null
@@ -157,6 +160,81 @@ function findFirstValue(value: unknown, paths: string[][]): JsonValue {
   return null
 }
 
+function findStringValue(value: unknown, paths: string[][]): string | null {
+  for (const path of paths) {
+    const candidate = getNestedValue(value, path)
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim()
+    }
+  }
+  return null
+}
+
+function findArrayValue(value: unknown, paths: string[][]): string[] {
+  for (const path of paths) {
+    const candidate = getNestedValue(value, path)
+    if (!Array.isArray(candidate)) {
+      continue
+    }
+    return candidate
+      .filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+      .slice(0, 10)
+  }
+  return []
+}
+
+function hasCoffeeBooksSemanticSignal(entry: unknown): boolean {
+  const corpus = [
+    findStringValue(entry, [['name'], ['displayName'], ['venue', 'name'], ['title']]),
+    findStringValue(entry, [['category'], ['venueCategory'], ['venue', 'category']]),
+    findStringValue(entry, [['subcategory'], ['venueSubcategory'], ['venue', 'subcategory']]),
+    findStringValue(entry, [['shortDescription'], ['description'], ['venue', 'shortDescription']]),
+    ...findArrayValue(entry, [['tags'], ['venueTags'], ['venue', 'tags']]),
+    ...findArrayValue(entry, [['sourceTypes'], ['types'], ['venue', 'sourceTypes']]),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  return /\b(book|books|bookshop|bookstore|reading|literary|library|museum|gallery|art|arts|exhibit|exhibition|cultural|culture)\b/.test(
+    corpus,
+  )
+}
+
+function extractCandidateSummaries(parsed: unknown): JsonValue {
+  const candidates =
+    getNestedValue(parsed, ['results']) ??
+    getNestedValue(parsed, ['venues']) ??
+    getNestedValue(parsed, ['data', 'results']) ??
+    getNestedValue(parsed, ['data', 'venues'])
+  if (!Array.isArray(candidates)) {
+    return []
+  }
+  return candidates.slice(0, 5).map((entry, index) =>
+    sanitizeForEvidence({
+      index,
+      name: findStringValue(entry, [['name'], ['displayName'], ['venue', 'name'], ['title']]),
+      category: findStringValue(entry, [['category'], ['venueCategory'], ['venue', 'category']]),
+      subcategory: findStringValue(entry, [
+        ['subcategory'],
+        ['venueSubcategory'],
+        ['venue', 'subcategory'],
+      ]),
+      sourceLabel: findStringValue(entry, [
+        ['sourceLabel'],
+        ['source', 'label'],
+        ['source', 'sourceOrigin'],
+        ['venue', 'source', 'sourceOrigin'],
+      ]),
+      tags: findArrayValue(entry, [['tags'], ['venueTags'], ['venue', 'tags']]),
+      sourceTypes: findArrayValue(entry, [['sourceTypes'], ['types'], ['venue', 'sourceTypes']]),
+      semanticEvidencePresent: hasCoffeeBooksSemanticSignal(entry),
+      survivedCandidateBoardFiltering: null,
+      roleFit: findFirstValue(entry, [['roleFit'], ['scores', 'roleFit'], ['venue', 'roleFit']]),
+      score: findFirstValue(entry, [['score'], ['fitScore'], ['rankScore']]),
+    }),
+  )
+}
+
 function extractQueryLabel(source: unknown): string | null {
   if (!source) {
     return null
@@ -214,6 +292,7 @@ function summarizeFieldProxyBody(body: string): Omit<
       budget: null,
       resultCount: null,
       responseQueryLabel: null,
+      candidateSummaries: [],
     }
   }
 
@@ -243,14 +322,32 @@ function summarizeFieldProxyBody(body: string): Omit<
     ]),
     resultCount: sanitizeForEvidence(resultCount),
     responseQueryLabel: sanitizeForEvidence(extractQueryLabel(parsed)),
+    candidateSummaries: extractCandidateSummaries(parsed),
   }
 }
 
+let atomicWriteCounter = 0
+
 async function atomicWriteJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
-  const temporaryPath = `${path}.tmp`
+  atomicWriteCounter += 1
+  const temporaryPath = `${path}.${process.pid}.${Date.now()}.${atomicWriteCounter}.tmp`
   await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
   await rename(temporaryPath, path)
+}
+
+async function durableWriteJson(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+}
+
+function createSerializedWriteQueue(): (operation: () => Promise<void>) => Promise<void> {
+  let queue = Promise.resolve()
+  return async (operation: () => Promise<void>): Promise<void> => {
+    const nextWrite = queue.then(operation, operation)
+    queue = nextWrite.catch(() => undefined)
+    await nextWrite
+  }
 }
 
 async function appendNdjson(path: string, value: unknown): Promise<void> {
@@ -522,6 +619,36 @@ async function readRouteCards(cdp: CdpClient): Promise<Array<Record<string, Json
   )
 }
 
+async function readRouteSourceEvidence(cdp: CdpClient): Promise<Record<string, JsonValue>> {
+  return evaluate<Record<string, JsonValue>>(
+    cdp,
+    `
+      (() => {
+        const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim()
+        const bodyText = normalize(document.body?.innerText)
+        const sourceLine = bodyText.match(/Highlight source:[^.]+\\./i)?.[0] || null
+        const lineageMatch = bodyText.match(/committed_route_fallback|approved_payload|candidate_draft|committed runtime route|candidate route story spine/i)?.[0] || null
+        const routeStopMatches = Array.from(bodyText.matchAll(/\\b(START|HIGHLIGHT|WIND-DOWN)\\s+([^\\n]+?)(?=\\s+(?:cafe|dessert|museum|restaurant|bar|activity|park|live music|WHERE THIS NIGHT LIVES|START|HIGHLIGHT|WIND-DOWN|$))/gi))
+          .slice(0, 5)
+          .map((match) => ({
+            role: normalize(match[1]),
+            text: normalize(match[2]),
+          }))
+        const semanticTerms = ['book', 'books', 'bookshop', 'bookstore', 'reading', 'literary', 'library', 'museum', 'gallery', 'art', 'arts', 'exhibit', 'exhibition', 'cultural', 'culture']
+        const lowerBody = bodyText.toLowerCase()
+        return {
+          url: location.href,
+          sourceLine,
+          lineageHint: lineageMatch,
+          routeStops: routeStopMatches,
+          semanticTermsPresent: semanticTerms.filter((term) => lowerBody.includes(term)),
+          bodyExcerpt: bodyText.slice(0, 2500),
+        }
+      })()
+    `,
+  )
+}
+
 async function clickTextButton(cdp: CdpClient, label: string): Promise<Record<string, JsonValue>> {
   return evaluate<Record<string, JsonValue>>(
     cdp,
@@ -694,12 +821,28 @@ async function runDryRun(): Promise<void> {
     fieldProxyCalls: [],
     stepBSupplyTraces: [],
     providerPatternHits: [],
+    routeSourceEvidence: [],
+    candidateEvidence: [],
     routeCardsBeforeClick: [],
     selectedRouteCard: null,
     revealedRouteText: null,
     finalError: null,
   }
   await atomicWriteJson(join(artifactDir, 'evidence.json'), evidence)
+  const dryRunQueue = createSerializedWriteQueue()
+  const dryRunQueuedEvidencePath = join(artifactDir, 'queued-evidence.json')
+  await Promise.all(
+    Array.from({ length: 5 }, (_, index) =>
+      dryRunQueue(() =>
+        atomicWriteJson(dryRunQueuedEvidencePath, {
+          artifactDir,
+          dryRun: true,
+          queuedWriteIndex: index,
+          timestamp: isoNow(),
+        }),
+      ),
+    ),
+  )
   await appendNdjson(join(artifactDir, 'events.ndjson'), {
     timestamp: isoNow(),
     kind: 'dry_run',
@@ -728,6 +871,8 @@ async function runHostedObservation(): Promise<void> {
     fieldProxyCalls: [],
     stepBSupplyTraces: [],
     providerPatternHits: [],
+    routeSourceEvidence: [],
+    candidateEvidence: [],
     routeCardsBeforeClick: [],
     selectedRouteCard: null,
     revealedRouteText: null,
@@ -735,17 +880,33 @@ async function runHostedObservation(): Promise<void> {
   }
   const requestById = new Map<string, NetworkRequestSummary>()
   const pendingWrites: Array<Promise<unknown>> = []
+  const queueEvidenceWrite = createSerializedWriteQueue()
   let browser: Awaited<ReturnType<typeof launchChrome>> | null = null
   let targetId: string | null = null
   let cdp: CdpClient | null = null
 
   async function recordEvent(kind: string, payload: unknown): Promise<void> {
     const event = { timestamp: isoNow(), kind, payload: sanitizeForEvidence(payload) }
-    await appendNdjson(eventPath, event)
+    await queueEvidenceWrite(() => appendNdjson(eventPath, event))
   }
 
   async function persist(reason: string): Promise<void> {
-    await atomicWriteJson(evidencePath, { ...evidence, persistedAt: isoNow(), persistReason: reason })
+    const snapshot = { ...evidence, persistedAt: isoNow(), persistReason: reason }
+    await queueEvidenceWrite(async () => {
+      try {
+        await atomicWriteJson(evidencePath, snapshot)
+      } catch (error: unknown) {
+        await appendNdjson(eventPath, {
+          timestamp: isoNow(),
+          kind: 'persist_error',
+          payload: sanitizeForEvidence({
+            reason,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        })
+        await durableWriteJson(evidencePath, snapshot)
+      }
+    })
   }
 
   async function checkpoint(name: string): Promise<void> {
@@ -896,7 +1057,14 @@ async function runHostedObservation(): Promise<void> {
               ...summarizeFieldProxyBody(bodyResult.body ?? ''),
             }
             evidence.fieldProxyCalls.push(fieldSummary)
+            const candidateEvidence = {
+              timestamp: isoNow(),
+              queryLabel: fieldSummary.queryLabel,
+              candidateSummaries: fieldSummary.candidateSummaries,
+            }
+            evidence.candidateEvidence.push(candidateEvidence)
             await recordEvent('field_proxy_response_summary', fieldSummary)
+            await recordEvent('candidate_evidence_summary', candidateEvidence)
             await persist('field_proxy_response_summary')
           }),
       )
@@ -928,6 +1096,14 @@ async function runHostedObservation(): Promise<void> {
       throw new Error('Could not click Continue.')
     }
     await checkpoint('after_click_continue')
+    const routeSourceAfterContinue = await readRouteSourceEvidence(cdp)
+    evidence.routeSourceEvidence.push({
+      timestamp: isoNow(),
+      action: 'after_click_continue',
+      ...routeSourceAfterContinue,
+    })
+    await recordEvent('route_source_evidence', evidence.routeSourceEvidence[evidence.routeSourceEvidence.length - 1])
+    await persist('route_source_after_continue')
 
     await waitUntil('visible route cards after candidate supply', async () => {
       if (!cdp) {
@@ -959,6 +1135,14 @@ async function runHostedObservation(): Promise<void> {
       throw new Error('Could not click first visible route card.')
     }
     await checkpoint('after_click_route_card')
+    const routeSourceAfterCardClick = await readRouteSourceEvidence(cdp)
+    evidence.routeSourceEvidence.push({
+      timestamp: isoNow(),
+      action: 'after_click_route_card',
+      ...routeSourceAfterCardClick,
+    })
+    await recordEvent('route_source_evidence', evidence.routeSourceEvidence[evidence.routeSourceEvidence.length - 1])
+    await persist('route_source_after_card_click')
 
     await checkpoint('before_click_review_this_route')
     const reviewResult = await clickTextButton(cdp, 'Review this route')

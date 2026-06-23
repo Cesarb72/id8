@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { buildPublicCurateCardTruthModel } from '../src/app/services/curate/publicCurateCardTruthService.ts'
+import { buildCurateCommittedRouteFallbackDecision } from '../src/app/services/curate/buildCurateCommittedRouteFallback.ts'
 import {
   runStepBCurateLiveSmokeCandidateSupply,
   shouldApplyStepBCurateLiveSmokeCandidateSupply,
@@ -18,10 +19,12 @@ import type {
 } from '../src/domain/interpretation/discovery/stopTypeCandidateBoard.ts'
 import { mapBuiltScenarioNightToVerifiedOpportunity } from '../src/domain/interpretation/verifiedCityOpportunity.ts'
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
+import type { GeneratePlanResult } from '../src/domain/runGeneratePlan.ts'
 import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
 import type { ProviderVenue } from '../src/domain/providers/providerTypes.ts'
 import type { ExperienceMode, IntentInput } from '../src/domain/types/intent.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
+import type { VenueCategory } from '../src/domain/types/venue.ts'
 
 const FIELD_PROXY_PATH = '/api/field/text-search'
 const originalFetch = globalThis.fetch
@@ -37,6 +40,7 @@ const managedEnvKeys = [
   'VITE_ID8_ALLOW_DEFAULT_CITY_FALLBACK',
   'VITE_ID8_ALLOW_FIXTURE_INJECTION',
   'VITE_ID8_FAIL_CLOSED_ON_LIVE_INVENTORY_FAILURE',
+  'VITE_ID8_ENABLE_FIELD_STATIC_PROVIDER_CORPUS_CURATE',
 ] as const
 const originalEnvValues = new Map(
   managedEnvKeys.map((key) => [key, process.env[key]] as const),
@@ -385,6 +389,99 @@ function createScenarioCandidate(
     reasons: ['quiet cafe fit'],
     ...overrides,
   }
+}
+
+function createFallbackPlannerStop(
+  role: 'warmup' | 'peak' | 'cooldown',
+  venueId: string,
+  name: string,
+  overrides: {
+    category?: VenueCategory
+    subcategory?: string
+    tags?: string[]
+    shortDescription?: string
+    narrativeFlavor?: string
+  } = {},
+): GeneratePlanResult['selectedArc']['stops'][number] {
+  return {
+    role,
+    scoredVenue: {
+      venue: {
+        id: venueId,
+        name,
+        city: 'San Jose',
+        neighborhood: 'Willow Glen',
+        driveMinutes: 8,
+        category: overrides.category ?? 'cafe',
+        subcategory: overrides.subcategory ?? 'coffee',
+        priceTier: '$$',
+        tags: overrides.tags ?? ['quiet', 'curated', 'thoughtful'],
+        useCases: ['date'],
+        vibeTags: ['cultured'],
+        energyLevel: 2,
+        socialDensity: 2,
+        uniquenessScore: 0.7,
+        distinctivenessScore: 0.7,
+        underexposureScore: 0.5,
+        shareabilityScore: 0.5,
+        isChain: false,
+        localSignals: {
+          localFavoriteScore: 0.7,
+          neighborhoodPrideScore: 0.7,
+          repeatVisitorScore: 0.6,
+        },
+        roleAffinity: {
+          warmup: 0.8,
+          peak: 0.8,
+          wildcard: 0.6,
+          cooldown: 0.8,
+        },
+        imageUrl: '',
+        shortDescription: overrides.shortDescription ?? 'Quiet curated cafe stop.',
+        narrativeFlavor: overrides.narrativeFlavor ?? 'Calm thoughtful route stop.',
+        isHiddenGem: false,
+        isActive: true,
+        highlightCapable: true,
+        durationProfile: {} as GeneratePlanResult['selectedArc']['stops'][number]['scoredVenue']['venue']['durationProfile'],
+        settings: {} as GeneratePlanResult['selectedArc']['stops'][number]['scoredVenue']['venue']['settings'],
+        signature: {} as GeneratePlanResult['selectedArc']['stops'][number]['scoredVenue']['venue']['signature'],
+        source: {
+          sourceOrigin: 'curated',
+        } as GeneratePlanResult['selectedArc']['stops'][number]['scoredVenue']['venue']['source'],
+      },
+    },
+  } as GeneratePlanResult['selectedArc']['stops'][number]
+}
+
+function buildFallbackGeneratePlanResult(
+  stops: GeneratePlanResult['selectedArc']['stops'],
+): GeneratePlanResult {
+  return {
+    selectedArc: {
+      stops,
+    },
+    itinerary: {
+      city: 'San Jose',
+      title: 'Fallback route',
+      shareSummary: 'Fallback route summary.',
+      storySpine: {
+        title: 'Fallback route',
+        routeSummary: 'Fallback route summary.',
+      },
+    },
+    trace: {
+      retrievalDiagnostics: {
+        liveSource: {
+          requestedMode: 'curated',
+          effectiveMode: 'curated',
+          liveFetchAttempted: false,
+          countsBySource: {
+            live: 0,
+          },
+        },
+      },
+    },
+  } as GeneratePlanResult
 }
 
 function buildCoffeeBooksScenarioBoard(params: {
@@ -776,6 +873,81 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
   process.stdout.write('Coffee & Books semantic Scenario Builder gate: passed\n')
 }
 
+function assertCoffeeBooksCommittedRouteFallbackGate(): void {
+  resetEnv()
+  process.env.VITE_ID8_ENABLE_FIELD_STATIC_PROVIDER_CORPUS_CURATE = '1'
+  const coffeeBooksStarterPack = findStarterPack('coffee-books')
+  const nonCoffeeStarterPack = findStarterPack('cozy-date-night')
+  const cafeOnlyResult = buildFallbackGeneratePlanResult([
+    createFallbackPlannerStop('warmup', 'fallback-tea', 'Fallback Tea Atelier'),
+    createFallbackPlannerStop('peak', 'fallback-coffee', 'Fallback Coffee Roastery'),
+    createFallbackPlannerStop('cooldown', 'fallback-bakery', 'Fallback Bakehouse', {
+      category: 'dessert',
+      subcategory: 'bakery',
+      tags: ['quiet', 'curated', 'calm'],
+    }),
+  ])
+  const rejectedCoffeeBooksFallback = buildCurateCommittedRouteFallbackDecision({
+    starterPack: coffeeBooksStarterPack,
+    result: cafeOnlyResult,
+    selectedDirectionId: 'direction-willow-glen',
+    selectedPocketId: 'willow-glen',
+  })
+  assert(
+    rejectedCoffeeBooksFallback.status === 'rejected' &&
+      rejectedCoffeeBooksFallback.rejectedReason ===
+        'coffee_books_semantic_representation_missing',
+    'Coffee & Books committed_route_fallback cafe-only route must be rejected before card admission.',
+  )
+  const visibleFallbackArtifacts =
+    rejectedCoffeeBooksFallback.status === 'accepted'
+      ? [rejectedCoffeeBooksFallback.artifact]
+      : []
+  assert(
+    visibleFallbackArtifacts.length === 0,
+    'Coffee & Books committed_route_fallback artifact without semantic representation must not become visible.',
+  )
+
+  const representedResult = buildFallbackGeneratePlanResult([
+    createFallbackPlannerStop('warmup', 'fallback-tea', 'Fallback Tea Atelier'),
+    createFallbackPlannerStop('peak', 'fallback-gallery', 'Fallback Reading Gallery', {
+      category: 'museum',
+      subcategory: 'art_gallery',
+      tags: ['gallery', 'reading', 'literary', 'culture'],
+      shortDescription: 'Small gallery with reading-room cultural programming.',
+      narrativeFlavor: 'Bookish cultural anchor.',
+    }),
+    createFallbackPlannerStop('cooldown', 'fallback-bakery', 'Fallback Bakehouse', {
+      category: 'dessert',
+      subcategory: 'bakery',
+    }),
+  ])
+  const acceptedCoffeeBooksFallback = buildCurateCommittedRouteFallbackDecision({
+    starterPack: coffeeBooksStarterPack,
+    result: representedResult,
+    selectedDirectionId: 'direction-willow-glen',
+    selectedPocketId: 'willow-glen',
+  })
+  assert(
+    acceptedCoffeeBooksFallback.status === 'accepted' &&
+      acceptedCoffeeBooksFallback.artifact.enrichment?.starterSemanticRepresentation?.status ===
+        'represented',
+    'Coffee & Books committed_route_fallback with explicit cultural/book evidence must remain eligible.',
+  )
+
+  const acceptedNonCoffeeFallback = buildCurateCommittedRouteFallbackDecision({
+    starterPack: nonCoffeeStarterPack,
+    result: cafeOnlyResult,
+    selectedDirectionId: 'direction-willow-glen',
+    selectedPocketId: 'willow-glen',
+  })
+  assert(
+    acceptedNonCoffeeFallback.status === 'accepted',
+    'Non-Coffee starters must keep existing committed_route_fallback behavior.',
+  )
+  process.stdout.write('Coffee & Books committed-route fallback gate: passed\n')
+}
+
 function assertCurateVisibleCardProjectionUsesApprovedRouteTruth(): void {
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   assert(
@@ -887,6 +1059,7 @@ async function main(): Promise<void> {
     }
   }
   assertCoffeeBooksScenarioGate(findStarterPack('coffee-books'))
+  assertCoffeeBooksCommittedRouteFallbackGate()
   assertCurateVisibleCardProjectionUsesApprovedRouteTruth()
   await assertFailClosedDoesNotRenderFalseCard()
   process.stdout.write(

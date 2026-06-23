@@ -1,10 +1,16 @@
 import type { ContractEntryArtifact } from '../../../domain/artifacts/contractEntryArtifact'
+import type {
+  StarterSemanticEvidence,
+  StarterSemanticEvidenceKind,
+  StarterSemanticRepresentation,
+} from '../../../domain/interpretation/construction/scenarioBuilder'
 import type { GeneratePlanResult } from '../../../domain/runGeneratePlan'
 import type { IntentInput } from '../../../domain/types/intent'
 import type { StarterPack } from '../../../domain/types/starterPack'
 
 type PublicRouteRole = 'start' | 'highlight' | 'windDown'
 type PlannerRouteRole = GeneratePlanResult['selectedArc']['stops'][number]['role']
+type PlannerRouteStop = GeneratePlanResult['selectedArc']['stops'][number]
 
 export type CurateCommittedRouteFallbackRejectedReason =
   | 'feature_flag_disabled'
@@ -14,6 +20,7 @@ export type CurateCommittedRouteFallbackRejectedReason =
   | 'missing_start_role'
   | 'missing_highlight_role'
   | 'missing_windDown_role'
+  | 'coffee_books_semantic_representation_missing'
 
 export interface CurateCommittedRouteFallbackAccepted {
   status: 'accepted'
@@ -108,6 +115,112 @@ function getLiveSource(result: GeneratePlanResult) {
   }
 }
 
+function normalizeCorpus(parts: Array<string | string[] | undefined | null>): string {
+  return parts
+    .flatMap((part) => (Array.isArray(part) ? part : [part]))
+    .filter((part): part is string => Boolean(part?.trim()))
+    .join(' ')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function corpusIncludesAny(corpus: string, terms: string[]): boolean {
+  const tokens = new Set(corpus.split(' ').filter(Boolean))
+  return terms.some((term) => {
+    const normalizedTerm = term
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    return normalizedTerm.includes(' ')
+      ? corpus.includes(normalizedTerm)
+      : tokens.has(normalizedTerm)
+  })
+}
+
+function collectCoffeeBooksFallbackSemanticEvidence(stop: PlannerRouteStop): StarterSemanticEvidence[] {
+  const venue = stop.scoredVenue.venue
+  const corpus = normalizeCorpus([
+    venue.name,
+    venue.category,
+    venue.subcategory,
+    venue.neighborhood,
+    venue.shortDescription,
+    venue.narrativeFlavor,
+    venue.tags,
+    venue.vibeTags,
+  ])
+  const matchers: Array<{ evidenceType: StarterSemanticEvidenceKind; terms: string[] }> = [
+    { evidenceType: 'book', terms: ['book', 'books', 'bookshop'] },
+    { evidenceType: 'reading', terms: ['reading', 'read'] },
+    { evidenceType: 'literary', terms: ['literary', 'literature'] },
+    { evidenceType: 'library', terms: ['library'] },
+    { evidenceType: 'bookstore', terms: ['bookstore', 'book store', 'bookshop'] },
+    { evidenceType: 'museum', terms: ['museum'] },
+    { evidenceType: 'gallery', terms: ['gallery'] },
+    { evidenceType: 'art', terms: ['art', 'arts'] },
+    { evidenceType: 'exhibit', terms: ['exhibit', 'exhibition'] },
+    { evidenceType: 'cultural', terms: ['cultural', 'culture', 'cultural venue'] },
+  ]
+  const evidenceTypes: StarterSemanticEvidenceKind[] = []
+  const matchedTerms: string[] = []
+  for (const matcher of matchers) {
+    const matches = matcher.terms.filter((term) => corpusIncludesAny(corpus, [term]))
+    if (matches.length === 0) {
+      continue
+    }
+    evidenceTypes.push(matcher.evidenceType)
+    matchedTerms.push(...matches)
+  }
+  if (venue.category === 'museum' && !evidenceTypes.includes('museum')) {
+    evidenceTypes.push('museum')
+    matchedTerms.push('category:museum')
+  }
+  if (evidenceTypes.length === 0) {
+    return []
+  }
+  return [
+    {
+      starterPackId: 'coffee-books',
+      venueId: venue.id,
+      name: venue.name,
+      position:
+        stop.role === 'warmup'
+          ? 'start'
+          : stop.role === 'peak'
+            ? 'highlight'
+            : stop.role === 'cooldown'
+              ? 'windDown'
+              : 'mid',
+      stopType: venue.category === 'museum' ? 'cultural_institution' : 'atmospheric_experience',
+      evidenceTypes: [...new Set(evidenceTypes)] as StarterSemanticEvidenceKind[],
+      matchedTerms: [...new Set(matchedTerms)],
+      source: 'selected_route_stop',
+    },
+  ]
+}
+
+function buildCoffeeBooksFallbackSemanticRepresentation(
+  stops: PlannerRouteStop[],
+): StarterSemanticRepresentation {
+  const evidence = stops.flatMap(collectCoffeeBooksFallbackSemanticEvidence)
+  if (evidence.length > 0) {
+    return {
+      starterPackId: 'coffee-books',
+      status: 'represented',
+      evidence,
+    }
+  }
+  return {
+    starterPackId: 'coffee-books',
+    status: 'missing',
+    evidence: [],
+    rejectionReasons: ['coffee_books_semantic_representation_missing'],
+  }
+}
+
 export function buildCurateCommittedRouteFallbackDecision(params: {
   starterPack: StarterPack
   result: GeneratePlanResult
@@ -177,6 +290,22 @@ export function buildCurateCommittedRouteFallbackDecision(params: {
       sourceMode,
     }
   }
+  const fallbackRouteStops = [start, highlight, windDown]
+  const coffeeBooksSemanticRepresentation =
+    params.starterPack.id === 'coffee-books'
+      ? buildCoffeeBooksFallbackSemanticRepresentation(fallbackRouteStops)
+      : null
+  if (
+    params.starterPack.id === 'coffee-books' &&
+    coffeeBooksSemanticRepresentation?.status !== 'represented'
+  ) {
+    return {
+      status: 'rejected',
+      rejectedReason: 'coffee_books_semantic_representation_missing',
+      routeStops,
+      sourceMode,
+    }
+  }
 
   const routeSummary =
     params.result.itinerary.storySpine?.routeSummary ?? params.result.itinerary.shareSummary
@@ -207,6 +336,13 @@ export function buildCurateCommittedRouteFallbackDecision(params: {
       directionId: selectedDirectionId,
       ...(params.selectedPocketId ? { pocketId: params.selectedPocketId } : {}),
     },
+    ...(coffeeBooksSemanticRepresentation
+      ? {
+          enrichment: {
+            starterSemanticRepresentation: coffeeBooksSemanticRepresentation,
+          },
+        }
+      : {}),
   }
 
   return {
