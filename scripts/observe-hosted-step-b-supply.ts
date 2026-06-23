@@ -631,6 +631,14 @@ async function readRouteSourceEvidence(cdp: CdpClient): Promise<Record<string, J
         const summarySuppressedRaw = summaryElement?.getAttribute('data-id8-route-summary-suppressed') || null
         const summarySemanticStatus = summaryElement?.getAttribute('data-id8-route-summary-semantic-status') || null
         const summaryRejectionReason = summaryElement?.getAttribute('data-id8-route-summary-rejection-reason') || null
+        const activeStarterIdForSemanticAdmission = summaryElement?.getAttribute('data-id8-route-summary-active-starter-id') || null
+        const reviewButtonVisible = Array.from(document.querySelectorAll('button, [role="button"]'))
+          .some((element) => {
+            const rect = element.getBoundingClientRect()
+            const style = window.getComputedStyle(element)
+            const visible = rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+            return visible && normalize(element.innerText || element.getAttribute('aria-label')).toLowerCase().includes('review this route')
+          })
         const sourceLine = bodyText.match(/Highlight source:[^.]+\\./i)?.[0] || null
         const lineageMatch = bodyText.match(/committed_route_fallback|approved_payload|candidate_draft|committed runtime route|candidate route story spine/i)?.[0] || null
         const routeStopMatches = Array.from(bodyText.matchAll(/\\b(START|HIGHLIGHT|WIND-DOWN)\\s+([^\\n]+?)(?=\\s+(?:cafe|dessert|museum|restaurant|bar|activity|park|live music|WHERE THIS NIGHT LIVES|START|HIGHLIGHT|WIND-DOWN|$))/gi))
@@ -646,11 +654,15 @@ async function readRouteSourceEvidence(cdp: CdpClient): Promise<Record<string, J
           visibleRouteSummaryText: summaryText,
           selectedRouteSummaryArtifactSource: summaryElement?.getAttribute('data-id8-route-summary-source') || null,
           selectedRouteSummaryArtifactProvenance: summaryElement?.getAttribute('data-id8-route-summary-provenance') || null,
+          selectedRouteArtifactCanonicalRouteSource: summaryElement?.getAttribute('data-id8-route-summary-rendered-route-source') || null,
+          activeStarterIdForSemanticAdmission,
           routeSummarySuppressed: summarySuppressedRaw === 'true',
           routeSummarySuppressionReason: summaryRejectionReason && summaryRejectionReason !== 'none' ? summaryRejectionReason : null,
           routeSummarySemanticRepresentationStatus: summarySemanticStatus,
           routeSummaryPassedStarterSemanticRepresentation:
-            summarySemanticStatus === 'represented' || summarySemanticStatus === 'not_applicable',
+            summarySemanticStatus === 'represented' ||
+            (summarySemanticStatus === 'not_applicable' && activeStarterIdForSemanticAdmission !== 'coffee-books'),
+          reviewCtaVisible: reviewButtonVisible,
           sourceLine,
           lineageHint: lineageMatch,
           routeStops: routeStopMatches,

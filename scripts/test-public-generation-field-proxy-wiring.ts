@@ -1010,14 +1010,29 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   assert(
     sandboxSource.includes('evaluateCoffeeBooksCommittedRouteSummaryAdmission') &&
-      sandboxSource.includes('committedSummaryAdmission.status === \'rejected\'') &&
-      sandboxSource.includes('return null') &&
+      sandboxSource.includes('starterPackId: activeCurateStarterPackId') &&
+      sandboxSource.includes('renderedCommittedRouteArtifactForSummary?.finalRoute') &&
+      sandboxSource.includes('selectedRouteArtifact.canonicalRouteArtifact') &&
       sandboxSource.includes('data-id8-route-summary-suppressed="true"') &&
       sandboxSource.includes('data-id8-route-summary-rejection-reason'),
-    'Coffee & Books committed/runtime summary projection must suppress invalid summaries and expose suppression evidence.',
+    'Coffee & Books committed/runtime summary admission must evaluate the actual rendered route and expose suppression evidence.',
   )
   assert(
-    sandboxSource.includes('selectedStarterPack?.id === \'coffee-books\'') &&
+    sandboxSource.includes('activeCurateStarterPackId =') &&
+      sandboxSource.includes('selectedStarterPack?.id ?? selectedStarterPackId') &&
+      sandboxSource.includes('params.starterPackId !== \'coffee-books\'') &&
+      sandboxSource.includes('if (!params.finalRoute)') &&
+      sandboxSource.includes('semanticRepresentationStatus: \'missing\''),
+    'Coffee & Books runtime summary admission must use explicit active starter scope and reject missing rendered route context instead of returning not_applicable.',
+  )
+  assert(
+    sandboxSource.includes('!coffeeBooksCommittedRouteSummarySuppressed') &&
+      sandboxSource.includes('const renderSharedPlanPreview = Boolean') &&
+      sandboxSource.includes('const showPrimaryContinueAction = Boolean'),
+    'Coffee & Books runtime summary suppression must hide both the generated summary and Review CTA.',
+  )
+  assert(
+    sandboxSource.includes('activeCurateStarterPackId === \'coffee-books\'') &&
       sandboxSource.includes('!effectiveCurateSelectedArtifact'),
     'Coffee & Books no-card direction fallback summaries must not render without a starter-valid artifact.',
   )
@@ -1054,9 +1069,12 @@ function assertHostedObserverCapturesSuppressedRouteSummaryEvidence(): void {
     observerSource.includes('visibleRouteSummaryText') &&
       observerSource.includes('selectedRouteSummaryArtifactSource') &&
       observerSource.includes('selectedRouteSummaryArtifactProvenance') &&
+      observerSource.includes('selectedRouteArtifactCanonicalRouteSource') &&
+      observerSource.includes('activeStarterIdForSemanticAdmission') &&
       observerSource.includes('routeSummarySuppressed') &&
       observerSource.includes('routeSummarySuppressionReason') &&
-      observerSource.includes('routeSummaryPassedStarterSemanticRepresentation'),
+      observerSource.includes('routeSummaryPassedStarterSemanticRepresentation') &&
+      observerSource.includes('reviewCtaVisible'),
     'Hosted observer must persist route summary source/provenance and suppression semantic evidence when no cards exist.',
   )
   process.stdout.write('Hosted observer route-summary suppression evidence capture: passed\n')

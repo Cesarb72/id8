@@ -2843,21 +2843,28 @@ function toCoffeeBooksSemanticPosition(role: UserStopRole): BuiltScenarioStop['p
 function evaluateCoffeeBooksCommittedRouteSummaryAdmission(params: {
   isPublicSurface: boolean
   isCurateWrapperActive: boolean
-  starterPack: StarterPack | null
+  starterPackId: string | null
   finalRoute: RuntimeRouteArtifact | null
   itinerary?: Itinerary | null
 }): CoffeeBooksCommittedRouteSummaryAdmission {
   if (
     !params.isPublicSurface ||
     !params.isCurateWrapperActive ||
-    params.starterPack?.id !== 'coffee-books' ||
-    !params.finalRoute
+    params.starterPackId !== 'coffee-books'
   ) {
     return {
       status: 'not_applicable',
       semanticRepresentationStatus: null,
       evidenceCount: null,
       rejectedReason: null,
+    }
+  }
+  if (!params.finalRoute) {
+    return {
+      status: 'rejected',
+      semanticRepresentationStatus: 'missing',
+      evidenceCount: 0,
+      rejectedReason: coffeeBooksSemanticRepresentationMissingReason,
     }
   }
   const itineraryStopByRole = new Map(
@@ -3041,7 +3048,7 @@ function buildSelectedRouteArtifactProjection(params: {
   isBuildWrapperActive: boolean
   selectedDirectionContractId: string | null
   selectedDirectionId: string | null
-  selectedStarterPack: StarterPack | null
+  activeCurateStarterPackId: string | null
   city: string
 }): SelectedRouteArtifact<CanonicalRouteArtifact> | null {
   const {
@@ -3060,7 +3067,7 @@ function buildSelectedRouteArtifactProjection(params: {
     isBuildWrapperActive,
     selectedDirectionContractId,
     selectedDirectionId,
-    selectedStarterPack,
+    activeCurateStarterPackId,
     city,
   } = params
 
@@ -3095,16 +3102,6 @@ function buildSelectedRouteArtifactProjection(params: {
       finalRoute: approvedFinalRoute,
       canonicalStopByRole: approvedCuratePreviewPayload.canonicalStopByRole,
       planSnapshot: approvedPlanSnapshot,
-    }
-    const approvedSummaryAdmission = evaluateCoffeeBooksCommittedRouteSummaryAdmission({
-      isPublicSurface,
-      isCurateWrapperActive,
-      starterPack: selectedStarterPack,
-      finalRoute: approvedFinalRoute,
-      itinerary: approvedPlanSnapshot.itinerary,
-    })
-    if (approvedSummaryAdmission.status === 'rejected') {
-      return null
     }
     return {
       source: 'committed',
@@ -3187,16 +3184,6 @@ function buildSelectedRouteArtifactProjection(params: {
     committedArtifactMatchesSelection &&
     committedRouteBodyMatchesSelectedArtifact
   ) {
-    const committedSummaryAdmission = evaluateCoffeeBooksCommittedRouteSummaryAdmission({
-      isPublicSurface,
-      isCurateWrapperActive,
-      starterPack: selectedStarterPack,
-      finalRoute: canonicalRouteArtifact.finalRoute,
-      itinerary: canonicalRouteArtifact.itinerary,
-    })
-    if (committedSummaryAdmission.status === 'rejected') {
-      return null
-    }
     const committedHighlightStop =
       canonicalRouteArtifact.finalRoute.stops.find((stop) => stop.role === 'highlight') ?? null
     const committedAnchorVenueId = canonicalRouteArtifact.planSnapshot.intentProfile.anchor?.venueId
@@ -3308,7 +3295,7 @@ function buildSelectedRouteArtifactProjection(params: {
     if (
       isPublicSurface &&
       isCurateWrapperActive &&
-      selectedStarterPack?.id === 'coffee-books' &&
+      activeCurateStarterPackId === 'coffee-books' &&
       !effectiveCurateSelectedArtifact
     ) {
       return null
@@ -9888,6 +9875,8 @@ export function SandboxConciergePage({
     () => starterPacks.find((pack) => pack.id === selectedStarterPackId) ?? null,
     [selectedStarterPackId],
   )
+  const activeCurateStarterPackId =
+    isCurateWrapperActive ? selectedStarterPack?.id ?? selectedStarterPackId : null
   const selectedStarterPackCacheId = selectedStarterPack?.id ?? null
   const getCuratePreviewCommitabilityCacheKey = useCallback(
     (artifactId: string) =>
@@ -17007,10 +16996,11 @@ export function SandboxConciergePage({
       isBuildWrapperActive,
       selectedDirectionContractId,
       selectedDirectionId,
-      selectedStarterPack,
+      activeCurateStarterPackId,
       city,
     })
   }, [
+    activeCurateStarterPackId,
     canonicalRouteArtifact,
     city,
     isPublicSurface,
@@ -17026,7 +17016,6 @@ export function SandboxConciergePage({
     selectedCandidateRouteArtifact,
     selectedCuratePreviewCommitability,
     selectedDirectionContractId,
-    selectedStarterPack,
     selectedStep2CandidateArtifactId,
   ])
   const selectedRouteSummaryArtifact = useMemo<SelectedRouteSummaryArtifact | null>(() => {
@@ -19736,25 +19725,37 @@ export function SandboxConciergePage({
   const previewBridgeSubline =
     previewHighlightProvenanceLine ??
     'Start, Highlight, and Wind-down are ready. Review the full route.'
+  const renderedCommittedRouteArtifactForSummary =
+    selectedRouteArtifact?.source === 'committed' && selectedRouteArtifact.canonicalRouteArtifact
+      ? selectedRouteArtifact.canonicalRouteArtifact
+      : selectedRouteArtifact?.source === 'committed'
+        ? canonicalRouteArtifact
+        : null
+  const renderedCommittedRouteSummarySource =
+    selectedRouteArtifact?.source === 'committed' && selectedRouteArtifact.canonicalRouteArtifact
+      ? 'selectedRouteArtifact.canonicalRouteArtifact'
+      : selectedRouteArtifact?.source === 'committed' && canonicalRouteArtifact
+        ? 'canonicalRouteArtifact'
+        : 'none'
   const coffeeBooksCommittedRouteSummaryAdmission = useMemo(
     () =>
       evaluateCoffeeBooksCommittedRouteSummaryAdmission({
         isPublicSurface,
         isCurateWrapperActive,
-        starterPack: selectedStarterPack,
-        finalRoute: canonicalRouteArtifact?.finalRoute ?? null,
-        itinerary: canonicalRouteArtifact?.itinerary ?? null,
+        starterPackId: activeCurateStarterPackId,
+        finalRoute: renderedCommittedRouteArtifactForSummary?.finalRoute ?? null,
+        itinerary: renderedCommittedRouteArtifactForSummary?.itinerary ?? null,
       }),
     [
-      canonicalRouteArtifact?.finalRoute,
-      canonicalRouteArtifact?.itinerary,
+      activeCurateStarterPackId,
       isCurateWrapperActive,
       isPublicSurface,
-      selectedStarterPack,
+      renderedCommittedRouteArtifactForSummary,
     ],
   )
   const coffeeBooksCommittedRouteSummarySuppressed = Boolean(
-    !selectedRouteArtifact &&
+    activeCurateStarterPackId === 'coffee-books' &&
+      selectedRouteArtifact?.source === 'committed' &&
       coffeeBooksCommittedRouteSummaryAdmission.status === 'rejected',
   )
   const curatePreviewCommitabilityReady = Boolean(
@@ -19887,6 +19888,7 @@ export function SandboxConciergePage({
   const renderSharedPlanPreview = Boolean(
     !hasRevealed &&
       preview &&
+      !coffeeBooksCommittedRouteSummarySuppressed &&
       !surpriseDirectionFallbackPreviewSuppressed &&
       !publicTruthGateSuppressPreview &&
       (!isModeWrapperActive || sharedFlowPhase === 'contract_preview'),
@@ -19899,6 +19901,7 @@ export function SandboxConciergePage({
   const revealedStepSubline =
     selectedRouteSummaryArtifact?.routeSummary ?? previewSpatialCoherenceLine
   const showPrimaryContinueAction = Boolean(
+    !coffeeBooksCommittedRouteSummarySuppressed &&
     !selectedCandidatePreviewValidationFailed &&
       !publicTruthGateSuppressPreview &&
       (!isPublicSurface || !isSurpriseWrapperActive || committedRevealReady),
@@ -23916,6 +23919,8 @@ export function SandboxConciergePage({
               className="preview-notice draft-feedback"
               data-id8-route-summary-suppressed="true"
               data-id8-route-summary-source="committed_runtime_route"
+              data-id8-route-summary-rendered-route-source={renderedCommittedRouteSummarySource}
+              data-id8-route-summary-active-starter-id={activeCurateStarterPackId ?? 'none'}
               data-id8-route-summary-semantic-status={
                 coffeeBooksCommittedRouteSummaryAdmission.semanticRepresentationStatus ?? 'unknown'
               }
@@ -24279,6 +24284,8 @@ export function SandboxConciergePage({
           data-id8-route-summary-suppressed="false"
           data-id8-route-summary-source={selectedRouteSummaryArtifact?.source ?? 'unknown'}
           data-id8-route-summary-provenance={activePlanPreview?.provenance ?? 'unknown'}
+          data-id8-route-summary-rendered-route-source={renderedCommittedRouteSummarySource}
+          data-id8-route-summary-active-starter-id={activeCurateStarterPackId ?? 'none'}
           data-id8-route-summary-semantic-status={
             coffeeBooksCommittedRouteSummaryAdmission.semanticRepresentationStatus ?? 'not_applicable'
           }
