@@ -108,6 +108,7 @@ export type StopTypeCandidateBoard = {
   city: string
   persona: string
   vibe: string
+  starterPack?: StarterPack
   scenarioFamily: ScenarioFamily
   requiredStopTypes: StopType[]
   candidatesByStopType: Record<StopType, StopTypeCandidate[]>
@@ -137,6 +138,7 @@ type BuildStopTypeCandidateBoardInput = {
   city: string
   persona: string
   vibe: string
+  starterPack?: StarterPack
   scenarioFamilyOverride?: ScenarioFamily
   scoredVenues: ScoredVenue[]
 }
@@ -1453,6 +1455,7 @@ export function buildStopTypeCandidateBoard(
     city: input.city,
     persona: input.persona,
     vibe: input.vibe,
+    starterPack: input.starterPack,
     scenarioFamily,
     requiredStopTypes,
     candidatesByStopType,
@@ -1574,11 +1577,13 @@ export async function buildStopTypeCandidateBoardFromIntent(
     getCrewPolicy(intent.crew),
     lens,
     getRoleContract({ intent }),
+    input.starterPack,
   )
   return buildStopTypeCandidateBoard({
     city: input.city,
     persona,
     vibe,
+    starterPack: input.starterPack,
     scenarioFamilyOverride: scenarioFamily,
     scoredVenues,
   })

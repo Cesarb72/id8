@@ -1,4 +1,6 @@
 import { fetchLivePlaces } from '../src/domain/sources/fetchLivePlaces.ts'
+import { buildLiveQueryPlan } from '../src/domain/sources/buildLiveQueryPlan.ts'
+import { starterPacks } from '../src/data/starterPacks.ts'
 import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
 
 const originalFetch = globalThis.fetch
@@ -10,6 +12,35 @@ function assert(condition: boolean, message: string): asserts condition {
 }
 
 async function main(): Promise<void> {
+  const coffeeBooksStarterPack = starterPacks.find((starterPack) => starterPack.id === 'coffee-books')
+  assert(coffeeBooksStarterPack, 'Expected Coffee & Books starter pack.')
+  const coffeeBooksQueryPlan = buildLiveQueryPlan(
+    {
+      city: 'San Jose',
+      crew: 'romantic',
+      mode: 'curate',
+      primaryAnchor: 'cultured',
+      secondaryAnchor: 'chill',
+      timeWindow: 'evening',
+    } as any,
+    coffeeBooksStarterPack,
+  )
+  const firstThreeCoffeeBooksLabels = coffeeBooksQueryPlan.slice(0, 3).map((entry) => entry.label)
+  const firstThreeCoffeeBooksText = coffeeBooksQueryPlan
+    .slice(0, 3)
+    .map((entry) => `${entry.label} ${entry.textQuery} ${entry.queryTerms.join(' ')}`.toLowerCase())
+    .join(' ')
+  assert(
+    firstThreeCoffeeBooksLabels.every((label) => label.startsWith('coffee-books-')),
+    `Expected Coffee & Books first three labels to be starter-specific; received ${firstThreeCoffeeBooksLabels.join(', ')}.`,
+  )
+  assert(
+    ['book', 'reading', 'literary', 'culture', 'gallery'].some((term) =>
+      firstThreeCoffeeBooksText.includes(term),
+    ),
+    'Expected Coffee & Books first three query labels/text to carry book/culture/reading semantics.',
+  )
+
   const requests: FieldTextSearchRequest[] = []
   globalThis.fetch = (async (input, init) => {
     const url = String(input)

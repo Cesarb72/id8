@@ -77,6 +77,10 @@ function buildQueryText(kind: LivePlaceKind, descriptors: string[], locationLabe
   return `${phrase} ${kind} in ${locationLabel}`.trim()
 }
 
+function isCoffeeBooksStarter(starterPack?: StarterPack): boolean {
+  return starterPack?.id === 'coffee-books'
+}
+
 export function buildLiveQueryPlan(
   intent: IntentProfile,
   starterPack?: StarterPack,
@@ -109,7 +113,70 @@ export function buildLiveQueryPlan(
   const strollKind: LivePlaceKind =
     intent.primaryAnchor === 'cozy' || intent.primaryAnchor === 'chill' ? 'park' : 'activity'
 
-  const plan: LiveQueryPlanEntry[] = [
+  const coffeeBooksStarter = isCoffeeBooksStarter(starterPack)
+  const plan: LiveQueryPlanEntry[] = coffeeBooksStarter
+    ? [
+        {
+          kind: 'cafe',
+          roleHint: 'start',
+          label: 'coffee-books-start-reading',
+          template: 'coffee-books-start-role-aware',
+          queryTerms: unique([
+            'coffee',
+            'tea',
+            'quiet',
+            'reading',
+            'bookstore',
+            'literary',
+            ...starterPackTerms.slice(0, 2),
+          ]),
+          notes: [
+            'Coffee & Books start query keeps the opener cafe-compatible while carrying reading and bookstore intent.',
+          ],
+          textQuery: '',
+        },
+        {
+          kind: 'museum',
+          roleHint: 'highlight',
+          label: 'coffee-books-highlight-culture',
+          template: 'coffee-books-highlight-role-aware',
+          queryTerms: unique([
+            'bookstore',
+            'books',
+            'reading',
+            'literary',
+            'gallery',
+            'local culture',
+            'quiet',
+            ...starterPackTerms,
+          ]),
+          notes: [
+            'Coffee & Books highlight query requires literary, gallery, or quiet cultural supply inside the Step B cap.',
+          ],
+          textQuery: '',
+        },
+        {
+          kind: 'cafe',
+          roleHint: 'windDown',
+          label: 'coffee-books-wind-down-literary',
+          template: 'coffee-books-wind-down-role-aware',
+          queryTerms: unique([
+            'wind down',
+            'tea',
+            'dessert',
+            'quiet',
+            'reading',
+            'literary',
+            'culture',
+            ...vibeTerms.slice(0, 2),
+          ]),
+          notes: [
+            'Coffee & Books wind-down query keeps the landing soft while preserving the Books promise.',
+          ],
+          textQuery: '',
+        },
+      ]
+    : [
     {
       kind: startKind,
       roleHint: 'start',

@@ -64,6 +64,7 @@ export type BuiltScenarioStop = {
   whyTonight?: string
   venueCategory?: VenueCategory
   venueSubcategory?: string
+  venueTags?: string[]
   sourceTypes?: string[]
   roleFit: {
     start?: number
@@ -210,6 +211,18 @@ function normalizeToken(value: string): string {
     .trim()
 }
 
+function normalizeCorpus(values: Array<string | undefined>): string {
+  return normalizeToken(values.filter(Boolean).join(' '))
+}
+
+function corpusIncludesAny(corpus: string, terms: string[]): boolean {
+  const tokenSet = new Set(corpus.split(' ').filter(Boolean))
+  return terms.some((term) => {
+    const normalized = normalizeToken(term)
+    return normalized.includes(' ') ? corpus.includes(normalized) : tokenSet.has(normalized)
+  })
+}
+
 function toSentenceCase(value: string): string {
   if (!value) {
     return value
@@ -265,6 +278,59 @@ function getWhyThisWorks(stops: BuiltScenarioStop[]): string {
   const highlight = stops[Math.min(2, stops.length - 1)]
   const closer = stops[stops.length - 1]
   return `Starts at ${start.name}, centers on ${highlight.name}, and lands cleanly at ${closer.name}.`
+}
+
+function hasCoffeeBooksRepresentation(stop: BuiltScenarioStop): boolean {
+  const corpus = normalizeCorpus([
+    stop.name,
+    stop.address,
+    stop.district,
+    stop.neighborhoodLabel,
+    stop.venueTypeLabel,
+    stop.factualSummary,
+    stop.venueSubcategory,
+    ...(stop.venueTags ?? []),
+    ...(stop.sourceTypes ?? []),
+    ...(stop.venueFeatures ?? []),
+    ...(stop.reasons ?? []),
+  ])
+  const directBookOrReadingSignal = corpusIncludesAny(corpus, [
+    'book',
+    'books',
+    'bookstore',
+    'book store',
+    'library',
+    'reading',
+    'literary',
+  ])
+  if (directBookOrReadingSignal) {
+    return true
+  }
+
+  const directCultureSignal =
+    stop.venueCategory === 'museum' ||
+    corpusIncludesAny(corpus, [
+      'museum',
+      'gallery',
+      'art',
+      'arts',
+      'cultural',
+      'culture',
+      'exhibit',
+      'exhibition',
+    ])
+  if (directCultureSignal) {
+    return true
+  }
+
+  const quietCuratedSignal = ['quiet', 'thoughtful', 'curated', 'reflective'].filter((token) =>
+    corpusIncludesAny(corpus, [token]),
+  ).length
+  return quietCuratedSignal >= 2 && (stop.culturalAnchorPotential ?? 0) >= 0.45
+}
+
+function hasCoffeeBooksRouteRepresentation(night: CandidateNight): boolean {
+  return night.stops.some(hasCoffeeBooksRepresentation)
 }
 
 function mapCategoryToVenueTypeLabel(category?: VenueCategory, subcategory?: string): string | undefined {
@@ -534,6 +600,7 @@ function toBuiltStop(
     whyTonight: undefined,
     venueCategory: candidate.venueCategory,
     venueSubcategory: candidate.venueSubcategory,
+    venueTags: candidate.venueTags,
     sourceTypes: candidate.sourceTypes,
     roleFit: {
       start: candidate.roleFit.start,
@@ -1248,9 +1315,37 @@ export function buildScenarioNightsFromCandidateBoard(
     requiredStopTypes,
     pools,
   })
-  const coherentCandidates = candidateNights.filter((night) => night.districtPlausibility >= 0.66)
+  const starterRepresentativeCandidates =
+    board.starterPack?.id === 'coffee-books'
+      ? candidateNights.filter(hasCoffeeBooksRouteRepresentation)
+      : candidateNights
+  if (board.starterPack?.id === 'coffee-books' && starterRepresentativeCandidates.length === 0) {
+    return [
+      {
+        id: `built_${board.scenarioFamily}_coffee_books_semantic_incomplete`,
+        city: board.city,
+        persona: board.persona,
+        vibe: board.vibe,
+        scenarioFamily: board.scenarioFamily,
+        title: `${SCENARIO_FLAVOR_LINE[board.scenarioFamily]} (incomplete)`,
+        flavorLine: SCENARIO_FLAVOR_LINE[board.scenarioFamily],
+        stops: [],
+        whyThisWorks:
+          'Coffee & Books requires at least one book, reading, literary, library, bookstore, cultural, gallery, or quiet curated cultural stop.',
+        complete: false,
+        missingStopTypes: requiredStopTypes,
+        evaluation: {
+          stopEvaluations: [],
+          passesGreatStopStandard: false,
+          failedStops: ['coffee_books_semantic_representation'],
+          notes: ['Coffee & Books semantic representation gate rejected cafe/bakery-only route supply.'],
+        },
+      },
+    ]
+  }
+  const coherentCandidates = starterRepresentativeCandidates.filter((night) => night.districtPlausibility >= 0.66)
   const rankingPool =
-    coherentCandidates.length >= Math.max(2, minNights) ? coherentCandidates : candidateNights
+    coherentCandidates.length >= Math.max(2, minNights) ? coherentCandidates : starterRepresentativeCandidates
   const rankedCandidates = rankingPool
     .slice()
     .sort((left, right) => right.score - left.score || getHighlightStopName(left).localeCompare(getHighlightStopName(right)))

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { buildPublicCurateCardTruthModel } from '../src/app/services/curate/publicCurateCardTruthService.ts'
 import {
   runStepBCurateLiveSmokeCandidateSupply,
@@ -11,6 +12,10 @@ import {
 } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import { buildContractEntryArtifactFromVerifiedOpportunity } from '../src/domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity.ts'
 import { buildScenarioNightsFromCandidateBoard } from '../src/domain/interpretation/construction/scenarioBuilder.ts'
+import type {
+  StopTypeCandidate,
+  StopTypeCandidateBoard,
+} from '../src/domain/interpretation/discovery/stopTypeCandidateBoard.ts'
 import { mapBuiltScenarioNightToVerifiedOpportunity } from '../src/domain/interpretation/verifiedCityOpportunity.ts'
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
 import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
@@ -161,20 +166,27 @@ function buildSupplyGate(
 }
 
 function buildProviderVenue(request: FieldTextSearchRequest, index: number): ProviderVenue {
-  const primaryType = request.queryLabel.includes('coffee')
-    ? 'cafe'
-    : request.queryLabel.includes('bar') || request.queryLabel.includes('night')
-      ? 'bar'
-      : 'restaurant'
+  const primaryType = request.queryLabel.includes('highlight-culture')
+    ? 'art_gallery'
+    : request.queryLabel.includes('coffee') || request.queryLabel.includes('reading')
+      ? 'cafe'
+      : request.queryLabel.includes('bar') || request.queryLabel.includes('night')
+        ? 'bar'
+        : 'restaurant'
+  const types = request.queryLabel.includes('coffee-books')
+    ? [primaryType, 'book_store', 'point_of_interest', 'establishment']
+    : [primaryType, 'point_of_interest', 'establishment']
   const latitude = 37.331 + index * 0.002
   const longitude = -121.889 - index * 0.002
   return {
     provider: 'google_places',
     providerRecordId: `mock-field-${request.mode}-${request.queryLabel}-${index + 1}`,
-    displayName: `${request.mode} ${request.queryLabel} field venue ${index + 1}`,
+    displayName: request.queryLabel.includes('coffee-books')
+      ? `${request.mode} ${request.queryLabel} book culture venue ${index + 1}`
+      : `${request.mode} ${request.queryLabel} field venue ${index + 1}`,
     formattedAddress: `${100 + index} Field Proxy Way, San Jose, CA`,
     primaryType,
-    types: [primaryType, 'point_of_interest', 'establishment'],
+    types,
     businessStatus: 'OPERATIONAL',
     rating: 4.5,
     userRatingCount: 120 + index,
@@ -249,6 +261,164 @@ function createZeroProxyTrap(label: string): typeof fetch {
   }) as typeof fetch
 }
 
+function semanticCorpusFromCandidate(candidate: StopTypeCandidate): string {
+  return [
+    candidate.name,
+    candidate.venueSubcategory,
+    candidate.shortDescription,
+    ...(candidate.sourceTypes ?? []),
+    ...(candidate.venueTags ?? []),
+    ...(candidate.reasons ?? []),
+  ]
+    .join(' ')
+    .toLowerCase()
+}
+
+function semanticCorpusIncludesAny(corpus: string, terms: string[]): boolean {
+  const normalizedCorpus = corpus.replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
+  const tokenSet = new Set(normalizedCorpus.split(' ').filter(Boolean))
+  return terms.some((term) => {
+    const normalizedTerm = term.replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
+    return normalizedTerm.includes(' ')
+      ? normalizedCorpus.includes(normalizedTerm)
+      : tokenSet.has(normalizedTerm)
+  })
+}
+
+function candidateHasCoffeeBooksSemanticRepresentation(candidate: StopTypeCandidate): boolean {
+  const corpus = semanticCorpusFromCandidate(candidate)
+  return (
+    candidate.venueCategory === 'museum' ||
+    semanticCorpusIncludesAny(corpus, [
+      'book',
+      'bookstore',
+      'book store',
+      'library',
+      'reading',
+      'literary',
+      'gallery',
+      'cultural',
+      'culture',
+    ])
+  )
+}
+
+function builtNightHasCoffeeBooksSemanticRepresentation(
+  night: ReturnType<typeof buildScenarioNightsFromCandidateBoard>[number],
+): boolean {
+  return night.stops.some((stop) => {
+    const corpus = [
+      stop.name,
+      stop.venueSubcategory,
+      stop.factualSummary,
+      ...(stop.venueTags ?? []),
+      ...(stop.sourceTypes ?? []),
+      ...(stop.venueFeatures ?? []),
+      ...(stop.reasons ?? []),
+    ]
+      .join(' ')
+      .toLowerCase()
+    return (
+      stop.venueCategory === 'museum' ||
+      semanticCorpusIncludesAny(corpus, [
+        'book',
+        'bookstore',
+        'book store',
+        'library',
+        'reading',
+        'literary',
+        'gallery',
+        'cultural',
+        'culture',
+      ])
+    )
+  })
+}
+
+function createScenarioCandidate(
+  venueId: string,
+  name: string,
+  overrides: Partial<StopTypeCandidate> = {},
+): StopTypeCandidate {
+  return {
+    venueId,
+    name,
+    city: 'San Jose',
+    address: '100 Test Way, San Jose, CA',
+    district: 'Downtown',
+    neighborhoodLabel: 'Downtown',
+    stopType: 'debrief_stop',
+    venueCategory: 'cafe',
+    venueSubcategory: 'cafe',
+    shortDescription: 'Quiet cafe stop.',
+    sourceTypes: ['cafe'],
+    venueTags: ['quiet', 'curated'],
+    sourceType: 'venue',
+    hoursKnown: true,
+    openNow: true,
+    authorityScore: 0.74,
+    hiddenGemScore: 0.4,
+    currentRelevance: 0.7,
+    eventPotential: 0,
+    performancePotential: 0,
+    liveNightlifePotential: 0,
+    culturalAnchorPotential: 0.2,
+    lateNightPotential: 0.2,
+    majorVenueStrength: 0.5,
+    roleFit: {
+      start: 0.82,
+      highlight: 0.82,
+      windDown: 0.82,
+    },
+    reasons: ['quiet cafe fit'],
+    ...overrides,
+  }
+}
+
+function buildCoffeeBooksScenarioBoard(params: {
+  starterPack: StarterPack
+  includeSemanticCandidate: boolean
+}): StopTypeCandidateBoard {
+  const startCandidate = createScenarioCandidate('generic-start-cafe', 'Generic Start Cafe', {
+    stopType: 'cultural_institution',
+  })
+  const highlightCandidate = params.includeSemanticCandidate
+    ? createScenarioCandidate('reading-gallery', 'Reading Room Gallery', {
+        stopType: 'secondary_cultural_stop',
+        venueCategory: 'museum',
+        venueSubcategory: 'art_gallery',
+        shortDescription: 'A quiet gallery and reading-room cultural stop.',
+        sourceTypes: ['art_gallery', 'book_store'],
+        venueTags: ['gallery', 'reading', 'literary', 'quiet', 'curated'],
+        culturalAnchorPotential: 0.76,
+        reasons: ['gallery reading culture signal'],
+      })
+    : createScenarioCandidate('generic-highlight-cafe', 'Generic Highlight Cafe', {
+        stopType: 'secondary_cultural_stop',
+      })
+  const windDownCandidate = createScenarioCandidate('generic-bakery', 'Generic Bakery', {
+    stopType: 'thematic_lunch',
+    venueCategory: 'dessert',
+    venueSubcategory: 'bakery',
+    sourceTypes: ['bakery'],
+    venueTags: ['dessert', 'quiet'],
+    reasons: ['bakery landing'],
+  })
+  return {
+    city: 'San Jose',
+    persona: 'romantic',
+    vibe: 'cultured',
+    starterPack: params.starterPack,
+    scenarioFamily: 'romantic_cultured',
+    requiredStopTypes: ['cultural_institution', 'secondary_cultural_stop', 'thematic_lunch'],
+    candidatesByStopType: {
+      cultural_institution: [startCandidate],
+      secondary_cultural_stop: [highlightCandidate],
+      thematic_lunch: [windDownCandidate],
+    } as StopTypeCandidateBoard['candidatesByStopType'],
+  }
+}
+
 async function assertPublicDefaultGenerationStaysDry(scenario: Scenario): Promise<number> {
   resetEnv()
   setPublicCurateRoute()
@@ -320,10 +490,31 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     starterPack: scenario.starterPack ?? null,
   })
   assert(board !== null, `${scenario.mode}: Step B candidate supply must build a board.`)
+  assert(
+    board.starterPack?.id === scenario.starterPack?.id,
+    `${scenario.mode}: candidate board must preserve starterPack for scoring/selection.`,
+  )
+  const requestLabels = calls.map((call) => call.body.queryLabel)
+  assert(
+    requestLabels.length > 0 &&
+      requestLabels.every((label) => label.startsWith('coffee-books-')),
+    `${scenario.mode}: Coffee & Books Step B supply labels must be starter-semantic; received ${requestLabels.join(', ')}.`,
+  )
+  const semanticCandidateCount = Object.values(board.candidatesByStopType)
+    .flat()
+    .filter(candidateHasCoffeeBooksSemanticRepresentation).length
+  assert(
+    semanticCandidateCount > 0,
+    `${scenario.mode}: Coffee & Books candidate board must contain book/culture/reading-adjacent candidates.`,
+  )
   const builtNights = buildScenarioNightsFromCandidateBoard(board)
   assert(
     builtNights.some((night) => night.complete),
     `${scenario.mode}: Scenario Builder must produce a built night from the board.`,
+  )
+  assert(
+    builtNights.some((night) => night.complete && builtNightHasCoffeeBooksSemanticRepresentation(night)),
+    `${scenario.mode}: Scenario Builder must not let cafe/bakery-only Coffee & Books routes win.`,
   )
   let artifact: ContractEntryArtifact | null = null
   for (const night of builtNights) {
@@ -478,6 +669,47 @@ async function assertReviewThisRouteMakesNoAdditionalFieldProxyCalls(
   return 0
 }
 
+function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
+  const genericOnlyBoard = buildCoffeeBooksScenarioBoard({
+    starterPack,
+    includeSemanticCandidate: false,
+  })
+  const genericOnlyNights = buildScenarioNightsFromCandidateBoard(genericOnlyBoard)
+  assert(
+    genericOnlyNights.every((night) => !night.complete),
+    'Coffee & Books cafe/bakery-only Scenario Builder route must fail the semantic representation gate.',
+  )
+
+  const semanticBoard = buildCoffeeBooksScenarioBoard({
+    starterPack,
+    includeSemanticCandidate: true,
+  })
+  const semanticNights = buildScenarioNightsFromCandidateBoard(semanticBoard)
+  assert(
+    semanticNights.some((night) => night.complete && builtNightHasCoffeeBooksSemanticRepresentation(night)),
+    'Coffee & Books semantically representative Scenario Builder route must remain eligible.',
+  )
+  process.stdout.write('Coffee & Books semantic Scenario Builder gate: passed\n')
+}
+
+function assertCurateVisibleCardProjectionUsesApprovedRouteTruth(): void {
+  const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
+  assert(
+    sandboxSource.includes('approvedRouteHighlightProof') &&
+      sandboxSource.includes('approvedRouteWhyChooseLine'),
+    'Curate visible card model must derive approved-route proof copy from final-route stops.',
+  )
+  assert(
+    sandboxSource.includes('{cardModel.districtLine}') &&
+      sandboxSource.includes('{cardModel.whyChooseLine}') &&
+      sandboxSource.includes('{cardModel.authorityLine}') &&
+      sandboxSource.includes('{cardModel.happeningsLine}') &&
+      sandboxSource.includes('{cardModel.whyTonightProofLine}'),
+    'Curate route card render must use cardModel copy fields instead of stale artifact copy.',
+  )
+  process.stdout.write('Curate visible card approved-route coherence projection: passed\n')
+}
+
 async function assertWrongSurfaceSupplyGateStaysDry(
   scenario: Scenario,
   overrides: Partial<StepBCurateLiveSmokeCandidateSupplyGate>,
@@ -564,6 +796,8 @@ async function main(): Promise<void> {
       )
     }
   }
+  assertCoffeeBooksScenarioGate(findStarterPack('coffee-books'))
+  assertCurateVisibleCardProjectionUsesApprovedRouteTruth()
   await assertFailClosedDoesNotRenderFalseCard()
   process.stdout.write(
     `Public default final generation without explicit live envelope proxy calls: ${defaultGenerationProxyCalls}\n`,

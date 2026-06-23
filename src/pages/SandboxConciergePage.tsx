@@ -857,6 +857,12 @@ interface CurateVisibleCardModel {
   start: string
   highlight: string
   windDown: string
+  districtLine: string
+  districtAnchorLine: string
+  authorityLine: string
+  happeningsLine?: string
+  whyChooseLine: string
+  whyTonightProofLine?: string
   cardDisplaySource: 'approved_payload' | 'candidate_draft' | 'fallback_unqualified'
   qualificationDisplayStatus: 'unchecked' | 'checking' | 'qualified' | 'rejected' | 'runtime_error'
   qualificationStatus: 'unchecked' | 'checking' | 'qualified' | 'rejected' | 'runtime_error'
@@ -2768,6 +2774,19 @@ function buildCurateVisibleCardModelFromArtifact(params: {
     approvedFinalRoute?.stops.find((stop) => stop.role === 'highlight')?.displayName ?? null
   const qualifiedRouteWindDown =
     approvedFinalRoute?.stops.find((stop) => stop.role === 'windDown')?.displayName ?? null
+  const approvedRouteLocation =
+    approvedFinalRoute?.location?.trim() ||
+    artifact.enrichment?.locationContext?.neighborhood?.trim() ||
+    artifact.enrichment?.locationContext?.city?.trim() ||
+    null
+  const approvedRouteHighlightProof =
+    approvedFinalRoute && qualifiedRouteHighlight
+      ? `${qualifiedRouteHighlight} is the highlight for this route.`
+      : artifact.authorityLine
+  const approvedRouteWhyChooseLine =
+    approvedFinalRoute && qualifiedRouteStart && qualifiedRouteHighlight && qualifiedRouteWindDown
+      ? `${qualifiedRouteHighlight} anchors the route, with ${qualifiedRouteStart} to start and ${qualifiedRouteWindDown} to wind down.`
+      : artifact.whyChooseLine
   const qualificationReason =
     preflight?.failedCheck ??
     preflight?.explicitFallbackReason ??
@@ -2797,6 +2816,18 @@ function buildCurateVisibleCardModelFromArtifact(params: {
     windDown: approvedFinalRoute
       ? qualifiedRouteWindDown ?? artifact.storySpine.windDown
       : artifact.storySpine.windDown,
+    districtLine:
+      approvedFinalRoute && approvedRouteLocation
+        ? `Mostly in ${approvedRouteLocation}`
+        : artifact.districtLine,
+    districtAnchorLine:
+      approvedFinalRoute && approvedRouteLocation
+        ? `District anchor: ${approvedRouteLocation}`
+        : artifact.districtAnchorLine,
+    authorityLine: approvedFinalRoute ? approvedRouteHighlightProof : artifact.authorityLine,
+    happeningsLine: approvedFinalRoute ? undefined : artifact.happeningsLine,
+    whyChooseLine: approvedFinalRoute ? approvedRouteWhyChooseLine : artifact.whyChooseLine,
+    whyTonightProofLine: approvedFinalRoute ? undefined : artifact.whyTonightProofLine,
     // Render-only label; `qualificationStatus` remains control state.
     qualificationDisplayStatus: getCurateQualificationStatus(preflight, artifact.qualification),
     qualifiedRouteStart,
@@ -23722,7 +23753,7 @@ export function SandboxConciergePage({
                       <span className="step2-night-option-story-stop">{cardModel.windDown}</span>
                     </div>
                   </div>
-                  <p className="step2-night-option-context">{option.districtLine}</p>
+                  <p className="step2-night-option-context">{cardModel.districtLine}</p>
                   <p className="step2-night-option-match">
                     {isPublicSurface
                       ? getPublicRouteStatusLabel(cardModel.qualificationDisplayStatus)
@@ -23744,13 +23775,13 @@ export function SandboxConciergePage({
                       Qualification reason: {cardModel.qualificationReason}
                     </p>
                   ) : null}
-                  <p className="step2-night-option-match">{option.whyChooseLine}</p>
-                  <p className="step2-night-option-match">{option.authorityLine}</p>
-                  {option.happeningsLine ? (
-                    <p className="step2-night-option-match">{option.happeningsLine}</p>
+                  <p className="step2-night-option-match">{cardModel.whyChooseLine}</p>
+                  <p className="step2-night-option-match">{cardModel.authorityLine}</p>
+                  {cardModel.happeningsLine ? (
+                    <p className="step2-night-option-match">{cardModel.happeningsLine}</p>
                   ) : null}
-                  {option.whyTonightProofLine ? (
-                    <p className="step2-night-option-match">{option.whyTonightProofLine}</p>
+                  {cardModel.whyTonightProofLine ? (
+                    <p className="step2-night-option-match">{cardModel.whyTonightProofLine}</p>
                   ) : null}
                 </button>
               )
