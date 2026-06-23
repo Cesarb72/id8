@@ -1,6 +1,15 @@
 import type { ContractEntryArtifact } from '../../../domain/artifacts/contractEntryArtifact'
-import { validateContractEntryArtifactPreCommitTruth } from '../../../domain/artifacts/contractEntryArtifact'
+import {
+  deriveContractEntryArtifactRoleCoverage,
+  validateContractEntryArtifactPreCommitTruth,
+} from '../../../domain/artifacts/contractEntryArtifact'
+import type { RuntimeRouteArtifact } from '../../../domain/artifacts/runtimeRouteArtifact'
 import type { StarterPack } from '../../../domain/types/starterPack'
+import {
+  buildCoffeeBooksSemanticRepresentationFromRouteStops,
+  coffeeBooksSemanticRepresentationMissingReason,
+  type CoffeeBooksSemanticRouteStopInput,
+} from './coffeeBooksSemanticRepresentation'
 
 export const PUBLIC_CURATE_CARD_TRUTH_CURRENT_SOURCE_COUNT = 34
 export const PUBLIC_CURATE_CARD_TRUTH_MINIMUM_LOAD_BEARING_SOURCE_COUNT = 9
@@ -22,6 +31,8 @@ export type PublicCurateStarterFitRejectionReason =
   | 'invalid_source_provenance'
   | 'approved_payload_starter_mismatch'
   | 'approved_payload_artifact_mismatch'
+  | 'approved_payload_route_mismatch'
+  | 'approved_payload_final_route_semantic_mismatch'
 
 export type PublicCurateRouteRole =
   | 'start'
@@ -49,6 +60,18 @@ export interface PublicCurateQualificationDiagnostic {
 export interface PublicCurateApprovedPayloadReference {
   starterPackId?: string | null
   artifactId?: string | null
+  finalRoute?: RuntimeRouteArtifact | null
+}
+
+export interface PublicCurateApprovedPayloadTruthResult {
+  allowedToRender: boolean
+  artifactId: string | null
+  approvedPayloadArtifactId: string | null
+  finalRoutePresent: boolean
+  routeStops: PublicCurateRouteStopInput[]
+  rejectionReasons: PublicCurateStarterFitRejectionReason[]
+  coffeeBooksSemanticRepresentationStatus: 'represented' | 'missing' | 'not_applicable'
+  coffeeBooksSuppressionReason: typeof coffeeBooksSemanticRepresentationMissingReason | null
 }
 
 export interface PublicCurateCardTruthInput {
@@ -259,6 +282,113 @@ function routeStopsFromArtifact(artifact: ContractEntryArtifact): PublicCurateRo
   ]
 }
 
+function routeStopsFromFinalRoute(
+  finalRoute: RuntimeRouteArtifact | null | undefined,
+): PublicCurateRouteStopInput[] {
+  return (finalRoute?.stops ?? []).map((stop) => ({
+    role: stop.role,
+    name: stop.displayName,
+    category: stop.title || stop.subtitle || stop.neighborhood || null,
+    sourceOrigin: stop.providerRecordId ? 'provider_record' : null,
+  }))
+}
+
+function normalizeRouteName(value: string | null | undefined): string {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function finalRouteMatchesArtifactCoreRoles(params: {
+  artifact: ContractEntryArtifact
+  finalRoute: RuntimeRouteArtifact
+}): boolean {
+  const roleCoverage = deriveContractEntryArtifactRoleCoverage(params.artifact)
+  const finalRouteByRole: Partial<Record<'start' | 'highlight' | 'windDown', string>> = {}
+  params.finalRoute.stops.forEach((stop) => {
+    const mappedRole = mapRouteRole(stop.role)
+    if (mappedRole && !finalRouteByRole[mappedRole]) {
+      finalRouteByRole[mappedRole] = stop.displayName
+    }
+  })
+  return requiredRoles.every(
+    (role) => normalizeRouteName(finalRouteByRole[role]) === normalizeRouteName(roleCoverage[role]),
+  )
+}
+
+function routeStopsToCoffeeBooksInputs(
+  routeStops: PublicCurateRouteStopInput[],
+): CoffeeBooksSemanticRouteStopInput[] {
+  return routeStops.map((stop, index) => ({
+    venueId: `approved-final-route-${index}-${normalizeRouteName(stop.name) || 'stop'}`,
+    name: stop.name,
+    position:
+      mapRouteRole(stop.role) === 'start'
+        ? 'start'
+        : mapRouteRole(stop.role) === 'highlight'
+          ? 'highlight'
+          : mapRouteRole(stop.role) === 'windDown'
+            ? 'windDown'
+            : 'mid',
+    evidenceParts: [
+      { field: 'displayName', value: stop.name },
+      { field: 'venueCategory', value: stop.category },
+      { field: 'sourceLabel', value: stop.sourceOrigin },
+      { field: 'sourceType', value: stop.sourceMode },
+    ],
+  }))
+}
+
+export function validatePublicCurateApprovedPayloadTruth(params: {
+  selectedStarterPack: StarterPack | null
+  artifact: ContractEntryArtifact
+  approvedRefinementEntryPayload?: PublicCurateApprovedPayloadReference | null
+}): PublicCurateApprovedPayloadTruthResult {
+  const rejectionReasons = new Set<PublicCurateStarterFitRejectionReason>()
+  const approvedPayload = params.approvedRefinementEntryPayload ?? null
+  const finalRoute = approvedPayload?.finalRoute ?? null
+  const routeStops = routeStopsFromFinalRoute(finalRoute)
+
+  if (!approvedPayload || !finalRoute) {
+    rejectionReasons.add('approved_payload_route_mismatch')
+  }
+  if (approvedPayload?.starterPackId && params.selectedStarterPack) {
+    if (approvedPayload.starterPackId !== params.selectedStarterPack.id) {
+      rejectionReasons.add('approved_payload_starter_mismatch')
+    }
+  }
+  if (approvedPayload?.artifactId !== params.artifact.id) {
+    rejectionReasons.add('approved_payload_artifact_mismatch')
+  }
+  if (finalRoute && !finalRouteMatchesArtifactCoreRoles({ artifact: params.artifact, finalRoute })) {
+    rejectionReasons.add('approved_payload_route_mismatch')
+  }
+
+  let coffeeBooksSemanticRepresentationStatus: PublicCurateApprovedPayloadTruthResult['coffeeBooksSemanticRepresentationStatus'] =
+    'not_applicable'
+  if (params.selectedStarterPack?.id === 'coffee-books') {
+    const representation = buildCoffeeBooksSemanticRepresentationFromRouteStops(
+      routeStopsToCoffeeBooksInputs(routeStops),
+    )
+    coffeeBooksSemanticRepresentationStatus = representation.status
+    if (representation.status !== 'represented') {
+      rejectionReasons.add('approved_payload_final_route_semantic_mismatch')
+    }
+  }
+
+  return {
+    allowedToRender: rejectionReasons.size === 0,
+    artifactId: params.artifact.id,
+    approvedPayloadArtifactId: approvedPayload?.artifactId ?? null,
+    finalRoutePresent: Boolean(finalRoute),
+    routeStops,
+    rejectionReasons: [...rejectionReasons],
+    coffeeBooksSemanticRepresentationStatus,
+    coffeeBooksSuppressionReason:
+      coffeeBooksSemanticRepresentationStatus === 'missing'
+        ? coffeeBooksSemanticRepresentationMissingReason
+        : null,
+  }
+}
+
 function routeStopFingerprint(routeStops: PublicCurateRouteStopInput[]): string {
   const value = routeStops
     .map((stop) => `${normalizeText(stop.role)}-${normalizeText(stop.name)}`)
@@ -463,6 +593,16 @@ export function validatePublicCurateStarterFit(params: {
   ) {
     rejectionReasons.add('approved_payload_artifact_mismatch')
   }
+  if (
+    params.approvedRefinementEntryPayload?.finalRoute &&
+    params.artifact &&
+    !finalRouteMatchesArtifactCoreRoles({
+      artifact: params.artifact,
+      finalRoute: params.approvedRefinementEntryPayload.finalRoute,
+    })
+  ) {
+    rejectionReasons.add('approved_payload_route_mismatch')
+  }
   if (params.artifact?.sourceMode && params.artifact.sourceMode !== 'curated') {
     rejectionReasons.add('invalid_source_provenance')
   }
@@ -510,7 +650,9 @@ export function buildPublicCurateCardTruthModel(
         selectedStarterPack: input.selectedStarterPack,
         artifact: selectedArtifact,
         routeStops,
-        approvedRefinementEntryPayload: input.approvedRefinementEntryPayload,
+        approvedRefinementEntryPayload:
+          input.qualificationByArtifactId?.[selectedArtifact.id]?.approvedRefinementEntryPayload ??
+          input.approvedRefinementEntryPayload,
       })
     : {
         status: 'not_run' as const,
@@ -525,42 +667,79 @@ export function buildPublicCurateCardTruthModel(
       validatePublicCurateStarterFit({
         selectedStarterPack: input.selectedStarterPack,
         artifact,
-        approvedRefinementEntryPayload: input.approvedRefinementEntryPayload,
+        approvedRefinementEntryPayload:
+          input.qualificationByArtifactId?.[artifact.id]?.approvedRefinementEntryPayload ??
+          input.approvedRefinementEntryPayload,
       }),
     ]),
   )
   const qualificationByArtifactId = input.qualificationByArtifactId ?? {}
+  const approvedPayloadTruthByArtifactId = Object.fromEntries(
+    (input.artifactCandidates ?? []).map((artifact) => {
+      const approvedPayload =
+        qualificationByArtifactId[artifact.id]?.approvedRefinementEntryPayload ??
+        input.approvedRefinementEntryPayload ??
+        null
+      return [
+        artifact.id,
+        validatePublicCurateApprovedPayloadTruth({
+          selectedStarterPack: input.selectedStarterPack,
+          artifact,
+          approvedRefinementEntryPayload: approvedPayload,
+        }),
+      ] as const
+    }),
+  )
   const visibleCards = (input.artifactCandidates ?? [])
     .map((artifact) => {
       const starterFit = starterFitByArtifactId[artifact.id]
+      const qualification = qualificationByArtifactId[artifact.id]
+      const approvedPayloadTruth = approvedPayloadTruthByArtifactId[artifact.id]
+      const approvedPayloadAllowed =
+        qualification?.hasApprovedPayload === true &&
+        approvedPayloadTruth?.allowedToRender === true
       return {
         artifactId: artifact.id,
         routeTitle: artifact.routeTitle,
-        routeStops: starterFit?.routeStops ?? routeStopsFromArtifact(artifact),
-        allowedToRender: starterFit?.allowedToRender === true,
-        rejectionReasons: starterFit?.rejectionReasons ?? [],
+        routeStops: approvedPayloadTruth?.routeStops?.length
+          ? approvedPayloadTruth.routeStops
+          : starterFit?.routeStops ?? routeStopsFromArtifact(artifact),
+        allowedToRender: starterFit?.allowedToRender === true && approvedPayloadAllowed,
+        rejectionReasons: [
+          ...(starterFit?.rejectionReasons ?? []),
+          ...(approvedPayloadTruth?.rejectionReasons ?? []),
+        ],
       }
     })
     .filter((card) => card.allowedToRender)
   const selectedCard = visibleCards.find((card) => card.artifactId === selectedArtifact?.id) ?? visibleCards[0] ?? null
-  const projection: PublicCurateRouteProjectionDiagnostic | null = selectedStarterFit.allowedToRender
+  const selectedApprovedPayloadTruth = selectedArtifact
+    ? approvedPayloadTruthByArtifactId[selectedArtifact.id]
+    : null
+  const selectedApprovedPayloadTruthAllowed =
+    selectedApprovedPayloadTruth?.allowedToRender === true &&
+    qualificationByArtifactId[selectedArtifact?.id ?? '']?.hasApprovedPayload === true
+  const projection: PublicCurateRouteProjectionDiagnostic | null =
+    selectedStarterFit.allowedToRender && selectedApprovedPayloadTruthAllowed
     ? {
         artifactId: selectedArtifact?.id ?? input.selectedArtifactId ?? null,
         allowedToRender: true,
         source: 'service_diagnostic_only',
-        routeStops,
+        routeStops: selectedApprovedPayloadTruth?.routeStops?.length
+          ? selectedApprovedPayloadTruth.routeStops
+          : routeStops,
       }
     : null
   const approvedPayload =
     selectedArtifact &&
     selectedStarterFit.allowedToRender &&
-    qualificationByArtifactId[selectedArtifact.id]?.hasApprovedPayload === true
-      ? qualificationByArtifactId[selectedArtifact.id]?.approvedRefinementEntryPayload ?? null
-      : null
+    selectedApprovedPayloadTruthAllowed
+    ? qualificationByArtifactId[selectedArtifact.id]?.approvedRefinementEntryPayload ?? null
+    : null
   const cardTruthStatus: PublicCurateCardTruthStatus =
     routeStops.length === 0
       ? 'no_candidate'
-      : selectedStarterFit.allowedToRender
+      : selectedStarterFit.allowedToRender && selectedApprovedPayloadTruth?.allowedToRender === true
         ? 'allowed'
         : 'rejected'
 
@@ -585,9 +764,16 @@ export function buildPublicCurateCardTruthModel(
       publicRenderMigrated: PUBLIC_CURATE_CARD_TRUTH_RENDER_MIGRATED,
       cardTruthStatus,
       starterFitStatus: selectedStarterFit.status,
-      rejectionReasons: selectedStarterFit.rejectionReasons,
-      routeStops,
-      allowedToRender: selectedStarterFit.allowedToRender,
+      rejectionReasons: [
+        ...selectedStarterFit.rejectionReasons,
+        ...(selectedApprovedPayloadTruth?.rejectionReasons ?? []),
+      ],
+      routeStops: selectedApprovedPayloadTruth?.routeStops?.length
+        ? selectedApprovedPayloadTruth.routeStops
+        : routeStops,
+      allowedToRender:
+        selectedStarterFit.allowedToRender &&
+        selectedApprovedPayloadTruth?.allowedToRender === true,
       pageCurrentlyWouldRenderSomethingElse: Boolean(
         input.currentPageRender?.wouldRenderCard && !selectedStarterFit.allowedToRender,
       ),

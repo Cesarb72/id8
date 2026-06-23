@@ -1,5 +1,8 @@
 import { readFileSync } from 'node:fs'
-import { buildPublicCurateCardTruthModel } from '../src/app/services/curate/publicCurateCardTruthService.ts'
+import {
+  buildPublicCurateCardTruthModel,
+  validatePublicCurateApprovedPayloadTruth,
+} from '../src/app/services/curate/publicCurateCardTruthService.ts'
 import { buildCurateCommittedRouteFallbackDecision } from '../src/app/services/curate/buildCurateCommittedRouteFallback.ts'
 import {
   buildCoffeeBooksSemanticRepresentationFromRouteStops,
@@ -28,6 +31,7 @@ import {
 } from '../src/domain/interpretation/verifiedCityOpportunity.ts'
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
 import type { GeneratePlanResult } from '../src/domain/runGeneratePlan.ts'
+import type { RuntimeRouteArtifact } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
 import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
 import type { ProviderVenue } from '../src/domain/providers/providerTypes.ts'
 import type { RealityDirectionCard } from '../src/app/types/realityDirectionCard.ts'
@@ -1214,6 +1218,246 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
   process.stdout.write('Coffee & Books committed runtime summary gate: passed\n')
 }
 
+function createTruthInvariantArtifact(): ContractEntryArtifact {
+  return {
+    id: 'step2_scenario_built_romantic_cultured_1',
+    sourceOpportunityId: 'step2_scenario_built_romantic_cultured_1',
+    sourceMode: 'curated',
+    anchorVenueId: 'rosicrucian-museum',
+    anchorRole: 'highlight',
+    anchorName: 'Rosicrucian Egyptian Museum',
+    routeTitle: 'Scenario-backed Coffee & Books route',
+    flavorLine: 'A cultured route with a literary anchor.',
+    routeSummary: 'Academic Coffee, Rosicrucian Egyptian Museum, and Willow Glen Bakehouse form the approved scenario-backed route.',
+    traits: ['focused', 'reliable', 'intimate'],
+    storySpine: {
+      start: 'Academic Coffee',
+      highlight: 'Rosicrucian Egyptian Museum',
+      windDown: 'Willow Glen Bakehouse',
+    },
+    districtLine: 'Mostly in San Jose',
+    districtAnchorLine: 'District anchor: San Jose',
+    authorityLine: 'Adega regional flight window is the highlight for this route.',
+    whyChooseLine:
+      'Rosicrucian Egyptian Museum anchors the route, with Academic Coffee to start and Willow Glen Bakehouse to wind down.',
+    selection: {
+      directionId: 'direction-romantic-cultured',
+      pocketId: 'san-jose',
+    },
+    directionBacking: {
+      status: 'backed',
+      directionId: 'direction-romantic-cultured',
+      pocketId: 'san-jose',
+      source: 'selection_direction',
+      reason: 'matched_selection_direction',
+    },
+    enrichment: {
+      mode: 'curate',
+      validationStatus: 'valid',
+      locationContext: {
+        city: 'San Jose',
+        neighborhood: 'San Jose',
+      },
+      userInputContext: {
+        starterPackId: 'coffee-books',
+      },
+      conciergeIntentSummary: {
+        primaryVibe: 'cultured',
+        persona: 'romantic',
+        summary: 'Coffee & Books validation fixture.',
+      },
+      tasteDistrictSummary: {
+        districtId: 'san-jose',
+        districtLabel: 'San Jose',
+        summary: 'San Jose Coffee & Books route.',
+      },
+      fieldProvenanceSummary: {
+        sourceMode: 'curated',
+        corpusUsed: true,
+      },
+      bearingsAdmissionProof: {
+        status: 'present',
+        proofId: 'truth-invariant-fixture-bearings',
+        summary: 'Fixture route has all core roles.',
+      },
+      waypointSequenceProof: {
+        status: 'present',
+        proofId: 'truth-invariant-fixture-waypoints',
+        summary: 'Fixture route has an ordered sequence.',
+      },
+      starterContextFit: {
+        status: 'passed',
+        starterPackId: 'coffee-books',
+        mode: 'curate',
+      },
+      modeContextFit: {
+        status: 'passed',
+        mode: 'curate',
+      },
+      canonicalRouteRoleCoverage: {
+        start: 'Academic Coffee',
+        highlight: 'Rosicrucian Egyptian Museum',
+        windDown: 'Willow Glen Bakehouse',
+      },
+      runtimeLockEligibility: {
+        eligible: true,
+        status: 'eligible',
+        selectedDirectionId: 'direction-romantic-cultured',
+      },
+    },
+  }
+}
+
+function createTruthInvariantFinalRoute(params: {
+  routeId: string
+  directionId: string
+  start: string
+  highlight: string
+  windDown: string
+}): RuntimeRouteArtifact {
+  const stops = [
+    { role: 'start' as const, displayName: params.start },
+    { role: 'highlight' as const, displayName: params.highlight },
+    { role: 'windDown' as const, displayName: params.windDown },
+  ].map((stop, index) => ({
+    id: `${params.routeId}_${stop.role}`,
+    sourceStopId: `${params.routeId}_${stop.role}_source`,
+    displayName: stop.displayName,
+    latitude: 37.33 + index * 0.001,
+    longitude: -121.89 - index * 0.001,
+    address: 'San Jose, CA',
+    role: stop.role,
+    stopIndex: index,
+    venueId: `${params.routeId}_${stop.role}_venue`,
+    title: stop.displayName,
+    subtitle: 'San Jose',
+    neighborhood: 'San Jose',
+    driveMinutes: 0,
+    imageUrl: '',
+  }))
+  return {
+    routeId: params.routeId,
+    selectedDirectionId: params.directionId,
+    location: 'San Jose',
+    persona: 'romantic',
+    vibe: 'cultured',
+    stops,
+    activeStopIndex: 0,
+    routeHeadline: 'Coffee & Books route',
+    routeSummary: `${params.highlight} anchors the route.`,
+    mapMarkers: stops.map((stop) => ({
+      id: `${stop.id}_marker`,
+      displayName: stop.displayName,
+      role: stop.role,
+      stopIndex: stop.stopIndex,
+      latitude: stop.latitude,
+      longitude: stop.longitude,
+    })),
+    liveNotices: [],
+    updatedAt: 1,
+  }
+}
+
+function assertCurateApprovedPayloadVisibleCardTruthInvariant(): void {
+  const starterPack = findStarterPack('coffee-books')
+  const artifact = createTruthInvariantArtifact()
+  const staleWillowGlenRoute = createTruthInvariantFinalRoute({
+    routeId: 'stale-willow-glen',
+    directionId: 'direction-romantic-cultured',
+    start: 'Willow Glen Tea Atelier',
+    highlight: 'Chromatic Coffee Roastery',
+    windDown: 'Willow Glen Bakehouse',
+  })
+  const stalePayload = {
+    artifactId: artifact.id,
+    starterPackId: starterPack.id,
+    finalRoute: staleWillowGlenRoute,
+  }
+  const staleTruth = validatePublicCurateApprovedPayloadTruth({
+    selectedStarterPack: starterPack,
+    artifact,
+    approvedRefinementEntryPayload: stalePayload,
+  })
+  assert(
+    !staleTruth.allowedToRender &&
+      staleTruth.rejectionReasons.includes('approved_payload_route_mismatch') &&
+      staleTruth.rejectionReasons.includes('approved_payload_final_route_semantic_mismatch'),
+    'Stale Willow Glen approved payload must not produce a visible Coffee & Books card.',
+  )
+  const rejectedModel = buildPublicCurateCardTruthModel({
+    selectedStarterPack: starterPack,
+    artifactCandidates: [artifact],
+    selectedArtifactId: artifact.id,
+    qualificationByArtifactId: {
+      [artifact.id]: {
+        status: 'committable',
+        hasApprovedPayload: true,
+        approvedRefinementEntryPayload: stalePayload,
+      },
+    },
+    committedRouteFallbackRenderEnabled: false,
+  })
+  assert(
+    rejectedModel.visibleCards.length === 0 &&
+      !rejectedModel.actionsAllowed.review &&
+      rejectedModel.diagnostics.rejectionReasons.includes('approved_payload_route_mismatch'),
+    'Visible card and Review CTA must be suppressed when approved payload route truth diverges from artifact truth.',
+  )
+
+  const alignedRoute = createTruthInvariantFinalRoute({
+    routeId: 'aligned-scenario-backed',
+    directionId: 'direction-romantic-cultured',
+    start: 'Academic Coffee',
+    highlight: 'Rosicrucian Egyptian Museum',
+    windDown: 'Willow Glen Bakehouse',
+  })
+  const alignedPayload = {
+    artifactId: artifact.id,
+    starterPackId: starterPack.id,
+    finalRoute: alignedRoute,
+  }
+  const alignedTruth = validatePublicCurateApprovedPayloadTruth({
+    selectedStarterPack: starterPack,
+    artifact,
+    approvedRefinementEntryPayload: alignedPayload,
+  })
+  assert(
+    alignedTruth.allowedToRender &&
+      alignedTruth.coffeeBooksSemanticRepresentationStatus === 'represented',
+    'Aligned scenario-backed approved payload with explicit cultural evidence must remain visible.',
+  )
+  const alignedModel = buildPublicCurateCardTruthModel({
+    selectedStarterPack: starterPack,
+    artifactCandidates: [artifact],
+    selectedArtifactId: artifact.id,
+    qualificationByArtifactId: {
+      [artifact.id]: {
+        status: 'committable',
+        hasApprovedPayload: true,
+        approvedRefinementEntryPayload: alignedPayload,
+      },
+    },
+    committedRouteFallbackRenderEnabled: false,
+  })
+  assert(
+    alignedModel.visibleCards.length === 1 &&
+      alignedModel.actionsAllowed.review &&
+      alignedModel.visibleCards[0]?.artifactId === artifact.id,
+    'Aligned artifact, approved payload, visible card, and Review CTA truth must render together.',
+  )
+
+  const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
+  assert(
+    sandboxSource.includes('validatePublicCurateApprovedPayloadTruth') &&
+      sandboxSource.includes('approvedPayloadTruthAllowed') &&
+      sandboxSource.includes('publicCurateSelectedCardTruthReady') &&
+      sandboxSource.includes('selectedCurateVisibleCardModel.artifact.id === selectedCandidateRouteArtifact.id') &&
+      sandboxSource.includes('data-id8-route-card-artifact-id'),
+    'Sandbox Curate card render and Review CTA must consume shared approved-payload truth invariant and expose stable card artifact ids.',
+  )
+  process.stdout.write('Curate approved-payload visible-card truth invariant: passed\n')
+}
+
 function assertCurateVisibleCardProjectionUsesApprovedRouteTruth(): void {
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   assert(
@@ -1259,6 +1503,9 @@ function assertHostedObserverCapturesSuppressedRouteSummaryEvidence(): void {
       observerSource.includes('No visible route card found and Step B Coffee & Books diagnostics were missing after candidate supply.') &&
       observerSource.includes('routeSummaryPassedStarterSemanticRepresentation') &&
       observerSource.includes('reviewCtaVisible') &&
+      observerSource.includes('data-id8-route-card-artifact-id') &&
+      observerSource.includes('stable route card artifact id before click') &&
+      observerSource.includes('stable-artifact-id-not-found') &&
       !observerSource.includes('semanticTermsPresent'),
     'Hosted observer must persist route summary source/provenance and suppression semantic evidence when no cards exist.',
   )
@@ -1354,6 +1601,7 @@ async function main(): Promise<void> {
   assertCoffeeBooksScenarioGate(findStarterPack('coffee-books'))
   assertCoffeeBooksCommittedRouteFallbackGate()
   assertCoffeeBooksCommittedRuntimeSummaryGate()
+  assertCurateApprovedPayloadVisibleCardTruthInvariant()
   assertCurateVisibleCardProjectionUsesApprovedRouteTruth()
   assertHostedObserverCapturesSuppressedRouteSummaryEvidence()
   await assertFailClosedDoesNotRenderFalseCard()

@@ -99,6 +99,7 @@ import {
   type CurateCommittedRouteFallbackRejectedReason,
 } from '../app/services/curate/buildCurateCommittedRouteFallback'
 import { buildCurateScenarioBackedArtifactBridge } from '../app/services/curate/buildCurateScenarioBackedArtifactBridge'
+import { validatePublicCurateApprovedPayloadTruth } from '../app/services/curate/publicCurateCardTruthService'
 import {
   buildCoffeeBooksSemanticRepresentationFromRouteStops,
   coffeeBooksSemanticRepresentationMissingReason,
@@ -886,6 +887,9 @@ interface CurateVisibleCardModel {
   finalRouteDisplayReason: string | null
   qualifiedDisplayRankReason: string | null
   qualificationReason: string | null
+  approvedPayloadTruthAllowed: boolean
+  approvedPayloadTruthRejectionReasons: string[]
+  approvedPayloadCoffeeBooksSemanticStatus: string
   isSelectable: boolean
 }
 
@@ -3054,9 +3058,22 @@ function buildCurateVisibleCardModelFromArtifact(params: {
   // `qualificationStatus` remains behavior/control state here, not display-only state.
   const qualificationStatus = getCurateQualificationStatus(preflight)
   const approvedRefinementEntryPayload = preflight?.approvedRefinementEntryPayload
-  const approvedFinalRoute = approvedRefinementEntryPayload?.finalRoute
+  const candidateApprovedFinalRoute = approvedRefinementEntryPayload?.finalRoute
+  const approvedPayloadTruth =
+    qualificationStatus === 'qualified' && approvedRefinementEntryPayload
+      ? validatePublicCurateApprovedPayloadTruth({
+          selectedStarterPack: starterPack,
+          artifact,
+          approvedRefinementEntryPayload,
+        })
+      : null
+  const approvedFinalRoute =
+    approvedPayloadTruth?.allowedToRender === true ? candidateApprovedFinalRoute : undefined
   const hasApprovedPayload = Boolean(
-    qualificationStatus === 'qualified' && approvedRefinementEntryPayload && approvedFinalRoute,
+    qualificationStatus === 'qualified' &&
+      approvedRefinementEntryPayload &&
+      approvedFinalRoute &&
+      approvedPayloadTruth?.allowedToRender === true,
   )
   const approvedRouteStarterFit = evaluateApprovedRouteStarterFit({
     finalRoute: approvedFinalRoute,
@@ -3142,6 +3159,10 @@ function buildCurateVisibleCardModelFromArtifact(params: {
     finalRouteMismatchReasons: approvedRouteStarterFit.finalRouteMismatchReasons,
     finalRouteDisplayReason: approvedRouteStarterFit.finalRouteDisplayReason,
     qualificationReason,
+    approvedPayloadTruthAllowed: approvedPayloadTruth?.allowedToRender ?? false,
+    approvedPayloadTruthRejectionReasons: approvedPayloadTruth?.rejectionReasons ?? [],
+    approvedPayloadCoffeeBooksSemanticStatus:
+      approvedPayloadTruth?.coffeeBooksSemanticRepresentationStatus ?? 'not_applicable',
   } as const
   const debugProjection = {
     qualifiedDisplayRankReason:
@@ -12775,6 +12796,29 @@ export function SandboxConciergePage({
     isCurateWrapperActive,
     selectedCandidateRouteArtifact,
   ])
+  const selectedCurateVisibleCardModel = useMemo(() => {
+    if (!isCurateWrapperActive) {
+      return null
+    }
+    const selectedArtifactId =
+      selectedStep2CandidateArtifactId ?? selectedCandidateRouteArtifact?.id ?? null
+    if (!selectedArtifactId) {
+      return null
+    }
+    return (
+      curatePrimaryCardDisplay.models.find(
+        (model) =>
+          model.artifact.id === selectedArtifactId &&
+          model.hasApprovedPayload &&
+          model.approvedPayloadTruthAllowed,
+      ) ?? null
+    )
+  }, [
+    curatePrimaryCardDisplay.models,
+    isCurateWrapperActive,
+    selectedCandidateRouteArtifact?.id,
+    selectedStep2CandidateArtifactId,
+  ])
   const selectedCurateQualificationArtifactId = isCurateWrapperActive
     ? explicitQualifiedCurateSelectedArtifact?.id ?? selectedCandidateRouteArtifact?.id ?? null
     : null
@@ -20331,10 +20375,20 @@ export function SandboxConciergePage({
     selectedRouteSummaryArtifact?.routeTitle ?? "Tonight's route is ready"
   const revealedStepSubline =
     selectedRouteSummaryArtifact?.routeSummary ?? previewSpatialCoherenceLine
+  const publicCurateSelectedCardTruthReady = Boolean(
+    !isPublicSurface ||
+      !isCurateWrapperActive ||
+      (selectedCurateVisibleCardModel &&
+        selectedCandidateRouteArtifact &&
+        selectedCuratePreviewCommitability?.status === 'committable' &&
+        selectedCuratePreviewCommitability.artifactId === selectedCurateVisibleCardModel.artifact.id &&
+        selectedCandidateRouteArtifact.id === selectedCurateVisibleCardModel.artifact.id),
+  )
   const showPrimaryContinueAction = Boolean(
     !coffeeBooksCommittedRouteSummarySuppressed &&
     !selectedCandidatePreviewValidationFailed &&
       !publicTruthGateSuppressPreview &&
+      publicCurateSelectedCardTruthReady &&
       (!isPublicSurface || !isSurpriseWrapperActive || committedRevealReady),
   )
   const showTryAnotherAction = isSurpriseWrapperActive
@@ -20379,6 +20433,8 @@ export function SandboxConciergePage({
       selectedCuratePreviewCommitability?.status === 'committable' &&
       selectedCuratePreviewCommitability.approvedRefinementEntryPayload &&
       selectedCandidateRouteArtifact &&
+      selectedCurateVisibleCardModel &&
+      selectedCurateVisibleCardModel.artifact.id === selectedCandidateRouteArtifact.id &&
       selectedCuratePreviewCommitability.artifactId === selectedCandidateRouteArtifact.id
     ) {
       applyCurateRefinementEntryPayload(
@@ -20418,6 +20474,7 @@ export function SandboxConciergePage({
     selectedRouteArtifactIdForGeneration,
     selectedBuildAnchor,
     selectedCandidateRouteArtifact,
+    selectedCurateVisibleCardModel,
   ])
   const handleRetrySurpriseGeneration = useCallback(() => {
     if (loading) {
@@ -21159,13 +21216,17 @@ export function SandboxConciergePage({
         approvedFinalRoutePresent: Boolean(preflight?.approvedRefinementEntryPayload?.finalRoute),
         cardDisplaySource: model.cardDisplaySource,
         isSelectable: model.isSelectable,
+        approvedPayloadTruthAllowed: model.approvedPayloadTruthAllowed,
+        approvedPayloadTruthRejectionReasons: model.approvedPayloadTruthRejectionReasons,
+        approvedPayloadCoffeeBooksSemanticStatus: model.approvedPayloadCoffeeBooksSemanticStatus,
         directionBackingStatus: model.artifact.directionBacking?.status ?? 'missing',
       }
     })
     const runtimeSummaryVisible = Boolean(selectedRouteSummaryArtifact)
     const reviewCtaVisible = Boolean(
-      selectedCuratePreviewCommitability?.approvedRefinementEntryPayload &&
-        selectedCuratePreviewCommitability.approvedRefinementEntryPayload.finalRoute,
+      showPrimaryContinueAction &&
+        selectedCurateVisibleCardModel?.hasApprovedPayload &&
+        selectedCurateVisibleCardModel.approvedPayloadTruthAllowed,
     )
     return {
       diagnosticMount: 'always_mounted_public_curate_page_level',
@@ -21256,7 +21317,7 @@ export function SandboxConciergePage({
               : curatePrimaryCardDisplay.primaryCardDisplayMode === 'checking'
                 ? 'blank_or_stuck_checking'
                 : 'visible_and_honest',
-          reviewCtaExpectedVisible: curatePrimaryCardDisplay.models.length > 0,
+          reviewCtaExpectedVisible: reviewCtaVisible,
           noCardStateText:
             curatePrimaryCardDisplay.models.length === 0
               ? 'Some options need another pass before they’re usable.'
@@ -21298,9 +21359,11 @@ export function SandboxConciergePage({
     renderedCommittedRouteSummarySource,
     scenarioBuiltNights,
     scenarioCandidateBoard,
+    selectedCurateVisibleCardModel,
     selectedCuratePreviewCommitability,
     selectedRouteSummaryArtifact,
     selectedStarterPack?.id,
+    showPrimaryContinueAction,
     step2CandidateRouteArtifacts.length,
     step2PrimarySourceOpportunities.length,
     stepBCoffeeBooksCandidateDiagnostics,
@@ -24578,6 +24641,9 @@ export function SandboxConciergePage({
                   key={option.id}
                   type="button"
                   className={`district-card step2-night-option${isSelected ? ' selected' : ''}`}
+                  data-id8-route-card-artifact-id={option.id}
+                  data-id8-route-card-source-opportunity-id={option.sourceOpportunityId}
+                  data-id8-route-card-display-source={cardModel.cardDisplaySource}
                   onClick={() => handleSelectStep2NightOption(option)}
                   aria-pressed={Boolean(isSelected)}
                   disabled={publicSurpriseRouteChoiceVisible ? false : !cardModel.isSelectable}

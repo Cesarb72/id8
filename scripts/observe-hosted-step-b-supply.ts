@@ -603,6 +603,11 @@ async function readRouteCards(cdp: CdpClient): Promise<Array<Record<string, Json
             cards.push({
               index: cards.length,
               selector,
+              artifactId: element.getAttribute('data-id8-route-card-artifact-id') || null,
+              sourceOpportunityId:
+                element.getAttribute('data-id8-route-card-source-opportunity-id') || null,
+              cardDisplaySource:
+                element.getAttribute('data-id8-route-card-display-source') || null,
               text,
               disabled: Boolean(element.disabled),
               ariaPressed: element.getAttribute('aria-pressed'),
@@ -800,12 +805,17 @@ async function selectCoffeeBooksStarter(cdp: CdpClient): Promise<Record<string, 
   )
 }
 
-async function clickRouteCard(cdp: CdpClient, index: number): Promise<Record<string, JsonValue>> {
+async function clickRouteCard(
+  cdp: CdpClient,
+  index: number,
+  artifactId?: string | null,
+): Promise<Record<string, JsonValue>> {
   return evaluate<Record<string, JsonValue>>(
     cdp,
     `
       (() => {
         const index = ${index}
+        const expectedArtifactId = ${JSON.stringify(artifactId ?? null)}
         const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim()
         const visible = (element) => {
           const rect = element.getBoundingClientRect()
@@ -826,13 +836,38 @@ async function clickRouteCard(cdp: CdpClient, index: number): Promise<Record<str
               continue
             }
             seen.add(element)
-            candidates.push({ element, selector, text: normalize(element.innerText || element.getAttribute('aria-label')), disabled: Boolean(element.disabled) })
+            candidates.push({
+              element,
+              selector,
+              artifactId: element.getAttribute('data-id8-route-card-artifact-id') || null,
+              text: normalize(element.innerText || element.getAttribute('aria-label')),
+              disabled: Boolean(element.disabled),
+            })
           }
         }
         const enabled = candidates.filter((entry) => !entry.disabled)
-        const selected = enabled[index] || candidates[index] || enabled[0] || candidates[0]
+        const matchingArtifact = expectedArtifactId
+          ? enabled.find((entry) => entry.artifactId === expectedArtifactId) ||
+            candidates.find((entry) => entry.artifactId === expectedArtifactId)
+          : null
+        const selected = matchingArtifact || enabled[index] || candidates[index] || enabled[0] || candidates[0]
         if (!selected) {
-          return { ok: false, reason: 'no-route-card', candidateCount: candidates.length }
+          return {
+            ok: false,
+            reason: 'no-route-card',
+            expectedArtifactId,
+            candidateCount: candidates.length,
+          }
+        }
+        if (expectedArtifactId && selected.artifactId !== expectedArtifactId) {
+          return {
+            ok: false,
+            reason: 'stable-artifact-id-not-found',
+            expectedArtifactId,
+            selectedArtifactId: selected.artifactId,
+            candidateCount: candidates.length,
+            candidateArtifactIds: candidates.map((entry) => entry.artifactId).filter(Boolean),
+          }
         }
         selected.element.scrollIntoView({ block: 'center', inline: 'center' })
         selected.element.click()
@@ -840,6 +875,7 @@ async function clickRouteCard(cdp: CdpClient, index: number): Promise<Record<str
           ok: true,
           index,
           selector: selected.selector,
+          artifactId: selected.artifactId,
           selectedText: selected.text,
           disabled: selected.disabled,
           candidateCount: candidates.length,
@@ -1248,9 +1284,28 @@ async function runHostedObservation(): Promise<void> {
       }
       return
     }
-    const cardClickResult = await clickRouteCard(cdp, 0)
+    const selectedCardArtifactId =
+      typeof selectedCard.artifactId === 'string' ? selectedCard.artifactId : null
+    if (selectedCardArtifactId) {
+      await waitUntil('stable route card artifact id before click', async () => {
+        if (!cdp) {
+          return false
+        }
+        const cards = await readRouteCards(cdp)
+        const matchingCard = cards.find((card) => card.artifactId === selectedCardArtifactId)
+        await recordEvent('route_card_stable_artifact_poll', {
+          expectedArtifactId: selectedCardArtifactId,
+          count: cards.length,
+          found: Boolean(matchingCard),
+          cards,
+        })
+        return Boolean(matchingCard)
+      }, 3_000)
+    }
+    const cardClickResult = await clickRouteCard(cdp, 0, selectedCardArtifactId)
     evidence.selectedRouteCard = {
       selectorUsed: String(cardClickResult.selector ?? selectedCard.selector ?? 'unknown'),
+      artifactId: String(cardClickResult.artifactId ?? selectedCardArtifactId ?? ''),
       selectedText: String(cardClickResult.selectedText ?? selectedCard.text ?? ''),
       clickResult: sanitizeForEvidence(cardClickResult),
     }
