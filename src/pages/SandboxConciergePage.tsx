@@ -98,6 +98,7 @@ import {
   isCurateCommittedRouteFallbackArtifact,
   type CurateCommittedRouteFallbackRejectedReason,
 } from '../app/services/curate/buildCurateCommittedRouteFallback'
+import { buildCurateScenarioBackedArtifactBridge } from '../app/services/curate/buildCurateScenarioBackedArtifactBridge'
 import {
   buildCoffeeBooksSemanticRepresentationFromRouteStops,
   coffeeBooksSemanticRepresentationMissingReason,
@@ -11648,6 +11649,37 @@ export function SandboxConciergePage({
     },
     [allDirectionCards, directionCards, ecsState, shouldUseScenarioBackedArtifacts],
   )
+  const curateScenarioBackedArtifactBridge = useMemo(() => {
+    if (!isCurateWrapperActive || !shouldUseScenarioBackedArtifacts) {
+      return null
+    }
+    const primaryOpportunities =
+      selectedStarterPack
+        ? starterAwareStep2SourceOpportunities
+        : admittedScenarioBackedVerifiedCityOpportunities.slice(0, 4)
+    const fallbackOpportunities =
+      selectedStarterPack
+        ? starterAwareRankedStep2SourceOpportunities
+        : admittedScenarioBackedVerifiedCityOpportunities
+    return buildCurateScenarioBackedArtifactBridge({
+      primaryOpportunities,
+      fallbackOpportunities,
+      ecsState,
+      directionCards,
+      allDirectionCards,
+      maxQualificationCandidateCount: 8,
+    })
+  }, [
+    admittedScenarioBackedVerifiedCityOpportunities,
+    allDirectionCards,
+    directionCards,
+    ecsState,
+    isCurateWrapperActive,
+    selectedStarterPack,
+    shouldUseScenarioBackedArtifacts,
+    starterAwareRankedStep2SourceOpportunities,
+    starterAwareStep2SourceOpportunities,
+  ])
   const shadowBuildProviderArtifact =
     isBuildWrapperActive &&
     buildProviderIntegrationEnabled &&
@@ -11691,6 +11723,9 @@ export function SandboxConciergePage({
   const buildProviderMergedIntoVisiblePool = false
 
   const step2CandidateRouteArtifacts = useMemo<ContractEntryArtifact[]>(() => {
+    if (isCurateWrapperActive && curateScenarioBackedArtifactBridge) {
+      return curateScenarioBackedArtifactBridge.candidateArtifacts
+    }
     if (shouldUseScenarioBackedArtifacts) {
       const sourceOpportunities =
         isBuildWrapperActive
@@ -11721,6 +11756,7 @@ export function SandboxConciergePage({
   }, [
     activeScenarioContract,
     buildStep2CandidateRouteArtifact,
+    curateScenarioBackedArtifactBridge,
     isBuildWrapperActive,
     isCurateWrapperActive,
     persona,
@@ -11765,6 +11801,9 @@ export function SandboxConciergePage({
     if (!isCurateWrapperActive) {
       return []
     }
+    if (curateScenarioBackedArtifactBridge) {
+      return curateScenarioBackedArtifactBridge.fallbackArtifacts
+    }
     if (selectedStarterPack) {
       return starterAwareRankedStep2SourceOpportunities
         .map(buildStep2CandidateRouteArtifact)
@@ -11787,6 +11826,7 @@ export function SandboxConciergePage({
   }, [
     activeScenarioContract,
     buildStep2CandidateRouteArtifact,
+    curateScenarioBackedArtifactBridge,
     isCurateWrapperActive,
     persona,
     primaryVibe,
@@ -11951,8 +11991,10 @@ export function SandboxConciergePage({
     [curateDisplayFallbackRouteArtifacts],
   )
   const directionBackedArtifactsForDisplay =
+    curateScenarioBackedArtifactBridge?.displayBackedArtifacts ??
     directionBackedDisplayArtifactsPartition.backedArtifacts
   const directionBackedCurateDisplayFallbackRouteArtifacts =
+    curateScenarioBackedArtifactBridge?.fallbackDisplayBackedArtifacts ??
     directionBackedCurateDisplayFallbackArtifactsPartition.backedArtifacts
   const suppressedDirectionUnbackedArtifacts = useMemo(() => {
     const byId = new Map<string, ContractEntryArtifact>()
@@ -11973,7 +12015,12 @@ export function SandboxConciergePage({
     if (!isCurateWrapperActive) {
       return [] as ContractEntryArtifact[]
     }
-    return [...curateDisplayArtifactsBeforeDedupe, ...curateDisplayFallbackRouteArtifacts]
+    const qualificationSourceArtifacts =
+      curateScenarioBackedArtifactBridge?.qualificationCandidateArtifacts ?? [
+        ...curateDisplayArtifactsBeforeDedupe,
+        ...curateDisplayFallbackRouteArtifacts,
+      ]
+    return qualificationSourceArtifacts
       .map((artifact, index) => ({
         artifact,
         index,
@@ -11998,6 +12045,7 @@ export function SandboxConciergePage({
       .slice(0, 8)
       .map((entry) => entry.artifact)
   }, [
+    curateScenarioBackedArtifactBridge,
     curateDisplayArtifactsBeforeDedupe,
     curateDisplayFallbackRouteArtifacts,
     curatePreDisplayBuildabilityByArtifactId,
@@ -13267,6 +13315,8 @@ export function SandboxConciergePage({
       artifactCardAdmission: {
         verifiedCityOpportunityCount: step2PrimarySourceOpportunities.length,
         admittedScenarioBackedOpportunityCount: admittedScenarioBackedVerifiedCityOpportunities.length,
+        scenarioBackedArtifactBridgeDiagnostics:
+          curateScenarioBackedArtifactBridge?.diagnostics ?? [],
         step2CandidateRouteArtifactCount: step2CandidateRouteArtifacts.length,
         candidateRouteArtifactsForDisplayCount: candidateRouteArtifactsForDisplay.length,
         visibleCardModelCount: curateVisibleCardModels.length,
@@ -13295,6 +13345,7 @@ export function SandboxConciergePage({
     curatePrimaryCardDisplay.primaryVisibleQualifiedCount,
     curatePrimaryCardDisplay.qualifiedRouteCardCount,
     curatePrimaryCardDisplay.unqualifiedDraftsHiddenCount,
+    curateScenarioBackedArtifactBridge,
     curateQualificationCandidateArtifacts,
     curateVisibleCardModels,
     currentPath,

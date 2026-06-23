@@ -5,6 +5,7 @@ import {
   buildCoffeeBooksSemanticRepresentationFromRouteStops,
   coffeeBooksSemanticRepresentationMissingReason,
 } from '../src/app/services/curate/coffeeBooksSemanticRepresentation.ts'
+import { buildCurateScenarioBackedArtifactBridge } from '../src/app/services/curate/buildCurateScenarioBackedArtifactBridge.ts'
 import {
   runStepBCurateLiveSmokeCandidateSupply,
   shouldApplyStepBCurateLiveSmokeCandidateSupply,
@@ -21,11 +22,15 @@ import type {
   StopTypeCandidate,
   StopTypeCandidateBoard,
 } from '../src/domain/interpretation/discovery/stopTypeCandidateBoard.ts'
-import { mapBuiltScenarioNightToVerifiedOpportunity } from '../src/domain/interpretation/verifiedCityOpportunity.ts'
+import {
+  mapBuiltScenarioNightToVerifiedOpportunity,
+  type VerifiedCityOpportunity,
+} from '../src/domain/interpretation/verifiedCityOpportunity.ts'
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
 import type { GeneratePlanResult } from '../src/domain/runGeneratePlan.ts'
 import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
 import type { ProviderVenue } from '../src/domain/providers/providerTypes.ts'
+import type { RealityDirectionCard } from '../src/app/types/realityDirectionCard.ts'
 import type { ExperienceMode, IntentInput } from '../src/domain/types/intent.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
 import type { VenueCategory } from '../src/domain/types/venue.ts'
@@ -625,6 +630,29 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
       representativeBuiltNight.starterSemanticRepresentation.evidence.length > 0,
     `${scenario.mode}: built night must preserve Coffee & Books semantic evidence.`,
   )
+  const scenarioDirectionCards: RealityDirectionCard[] = [
+    {
+      id: 'coffee-books-scenario-direction',
+      cluster: 'chill',
+      card: {
+        title: 'Coffee and Books scenario route',
+        whyNow: 'A quiet route with a literary middle.',
+        whyYou: 'Built from the Coffee & Books starter.',
+        proofLine: 'Scenario-backed Coffee & Books proof.',
+        liveSignals: {
+          title: 'Scenario supply',
+          items: ['Books Inc.', 'Authors Bookstore'],
+        },
+        confirmation: 'Coffee & Books scenario route',
+      },
+      debugMeta: {
+        pocketId: 'san-jose',
+        archetype: 'cultural',
+        confidence: 0.9,
+      },
+    },
+  ]
+  const representedScenarioOpportunities: VerifiedCityOpportunity[] = []
   let artifact: ContractEntryArtifact | null = null
   for (const night of builtNights) {
     if (!night.complete) {
@@ -633,7 +661,7 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     const opportunity = mapBuiltScenarioNightToVerifiedOpportunity({
       night,
       districtDiscoveryCards: [{ id: 'san-jose', name: 'San Jose' }],
-      directionCards: [],
+      directionCards: scenarioDirectionCards,
       personaLabel: 'Romantic',
       vibeLabel: 'Cozy',
     })
@@ -645,6 +673,7 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
         opportunity.starterSemanticRepresentation.evidence.length > 0,
       `${scenario.mode}: VerifiedCityOpportunity must preserve Coffee & Books semantic evidence.`,
     )
+    representedScenarioOpportunities.push(opportunity)
     artifact = buildContractEntryArtifactFromVerifiedOpportunity({
       opportunity,
       ecsState: {
@@ -658,6 +687,66 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
       break
     }
   }
+  const bridgeScenarioOpportunities = representedScenarioOpportunities.map((opportunity, index) => ({
+    ...opportunity,
+    selection: {
+      pocketId: opportunity.selection.pocketId ?? `coffee-books-scenario-pocket-${index}`,
+      directionId: opportunity.selection.directionId ?? `coffee-books-scenario-direction-${index}`,
+    },
+  }))
+  const bridgeDirectionCards: RealityDirectionCard[] = bridgeScenarioOpportunities.map(
+    (opportunity, index) => ({
+      id: opportunity.selection.directionId ?? `coffee-books-scenario-direction-${index}`,
+      cluster: 'chill',
+      card: {
+        title: `Coffee and Books scenario route ${index + 1}`,
+        whyNow: 'A quiet route with a literary middle.',
+        whyYou: 'Built from the Coffee & Books starter.',
+        proofLine: 'Scenario-backed Coffee & Books proof.',
+        liveSignals: {
+          title: 'Scenario supply',
+          items: ['Books Inc.', 'Authors Bookstore'],
+        },
+        confirmation: 'Coffee & Books scenario route',
+      },
+      debugMeta: {
+        pocketId: opportunity.selection.pocketId ?? `coffee-books-scenario-pocket-${index}`,
+        archetype: 'cultural',
+        confidence: 0.9,
+      },
+    }),
+  )
+  const scenarioBridge = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: bridgeScenarioOpportunities,
+    fallbackOpportunities: bridgeScenarioOpportunities,
+    ecsState: {
+      exploration: 'focused',
+      discovery: 'reliable',
+      highlight: 'standout',
+    },
+    directionCards: bridgeDirectionCards,
+    allDirectionCards: bridgeDirectionCards,
+  })
+  assert(
+    scenarioBridge.candidateArtifacts.length > 0,
+    `${scenario.mode}: scenario-backed Coffee & Books opportunity must become a candidate artifact through the shared Curate bridge.`,
+  )
+  assert(
+    scenarioBridge.displayBackedArtifacts.length > 0,
+    `${scenario.mode}: scenario-backed Coffee & Books artifact must be direction-backed for display admission.`,
+  )
+  assert(
+    scenarioBridge.qualificationCandidateArtifacts.length > 0,
+    `${scenario.mode}: represented scenario-backed artifact must enter qualification candidates.`,
+  )
+  assert(
+    scenarioBridge.diagnostics.some(
+      (entry) =>
+        entry.starterSemanticStatus === 'represented' &&
+        entry.includedInQualificationCandidateArtifacts,
+    ),
+    `${scenario.mode}: shared bridge diagnostics must expose represented qualification candidate inclusion.`,
+  )
   assert(artifact, `${scenario.mode}: ContractEntryArtifact must be produced before reveal.`)
   assert(
     artifact.enrichment?.starterSemanticRepresentation?.status === 'represented' &&
