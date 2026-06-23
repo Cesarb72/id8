@@ -27,6 +27,10 @@ import {
 } from './sandboxPlannerParityService'
 
 type CurateStopRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
+type CurateCommitSemantics = 'seed_guided' | 'approved_route_hard_commit'
+
+const approvedPayloadRouteMaterializationUnavailableReason =
+  'approved_payload_route_materialization_unavailable' as const
 
 export type CuratePreviewQualificationAttemptResult<
   TDirectionCoreRole extends string = string,
@@ -112,7 +116,7 @@ export interface CuratePreviewQualificationAttemptDependencies<
       sourceMode: 'curated'
       sourceModeOverrideApplied: true
       debugMode: false
-      curateCommitSemantics: 'seed_guided'
+      curateCommitSemantics: CurateCommitSemantics
       starterPack?: unknown
       experienceContract: ExperienceContract
       contractConstraints: ContractConstraints
@@ -249,6 +253,33 @@ function getApprovedPayloadTruthFailureReason(params: {
   return truth.allowedToRender ? null : truth.rejectionReasons[0] ?? 'approved_payload_route_mismatch'
 }
 
+function hasExactCoreRouteDiscoveryPreferences(
+  discoveryPreferences: NonNullable<IntentInput['discoveryPreferences']> | undefined,
+): boolean {
+  if (!discoveryPreferences || discoveryPreferences.length === 0) {
+    return false
+  }
+  return (['start', 'highlight', 'windDown'] as const).every((role) =>
+    discoveryPreferences.some(
+      (preference) => preference.role === role && Boolean(preference.venueId.trim()),
+    ),
+  )
+}
+
+function shouldUseApprovedRouteHardCommit(params: {
+  activeCandidateOpportunity?: unknown
+  selectedArtifactLineage?: ContractEntryArtifactLineage
+  selectedArtifactDiscoveryPreferences:
+    | NonNullable<IntentInput['discoveryPreferences']>
+    | undefined
+}): boolean {
+  return Boolean(
+    params.selectedArtifactLineage &&
+      getPreviewScenarioFamily(params.activeCandidateOpportunity) &&
+      hasExactCoreRouteDiscoveryPreferences(params.selectedArtifactDiscoveryPreferences),
+  )
+}
+
 function buildRepairDiagnostics<
   TDirectionCoreRole extends string,
   TApprovedPayload,
@@ -351,6 +382,13 @@ export async function runCuratePreviewQualificationAttempt<
   })
 
   try {
+    const curateCommitSemantics: CurateCommitSemantics = shouldUseApprovedRouteHardCommit({
+      activeCandidateOpportunity: params.activeCandidateOpportunity,
+      selectedArtifactLineage: params.selectedArtifactLineage,
+      selectedArtifactDiscoveryPreferences: params.selectedArtifactDiscoveryPreferences,
+    })
+      ? 'approved_route_hard_commit'
+      : 'seed_guided'
     const result = await dependencies.runPlanBuild(
       {
         mode: 'curate',
@@ -368,7 +406,7 @@ export async function runCuratePreviewQualificationAttempt<
         sourceMode: 'curated',
         sourceModeOverrideApplied: true,
         debugMode: false,
-        curateCommitSemantics: 'seed_guided',
+        curateCommitSemantics,
         starterPack: params.selectedStarterPack,
         experienceContract: params.canonicalExperienceContract,
         contractConstraints: params.canonicalContractConstraints,
@@ -413,6 +451,12 @@ export async function runCuratePreviewQualificationAttempt<
     )
     const exactPreservationSatisfied =
       !hardCommitRequired || hardCommitPreservationSucceeded
+    const approvedPayloadMaterializationFailureReason =
+      curateCommitSemantics === 'approved_route_hard_commit' &&
+      hardCommitRequired &&
+      !hardCommitPreservationSucceeded
+        ? approvedPayloadRouteMaterializationUnavailableReason
+        : null
     const baseCommitParitySucceeded = Boolean(
       exactPreservationSatisfied &&
         parity.directionValidation.valid &&
@@ -433,15 +477,16 @@ export async function runCuratePreviewQualificationAttempt<
     const failedCheck = commitParitySucceeded
       ? null
       : approvedPayloadTruthFailureReason ??
+        approvedPayloadMaterializationFailureReason ??
         (hardCommitRequired && !hardCommitPreservationSucceeded
-        ? 'curateHardCommit.hardCommitPreservationSucceeded'
-        : !parity.directionValidation.valid
-          ? parity.directionValidation.generationDriftReason ??
-            'directionValidation.valid'
-          : parity.nextFinalRoute.selectedDirectionId !==
-              params.activeDirectionContract.id
-            ? 'nextFinalRoute.selectedDirectionId'
-            : 'curate_preflight_commit_parity')
+          ? 'curateHardCommit.hardCommitPreservationSucceeded'
+          : !parity.directionValidation.valid
+            ? parity.directionValidation.generationDriftReason ??
+              'directionValidation.valid'
+            : parity.nextFinalRoute.selectedDirectionId !==
+                params.activeDirectionContract.id
+              ? 'nextFinalRoute.selectedDirectionId'
+              : 'curate_preflight_commit_parity')
     const failureKind: CuratePreviewCommitabilityStateLike<
       TDirectionCoreRole,
       TApprovedPayload
@@ -489,6 +534,7 @@ export async function runCuratePreviewQualificationAttempt<
           rankedCandidateCount: curateHardCommit?.rankedCandidateCount ?? 0,
           explicitFallbackReason: `${
             approvedPayloadTruthFailureReason ??
+            approvedPayloadMaterializationFailureReason ??
             curateHardCommit?.explicitFallbackReason ??
             parity.directionValidation.generationDriftReason ??
             failedCheck ??
@@ -545,6 +591,7 @@ export async function runCuratePreviewQualificationAttempt<
             curateHardCommit?.hardCommitCandidateCount ?? 0,
           repairedFailureReason: `${
             approvedPayloadTruthFailureReason ??
+            approvedPayloadMaterializationFailureReason ??
             curateHardCommit?.explicitFallbackReason ??
             parity.directionValidation.generationDriftReason ??
             failedCheck ??
@@ -586,6 +633,7 @@ export async function runCuratePreviewQualificationAttempt<
       explicitFallbackReason: commitParitySucceeded
         ? curateHardCommit?.explicitFallbackReason
         : approvedPayloadTruthFailureReason ??
+          approvedPayloadMaterializationFailureReason ??
           curateHardCommit?.explicitFallbackReason ??
           parity.directionValidation.generationDriftReason ??
           failedCheck ??
@@ -642,6 +690,7 @@ export async function runCuratePreviewQualificationAttempt<
         ? commitParitySucceeded
           ? null
           : approvedPayloadTruthFailureReason ??
+            approvedPayloadMaterializationFailureReason ??
             curateHardCommit?.explicitFallbackReason ??
             parity.directionValidation.generationDriftReason ??
             failedCheck ??

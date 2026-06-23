@@ -1477,8 +1477,45 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
     windDown: 'Willow Glen Bakehouse',
   })
 
-  const runAttempt = async (finalRoute: RuntimeRouteArtifact) => {
+  const selectedArtifactDiscoveryPreferences: NonNullable<IntentInput['discoveryPreferences']> = [
+    {
+      venueId: 'aligned-scenario-backed_start_venue',
+      role: 'start',
+    },
+    {
+      venueId: 'aligned-scenario-backed_highlight_venue',
+      role: 'highlight',
+    },
+    {
+      venueId: 'aligned-scenario-backed_windDown_venue',
+      role: 'windDown',
+    },
+  ]
+  const selectedArtifactLineage = {
+    artifactId: artifact.id,
+    sourceOpportunityId: artifact.sourceOpportunityId,
+    sourceMode: artifact.sourceMode,
+    anchorVenueId: artifact.anchorVenueId,
+    anchorRole: artifact.anchorRole,
+    directionId: artifact.selection.directionId,
+    pocketId: artifact.selection.pocketId,
+  }
+  const activeCandidateOpportunity = {
+    scenarioNight: {
+      scenarioFamily: 'romantic_cultured',
+    },
+  }
+
+  const runAttempt = async (
+    finalRoute: RuntimeRouteArtifact,
+    hardCommit: {
+      hardCommitRequired?: boolean
+      hardCommitPreservationSucceeded?: boolean
+      hardCommitCandidateCount?: number
+    } = {},
+  ) => {
     let approvedPayloadBuildCount = 0
+    let observedCurateCommitSemantics: string | null = null
     const result = await runCuratePreviewQualificationAttempt({
       artifactId: artifact.id,
       artifactToQualify: artifact,
@@ -1486,7 +1523,7 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
         cluster: 'romantic_cultured',
         card: { confirmation: 'Cultured Coffee & Books route' },
       },
-      activeCandidateOpportunity: undefined,
+      activeCandidateOpportunity,
       selectedStarterPack: starterPack,
       districtLocationQuery: 'San Jose',
       persona: 'romantic',
@@ -1506,32 +1543,44 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       expectedDirectionIdentityForPreview: 'selection',
       activeIntentSelectedDirectionContext: {} as never,
       activeRouteShapeContract: {} as never,
-      selectedArtifactDiscoveryPreferences: [],
-      selectedArtifactLineage: undefined,
+      selectedArtifactDiscoveryPreferences,
+      selectedArtifactLineage,
       selectedArtifactLineageSummary: 'scenario_backed_artifact',
       plannerInputSummary: 'mocked Coffee & Books preflight',
       selectedDirectionPreviewContext: undefined,
     }, {
-      runPlanBuild: async () => ({
-        trace: {
-          curateHardCommit: {
-            hardCommitRequired: false,
-            hardCommitPreservationSucceeded: true,
-            hardCommitCandidateCount: 1,
-            rankedCandidateCount: 1,
-            failedRoles: [],
-            exactPreservingCandidateIds: [artifact.id],
+      runPlanBuild: async (_input, options) => {
+        observedCurateCommitSemantics = options?.curateCommitSemantics ?? null
+        return {
+          trace: {
+            curateHardCommit: {
+              hardCommitRequired: hardCommit.hardCommitRequired ?? true,
+              hardCommitPreservationSucceeded:
+                hardCommit.hardCommitPreservationSucceeded ?? true,
+              hardCommitCandidateCount: hardCommit.hardCommitCandidateCount ?? 1,
+              rankedCandidateCount: 1,
+              failedRoles:
+                hardCommit.hardCommitPreservationSucceeded === false
+                  ? ['start', 'highlight', 'windDown']
+                  : [],
+              exactPreservingCandidateIds:
+                hardCommit.hardCommitPreservationSucceeded === false ? [] : [artifact.id],
+              explicitFallbackReason:
+                hardCommit.hardCommitPreservationSucceeded === false
+                  ? 'curate_selected_artifact_structurally_infeasible'
+                  : undefined,
+            },
           },
-        },
-        intentProfile: {
-          mode: 'curate',
-          selectedDirectionContext: {},
-        },
-        itinerary: {},
-        selectedArc: {},
-        scoredVenues: [],
-        lens: {},
-      }) as never,
+          intentProfile: {
+            mode: 'curate',
+            selectedDirectionContext: {},
+          },
+          itinerary: {},
+          selectedArc: {},
+          scoredVenues: [],
+          lens: {},
+        } as never
+      },
       enforceSelectedDirectionLineage: () => undefined,
       runPostPlannerCommitParityStages: async () => ({
         strongCurationPass: {
@@ -1581,13 +1630,14 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       getErrorMessageRaw: () => 'n/a',
       getCuratePreflightRuntimeReason: () => 'n/a',
     })
-    return { result, approvedPayloadBuildCount }
+    return { result, approvedPayloadBuildCount, observedCurateCommitSemantics }
   }
 
   const staleAttempt = await runAttempt(staleWillowGlenRoute)
   assert(
     staleAttempt.result.kind === 'infeasible' &&
       staleAttempt.approvedPayloadBuildCount === 0 &&
+      staleAttempt.observedCurateCommitSemantics === 'approved_route_hard_commit' &&
       staleAttempt.result.state.status === 'infeasible' &&
       staleAttempt.result.state.approvedRefinementEntryPayload === undefined &&
       staleAttempt.result.state.failedCheck === 'approved_payload_route_mismatch',
@@ -1598,9 +1648,26 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
   assert(
     alignedAttempt.result.kind === 'committable' &&
       alignedAttempt.approvedPayloadBuildCount === 1 &&
+      alignedAttempt.observedCurateCommitSemantics === 'approved_route_hard_commit' &&
       alignedAttempt.result.state.status === 'committable' &&
       Boolean(alignedAttempt.result.state.approvedRefinementEntryPayload),
     'Curate preflight must still approve an aligned scenario-backed Coffee & Books route.',
+  )
+
+  const unavailableAttempt = await runAttempt(alignedRoute, {
+    hardCommitRequired: true,
+    hardCommitPreservationSucceeded: false,
+    hardCommitCandidateCount: 0,
+  })
+  assert(
+    unavailableAttempt.result.kind === 'infeasible' &&
+      unavailableAttempt.approvedPayloadBuildCount === 0 &&
+      unavailableAttempt.observedCurateCommitSemantics === 'approved_route_hard_commit' &&
+      unavailableAttempt.result.state.failedCheck ===
+        'approved_payload_route_materialization_unavailable' &&
+      unavailableAttempt.result.state.explicitFallbackReason ===
+        'approved_payload_route_materialization_unavailable',
+    'Scenario-backed Curate preflight must fail closed with a precise materialization reason when no exact-preserving route exists.',
   )
 
   const serviceSource = readFileSync(
@@ -1611,6 +1678,8 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
     serviceSource.includes('validatePublicCurateApprovedPayloadTruth') &&
       serviceSource.includes('getApprovedPayloadTruthFailureReason') &&
       serviceSource.includes('approvedPayloadTruthFailureReason') &&
+      serviceSource.includes('approved_route_hard_commit') &&
+      serviceSource.includes('approved_payload_route_materialization_unavailable') &&
       serviceSource.includes('baseCommitParitySucceeded && !approvedPayloadTruthFailureReason'),
     'Curate preflight qualification must share the approved-payload truth invariant before payload construction.',
   )
