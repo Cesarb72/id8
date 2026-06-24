@@ -368,6 +368,86 @@ function assertDrySystemicStarterGeoCheck(): void {
     'Arcade dry check must not hit place_right when DI pocket is coherent.',
   )
 
+  const multiNeighborhoodBoard = buildManualStarterScenarioBoard({
+    starterPack: arcade,
+    scenarioFamily: 'friends_lively',
+    namePrefix: 'Arcade',
+    categoryByStopType: {
+      group_gathering_point: 'bar',
+      group_activity_anchor: 'activity',
+      cocktail_bar: 'bar',
+      late_energy_venue: 'bar',
+      late_night_food: 'restaurant',
+    },
+  })
+  const multiNeighborhoodBuckets = [
+    'raw-pocket-arcade-home',
+    'raw-pocket-arcade-home',
+    'raw-pocket-arcade-highlight',
+    'raw-pocket-arcade-highlight',
+    'raw-pocket-arcade-landing',
+  ]
+  multiNeighborhoodBoard.requiredStopTypes.forEach((stopType, index) => {
+    multiNeighborhoodBoard.candidatesByStopType[stopType]?.forEach((candidate) => {
+      candidate.geoBucket = multiNeighborhoodBuckets[index]
+      candidate.geoBucketSource = 'district_intelligence'
+      candidate.geoAssignmentMethod = 'district_intelligence_direct'
+      candidate.geoLabel = multiNeighborhoodBuckets[index]
+      candidate.district = multiNeighborhoodBuckets[index]
+      candidate.neighborhoodLabel = multiNeighborhoodBuckets[index]
+    })
+  })
+  const multiNeighborhoodNight = buildScenarioNightsFromCandidateBoard(multiNeighborhoodBoard).find(
+    (night) => night.complete,
+  )
+  assert(
+    multiNeighborhoodNight?.geoCoherence?.spatialLadder?.routeShapeClassification ===
+      'multi_neighborhood_arc' &&
+      multiNeighborhoodNight.geoCoherence.spatialLadder.approvedForCurrentRouteContract,
+    'Arcade dry check must admit controlled multi-neighborhood arcs through the shared spatial ladder.',
+  )
+
+  const bouncingBoard = buildManualStarterScenarioBoard({
+    starterPack: arcade,
+    scenarioFamily: 'friends_lively',
+    namePrefix: 'Arcade',
+    categoryByStopType: {
+      group_gathering_point: 'bar',
+      group_activity_anchor: 'activity',
+      cocktail_bar: 'bar',
+      late_energy_venue: 'bar',
+      late_night_food: 'restaurant',
+    },
+  })
+  const bouncingBuckets = [
+    'raw-pocket-arcade-home',
+    'raw-pocket-arcade-jump',
+    'raw-pocket-arcade-home',
+    'raw-pocket-arcade-second-jump',
+    'raw-pocket-arcade-home',
+  ]
+  bouncingBoard.requiredStopTypes.forEach((stopType, index) => {
+    bouncingBoard.candidatesByStopType[stopType]?.forEach((candidate) => {
+      candidate.geoBucket = bouncingBuckets[index]
+      candidate.geoBucketSource = 'district_intelligence'
+      candidate.geoAssignmentMethod = 'district_intelligence_direct'
+      candidate.geoLabel = bouncingBuckets[index]
+      candidate.district = bouncingBuckets[index]
+      candidate.neighborhoodLabel = bouncingBuckets[index]
+    })
+  })
+  const bouncingNights = buildScenarioNightsFromCandidateBoard(bouncingBoard)
+  assert(
+    bouncingNights.every((night) => !night.complete) &&
+      bouncingNights.some(
+        (night) =>
+          night.geoCoherence?.rejectionReason === 'scenario_spatial_ladder_scattered' &&
+          night.geoCoherence.spatialLadder?.routeShapeClassification === 'scattered' &&
+          night.geoCoherence.spatialLadder.repeatedClusterEscapeCount > 1,
+      ),
+    'Arcade dry check must reject repeated bouncing through the shared spatial ladder.',
+  )
+
   const scatteredBoard = buildManualStarterScenarioBoard({
     starterPack: arcade,
     scenarioFamily: 'friends_lively',
@@ -1597,6 +1677,42 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
       semanticCompleteNight.geoCoherence?.status === 'controlled_adjacent',
     'Coffee & Books semantically representative Scenario Builder route must expose coherent route geography.',
   )
+  assert(
+    semanticCompleteNight.geoCoherence?.spatialLadder?.routeShapeClassification ===
+      'walkable_cluster' &&
+      semanticCompleteNight.geoCoherence.spatialLadder.approvedForCurrentRouteContract,
+    'Coffee & Books same-cluster route must remain preferred and approved by the shared spatial ladder.',
+  )
+
+  const destinationJumpBoard = buildCoffeeBooksScenarioBoard({
+    starterPack,
+    includeSemanticCandidate: true,
+  })
+  const destinationJumpBuckets = [
+    'raw-pocket-coffee-books-home',
+    'raw-pocket-coffee-books-destination',
+    'raw-pocket-coffee-books-home',
+  ]
+  destinationJumpBoard.requiredStopTypes.forEach((stopType, index) => {
+    destinationJumpBoard.candidatesByStopType[stopType]?.forEach((candidate) => {
+      candidate.geoBucket = destinationJumpBuckets[index]
+      candidate.geoBucketSource = 'district_intelligence'
+      candidate.geoAssignmentMethod = 'district_intelligence_direct'
+      candidate.geoLabel = destinationJumpBuckets[index]
+      candidate.district = destinationJumpBuckets[index]
+      candidate.neighborhoodLabel = destinationJumpBuckets[index]
+    })
+  })
+  const destinationJumpNight = buildScenarioNightsFromCandidateBoard(destinationJumpBoard).find(
+    (night) => night.complete && builtNightHasCoffeeBooksSemanticRepresentation(night),
+  )
+  assert(
+    destinationJumpNight?.geoCoherence?.spatialLadder?.routeShapeClassification ===
+      'destination_outing' &&
+      destinationJumpNight.geoCoherence.spatialLadder.jumpCount === 1 &&
+      destinationJumpNight.geoCoherence.spatialLadder.expectedHardCommitMaterializable,
+    'Coffee & Books one-destination-jump route must remain eligible when semantically represented and contract-approved.',
+  )
 
   const addressFragmentBoard = buildCoffeeBooksScenarioBoard({
     starterPack,
@@ -1673,6 +1789,8 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
       scenarioBuilderSource.includes('starterSemanticRepresentation') &&
       scenarioBuilderSource.includes('scenario_route_geo_scattered') &&
       scenarioBuilderSource.includes('scenario_route_mixed_di_fallback_scattered') &&
+      scenarioBuilderSource.includes('spatialLadder') &&
+      scenarioBuilderSource.includes('routeShapeClassification') &&
       scenarioBuilderSource.includes('geoCoherence'),
     'Scenario Builder diagnostics must keep Coffee & Books semantic and geo-coherence rejection reasons available.',
   )

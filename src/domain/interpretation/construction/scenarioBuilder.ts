@@ -8,6 +8,10 @@ import type {
 import { getScenarioRequiredStopTypes } from '../discovery/stopTypeCandidateBoard'
 import type { VenueCategory } from '../../types/venue'
 import { haversineDistanceM } from '../../../engines/district/clustering/geoDistance'
+import { computeSpatialCoherence } from '../../spatial/computeSpatialCoherence'
+import type { ArcStop } from '../../types/arc'
+import type { IntentProfile } from '../../types/intent'
+import type { SpatialCoherenceAnalysis } from '../../types/spatial'
 
 export type BuiltScenarioStopPosition =
   | 'start'
@@ -202,12 +206,38 @@ type CandidateNight = {
   starterSemanticRepresentation?: StarterSemanticRepresentation
 }
 
+export type ScenarioRouteShapeClassification =
+  | 'walkable_cluster'
+  | 'destination_outing'
+  | 'multi_neighborhood_arc'
+  | 'scattered'
+
+export type ScenarioSpatialLadderVerdict = {
+  verdict: 'approved' | 'rejected'
+  mode: SpatialCoherenceAnalysis['mode']
+  routeShapeClassification: ScenarioRouteShapeClassification
+  jumpCount: number
+  clustersVisited: string[]
+  clusterEscapeCount: number
+  repeatedClusterEscapeCount: number
+  longTransitionCount: number
+  spatialScore: number
+  notes: string[]
+  starterId?: string
+  routeContractPresent: boolean
+  approvedForCurrentRouteContract: boolean
+  expectedHardCommitMaterializable: boolean
+  rejectionReason?: 'scenario_spatial_ladder_scattered' | 'scenario_spatial_ladder_route_contract_rejected'
+}
+
 export type ScenarioRouteGeoCoherence = {
   status: 'coherent' | 'controlled_adjacent' | 'scattered' | 'missing_geo'
   rejectionReason?:
     | 'scenario_route_geo_scattered'
     | 'scenario_route_missing_geo'
     | 'scenario_route_mixed_di_fallback_scattered'
+    | 'scenario_spatial_ladder_scattered'
+    | 'scenario_spatial_ladder_route_contract_rejected'
   geoBearingStopCount: number
   uniqueGeoBucketCount: number
   dominantGeoBucket?: string
@@ -225,6 +255,7 @@ export type ScenarioRouteGeoCoherence = {
     fallbackDistanceThresholdM: number
     fallbackNearEnoughToDominantPocket: boolean
   }
+  spatialLadder?: ScenarioSpatialLadderVerdict
   routeGeoBuckets: Array<{
     venueId: string
     name: string
@@ -975,7 +1006,159 @@ function getMixedSourceDiagnostic(
   }
 }
 
-function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoherence {
+function getSpatialClusterLabel(stop: BuiltScenarioStop): string {
+  return (
+    stop.geoBucket ??
+    stop.geoLabel ??
+    stop.district ??
+    stop.neighborhoodLabel ??
+    stop.address ??
+    `scenario-stop-${stop.venueId}`
+  )
+}
+
+function estimateScenarioDriveMinutes(stops: BuiltScenarioStop[], targetIndex: number): number {
+  let minutes = 0
+  for (let index = 1; index <= targetIndex; index += 1) {
+    const previous = stops[index - 1]
+    const current = stops[index]
+    if (!previous || !current) {
+      continue
+    }
+    const previousCluster = getSpatialClusterLabel(previous)
+    const currentCluster = getSpatialClusterLabel(current)
+    if (previousCluster === currentCluster) {
+      continue
+    }
+    if (previous.coordinates && current.coordinates) {
+      const distance = haversineDistanceM(previous.coordinates, current.coordinates)
+      minutes += Math.max(4, Math.min(14, Math.round(distance / 160)))
+      continue
+    }
+    minutes += 6
+  }
+  return minutes
+}
+
+function toSpatialArcStop(
+  stop: BuiltScenarioStop,
+  stops: BuiltScenarioStop[],
+  index: number,
+): ArcStop {
+  const internalRole = stop.position === 'highlight' ? 'peak' : stop.position === 'windDown' || stop.position === 'closer' ? 'cooldown' : 'warmup'
+  return {
+    role: internalRole,
+    scoredVenue: {
+      venue: {
+        id: stop.venueId,
+        name: stop.name,
+        city: stop.district ?? stop.neighborhoodLabel ?? 'scenario',
+        neighborhood: getSpatialClusterLabel(stop),
+        driveMinutes: estimateScenarioDriveMinutes(stops, index),
+        category: stop.venueCategory ?? 'activity',
+        subcategory: stop.venueSubcategory ?? stop.stopType,
+        tags: stop.venueTags ?? stop.sourceTypes ?? [],
+        isHiddenGem: Boolean(stop.isHiddenGem),
+        source: {
+          latitude: stop.coordinates?.lat,
+          longitude: stop.coordinates?.lng,
+        },
+      },
+    },
+  } as ArcStop
+}
+
+function computeScenarioSpatialCoherence(stops: BuiltScenarioStop[]): SpatialCoherenceAnalysis {
+  return computeSpatialCoherence(
+    stops.map((stop, index) => toSpatialArcStop(stop, stops, index)),
+    {
+      mode: 'curate',
+      distanceMode: 'nearby',
+    } as IntentProfile,
+  )
+}
+
+function classifyScenarioRouteShape(params: {
+  spatial: SpatialCoherenceAnalysis
+  geoStatus: ScenarioRouteGeoCoherence['status']
+}): ScenarioRouteShapeClassification {
+  const { spatial, geoStatus } = params
+  if (geoStatus === 'missing_geo' || geoStatus === 'scattered') {
+    return 'scattered'
+  }
+  if (spatial.clustersVisited.length <= 1 && spatial.clusterEscapeCount === 0) {
+    return 'walkable_cluster'
+  }
+  if (spatial.jumpUsed && spatial.repeatedClusterEscapeCount === 0) {
+    return 'destination_outing'
+  }
+  if (
+    geoStatus === 'controlled_adjacent' &&
+    spatial.repeatedClusterEscapeCount <= 1 &&
+    spatial.longTransitionCount <= 1
+  ) {
+    return 'multi_neighborhood_arc'
+  }
+  return 'scattered'
+}
+
+function routeContractApprovesShape(classification: ScenarioRouteShapeClassification): boolean {
+  if (classification === 'scattered') {
+    return false
+  }
+  return true
+}
+
+function buildSpatialLadderVerdict(params: {
+  stops: BuiltScenarioStop[]
+  geoStatus: ScenarioRouteGeoCoherence['status']
+  evaluationContract?: ScenarioEvaluationContract
+}): ScenarioSpatialLadderVerdict | undefined {
+  if (params.stops.length === 0) {
+    return undefined
+  }
+  const spatial = computeScenarioSpatialCoherence(params.stops)
+  const routeShapeClassification = classifyScenarioRouteShape({
+    spatial,
+    geoStatus: params.geoStatus,
+  })
+  const approvedForCurrentRouteContract = routeContractApprovesShape(routeShapeClassification)
+  const expectedHardCommitMaterializable =
+    approvedForCurrentRouteContract &&
+    routeShapeClassification !== 'scattered' &&
+    spatial.repeatedClusterEscapeCount <= 1
+  const jumpCount = spatial.transitions.filter((transition) => transition.jumpUsed).length
+  const rejected = !approvedForCurrentRouteContract || routeShapeClassification === 'scattered'
+  return {
+    verdict: rejected ? 'rejected' : 'approved',
+    mode: spatial.mode,
+    routeShapeClassification,
+    jumpCount,
+    clustersVisited: spatial.clustersVisited,
+    clusterEscapeCount: spatial.clusterEscapeCount,
+    repeatedClusterEscapeCount: spatial.repeatedClusterEscapeCount,
+    longTransitionCount: spatial.longTransitionCount,
+    spatialScore: spatial.score,
+    notes: spatial.notes,
+    ...(params.evaluationContract?.starterId ? { starterId: params.evaluationContract.starterId } : {}),
+    routeContractPresent: Boolean(params.evaluationContract?.routeContract),
+    approvedForCurrentRouteContract,
+    expectedHardCommitMaterializable,
+    ...(rejected
+      ? {
+          rejectionReason:
+            routeShapeClassification === 'scattered'
+              ? 'scenario_spatial_ladder_scattered'
+              : 'scenario_spatial_ladder_route_contract_rejected',
+        }
+      : {}),
+  }
+}
+
+function getRouteGeoCoherence(
+  stops: BuiltScenarioStop[],
+  evaluationContract?: ScenarioEvaluationContract,
+): ScenarioRouteGeoCoherence {
   const routeGeoBuckets = stops.map((stop) => ({
     venueId: stop.venueId,
     name: stop.name,
@@ -1013,6 +1196,11 @@ function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoher
   const mixedSourceDiagnostic = getMixedSourceDiagnostic(routeGeoBuckets)
 
   if (geoBearingStopCount < requiredGeoBearingStopCount) {
+    const spatialLadder = buildSpatialLadderVerdict({
+      stops,
+      geoStatus: 'missing_geo',
+      evaluationContract,
+    })
     return {
       status: 'missing_geo',
       rejectionReason: 'scenario_route_missing_geo',
@@ -1020,10 +1208,16 @@ function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoher
       uniqueGeoBucketCount,
       ...(dominantGeoBucket ? { dominantGeoBucket } : {}),
       dominantGeoShare,
+      ...(spatialLadder ? { spatialLadder } : {}),
       routeGeoBuckets,
     }
   }
   if (mixedSourceDiagnostic && !mixedSourceDiagnostic.fallbackNearEnoughToDominantPocket) {
+    const spatialLadder = buildSpatialLadderVerdict({
+      stops,
+      geoStatus: 'scattered',
+      evaluationContract,
+    })
     return {
       status: 'scattered',
       rejectionReason: 'scenario_route_mixed_di_fallback_scattered',
@@ -1036,31 +1230,53 @@ function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoher
           : {}),
       dominantGeoShare,
       mixedSourceDiagnostic,
+      ...(spatialLadder ? { spatialLadder } : {}),
       routeGeoBuckets,
     }
   }
   if (uniqueGeoBucketCount <= 2) {
+    const spatialLadder = buildSpatialLadderVerdict({
+      stops,
+      geoStatus: 'coherent',
+      evaluationContract,
+    })
+    const ladderRejected = spatialLadder?.verdict === 'rejected'
     return {
-      status: 'coherent',
+      status: ladderRejected ? 'scattered' : 'coherent',
+      ...(spatialLadder?.rejectionReason ? { rejectionReason: spatialLadder.rejectionReason } : {}),
       geoBearingStopCount,
       uniqueGeoBucketCount,
       ...(dominantGeoBucket ? { dominantGeoBucket } : {}),
       dominantGeoShare,
       ...(mixedSourceDiagnostic ? { mixedSourceDiagnostic } : {}),
+      ...(spatialLadder ? { spatialLadder } : {}),
       routeGeoBuckets,
     }
   }
   if (uniqueGeoBucketCount === 3 && dominantGeoShare >= 0.4) {
+    const spatialLadder = buildSpatialLadderVerdict({
+      stops,
+      geoStatus: 'controlled_adjacent',
+      evaluationContract,
+    })
+    const ladderRejected = spatialLadder?.verdict === 'rejected'
     return {
-      status: 'controlled_adjacent',
+      status: ladderRejected ? 'scattered' : 'controlled_adjacent',
+      ...(spatialLadder?.rejectionReason ? { rejectionReason: spatialLadder.rejectionReason } : {}),
       geoBearingStopCount,
       uniqueGeoBucketCount,
       ...(dominantGeoBucket ? { dominantGeoBucket } : {}),
       dominantGeoShare,
       ...(mixedSourceDiagnostic ? { mixedSourceDiagnostic } : {}),
+      ...(spatialLadder ? { spatialLadder } : {}),
       routeGeoBuckets,
     }
   }
+  const spatialLadder = buildSpatialLadderVerdict({
+    stops,
+    geoStatus: 'scattered',
+    evaluationContract,
+  })
   return {
     status: 'scattered',
     rejectionReason: 'scenario_route_geo_scattered',
@@ -1069,6 +1285,7 @@ function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoher
     ...(dominantGeoBucket ? { dominantGeoBucket } : {}),
     dominantGeoShare,
     ...(mixedSourceDiagnostic ? { mixedSourceDiagnostic } : {}),
+    ...(spatialLadder ? { spatialLadder } : {}),
     routeGeoBuckets,
   }
 }
@@ -1169,6 +1386,7 @@ function getScenarioCoherence(
 function getCandidateNightScore(
   scenarioFamily: ScenarioFamily,
   stops: BuiltScenarioStop[],
+  evaluationContract?: ScenarioEvaluationContract,
 ): CandidateNight {
   const highlightIndex = Math.min(2, stops.length - 1)
   const highlight = stops[highlightIndex]
@@ -1186,7 +1404,7 @@ function getCandidateNightScore(
     stops.reduce((sum, stop) => sum + stop.currentRelevance, 0) / Math.max(1, stops.length),
   )
   const districtPlausibility = getDistrictPlausibility(stops)
-  const geoCoherence = getRouteGeoCoherence(stops)
+  const geoCoherence = getRouteGeoCoherence(stops, evaluationContract)
   const roleDiscipline = getRoleDiscipline(scenarioFamily, stops)
   const scenarioCoherence = getScenarioCoherence(scenarioFamily, stops)
   const geoCoherenceScore =
@@ -1260,10 +1478,11 @@ function hasAnyMissingPool(
 
 function buildCandidateNightCombinations(params: {
   scenarioFamily: ScenarioFamily
+  evaluationContract?: ScenarioEvaluationContract
   requiredStopTypes: StopType[]
   pools: Record<StopType, StopTypeCandidate[]>
 }): CandidateNight[] {
-  const { scenarioFamily, requiredStopTypes, pools } = params
+  const { scenarioFamily, evaluationContract, requiredStopTypes, pools } = params
   const candidateNights: CandidateNight[] = []
   const stopCount = requiredStopTypes.length
 
@@ -1302,7 +1521,7 @@ function buildCandidateNightCombinations(params: {
     usedVenueIds: Set<string>,
   ): void {
     if (index >= stopCount) {
-      candidateNights.push(getCandidateNightScore(scenarioFamily, selectedStops))
+      candidateNights.push(getCandidateNightScore(scenarioFamily, selectedStops, evaluationContract))
       return
     }
     const stopType = requiredStopTypes[index]
@@ -1759,6 +1978,7 @@ export function buildScenarioNightsFromCandidateBoard(
 
   const candidateNights = buildCandidateNightCombinations({
     scenarioFamily: board.scenarioFamily,
+    evaluationContract: board.evaluationContract,
     requiredStopTypes,
     pools,
   })
