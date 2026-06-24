@@ -23,13 +23,16 @@ import {
 import { buildContractEntryArtifactFromVerifiedOpportunity } from '../src/domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity.ts'
 import {
   buildScenarioNightsFromCandidateBoard,
+  evaluateBuiltScenarioNight,
   type BuiltScenarioNight,
 } from '../src/domain/interpretation/construction/scenarioBuilder.ts'
 import type {
+  ScenarioFamily,
   StopType,
   StopTypeCandidate,
   StopTypeCandidateBoard,
 } from '../src/domain/interpretation/discovery/stopTypeCandidateBoard.ts'
+import { getScenarioRequiredStopTypes } from '../src/domain/interpretation/discovery/stopTypeCandidateBoard.ts'
 import {
   mapBuiltScenarioNightToVerifiedOpportunity,
   type VerifiedCityOpportunity,
@@ -125,6 +128,193 @@ function findStarterPack(id: string): StarterPack {
     throw new Error(`Missing starter pack: ${id}`)
   }
   return starterPack
+}
+
+function buildScenarioContractFixtureCandidate(params: {
+  stopType: StopType
+  index: number
+  category: VenueCategory
+  namePrefix: string
+}): StopTypeCandidate {
+  const positionRole =
+    params.index === 0 || params.index === 1
+      ? 'start'
+      : params.index === 2
+        ? 'highlight'
+        : 'windDown'
+  return {
+    venueId: `${params.namePrefix.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${params.stopType}`,
+    name: `${params.namePrefix} ${params.stopType.replace(/_/g, ' ')}`,
+    city: 'San Jose',
+    address: `${100 + params.index} Contract Way, San Jose, CA`,
+    district: 'Downtown',
+    neighborhoodLabel: 'Downtown',
+    stopType: params.stopType,
+    venueCategory: params.category,
+    venueSubcategory: params.category,
+    shortDescription: 'Contract propagation fixture venue.',
+    sourceTypes: [params.category],
+    venueTags: ['contract-fixture', params.namePrefix.toLowerCase()],
+    sourceType: 'venue',
+    hoursKnown: true,
+    openNow: true,
+    authorityScore: 0.82,
+    hiddenGemScore: 0.2,
+    currentRelevance: 0.74,
+    eventPotential: params.category === 'event' || params.category === 'live_music' ? 0.8 : 0.3,
+    performancePotential: params.category === 'live_music' ? 0.82 : 0.3,
+    liveNightlifePotential: params.category === 'bar' || params.category === 'live_music' ? 0.8 : 0.25,
+    culturalAnchorPotential: params.category === 'museum' || params.category === 'live_music' ? 0.8 : 0.25,
+    lateNightPotential: params.index >= 3 ? 0.72 : 0.32,
+    majorVenueStrength: 0.72,
+    roleFit: {
+      start: positionRole === 'start' ? 0.82 : 0.62,
+      highlight: positionRole === 'highlight' ? 0.84 : 0.62,
+      windDown: positionRole === 'windDown' ? 0.82 : 0.58,
+    },
+    reasons: ['contract fixture', params.namePrefix.toLowerCase()],
+  }
+}
+
+function buildManualStarterScenarioBoard(params: {
+  starterPack: StarterPack
+  scenarioFamily: ScenarioFamily
+  namePrefix: string
+  categoryByStopType: Partial<Record<StopType, VenueCategory>>
+}): StopTypeCandidateBoard {
+  const requiredStopTypes = getScenarioRequiredStopTypes(params.scenarioFamily)
+  const candidatesByStopType = {} as Record<StopType, StopTypeCandidate[]>
+  requiredStopTypes.forEach((stopType, index) => {
+    candidatesByStopType[stopType] = [
+      buildScenarioContractFixtureCandidate({
+        stopType,
+        index,
+        category: params.categoryByStopType[stopType] ?? 'activity',
+        namePrefix: params.namePrefix,
+      }),
+    ]
+  })
+  return {
+    city: 'San Jose',
+    persona: params.starterPack.personaBias ?? 'friends',
+    vibe: params.starterPack.primaryAnchor,
+    starterPack: params.starterPack,
+    scenarioFamily: params.scenarioFamily,
+    evaluationContract: {
+      scenarioFamily: params.scenarioFamily,
+      starterId: params.starterPack.id,
+      ...(params.starterPack.roleContracts
+        ? { routeContract: params.starterPack.roleContracts }
+        : {}),
+    },
+    requiredStopTypes,
+    candidatesByStopType,
+  }
+}
+
+function assertBuiltNightGreatStopReceivedStarterContract(params: {
+  label: string
+  starterPack: StarterPack
+  board: StopTypeCandidateBoard
+}): void {
+  const builtNights = buildScenarioNightsFromCandidateBoard(params.board)
+  const completeNight = builtNights.find((night) => night.complete)
+  assert(completeNight, `${params.label}: expected a complete scenario night.`)
+  assert(
+    completeNight.evaluationContract?.starterId === params.starterPack.id,
+    `${params.label}: built night must preserve starter identity.`,
+  )
+  const firstEvaluation = completeNight.evaluation?.stopEvaluations[0]?.evaluation
+  assert(firstEvaluation, `${params.label}: Great Stop evaluation must be present.`)
+  assert(
+    firstEvaluation.evaluationContract.starterId === params.starterPack.id,
+    `${params.label}: Great Stop must receive starter identity.`,
+  )
+  assert(
+    firstEvaluation.evaluationContract.scenarioFamily === params.board.scenarioFamily,
+    `${params.label}: Great Stop must preserve scenario family as secondary descriptor.`,
+  )
+  assert(
+    firstEvaluation.placeRightDiagnostic.scenarioFamily === params.board.scenarioFamily &&
+      firstEvaluation.placeRightDiagnostic.starterId === params.starterPack.id,
+    `${params.label}: place_right diagnostics must expose contract used and starter id.`,
+  )
+}
+
+function assertGeneralStarterContractPropagationToGreatStop(): void {
+  const coffeeBooks = findStarterPack('coffee-books')
+  const coffeeBooksEvaluation = evaluateBuiltScenarioNight({
+    evaluationContract: {
+      scenarioFamily: 'romantic_cultured',
+      starterId: coffeeBooks.id,
+      routeContract: coffeeBooks.roleContracts,
+    },
+    stops: [
+      {
+        position: 'start',
+        stopType: 'cultural_institution',
+        venueId: 'coffee-books-contract-stop',
+        name: 'Coffee Books Contract Stop',
+        address: '101 Contract Way, San Jose, CA',
+        district: 'Downtown',
+        neighborhoodLabel: 'Downtown',
+        authorityScore: 0.8,
+        currentRelevance: 0.76,
+        reasons: ['starter contract fixture'],
+        momentLabel: '',
+        whyThisStop: 'Starter contract fixture.',
+        venueCategory: 'museum',
+        venueSubcategory: 'book-store',
+        venueTags: ['bookstore', 'reading'],
+        sourceTypes: ['book-store'],
+        roleFit: { start: 0.84, highlight: 0.8, windDown: 0.7 },
+        culturalAnchorPotential: 0.86,
+      },
+    ],
+  })
+  const coffeeBooksStopEvaluation = coffeeBooksEvaluation.stopEvaluations[0]?.evaluation
+  assert(
+    coffeeBooksStopEvaluation?.evaluationContract.starterId === 'coffee-books' &&
+      coffeeBooksStopEvaluation.placeRightDiagnostic.contractUsed === 'starter_route_contract',
+    'Coffee & Books direct Great Stop evaluation must receive starter route contract.',
+  )
+
+  const arcade = findStarterPack('arcade-and-drinks')
+  assertBuiltNightGreatStopReceivedStarterContract({
+    label: 'Arcade',
+    starterPack: arcade,
+    board: buildManualStarterScenarioBoard({
+      starterPack: arcade,
+      scenarioFamily: 'friends_lively',
+      namePrefix: 'Arcade',
+      categoryByStopType: {
+        group_gathering_point: 'bar',
+        group_activity_anchor: 'activity',
+        cocktail_bar: 'bar',
+        late_energy_venue: 'bar',
+        late_night_food: 'restaurant',
+      },
+    }),
+  })
+
+  const liveMusic = findStarterPack('live-music-loop')
+  assertBuiltNightGreatStopReceivedStarterContract({
+    label: 'Live Music',
+    starterPack: liveMusic,
+    board: buildManualStarterScenarioBoard({
+      starterPack: liveMusic,
+      scenarioFamily: 'friends_cultured',
+      namePrefix: 'Live Music',
+      categoryByStopType: {
+        cultural_institution: 'museum',
+        atmospheric_detour: 'activity',
+        wine_or_craft_debrief: 'bar',
+        group_dinner: 'restaurant',
+        cultured_closer: 'live_music',
+      },
+    }),
+  })
+  process.stdout.write('General starter contract propagation to Great Stop: passed\n')
 }
 
 function buildScenarios(): Scenario[] {
@@ -526,6 +716,11 @@ function buildCoffeeBooksScenarioBoard(params: {
     vibe: 'cultured',
     starterPack: params.starterPack,
     scenarioFamily: 'romantic_cultured',
+    evaluationContract: {
+      scenarioFamily: 'romantic_cultured',
+      starterId: params.starterPack.id,
+      routeContract: params.starterPack.roleContracts,
+    },
     requiredStopTypes: ['cultural_institution', 'secondary_cultural_stop', 'thematic_lunch'],
     candidatesByStopType: {
       cultural_institution: [startCandidate],
@@ -610,6 +805,14 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     board.starterPack?.id === scenario.starterPack?.id,
     `${scenario.mode}: candidate board must preserve starterPack for scoring/selection.`,
   )
+  assert(
+    board.evaluationContract.starterId === scenario.starterPack?.id,
+    `${scenario.mode}: candidate board must carry starter identity into scenario evaluation contract.`,
+  )
+  assert(
+    board.evaluationContract.routeContract === scenario.starterPack?.roleContracts,
+    `${scenario.mode}: candidate board must carry starter route contract into scenario evaluation contract.`,
+  )
   const requestLabels = calls.map((call) => call.body.queryLabel)
   assert(
     requestLabels.length > 0 &&
@@ -657,6 +860,22 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     representativeBuiltNight.starterSemanticRepresentation?.status === 'represented' &&
       representativeBuiltNight.starterSemanticRepresentation.evidence.length > 0,
     `${scenario.mode}: built night must preserve Coffee & Books semantic evidence.`,
+  )
+  assert(
+    representativeBuiltNight.evaluationContract?.starterId === 'coffee-books',
+    `${scenario.mode}: represented built night must preserve Coffee & Books starter identity.`,
+  )
+  const firstGreatStopEvaluation = representativeBuiltNight.evaluation?.stopEvaluations[0]?.evaluation
+  assert(
+    firstGreatStopEvaluation?.evaluationContract.starterId === 'coffee-books',
+    `${scenario.mode}: Great Stop must receive Coffee & Books starter identity.`,
+  )
+  assert(
+    firstGreatStopEvaluation.placeRightDiagnostic.contractUsed === 'starter_route_contract' &&
+      firstGreatStopEvaluation.placeRightDiagnostic.starterId === 'coffee-books' &&
+      firstGreatStopEvaluation.placeRightDiagnostic.routeContractSummary?.roles.includes('highlight') &&
+      firstGreatStopEvaluation.placeRightDiagnostic.routeContractSummary.roles.includes('windDown'),
+    `${scenario.mode}: place_right diagnostics must expose Coffee & Books contract usage.`,
   )
   const scenarioDirectionCards: RealityDirectionCard[] = [
     {
@@ -1073,6 +1292,11 @@ function createCoffeeBooksBridgeScenarioNight(params: {
     persona: 'romantic',
     vibe: 'cultured',
     scenarioFamily: 'romantic_cultured',
+    evaluationContract: {
+      scenarioFamily: 'romantic_cultured',
+      starterId: 'coffee-books',
+      routeContract: findStarterPack('coffee-books').roleContracts,
+    },
     title: `${params.id} Coffee & Books scenario`,
     flavorLine: 'A Coffee & Books exact-route buildability fixture.',
     stops,
@@ -2194,6 +2418,7 @@ async function main(): Promise<void> {
   await assertCuratePreflightApprovedPayloadTruthInvariant()
   assertCurateVisibleCardProjectionUsesApprovedRouteTruth()
   assertHostedObserverCapturesSuppressedRouteSummaryEvidence()
+  assertGeneralStarterContractPropagationToGreatStop()
   await assertFailClosedDoesNotRenderFalseCard()
   process.stdout.write(
     `Public default final generation without explicit live envelope proxy calls: ${defaultGenerationProxyCalls}\n`,

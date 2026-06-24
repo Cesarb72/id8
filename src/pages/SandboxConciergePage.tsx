@@ -13188,6 +13188,8 @@ export function SandboxConciergePage({
       activeStarterId: selectedStarterPack?.id ?? null,
       selectedScenarioFamily:
         scenarioCandidateBoard?.scenarioFamily ?? resolvedScenarioFamily ?? 'romantic_cultured',
+      evaluationContract: scenarioCandidateBoard?.evaluationContract ?? null,
+      routeContractRoles: Object.keys(scenarioCandidateBoard?.evaluationContract.routeContract ?? {}),
       requiredStopTypes: activeScenarioRequiredStopTypes,
       expectedCoffeeBooksRepresentationRole:
         stepBStarterRoleCompatibilityProbe.coffeeBooks.expectedPromiseRole,
@@ -13267,10 +13269,16 @@ export function SandboxConciergePage({
         name: stop.name,
         position: stop.position,
         stopType: stop.stopType,
+        address: stop.address ?? null,
+        district: stop.district ?? null,
+        neighborhoodLabel: stop.neighborhoodLabel ?? null,
+        coordinates: stop.coordinates ?? null,
         venueCategory: stop.venueCategory,
         venueSubcategory: stop.venueSubcategory,
         sourceTypes: stop.sourceTypes,
         evaluationFailedCriteria: stop.evaluation?.failedCriteria ?? [],
+        greatStopEvaluationContract: stop.evaluation?.evaluationContract ?? null,
+        placeRightDiagnostic: stop.evaluation?.placeRightDiagnostic ?? null,
         matchedSemanticEvidence:
           night.starterSemanticRepresentation?.matchedEvidence?.filter(
             (match) => match.stopVenueId === stop.venueId,
@@ -13289,6 +13297,7 @@ export function SandboxConciergePage({
         complete: night.complete,
         scoreKnown: false,
         selectedStops,
+        evaluationContract: night.evaluationContract ?? null,
         includesCoffeeBooksSemanticEvidence:
           night.starterSemanticRepresentation?.status === 'represented',
         starterSemanticRepresentation: night.starterSemanticRepresentation ?? null,

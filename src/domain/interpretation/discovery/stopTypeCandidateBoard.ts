@@ -18,7 +18,7 @@ import type {
   VibeAnchor,
 } from '../../types/intent'
 import type { SourceMode } from '../../types/sourceMode'
-import type { StarterPack } from '../../types/starterPack'
+import type { StarterPack, StarterPackRoleContractMap } from '../../types/starterPack'
 import type { Venue, VenueCategory } from '../../types/venue'
 
 export type ScenarioFamily =
@@ -78,6 +78,7 @@ export type StopTypeCandidate = {
   address?: string
   district?: string
   neighborhoodLabel?: string
+  coordinates?: { lat: number; lng: number }
   stopType: StopType
   venueCategory?: VenueCategory
   venueSubcategory?: string
@@ -104,12 +105,19 @@ export type StopTypeCandidate = {
   reasons: string[]
 }
 
+export type ScenarioEvaluationContract = {
+  scenarioFamily: ScenarioFamily
+  starterId?: string
+  routeContract?: StarterPackRoleContractMap
+}
+
 export type StopTypeCandidateBoard = {
   city: string
   persona: string
   vibe: string
   starterPack?: StarterPack
   scenarioFamily: ScenarioFamily
+  evaluationContract: ScenarioEvaluationContract
   requiredStopTypes: StopType[]
   candidatesByStopType: Record<StopType, StopTypeCandidate[]>
   debug?: {
@@ -139,6 +147,10 @@ export type StopTypeCandidateBoard = {
         topCandidates: Array<{
           venueId: string
           name: string
+          address?: string
+          district?: string
+          neighborhoodLabel?: string
+          coordinates?: { lat: number; lng: number }
           venueCategory?: VenueCategory
           venueSubcategory?: string
           sourceType?: 'venue' | 'event' | 'hybrid'
@@ -354,6 +366,17 @@ export function resolveScenarioFamily(input: {
 
 export function getScenarioRequiredStopTypes(scenarioFamily: ScenarioFamily): StopType[] {
   return [...STOP_TYPES_BY_SCENARIO_FAMILY[scenarioFamily]]
+}
+
+function buildScenarioEvaluationContract(params: {
+  scenarioFamily: ScenarioFamily
+  starterPack?: StarterPack
+}): ScenarioEvaluationContract {
+  return {
+    scenarioFamily: params.scenarioFamily,
+    ...(params.starterPack?.id ? { starterId: params.starterPack.id } : {}),
+    ...(params.starterPack?.roleContracts ? { routeContract: params.starterPack.roleContracts } : {}),
+  }
 }
 
 function uniqueLowerTokens(venue: Venue): Set<string> {
@@ -1676,6 +1699,10 @@ export function buildStopTypeCandidateBoard(
     vibe: input.vibe,
     starterPack: input.starterPack,
     scenarioFamily,
+    evaluationContract: buildScenarioEvaluationContract({
+      scenarioFamily,
+      starterPack: input.starterPack,
+    }),
     requiredStopTypes,
     candidatesByStopType,
     debug: buildFixtureCandidateBoardDebug(rankedBoard, candidatesByStopType),
@@ -1776,6 +1803,10 @@ function buildFixtureCandidateBoardDebug(
         return {
           venueId: candidate.venueId,
           name: candidate.name,
+          address: candidate.address,
+          district: candidate.district,
+          neighborhoodLabel: candidate.neighborhoodLabel,
+          coordinates: candidate.coordinates,
           venueCategory: candidate.venueCategory,
           venueSubcategory: candidate.venueSubcategory,
           sourceType: candidate.sourceType,

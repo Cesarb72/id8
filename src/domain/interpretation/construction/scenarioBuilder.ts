@@ -1,4 +1,5 @@
 import type {
+  ScenarioEvaluationContract,
   ScenarioFamily,
   StopType,
   StopTypeCandidate,
@@ -27,6 +28,20 @@ export type GreatStopEvaluation = {
   isIntentRight: boolean
   isPlaceRight: boolean
   isMomentRight: boolean
+  evaluationContract: ScenarioEvaluationContract
+  placeRightDiagnostic: {
+    contractUsed: 'scenario_family_only' | 'starter_route_contract'
+    scenarioFamily: ScenarioFamily
+    starterId?: string
+    routeContractSummary?: {
+      roles: string[]
+      roleCount: number
+    }
+    stopDistrict?: string
+    stopAddress?: string
+    stopCoordinates?: { lat: number; lng: number }
+    failureReason?: 'missing_geography' | 'scattered_route' | 'outside_pocket' | 'role_place_mismatch' | 'wrong_or_missing_contract' | 'unknown'
+  }
   failedCriteria: GreatStopCriterion[]
   notes?: string[]
 }
@@ -110,6 +125,7 @@ export type BuiltScenarioStop = {
   factualSummary?: string
   venueFeatures?: string[]
   serviceOptions?: string[]
+  coordinates?: { lat: number; lng: number }
   isHiddenGem?: boolean
   authorityScore: number
   currentRelevance: number
@@ -141,6 +157,7 @@ export type BuiltScenarioNight = {
   persona: string
   vibe: string
   scenarioFamily: ScenarioFamily
+  evaluationContract?: ScenarioEvaluationContract
   title: string
   flavorLine: string
   stops: BuiltScenarioStop[]
@@ -733,6 +750,7 @@ function toBuiltStop(
     factualSummary: buildFactualSummary(candidate),
     venueFeatures: deriveVenueFeatures(candidate),
     serviceOptions: deriveServiceOptions(candidate),
+    coordinates: candidate.coordinates,
     isHiddenGem: candidate.hiddenGemScore >= 0.66,
     authorityScore: candidate.authorityScore,
     currentRelevance: candidate.currentRelevance,
@@ -1317,21 +1335,58 @@ function getExpectedPositionForStop(
   return STOP_TYPE_POSITION_EXPECTATION[stopType]
 }
 
-function getPlaceRight(stop: BuiltScenarioStop, stops: BuiltScenarioStop[]): boolean {
+function summarizeEvaluationContract(
+  contract: ScenarioEvaluationContract,
+): GreatStopEvaluation['placeRightDiagnostic']['routeContractSummary'] {
+  const roles = Object.keys(contract.routeContract ?? {}).sort()
+  if (roles.length === 0) {
+    return undefined
+  }
+  return {
+    roles,
+    roleCount: roles.length,
+  }
+}
+
+function getPlaceRightDiagnostic(params: {
+  stop: BuiltScenarioStop
+  stops: BuiltScenarioStop[]
+  evaluationContract: ScenarioEvaluationContract
+}): GreatStopEvaluation['placeRightDiagnostic'] {
+  const { stop, stops, evaluationContract } = params
   const districts = stops.map((entry) => normalizeToken(entry.district ?? '')).filter(Boolean)
   const district = normalizeToken(stop.district ?? '')
+  const base = {
+    contractUsed: evaluationContract.routeContract ? 'starter_route_contract' : 'scenario_family_only',
+    scenarioFamily: evaluationContract.scenarioFamily,
+    ...(evaluationContract.starterId ? { starterId: evaluationContract.starterId } : {}),
+    ...(summarizeEvaluationContract(evaluationContract)
+      ? { routeContractSummary: summarizeEvaluationContract(evaluationContract) }
+      : {}),
+    ...(stop.district ? { stopDistrict: stop.district } : {}),
+    ...(stop.address ? { stopAddress: stop.address } : {}),
+    ...(stop.coordinates ? { stopCoordinates: stop.coordinates } : {}),
+  } satisfies Omit<GreatStopEvaluation['placeRightDiagnostic'], 'failureReason'>
   if (!district) {
-    return false
+    return {
+      ...base,
+      failureReason: 'missing_geography',
+    }
   }
   if (districts.length <= 2) {
-    return true
+    return base
   }
   const uniqueDistricts = new Set(districts)
   if (uniqueDistricts.size <= 3) {
-    return true
+    return base
   }
   const sharedCount = districts.filter((entry) => entry === district).length
   return sharedCount >= 2
+    ? base
+    : {
+        ...base,
+        failureReason: 'scattered_route',
+      }
 }
 
 function getMomentRight(stop: BuiltScenarioStop): boolean {
@@ -1349,11 +1404,12 @@ function getMomentRight(stop: BuiltScenarioStop): boolean {
 }
 
 export function evaluateBuiltScenarioStop(params: {
-  scenarioFamily: ScenarioFamily
+  evaluationContract: ScenarioEvaluationContract
   stop: BuiltScenarioStop
   stops: BuiltScenarioStop[]
 }): GreatStopEvaluation {
-  const { scenarioFamily, stop, stops } = params
+  const { evaluationContract, stop, stops } = params
+  const scenarioFamily = evaluationContract.scenarioFamily
   const hasName = stop.name.trim().length >= 2 && !isSyntheticName(stop.name)
   const hasIdentityField = Boolean(stop.address?.trim() || stop.district?.trim() || stop.neighborhoodLabel?.trim())
   const isReal = Boolean(stop.venueId.trim()) && hasName && hasIdentityField
@@ -1364,7 +1420,12 @@ export function evaluateBuiltScenarioStop(params: {
   const isRoleRight = expectedPosition === stop.position && roleFitScore >= roleFitThreshold
 
   const isIntentRight = getIntentRight(scenarioFamily, stop)
-  const isPlaceRight = getPlaceRight(stop, stops)
+  const placeRightDiagnostic = getPlaceRightDiagnostic({
+    stop,
+    stops,
+    evaluationContract,
+  })
+  const isPlaceRight = !placeRightDiagnostic.failureReason
   const isMomentRight = getMomentRight(stop)
 
   const failedCriteria: GreatStopCriterion[] = []
@@ -1382,18 +1443,20 @@ export function evaluateBuiltScenarioStop(params: {
     isIntentRight,
     isPlaceRight,
     isMomentRight,
+    evaluationContract,
+    placeRightDiagnostic,
     failedCriteria,
     notes,
   }
 }
 
 export function evaluateBuiltScenarioNight(params: {
-  scenarioFamily: ScenarioFamily
+  evaluationContract: ScenarioEvaluationContract
   stops: BuiltScenarioStop[]
 }): BuiltScenarioNightEvaluation {
   const stopEvaluations = params.stops.map((stop) => {
     const evaluation = evaluateBuiltScenarioStop({
-      scenarioFamily: params.scenarioFamily,
+      evaluationContract: params.evaluationContract,
       stop,
       stops: params.stops,
     })
@@ -1436,6 +1499,7 @@ export function buildScenarioNightsFromCandidateBoard(
         persona: board.persona,
         vibe: board.vibe,
         scenarioFamily: board.scenarioFamily,
+        evaluationContract: board.evaluationContract,
         title: `${SCENARIO_FLAVOR_LINE[board.scenarioFamily]} (incomplete)`,
         flavorLine: SCENARIO_FLAVOR_LINE[board.scenarioFamily],
         stops: [],
@@ -1473,6 +1537,7 @@ export function buildScenarioNightsFromCandidateBoard(
         persona: board.persona,
         vibe: board.vibe,
         scenarioFamily: board.scenarioFamily,
+        evaluationContract: board.evaluationContract,
         title: `${SCENARIO_FLAVOR_LINE[board.scenarioFamily]} (incomplete)`,
         flavorLine: SCENARIO_FLAVOR_LINE[board.scenarioFamily],
         stops: [],
@@ -1517,7 +1582,7 @@ export function buildScenarioNightsFromCandidateBoard(
   return selected.map((night, index) => {
     const stopsWithContract = withPreviewContract(board.scenarioFamily, night.stops)
     const evaluation = evaluateBuiltScenarioNight({
-      scenarioFamily: board.scenarioFamily,
+      evaluationContract: board.evaluationContract,
       stops: stopsWithContract,
     })
     const evaluatedStops = stopsWithContract.map((stop, stopIndex) => {
@@ -1535,6 +1600,7 @@ export function buildScenarioNightsFromCandidateBoard(
       persona: board.persona,
       vibe: board.vibe,
       scenarioFamily: board.scenarioFamily,
+      evaluationContract: board.evaluationContract,
       title: pickTitle(board.scenarioFamily, highlight?.name ?? 'local highlight'),
       flavorLine: SCENARIO_FLAVOR_LINE[board.scenarioFamily],
       stops: evaluatedStops,
