@@ -40,6 +40,8 @@ export type GreatStopEvaluation = {
     stopDistrict?: string
     stopAddress?: string
     stopCoordinates?: { lat: number; lng: number }
+    stopGeoBucket?: string
+    stopGeoBucketSource?: BuiltScenarioStop['geoBucketSource']
     failureReason?: 'missing_geography' | 'scattered_route' | 'outside_pocket' | 'role_place_mismatch' | 'wrong_or_missing_contract' | 'unknown'
   }
   failedCriteria: GreatStopCriterion[]
@@ -126,6 +128,11 @@ export type BuiltScenarioStop = {
   venueFeatures?: string[]
   serviceOptions?: string[]
   coordinates?: { lat: number; lng: number }
+  providerPlaceId?: string
+  sourceLabel?: string
+  geoBucket?: string
+  geoBucketSource?: StopTypeCandidate['geoBucketSource']
+  geoLabel?: string
   isHiddenGem?: boolean
   authorityScore: number
   currentRelevance: number
@@ -166,6 +173,7 @@ export type BuiltScenarioNight = {
   missingStopTypes?: StopType[]
   evaluation?: BuiltScenarioNightEvaluation
   starterSemanticRepresentation?: StarterSemanticRepresentation
+  geoCoherence?: ScenarioRouteGeoCoherence
   selectionDebug?: {
     highlightDiversityApplied: boolean
     selectedScenarioNightHighlightNames: string[]
@@ -188,7 +196,29 @@ type CandidateNight = {
   currentRelevance: number
   districtPlausibility: number
   roleDiscipline: number
+  geoCoherence: ScenarioRouteGeoCoherence
   starterSemanticRepresentation?: StarterSemanticRepresentation
+}
+
+export type ScenarioRouteGeoCoherence = {
+  status: 'coherent' | 'controlled_adjacent' | 'scattered' | 'missing_geo'
+  rejectionReason?: 'scenario_route_geo_scattered' | 'scenario_route_missing_geo'
+  geoBearingStopCount: number
+  uniqueGeoBucketCount: number
+  dominantGeoBucket?: string
+  dominantGeoShare: number
+  routeGeoBuckets: Array<{
+    venueId: string
+    name: string
+    position: BuiltScenarioStopPosition
+    stopType: StopType
+    geoBucket?: string
+    geoBucketSource?: BuiltScenarioStop['geoBucketSource']
+    geoLabel?: string
+    district?: string
+    address?: string
+    coordinates?: { lat: number; lng: number }
+  }>
 }
 
 type DistinctNightSelectionResult = {
@@ -751,6 +781,11 @@ function toBuiltStop(
     venueFeatures: deriveVenueFeatures(candidate),
     serviceOptions: deriveServiceOptions(candidate),
     coordinates: candidate.coordinates,
+    providerPlaceId: candidate.providerPlaceId,
+    sourceLabel: candidate.sourceLabel,
+    geoBucket: candidate.geoBucket,
+    geoBucketSource: candidate.geoBucketSource,
+    geoLabel: candidate.geoLabel,
     isHiddenGem: candidate.hiddenGemScore >= 0.66,
     authorityScore: candidate.authorityScore,
     currentRelevance: candidate.currentRelevance,
@@ -849,6 +884,87 @@ function getDistrictPlausibility(stops: BuiltScenarioStop[]): number {
     }, {}))) / districts.length
   const dominantPenalty = dominantShare < 0.4 ? 0.12 : dominantShare < 0.5 ? 0.06 : 0
   return clamp01(0.94 - transitionPenalty - spreadPenalty - dominantPenalty)
+}
+
+function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoherence {
+  const routeGeoBuckets = stops.map((stop) => ({
+    venueId: stop.venueId,
+    name: stop.name,
+    position: stop.position,
+    stopType: stop.stopType,
+    ...(stop.geoBucket ? { geoBucket: stop.geoBucket } : {}),
+    ...(stop.geoBucketSource ? { geoBucketSource: stop.geoBucketSource } : {}),
+    ...(stop.geoLabel ? { geoLabel: stop.geoLabel } : {}),
+    ...(stop.district ? { district: stop.district } : {}),
+    ...(stop.address ? { address: stop.address } : {}),
+    ...(stop.coordinates ? { coordinates: stop.coordinates } : {}),
+  }))
+  const geoBuckets = routeGeoBuckets
+    .map((entry) => entry.geoBucket)
+    .filter((entry): entry is string => Boolean(entry))
+  const geoBearingStopCount = geoBuckets.length
+  const bucketCounts = geoBuckets.reduce<Record<string, number>>((acc, bucket) => {
+    acc[bucket] = (acc[bucket] ?? 0) + 1
+    return acc
+  }, {})
+  const sortedBuckets = Object.entries(bucketCounts).sort((left, right) => {
+    if (right[1] !== left[1]) {
+      return right[1] - left[1]
+    }
+    return left[0].localeCompare(right[0])
+  })
+  const uniqueGeoBucketCount = sortedBuckets.length
+  const dominantGeoBucket = sortedBuckets[0]?.[0]
+  const dominantGeoShare =
+    geoBearingStopCount > 0 && sortedBuckets[0]
+      ? Number((sortedBuckets[0][1] / geoBearingStopCount).toFixed(3))
+      : 0
+  const requiredGeoBearingStopCount = Math.min(3, stops.length)
+
+  if (geoBearingStopCount < requiredGeoBearingStopCount) {
+    return {
+      status: 'missing_geo',
+      rejectionReason: 'scenario_route_missing_geo',
+      geoBearingStopCount,
+      uniqueGeoBucketCount,
+      ...(dominantGeoBucket ? { dominantGeoBucket } : {}),
+      dominantGeoShare,
+      routeGeoBuckets,
+    }
+  }
+  if (uniqueGeoBucketCount <= 2) {
+    return {
+      status: 'coherent',
+      geoBearingStopCount,
+      uniqueGeoBucketCount,
+      ...(dominantGeoBucket ? { dominantGeoBucket } : {}),
+      dominantGeoShare,
+      routeGeoBuckets,
+    }
+  }
+  if (uniqueGeoBucketCount === 3 && dominantGeoShare >= 0.4) {
+    return {
+      status: 'controlled_adjacent',
+      geoBearingStopCount,
+      uniqueGeoBucketCount,
+      ...(dominantGeoBucket ? { dominantGeoBucket } : {}),
+      dominantGeoShare,
+      routeGeoBuckets,
+    }
+  }
+  return {
+    status: 'scattered',
+    rejectionReason: 'scenario_route_geo_scattered',
+    geoBearingStopCount,
+    uniqueGeoBucketCount,
+    ...(dominantGeoBucket ? { dominantGeoBucket } : {}),
+    dominantGeoShare,
+    routeGeoBuckets,
+  }
+}
+
+function isGeoCoherentScenarioNight(night: CandidateNight): boolean {
+  return night.geoCoherence.status === 'coherent' || night.geoCoherence.status === 'controlled_adjacent'
 }
 
 function getScenarioCoherence(
@@ -960,8 +1076,17 @@ function getCandidateNightScore(
     stops.reduce((sum, stop) => sum + stop.currentRelevance, 0) / Math.max(1, stops.length),
   )
   const districtPlausibility = getDistrictPlausibility(stops)
+  const geoCoherence = getRouteGeoCoherence(stops)
   const roleDiscipline = getRoleDiscipline(scenarioFamily, stops)
   const scenarioCoherence = getScenarioCoherence(scenarioFamily, stops)
+  const geoCoherenceScore =
+    geoCoherence.status === 'coherent'
+      ? 1
+      : geoCoherence.status === 'controlled_adjacent'
+        ? 0.86
+        : geoCoherence.status === 'missing_geo'
+          ? 0.28
+          : 0.14
   const syntheticPenalty =
     stops.filter((stop) => isSyntheticName(stop.name)).length > 0
       ? 0.08
@@ -973,7 +1098,8 @@ function getCandidateNightScore(
       landingQuality * 0.12 +
       hiddenGemPresence * 0.05 +
       currentRelevance * 0.08 +
-      districtPlausibility * 0.16 +
+      districtPlausibility * 0.06 +
+      geoCoherenceScore * 0.1 +
       roleDiscipline * 0.16 -
       syntheticPenalty,
   )
@@ -987,6 +1113,7 @@ function getCandidateNightScore(
     currentRelevance,
     districtPlausibility,
     roleDiscipline,
+    geoCoherence,
   }
 }
 
@@ -1354,8 +1481,10 @@ function getPlaceRightDiagnostic(params: {
   evaluationContract: ScenarioEvaluationContract
 }): GreatStopEvaluation['placeRightDiagnostic'] {
   const { stop, stops, evaluationContract } = params
-  const districts = stops.map((entry) => normalizeToken(entry.district ?? '')).filter(Boolean)
-  const district = normalizeToken(stop.district ?? '')
+  const placeKeys = stops
+    .map((entry) => entry.geoBucket ?? normalizeToken(entry.district ?? ''))
+    .filter(Boolean)
+  const placeKey = stop.geoBucket ?? normalizeToken(stop.district ?? '')
   const base = {
     contractUsed: evaluationContract.routeContract ? 'starter_route_contract' : 'scenario_family_only',
     scenarioFamily: evaluationContract.scenarioFamily,
@@ -1366,21 +1495,23 @@ function getPlaceRightDiagnostic(params: {
     ...(stop.district ? { stopDistrict: stop.district } : {}),
     ...(stop.address ? { stopAddress: stop.address } : {}),
     ...(stop.coordinates ? { stopCoordinates: stop.coordinates } : {}),
+    ...(stop.geoBucket ? { stopGeoBucket: stop.geoBucket } : {}),
+    ...(stop.geoBucketSource ? { stopGeoBucketSource: stop.geoBucketSource } : {}),
   } satisfies Omit<GreatStopEvaluation['placeRightDiagnostic'], 'failureReason'>
-  if (!district) {
+  if (!placeKey) {
     return {
       ...base,
       failureReason: 'missing_geography',
     }
   }
-  if (districts.length <= 2) {
+  if (placeKeys.length <= 2) {
     return base
   }
-  const uniqueDistricts = new Set(districts)
-  if (uniqueDistricts.size <= 3) {
+  const uniquePlaceKeys = new Set(placeKeys)
+  if (uniquePlaceKeys.size <= 3) {
     return base
   }
-  const sharedCount = districts.filter((entry) => entry === district).length
+  const sharedCount = placeKeys.filter((entry) => entry === placeKey).length
   return sharedCount >= 2
     ? base
     : {
@@ -1560,9 +1691,72 @@ export function buildScenarioNightsFromCandidateBoard(
       },
     ]
   }
-  const coherentCandidates = starterRepresentativeCandidates.filter((night) => night.districtPlausibility >= 0.66)
+  const geoCoherentCandidates = starterRepresentativeCandidates.filter(isGeoCoherentScenarioNight)
+  if (geoCoherentCandidates.length === 0) {
+    const diagnosticCandidate = starterRepresentativeCandidates
+      .slice()
+      .sort((left, right) => {
+        if (right.geoCoherence.dominantGeoShare !== left.geoCoherence.dominantGeoShare) {
+          return right.geoCoherence.dominantGeoShare - left.geoCoherence.dominantGeoShare
+        }
+        return right.score - left.score
+      })[0]
+    const diagnosticStops = diagnosticCandidate
+      ? withPreviewContract(board.scenarioFamily, diagnosticCandidate.stops)
+      : []
+    const diagnosticEvaluation = diagnosticStops.length > 0
+      ? evaluateBuiltScenarioNight({
+          evaluationContract: board.evaluationContract,
+          stops: diagnosticStops,
+        })
+      : {
+          stopEvaluations: [],
+          passesGreatStopStandard: false,
+          failedStops: [],
+          notes: ['Cannot evaluate Great Stop quality because scenario route geography is missing or scattered.'],
+        }
+    const failedCheck =
+      diagnosticCandidate?.geoCoherence.rejectionReason ?? 'scenario_route_missing_geo'
+    return [
+      {
+        id: `built_${board.scenarioFamily}_geo_incomplete`,
+        city: board.city,
+        persona: board.persona,
+        vibe: board.vibe,
+        scenarioFamily: board.scenarioFamily,
+        evaluationContract: board.evaluationContract,
+        title: `${SCENARIO_FLAVOR_LINE[board.scenarioFamily]} (incomplete)`,
+        flavorLine: SCENARIO_FLAVOR_LINE[board.scenarioFamily],
+        stops: diagnosticStops.map((stop, stopIndex) => ({
+          ...stop,
+          evaluation: diagnosticEvaluation.stopEvaluations[stopIndex]?.evaluation,
+        })),
+        whyThisWorks: 'Scenario route candidates were not geographically coherent enough to build a usable night.',
+        complete: false,
+        evaluation: {
+          ...diagnosticEvaluation,
+          passesGreatStopStandard: false,
+          failedStops:
+            diagnosticEvaluation.failedStops.length > 0
+              ? diagnosticEvaluation.failedStops
+              : [failedCheck],
+          notes: [
+            ...(diagnosticEvaluation.notes ?? []),
+            `Scenario route geo-coherence rejected route: ${failedCheck}.`,
+          ],
+        },
+        ...(diagnosticCandidate?.starterSemanticRepresentation
+          ? { starterSemanticRepresentation: diagnosticCandidate.starterSemanticRepresentation }
+          : {}),
+        ...(diagnosticCandidate?.geoCoherence
+          ? { geoCoherence: diagnosticCandidate.geoCoherence }
+          : {}),
+      },
+    ]
+  }
+  const coherentCandidates = geoCoherentCandidates.filter((night) => night.districtPlausibility >= 0.66)
   const rankingPool =
-    coherentCandidates.length >= Math.max(2, minNights) ? coherentCandidates : starterRepresentativeCandidates
+    coherentCandidates.length >= Math.max(2, minNights) ? coherentCandidates : geoCoherentCandidates
   const rankedCandidates = rankingPool
     .slice()
     .sort((left, right) => right.score - left.score || getHighlightStopName(left).localeCompare(getHighlightStopName(right)))
@@ -1607,6 +1801,7 @@ export function buildScenarioNightsFromCandidateBoard(
       whyThisWorks: getWhyThisWorks(evaluatedStops),
       complete: true,
       evaluation,
+      geoCoherence: night.geoCoherence,
       ...(night.starterSemanticRepresentation
         ? { starterSemanticRepresentation: night.starterSemanticRepresentation }
         : {}),

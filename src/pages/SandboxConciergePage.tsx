@@ -13254,6 +13254,15 @@ export function SandboxConciergePage({
           stopType: candidate.stopType,
           venueId: candidate.venueId,
           name: candidate.name,
+          address: candidate.address ?? null,
+          district: candidate.district ?? null,
+          neighborhoodLabel: candidate.neighborhoodLabel ?? null,
+          coordinates: candidate.coordinates ?? null,
+          providerPlaceId: candidate.providerPlaceId ?? null,
+          sourceLabel: candidate.sourceLabel ?? null,
+          geoBucket: candidate.geoBucket ?? null,
+          geoBucketSource: candidate.geoBucketSource ?? null,
+          geoLabel: candidate.geoLabel ?? null,
           boardRank: candidate.boardRank,
           score: candidate.score,
           enteredStopTypePool: candidate.enteredStopTypePool,
@@ -13273,9 +13282,21 @@ export function SandboxConciergePage({
         district: stop.district ?? null,
         neighborhoodLabel: stop.neighborhoodLabel ?? null,
         coordinates: stop.coordinates ?? null,
+        providerPlaceId: stop.providerPlaceId ?? null,
+        sourceLabel: stop.sourceLabel ?? null,
+        geoBucket: stop.geoBucket ?? null,
+        geoBucketSource: stop.geoBucketSource ?? null,
+        geoLabel: stop.geoLabel ?? null,
         venueCategory: stop.venueCategory,
         venueSubcategory: stop.venueSubcategory,
         sourceTypes: stop.sourceTypes,
+        greatStopCriteria: {
+          real: stop.evaluation?.isReal ?? null,
+          role_right: stop.evaluation?.isRoleRight ?? null,
+          intent_right: stop.evaluation?.isIntentRight ?? null,
+          place_right: stop.evaluation?.isPlaceRight ?? null,
+          moment_right: stop.evaluation?.isMomentRight ?? null,
+        },
         evaluationFailedCriteria: stop.evaluation?.failedCriteria ?? [],
         greatStopEvaluationContract: stop.evaluation?.evaluationContract ?? null,
         placeRightDiagnostic: stop.evaluation?.placeRightDiagnostic ?? null,
@@ -13298,6 +13319,7 @@ export function SandboxConciergePage({
         scoreKnown: false,
         selectedStops,
         evaluationContract: night.evaluationContract ?? null,
+        geoCoherence: night.geoCoherence ?? null,
         includesCoffeeBooksSemanticEvidence:
           night.starterSemanticRepresentation?.status === 'represented',
         starterSemanticRepresentation: night.starterSemanticRepresentation ?? null,
@@ -13307,6 +13329,76 @@ export function SandboxConciergePage({
     })
     const scenarioBuiltCount = scenarioBuiltNights.filter((night) => night.complete).length
     const scenarioRejectedCount = scenarioBuiltNights.length - scenarioBuiltCount
+    const liveResultSets = Object.values(
+      allDiagnosticCandidates.reduce<Record<string, {
+        sourceLabel: string
+        candidateCount: number
+        geoBuckets: Set<string>
+        geoSourceCounts: Record<string, number>
+      }>>((acc, candidate) => {
+        const sourceLabel = candidate.sourceLabel ?? 'unknown'
+        if (['curated', 'bootstrap', 'static', 'unknown'].includes(sourceLabel)) {
+          return acc
+        }
+        const current = acc[sourceLabel] ?? {
+          sourceLabel,
+          candidateCount: 0,
+          geoBuckets: new Set<string>(),
+          geoSourceCounts: {},
+        }
+        current.candidateCount += 1
+        if (candidate.geoBucket) {
+          current.geoBuckets.add(candidate.geoBucket)
+        }
+        const geoSource = candidate.geoBucketSource ?? 'missing_geo'
+        current.geoSourceCounts[geoSource] = (current.geoSourceCounts[geoSource] ?? 0) + 1
+        acc[sourceLabel] = current
+        return acc
+      }, {}),
+    )
+    const geoBucketSets = liveResultSets
+      .map((entry) => entry.geoBuckets)
+      .filter((entry) => entry.size > 0)
+    const overlappingGeoBuckets =
+      geoBucketSets.length === 0
+        ? []
+        : [...geoBucketSets[0]].filter((bucket) =>
+            geoBucketSets.every((bucketSet) => bucketSet.has(bucket)),
+          )
+    const scenarioGeoStatusCounts = scenarioNightDiagnostics.reduce<Record<string, number>>(
+      (acc, night) => {
+        const status = night.geoCoherence?.status ?? 'unknown'
+        acc[status] = (acc[status] ?? 0) + 1
+        return acc
+      },
+      {},
+    )
+    const supplyGeographyDiagnostics = {
+      envelope: {
+        liveProviderAllowed: true,
+        maxProviderCalls: 3,
+        maxQueryLabels: 3,
+        maxCenters: 1,
+        source: 'step_b_private_wrapper',
+      },
+      liveRoleResultSets: liveResultSets.map((entry) => ({
+        sourceLabel: entry.sourceLabel,
+        candidateCount: entry.candidateCount,
+        geoBuckets: [...entry.geoBuckets].sort(),
+        geoSourceCounts: entry.geoSourceCounts,
+      })),
+      overlappingGeoBucketsAcrossResultSets: overlappingGeoBuckets.sort(),
+      resultSetsOverlapGeographically: overlappingGeoBuckets.length > 0,
+      maxCentersOneReturnedScatteredCandidates:
+        scenarioGeoStatusCounts.scattered !== undefined && scenarioGeoStatusCounts.scattered > 0,
+      scenarioGeoStatusCounts,
+      geographyTension:
+        overlappingGeoBuckets.length > 0
+          ? 'role_result_sets_share_geo_bucket'
+          : liveResultSets.length > 1
+            ? 'role_result_sets_do_not_share_geo_bucket'
+            : 'insufficient_live_role_result_sets',
+    }
     const artifactDiagnostics = [
       ...new Map(
         [
@@ -13361,6 +13453,8 @@ export function SandboxConciergePage({
         stepBStarterRoleCompatibilityProbe.systemicClassification,
       candidateBoard: {
         boardPresent: Boolean(scenarioCandidateBoard),
+        districtIntelligence: scenarioCandidateBoard?.debug?.districtIntelligence ?? null,
+        supplyGeography: supplyGeographyDiagnostics,
         stopTypeDiagnostics,
         bookstoreCandidateDisposition,
       },

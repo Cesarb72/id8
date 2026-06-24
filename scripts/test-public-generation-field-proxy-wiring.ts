@@ -15,6 +15,7 @@ import {
   shouldApplyStepBCurateLiveSmokeCandidateSupply,
   type StepBCurateLiveSmokeCandidateSupplyGate,
 } from '../src/app/services/arcApplicationService.ts'
+import { buildDistrictCandidateGeoIndex } from '../src/engines/district/candidates/buildDistrictCandidateGeoIndex.ts'
 import { starterPacks } from '../src/data/starterPacks.ts'
 import {
   validateContractEntryArtifactPreCommitTruth,
@@ -149,6 +150,12 @@ function buildScenarioContractFixtureCandidate(params: {
     address: `${100 + params.index} Contract Way, San Jose, CA`,
     district: 'Downtown',
     neighborhoodLabel: 'Downtown',
+    coordinates: { lat: 37.333 + params.index * 0.0005, lng: -121.889 - params.index * 0.0005 },
+    providerPlaceId: `provider-${params.namePrefix.toLowerCase()}-${params.index}`,
+    sourceLabel: 'fixture',
+    geoBucket: 'neighborhood:downtown',
+    geoBucketSource: 'neighborhood_fallback',
+    geoLabel: 'Downtown',
     stopType: params.stopType,
     venueCategory: params.category,
     venueSubcategory: params.category,
@@ -315,6 +322,247 @@ function assertGeneralStarterContractPropagationToGreatStop(): void {
     }),
   })
   process.stdout.write('General starter contract propagation to Great Stop: passed\n')
+}
+
+function assertDrySystemicStarterGeoCheck(): void {
+  const arcade = findStarterPack('arcade-and-drinks')
+  const coherentBoard = buildManualStarterScenarioBoard({
+    starterPack: arcade,
+    scenarioFamily: 'friends_lively',
+    namePrefix: 'Arcade',
+    categoryByStopType: {
+      group_gathering_point: 'bar',
+      group_activity_anchor: 'activity',
+      cocktail_bar: 'bar',
+      late_energy_venue: 'bar',
+      late_night_food: 'restaurant',
+    },
+  })
+  Object.values(coherentBoard.candidatesByStopType).forEach((candidates) => {
+    candidates.forEach((candidate) => {
+      candidate.geoBucket = 'raw-pocket-arcade-district-seam'
+      candidate.geoBucketSource = 'district_intelligence'
+      candidate.geoLabel = 'Arcade District Seam'
+      candidate.district = '100 Address Fragment'
+      candidate.neighborhoodLabel = '100 Address Fragment'
+    })
+  })
+  const coherentNight = buildScenarioNightsFromCandidateBoard(coherentBoard).find(
+    (night) => night.complete,
+  )
+  assert(coherentNight, 'Arcade dry check must produce a complete DI-backed scenario night.')
+  assert(
+    coherentNight.evaluationContract?.starterId === arcade.id,
+    'Arcade dry check must preserve starter identity into Scenario Builder.',
+  )
+  assert(
+    coherentNight.geoCoherence?.routeGeoBuckets.every(
+      (entry) => entry.geoBucketSource === 'district_intelligence',
+    ),
+    'Arcade dry check must expose District Intelligence geo source attribution.',
+  )
+  assert(
+    coherentNight.evaluation?.stopEvaluations.every(
+      (entry) => !entry.evaluation.failedCriteria.includes('place_right'),
+    ),
+    'Arcade dry check must not hit place_right when DI pocket is coherent.',
+  )
+
+  const scatteredBoard = buildManualStarterScenarioBoard({
+    starterPack: arcade,
+    scenarioFamily: 'friends_lively',
+    namePrefix: 'Arcade',
+    categoryByStopType: {
+      group_gathering_point: 'bar',
+      group_activity_anchor: 'activity',
+      cocktail_bar: 'bar',
+      late_energy_venue: 'bar',
+      late_night_food: 'restaurant',
+    },
+  })
+  Object.values(scatteredBoard.candidatesByStopType).forEach((candidates, index) => {
+    candidates.forEach((candidate) => {
+      candidate.geoBucket = `grid:arcade:${index}`
+      candidate.geoBucketSource = 'coordinate_fallback'
+      candidate.geoLabel = `grid:arcade:${index}`
+      candidate.district = `${100 + index} Address Fragment`
+      candidate.neighborhoodLabel = `${100 + index} Address Fragment`
+    })
+  })
+  const scatteredNights = buildScenarioNightsFromCandidateBoard(scatteredBoard)
+  assert(
+    scatteredNights.every((night) => !night.complete),
+    'Arcade dry check must fail closed when route geography is scattered.',
+  )
+  assert(
+    scatteredNights.some((night) => night.geoCoherence?.rejectionReason === 'scenario_route_geo_scattered'),
+    'Arcade dry check must expose scenario_route_geo_scattered for fallback-scattered routes.',
+  )
+  process.stdout.write('Arcade dry systemic geo source check: passed\n')
+}
+
+function buildDistrictSeamVenue(params: {
+  index: number
+  name: string
+  category: VenueCategory
+  lat: number
+  lng: number
+  providerRecordId: string
+}): Venue {
+  return {
+    id: `live_google_${params.providerRecordId}`,
+    name: params.name,
+    city: 'San Jose',
+    neighborhood: 'The Alameda',
+    category: params.category,
+    subcategory: params.category === 'museum' ? 'art_gallery' : params.category,
+    shortDescription: `${params.name} live candidate.`,
+    narrativeFlavor: `${params.name} supports district seam tests.`,
+    tags: [params.category, 'district-seam'],
+    vibeTags: ['curated', 'walkable'],
+    energyLevel: 2,
+    driveMinutes: 8,
+    priceTier: 2,
+    isChain: false,
+    uniquenessScore: 0.72,
+    shareabilityScore: 0.66,
+    underexposureScore: 0.44,
+    highlightCapable: params.category === 'museum',
+    localSignals: {
+      localFavoriteScore: 0.7,
+      repeatVisitorScore: 0.64,
+      touristAppealScore: 0.38,
+    },
+    durationProfile: {} as Venue['durationProfile'],
+    settings: {
+      performanceCapable: false,
+      musicCapable: false,
+      eventCapable: params.category === 'museum',
+    } as Venue['settings'],
+    signature: {} as Venue['signature'],
+    source: {
+      sourceOrigin: 'live',
+      providerRecordId: params.providerRecordId,
+      sourceConfidence: 0.86,
+      completenessScore: 0.82,
+      qualityGateStatus: 'approved',
+      qualityScore: 0.82,
+      latitude: params.lat,
+      longitude: params.lng,
+      formattedAddress: `${1000 + params.index} The Alameda, San Jose, CA`,
+      sourceTypes: [params.category, params.category === 'museum' ? 'art_gallery' : params.category],
+      sourceQueryLabel: 'coffee-books-highlight-culture',
+      hoursKnown: true,
+      openNow: true,
+      timeConfidence: 0.7,
+      happenings: {
+        currentRelevance: 0.72,
+        culturalAnchorPotential: params.category === 'museum' ? 0.82 : 0.48,
+      },
+    } as Venue['source'],
+  } as Venue
+}
+
+function assertDistrictIntelligenceGeoConsumerSeam(): void {
+  const venues = [
+    buildDistrictSeamVenue({
+      index: 0,
+      name: 'The Alameda Reading Room',
+      category: 'cafe',
+      lat: 37.3368,
+      lng: -121.9138,
+      providerRecordId: 'di_seam_0',
+    }),
+    buildDistrictSeamVenue({
+      index: 1,
+      name: 'Authors Corner Gallery',
+      category: 'museum',
+      lat: 37.337,
+      lng: -121.9135,
+      providerRecordId: 'di_seam_1',
+    }),
+    buildDistrictSeamVenue({
+      index: 2,
+      name: 'Pocket Culture Hall',
+      category: 'museum',
+      lat: 37.3372,
+      lng: -121.9136,
+      providerRecordId: 'di_seam_2',
+    }),
+    buildDistrictSeamVenue({
+      index: 3,
+      name: 'Literary Dessert Counter',
+      category: 'dessert',
+      lat: 37.3367,
+      lng: -121.9133,
+      providerRecordId: 'di_seam_3',
+    }),
+    buildDistrictSeamVenue({
+      index: 4,
+      name: 'The Alameda Tea Table',
+      category: 'cafe',
+      lat: 37.3369,
+      lng: -121.9131,
+      providerRecordId: 'di_seam_4',
+    }),
+  ]
+  const index = buildDistrictCandidateGeoIndex(venues)
+  assert(index.profileCount > 0, 'District Intelligence must form a pocket over live-shaped candidates.')
+  assert(
+    index.assignedVenueCount === venues.length,
+    'District Intelligence geo index must assign every admitted live-shaped candidate.',
+  )
+  const assignment = index.assignmentsByVenueId.get(venues[0].id)
+  assert(assignment, 'District Intelligence assignment must expose a stable pocket id.')
+  assert(
+    [...index.assignmentsByVenueId.values()].every(
+      (entry) => entry.source === 'district_intelligence',
+    ),
+    'District Intelligence assignments must be labeled as district_intelligence.',
+  )
+
+  const board = buildCoffeeBooksScenarioBoard({
+    starterPack: findStarterPack('coffee-books'),
+    includeSemanticCandidate: true,
+  })
+  for (const candidates of Object.values(board.candidatesByStopType)) {
+    candidates.forEach((candidate) => {
+      candidate.geoBucket = assignment.pocketId
+      candidate.geoBucketSource = 'district_intelligence'
+      candidate.geoLabel = assignment.pocketLabel
+      candidate.district = '100 Address Fragment'
+      candidate.neighborhoodLabel = '100 Address Fragment'
+    })
+  }
+  const nights = buildScenarioNightsFromCandidateBoard(board)
+  const completeNight = nights.find((night) => night.complete)
+  assert(
+    completeNight?.geoCoherence?.routeGeoBuckets.every(
+      (entry) => entry.geoBucketSource === 'district_intelligence',
+    ),
+    'Scenario Builder route coherence must consume District Intelligence pocket fields when present.',
+  )
+  assert(
+    completeNight?.evaluation?.stopEvaluations.every(
+      (entry) => !entry.evaluation.failedCriteria.includes('place_right'),
+    ),
+    'Great Stop place_right must evaluate normalized DI pockets before raw address fragments.',
+  )
+
+  const stopTypeBoardSource = readFileSync(
+    'src/domain/interpretation/discovery/stopTypeCandidateBoard.ts',
+    'utf8',
+  )
+  assert(
+    stopTypeBoardSource.includes('buildDistrictCandidateGeoIndex') &&
+      stopTypeBoardSource.includes('districtIntelligence') &&
+      stopTypeBoardSource.includes('district_intelligence') &&
+      stopTypeBoardSource.includes('coordinate_fallback') &&
+      stopTypeBoardSource.includes('neighborhood_fallback') &&
+      stopTypeBoardSource.includes('missing_geo'),
+    'StopTypeCandidateBoard must expose DI-preferred geo source diagnostics and fallback source labels.',
+  )
+  process.stdout.write('District Intelligence geo consumer seam: passed\n')
 }
 
 function buildScenarios(): Scenario[] {
@@ -538,6 +786,12 @@ function createScenarioCandidate(
     address: '100 Test Way, San Jose, CA',
     district: 'Downtown',
     neighborhoodLabel: 'Downtown',
+    coordinates: { lat: 37.333, lng: -121.889 },
+    providerPlaceId: `provider-${venueId}`,
+    sourceLabel: 'fixture',
+    geoBucket: 'neighborhood:downtown',
+    geoBucketSource: 'neighborhood_fallback',
+    geoLabel: 'Downtown',
     stopType: 'debrief_stop',
     venueCategory: 'cafe',
     venueSubcategory: 'cafe',
@@ -663,12 +917,33 @@ function buildCoffeeBooksScenarioBoard(params: {
   starterPack: StarterPack
   includeSemanticCandidate: boolean
   includeCafeOnlyHighlightAlternative?: boolean
+  scatteredGeo?: boolean
+  addressFragmentSameGeo?: boolean
 }): StopTypeCandidateBoard {
   const startCandidate = createScenarioCandidate('generic-start-cafe', 'Generic Start Cafe', {
     stopType: 'cultural_institution',
     culturalAnchorPotential: 0.9,
     venueTags: ['quiet', 'curated', 'thoughtful'],
     reasons: ['quiet curated cafe fit'],
+    ...(params.scatteredGeo
+      ? {
+          district: '100 First Fragment',
+          neighborhoodLabel: '100 First Fragment',
+          coordinates: undefined,
+          geoBucket: 'grid:1:1',
+          geoBucketSource: 'coordinate_fallback',
+          geoLabel: 'grid:1:1',
+        }
+      : {}),
+    ...(params.addressFragmentSameGeo
+      ? {
+          district: '100 First Fragment',
+          neighborhoodLabel: '100 First Fragment',
+          geoBucket: 'grid:9:9',
+          geoBucketSource: 'coordinate_fallback',
+          geoLabel: 'grid:9:9',
+        }
+      : {}),
   })
   const highlightCandidate = params.includeSemanticCandidate
     ? createScenarioCandidate('reading-gallery', 'Reading Room Gallery', {
@@ -680,6 +955,25 @@ function buildCoffeeBooksScenarioBoard(params: {
         venueTags: ['gallery', 'reading', 'literary', 'quiet', 'curated'],
         culturalAnchorPotential: 0.76,
         reasons: ['gallery reading culture signal'],
+        ...(params.scatteredGeo
+          ? {
+              district: '200 Second Fragment',
+              neighborhoodLabel: '200 Second Fragment',
+              coordinates: undefined,
+              geoBucket: 'grid:2:2',
+              geoBucketSource: 'coordinate_fallback',
+              geoLabel: 'grid:2:2',
+            }
+          : {}),
+        ...(params.addressFragmentSameGeo
+          ? {
+              district: '200 Second Fragment',
+              neighborhoodLabel: '200 Second Fragment',
+              geoBucket: 'grid:9:9',
+              geoBucketSource: 'coordinate_fallback',
+              geoLabel: 'grid:9:9',
+            }
+          : {}),
       })
     : createScenarioCandidate('generic-highlight-cafe', 'Generic Highlight Cafe', {
         stopType: 'secondary_cultural_stop',
@@ -709,6 +1003,25 @@ function buildCoffeeBooksScenarioBoard(params: {
     sourceTypes: ['bakery'],
     venueTags: ['dessert', 'quiet'],
     reasons: ['bakery landing'],
+    ...(params.scatteredGeo
+      ? {
+          district: '300 Third Fragment',
+          neighborhoodLabel: '300 Third Fragment',
+          coordinates: undefined,
+          geoBucket: 'grid:3:3',
+          geoBucketSource: 'coordinate_fallback',
+          geoLabel: 'grid:3:3',
+        }
+      : {}),
+    ...(params.addressFragmentSameGeo
+      ? {
+          district: '300 Third Fragment',
+          neighborhoodLabel: '300 Third Fragment',
+          geoBucket: 'grid:9:9',
+          geoBucketSource: 'coordinate_fallback',
+          geoLabel: 'grid:9:9',
+        }
+      : {}),
   })
   return {
     city: 'San Jose',
@@ -812,6 +1125,16 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
   assert(
     board.evaluationContract.routeContract === scenario.starterPack?.roleContracts,
     `${scenario.mode}: candidate board must carry starter route contract into scenario evaluation contract.`,
+  )
+  const liveCandidateWithGeo = Object.values(board.candidatesByStopType)
+    .flat()
+    .find((candidate) => candidate.sourceType === 'hybrid')
+  assert(
+    liveCandidateWithGeo?.coordinates &&
+      liveCandidateWithGeo.geoBucket &&
+      liveCandidateWithGeo.providerPlaceId &&
+      liveCandidateWithGeo.sourceLabel,
+    `${scenario.mode}: live/provider geography and provenance must propagate into scenario candidates.`,
   )
   const requestLabels = calls.map((call) => call.body.queryLabel)
   assert(
@@ -1163,6 +1486,44 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
       semanticCompleteNight.starterSemanticRepresentation.evidence.length > 0,
     'Coffee & Books built night must expose which selected stop satisfied representation.',
   )
+  assert(
+    semanticCompleteNight.geoCoherence?.status === 'coherent' ||
+      semanticCompleteNight.geoCoherence?.status === 'controlled_adjacent',
+    'Coffee & Books semantically representative Scenario Builder route must expose coherent route geography.',
+  )
+
+  const addressFragmentBoard = buildCoffeeBooksScenarioBoard({
+    starterPack,
+    includeSemanticCandidate: true,
+    addressFragmentSameGeo: true,
+  })
+  const addressFragmentNights = buildScenarioNightsFromCandidateBoard(addressFragmentBoard)
+  const addressFragmentCompleteNight = addressFragmentNights.find((night) => night.complete)
+  assert(
+    addressFragmentCompleteNight?.geoCoherence?.status === 'coherent',
+    'Scenario Builder route geography must use stable geo bucket before raw address-fragment districts.',
+  )
+  assert(
+    addressFragmentCompleteNight.evaluation?.stopEvaluations.every(
+      (entry) => !entry.evaluation.failedCriteria.includes('place_right'),
+    ),
+    'Great Stop place_right must evaluate stable geo bucket before address-fragment districts.',
+  )
+
+  const scatteredGeoBoard = buildCoffeeBooksScenarioBoard({
+    starterPack,
+    includeSemanticCandidate: true,
+    scatteredGeo: true,
+  })
+  const scatteredGeoNights = buildScenarioNightsFromCandidateBoard(scatteredGeoBoard)
+  assert(
+    scatteredGeoNights.every((night) => !night.complete),
+    'Coffee & Books represented but citywide-scattered Scenario Builder route must fail before artifact bridge.',
+  )
+  assert(
+    scatteredGeoNights.some((night) => night.geoCoherence?.rejectionReason === 'scenario_route_geo_scattered'),
+    'Scenario Builder must expose scenario_route_geo_scattered for represented scattered routes.',
+  )
 
   const mixedBoard = buildCoffeeBooksScenarioBoard({
     starterPack,
@@ -1191,18 +1552,22 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
       stopTypeBoardSource.includes('boardRank') &&
       stopTypeBoardSource.includes('enteredStopTypePool') &&
       stopTypeBoardSource.includes('coffeeBooksSemanticEvidencePresent') &&
-      stopTypeBoardSource.includes('matchedSemanticEvidence'),
-    'StopTypeCandidateBoard diagnostics must expose rank, stop-type pool entry, role/source fields, and Coffee & Books semantic evidence.',
+      stopTypeBoardSource.includes('matchedSemanticEvidence') &&
+      stopTypeBoardSource.includes('geoBucket') &&
+      stopTypeBoardSource.includes('providerPlaceId'),
+    'StopTypeCandidateBoard diagnostics must expose rank, stop-type pool entry, role/source fields, geography, and Coffee & Books semantic evidence.',
   )
   const scenarioBuilderSource = readFileSync(
     'src/domain/interpretation/construction/scenarioBuilder.ts',
     'utf8',
   )
   assert(
-    scenarioBuilderSource.includes('coffee_books_semantic_incomplete') &&
+      scenarioBuilderSource.includes('coffee_books_semantic_incomplete') &&
       scenarioBuilderSource.includes('coffee_books_semantic_representation') &&
-      scenarioBuilderSource.includes('starterSemanticRepresentation'),
-    'Scenario Builder diagnostics must keep Coffee & Books semantic rejection reasons available.',
+      scenarioBuilderSource.includes('starterSemanticRepresentation') &&
+      scenarioBuilderSource.includes('scenario_route_geo_scattered') &&
+      scenarioBuilderSource.includes('geoCoherence'),
+    'Scenario Builder diagnostics must keep Coffee & Books semantic and geo-coherence rejection reasons available.',
   )
   process.stdout.write('Coffee & Books semantic Scenario Builder gate: passed\n')
 }
@@ -2419,6 +2784,8 @@ async function main(): Promise<void> {
   assertCurateVisibleCardProjectionUsesApprovedRouteTruth()
   assertHostedObserverCapturesSuppressedRouteSummaryEvidence()
   assertGeneralStarterContractPropagationToGreatStop()
+  assertDrySystemicStarterGeoCheck()
+  assertDistrictIntelligenceGeoConsumerSeam()
   await assertFailClosedDoesNotRenderFalseCard()
   process.stdout.write(
     `Public default final generation without explicit live envelope proxy calls: ${defaultGenerationProxyCalls}\n`,

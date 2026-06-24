@@ -3,6 +3,10 @@ import { getCrewPolicy } from '../../intent/getCrewPolicy'
 import { buildExperienceLens } from '../../intent/buildExperienceLens'
 import { normalizeIntent } from '../../intent/normalizeIntent'
 import { retrieveVenues } from '../../retrieval/retrieveVenues'
+import {
+  buildDistrictCandidateGeoIndex,
+  type DistrictCandidateGeoAssignment,
+} from '../../../engines/district/candidates/buildDistrictCandidateGeoIndex'
 import type { LiveProviderEnvelope } from '../../retrieval/liveEnvelope'
 import { scoreVenueCollection } from '../../retrieval/scoreVenueFit'
 import {
@@ -79,6 +83,11 @@ export type StopTypeCandidate = {
   district?: string
   neighborhoodLabel?: string
   coordinates?: { lat: number; lng: number }
+  providerPlaceId?: string
+  sourceLabel?: string
+  geoBucket?: string
+  geoBucketSource?: 'district_intelligence' | 'coordinate_fallback' | 'neighborhood_fallback' | 'missing_geo'
+  geoLabel?: string
   stopType: StopType
   venueCategory?: VenueCategory
   venueSubcategory?: string
@@ -151,6 +160,11 @@ export type StopTypeCandidateBoard = {
           district?: string
           neighborhoodLabel?: string
           coordinates?: { lat: number; lng: number }
+          providerPlaceId?: string
+          sourceLabel?: string
+          geoBucket?: string
+          geoBucketSource?: StopTypeCandidate['geoBucketSource']
+          geoLabel?: string
           venueCategory?: VenueCategory
           venueSubcategory?: string
           sourceType?: 'venue' | 'event' | 'hybrid'
@@ -173,6 +187,14 @@ export type StopTypeCandidateBoard = {
         }>
       }
     >>
+    districtIntelligence?: {
+      profileCount: number
+      assignedVenueCount: number
+      admittedVenueCount: number
+      blockedVenueCount: number
+      selectedPocketIds: string[]
+      notes: string[]
+    }
   }
 }
 
@@ -376,6 +398,75 @@ function buildScenarioEvaluationContract(params: {
     scenarioFamily: params.scenarioFamily,
     ...(params.starterPack?.id ? { starterId: params.starterPack.id } : {}),
     ...(params.starterPack?.roleContracts ? { routeContract: params.starterPack.roleContracts } : {}),
+  }
+}
+
+function normalizeGeoLabel(value: string | undefined): string {
+  return value?.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim() ?? ''
+}
+
+function isAddressFragment(value: string | undefined): boolean {
+  const normalized = normalizeGeoLabel(value)
+  if (!normalized) {
+    return false
+  }
+  return /^\d+\b/.test(normalized) || /\b(ste|suite|unit|apt|blvd|ave|avenue|st|street|rd|road|way|dr|drive|ln|lane|ct|court)\b/.test(normalized)
+}
+
+function getScenarioGeoBucket(params: {
+  districtAssignment?: DistrictCandidateGeoAssignment
+  coordinates?: { lat: number; lng: number }
+  neighborhood?: string
+  district?: string
+}): {
+  geoBucket?: string
+  geoBucketSource?: StopTypeCandidate['geoBucketSource']
+  geoLabel?: string
+} {
+  if (params.districtAssignment) {
+    return {
+      geoBucket: params.districtAssignment.pocketId,
+      geoBucketSource: 'district_intelligence',
+      geoLabel: params.districtAssignment.pocketLabel,
+    }
+  }
+
+  if (
+    typeof params.coordinates?.lat === 'number' &&
+    Number.isFinite(params.coordinates.lat) &&
+    typeof params.coordinates.lng === 'number' &&
+    Number.isFinite(params.coordinates.lng)
+  ) {
+    const latBucket = Math.round(params.coordinates.lat / 0.018)
+    const lngBucket = Math.round(params.coordinates.lng / 0.018)
+    const geoBucket = `grid:${latBucket}:${lngBucket}`
+    return {
+      geoBucket,
+      geoBucketSource: 'coordinate_fallback',
+      geoLabel: geoBucket,
+    }
+  }
+
+  const neighborhood = normalizeGeoLabel(params.neighborhood)
+  if (neighborhood && !isAddressFragment(neighborhood)) {
+    return {
+      geoBucket: `neighborhood:${neighborhood}`,
+      geoBucketSource: 'neighborhood_fallback',
+      geoLabel: params.neighborhood,
+    }
+  }
+
+  const district = normalizeGeoLabel(params.district)
+  if (district && !isAddressFragment(district)) {
+    return {
+      geoBucket: `district:${district}`,
+      geoBucketSource: 'neighborhood_fallback',
+      geoLabel: params.district,
+    }
+  }
+
+  return {
+    geoBucketSource: 'missing_geo',
   }
 }
 
@@ -1562,6 +1653,9 @@ export function buildStopTypeCandidateBoard(
 
   const requiredStopTypes = getScenarioRequiredStopTypes(scenarioFamily)
   const scored = dedupeByVenue(input.scoredVenues)
+  const districtGeoIndex = buildDistrictCandidateGeoIndex(
+    scored.map((scoredVenue) => scoredVenue.venue),
+  )
   const candidatesByStopType = emptyCandidatesByStopType(requiredStopTypes)
   const rankedBoard = emptyCandidatesByStopType(requiredStopTypes) as Record<
     StopType,
@@ -1645,6 +1739,22 @@ export function buildStopTypeCandidateBoard(
               : 0),
         ),
       }
+      const coordinates =
+        typeof scoredVenue.venue.source.latitude === 'number' &&
+        Number.isFinite(scoredVenue.venue.source.latitude) &&
+        typeof scoredVenue.venue.source.longitude === 'number' &&
+        Number.isFinite(scoredVenue.venue.source.longitude)
+          ? {
+              lat: scoredVenue.venue.source.latitude,
+              lng: scoredVenue.venue.source.longitude,
+            }
+          : undefined
+      const geo = getScenarioGeoBucket({
+        districtAssignment: districtGeoIndex.assignmentsByVenueId.get(scoredVenue.venue.id),
+        coordinates,
+        neighborhood: scoredVenue.venue.neighborhood,
+        district: scoredVenue.venue.neighborhood,
+      })
 
       const candidate: StopTypeCandidate & { __rankScore: number } = {
         venueId: scoredVenue.venue.id,
@@ -1653,6 +1763,10 @@ export function buildStopTypeCandidateBoard(
         address: scoredVenue.venue.source.formattedAddress,
         district: scoredVenue.venue.neighborhood,
         neighborhoodLabel: scoredVenue.venue.neighborhood,
+        coordinates,
+        providerPlaceId: scoredVenue.venue.source.providerRecordId,
+        sourceLabel: scoredVenue.venue.source.sourceQueryLabel ?? scoredVenue.venue.source.sourceOrigin,
+        ...geo,
         stopType,
         venueCategory: scoredVenue.venue.category,
         venueSubcategory: scoredVenue.venue.subcategory,
@@ -1705,14 +1819,24 @@ export function buildStopTypeCandidateBoard(
     }),
     requiredStopTypes,
     candidatesByStopType,
-    debug: buildFixtureCandidateBoardDebug(rankedBoard, candidatesByStopType),
+    debug: {
+      ...buildFixtureCandidateBoardDebug(rankedBoard, candidatesByStopType),
+      districtIntelligence: {
+        profileCount: districtGeoIndex.profileCount,
+        assignedVenueCount: districtGeoIndex.assignedVenueCount,
+        admittedVenueCount: districtGeoIndex.admittedVenueCount,
+        blockedVenueCount: districtGeoIndex.blockedVenueCount,
+        selectedPocketIds: districtGeoIndex.selectedPocketIds,
+        notes: districtGeoIndex.notes,
+      },
+    },
   }
 }
 
 function buildFixtureCandidateBoardDebug(
   rankedBoard: Record<StopType, Array<StopTypeCandidate & { __rankScore: number }>>,
   selectedBoard: Record<StopType, StopTypeCandidate[]>,
-): StopTypeCandidateBoard['debug'] {
+): NonNullable<StopTypeCandidateBoard['debug']> {
   const devGreatStopFixturesEnabled = readDevGreatStopFixturesEnabled()
   const fixtureIds = new Set(devGreatStopFixtureVenueIds)
   const fixtureStopTypeMembership: NonNullable<StopTypeCandidateBoard['debug']>['fixtureStopTypeMembership'] = []
@@ -1807,6 +1931,11 @@ function buildFixtureCandidateBoardDebug(
           district: candidate.district,
           neighborhoodLabel: candidate.neighborhoodLabel,
           coordinates: candidate.coordinates,
+          providerPlaceId: candidate.providerPlaceId,
+          sourceLabel: candidate.sourceLabel,
+          geoBucket: candidate.geoBucket,
+          geoBucketSource: candidate.geoBucketSource,
+          geoLabel: candidate.geoLabel,
           venueCategory: candidate.venueCategory,
           venueSubcategory: candidate.venueSubcategory,
           sourceType: candidate.sourceType,
