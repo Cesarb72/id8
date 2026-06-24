@@ -14,6 +14,7 @@ import type { RuntimeRouteArtifact } from '../../../domain/artifacts/runtimeRout
 import type { StarterPack } from '../../../domain/types/starterPack'
 import type { ConciergeIntent, ContractConstraints, ExperienceContract, IntentInput, PersonaMode, ResolvedDirectionContext, RouteShapeContract, VibeAnchor } from '../../../domain/types/intent'
 import type { UserStopRole } from '../../../domain/types/itinerary'
+import type { Venue } from '../../../domain/types/venue'
 import type { RankedPocket } from '../../../engines/district/types/districtTypes'
 import { validatePublicCurateApprovedPayloadTruth } from '../curate/publicCurateCardTruthService'
 import type {
@@ -95,6 +96,7 @@ export interface CuratePreviewQualificationAttemptParams<
   selectedArtifactDiscoveryPreferences:
     | NonNullable<IntentInput['discoveryPreferences']>
     | undefined
+  scenarioHardCommitSeedVenues?: Venue[]
   selectedArtifactLineage: ContractEntryArtifactLineage | undefined
   selectedArtifactLineageSummary: string
   plannerInputSummary: string
@@ -125,6 +127,7 @@ export interface CuratePreviewQualificationAttemptDependencies<
       districtTasteBridgeArtifacts?: DistrictTasteBridgeArtifact[]
       contractGateWorld?: ContractGateWorld
       selectedArtifactLineage?: ContractEntryArtifactLineage
+      seedVenues?: Venue[]
     },
   ): Promise<GeneratePlanResult>
   enforceSelectedDirectionLineage(params: {
@@ -266,6 +269,19 @@ function hasExactCoreRouteDiscoveryPreferences(
   )
 }
 
+function getMissingScenarioHardCommitSeedRoles(params: {
+  discoveryPreferences: NonNullable<IntentInput['discoveryPreferences']> | undefined
+  seedVenues: Venue[] | undefined
+}): CurateStopRole[] {
+  const seedVenueIds = new Set((params.seedVenues ?? []).map((venue) => venue.id.trim()))
+  return (['start', 'highlight', 'windDown'] as const).filter((role) => {
+    const targetVenueId = params.discoveryPreferences
+      ?.find((preference) => preference.role === role)
+      ?.venueId.trim()
+    return !targetVenueId || !seedVenueIds.has(targetVenueId)
+  })
+}
+
 function shouldUseApprovedRouteHardCommit(params: {
   activeCandidateOpportunity?: unknown
   selectedArtifactLineage?: ContractEntryArtifactLineage
@@ -397,6 +413,56 @@ export async function runCuratePreviewQualificationAttempt<
   })
     ? 'approved_route_hard_commit'
     : 'seed_guided'
+  const scenarioHardCommitSeedVenues =
+    curateCommitSemantics === 'approved_route_hard_commit'
+      ? params.scenarioHardCommitSeedVenues
+      : undefined
+  const missingScenarioHardCommitSeedRoles =
+    curateCommitSemantics === 'approved_route_hard_commit'
+      ? getMissingScenarioHardCommitSeedRoles({
+          discoveryPreferences: params.selectedArtifactDiscoveryPreferences,
+          seedVenues: scenarioHardCommitSeedVenues,
+        })
+      : []
+
+  if (
+    curateCommitSemantics === 'approved_route_hard_commit' &&
+    missingScenarioHardCommitSeedRoles.length > 0
+  ) {
+    return {
+      kind: 'infeasible',
+      artifactId: params.artifactId,
+      state: {
+        status: 'infeasible',
+        artifactId: params.artifactId,
+        hardCommitCandidateCount: 0,
+        rankedCandidateCount: 0,
+        explicitFallbackReason: approvedPayloadRouteMaterializationUnavailableReason,
+        failureKind: 'structural_infeasibility',
+        failedCheck: approvedPayloadRouteMaterializationUnavailableReason,
+        errorName: null,
+        errorMessageRaw: null,
+        curateCommitSemantics,
+        hardCommitRequired: true,
+        failedRoles: missingScenarioHardCommitSeedRoles,
+        missingRoleForContract: null,
+        selectedDirectionId: params.activeDirectionContract.id,
+        activeDistrictPocketId: params.activeDistrictPocketId,
+        selectedArtifactLineageSummary: params.selectedArtifactLineageSummary,
+        plannerInputSummary: params.plannerInputSummary,
+        approvedRefinementEntryPayload: undefined,
+        ...repairDiagnostics,
+        windDownRepairSucceeded: false,
+        repairedHardCommitCandidateCount: params.repairState?.attempted ? 0 : null,
+        repairedFailureReason: params.repairState?.attempted
+          ? approvedPayloadRouteMaterializationUnavailableReason
+          : null,
+        repairedQualificationStatus: params.repairState?.attempted
+          ? 'infeasible'
+          : null,
+      },
+    }
+  }
 
   try {
     const result = await dependencies.runPlanBuild(
@@ -425,6 +491,7 @@ export async function runCuratePreviewQualificationAttempt<
         districtTasteBridgeArtifacts: params.districtTasteBridgeArtifacts,
         contractGateWorld: params.contractGateWorld,
         selectedArtifactLineage: params.selectedArtifactLineage,
+        seedVenues: scenarioHardCommitSeedVenues,
       },
     )
 

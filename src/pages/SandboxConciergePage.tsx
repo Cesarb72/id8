@@ -99,6 +99,7 @@ import {
   type CurateCommittedRouteFallbackRejectedReason,
 } from '../app/services/curate/buildCurateCommittedRouteFallback'
 import { buildCurateScenarioBackedArtifactBridge } from '../app/services/curate/buildCurateScenarioBackedArtifactBridge'
+import { buildCurateScenarioHardCommitSeedVenues } from '../app/services/curate/buildCurateScenarioHardCommitSeedVenues'
 import { validatePublicCurateApprovedPayloadTruth } from '../app/services/curate/publicCurateCardTruthService'
 import {
   buildCoffeeBooksSemanticRepresentationFromRouteStops,
@@ -15214,6 +15215,11 @@ export function SandboxConciergePage({
             opportunity: activeCandidateOpportunity,
             windDownOverride: repairState?.repairedWindDownTarget ?? null,
           })
+          const scenarioHardCommitSeedVenues = buildCurateScenarioHardCommitSeedVenues({
+            opportunity: activeCandidateOpportunity,
+            discoveryPreferences: selectedArtifactDiscoveryPreferences,
+            city: districtLocationQuery,
+          }).seedVenues
           const selectedArtifactLineage = resolveSelectedArtifactPlanningLineage(artifactToQualify)
           const selectedArtifactLineageSummary = formatSelectedArtifactLineageSummary(
             selectedArtifactLineage,
@@ -15350,6 +15356,7 @@ export function SandboxConciergePage({
               activeIntentSelectedDirectionContext,
               activeRouteShapeContract,
               selectedArtifactDiscoveryPreferences,
+              scenarioHardCommitSeedVenues,
               selectedArtifactLineage,
               selectedArtifactLineageSummary,
               plannerInputSummary,

@@ -38,6 +38,7 @@ import type { ProviderVenue } from '../src/domain/providers/providerTypes.ts'
 import type { RealityDirectionCard } from '../src/app/types/realityDirectionCard.ts'
 import type { ExperienceMode, IntentInput } from '../src/domain/types/intent.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
+import type { Venue } from '../src/domain/types/venue.ts'
 import type { VenueCategory } from '../src/domain/types/venue.ts'
 
 const FIELD_PROXY_PATH = '/api/field/text-search'
@@ -1505,6 +1506,13 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       scenarioFamily: 'romantic_cultured',
     },
   }
+  const alignedScenarioHardCommitSeedVenues = selectedArtifactDiscoveryPreferences.map(
+    (preference) =>
+      ({
+        id: preference.venueId,
+        name: preference.venueId,
+      }) as Venue,
+  )
 
   const runAttempt = async (
     finalRoute: RuntimeRouteArtifact,
@@ -1513,10 +1521,13 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       hardCommitPreservationSucceeded?: boolean
       hardCommitCandidateCount?: number
       throwFromPlanBuild?: Error
+      scenarioHardCommitSeedVenues?: Venue[]
     } = {},
   ) => {
     let approvedPayloadBuildCount = 0
     let observedCurateCommitSemantics: string | null = null
+    let observedSeedVenueIds: string[] = []
+    let runPlanBuildCount = 0
     const result = await runCuratePreviewQualificationAttempt({
       artifactId: artifact.id,
       artifactToQualify: artifact,
@@ -1545,13 +1556,17 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       activeIntentSelectedDirectionContext: {} as never,
       activeRouteShapeContract: {} as never,
       selectedArtifactDiscoveryPreferences,
+      scenarioHardCommitSeedVenues:
+        hardCommit.scenarioHardCommitSeedVenues ?? alignedScenarioHardCommitSeedVenues,
       selectedArtifactLineage,
       selectedArtifactLineageSummary: 'scenario_backed_artifact',
       plannerInputSummary: 'mocked Coffee & Books preflight',
       selectedDirectionPreviewContext: undefined,
     }, {
       runPlanBuild: async (_input, options) => {
+        runPlanBuildCount += 1
         observedCurateCommitSemantics = options?.curateCommitSemantics ?? null
+        observedSeedVenueIds = options?.seedVenues?.map((venue) => venue.id) ?? []
         if (hardCommit.throwFromPlanBuild) {
           throw hardCommit.throwFromPlanBuild
         }
@@ -1635,7 +1650,13 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       getCuratePreflightRuntimeReason: (error) =>
         error instanceof Error ? `curate_preflight_runtime_error:${error.name}` : 'curate_preflight_runtime_error',
     })
-    return { result, approvedPayloadBuildCount, observedCurateCommitSemantics }
+    return {
+      result,
+      approvedPayloadBuildCount,
+      observedCurateCommitSemantics,
+      observedSeedVenueIds,
+      runPlanBuildCount,
+    }
   }
 
   const staleAttempt = await runAttempt(staleWillowGlenRoute)
@@ -1654,9 +1675,29 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
     alignedAttempt.result.kind === 'committable' &&
       alignedAttempt.approvedPayloadBuildCount === 1 &&
       alignedAttempt.observedCurateCommitSemantics === 'approved_route_hard_commit' &&
+      alignedAttempt.runPlanBuildCount === 1 &&
+      selectedArtifactDiscoveryPreferences.every((preference) =>
+        alignedAttempt.observedSeedVenueIds.includes(preference.venueId),
+      ) &&
       alignedAttempt.result.state.status === 'committable' &&
       Boolean(alignedAttempt.result.state.approvedRefinementEntryPayload),
-    'Curate preflight must still approve an aligned scenario-backed Coffee & Books route.',
+    'Curate preflight must still approve an aligned scenario-backed Coffee & Books route with exact seed venues.',
+  )
+
+  const missingSeedIdentityAttempt = await runAttempt(alignedRoute, {
+    scenarioHardCommitSeedVenues: alignedScenarioHardCommitSeedVenues.filter(
+      (venue) => venue.id !== 'aligned-scenario-backed_highlight_venue',
+    ),
+  })
+  assert(
+    missingSeedIdentityAttempt.result.kind === 'infeasible' &&
+      missingSeedIdentityAttempt.approvedPayloadBuildCount === 0 &&
+      missingSeedIdentityAttempt.runPlanBuildCount === 0 &&
+      missingSeedIdentityAttempt.result.state.failedCheck ===
+        'approved_payload_route_materialization_unavailable' &&
+      missingSeedIdentityAttempt.result.state.explicitFallbackReason ===
+        'approved_payload_route_materialization_unavailable',
+    'Scenario-backed hard-commit qualification must fail closed before planning when exact seed identity is missing.',
   )
 
   const unavailableAttempt = await runAttempt(alignedRoute, {
@@ -1716,6 +1757,8 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       serviceSource.includes('approved_route_hard_commit') &&
       serviceSource.includes('approved_payload_route_materialization_unavailable') &&
       serviceSource.includes('isKnownHardCommitMaterializationError') &&
+      serviceSource.includes('scenarioHardCommitSeedVenues') &&
+      serviceSource.includes('getMissingScenarioHardCommitSeedRoles') &&
       serviceSource.includes('baseCommitParitySucceeded && !approvedPayloadTruthFailureReason'),
     'Curate preflight qualification must share the approved-payload truth invariant before payload construction.',
   )
