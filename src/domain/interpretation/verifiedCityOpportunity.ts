@@ -1,6 +1,7 @@
 import { curatedVenues } from '../../data/venues'
 import type { ContractConstraints } from '../types/intent'
 import type { EngineSourceMode } from '../types/sourceMode'
+import type { StarterPack } from '../types/starterPack'
 import { dedupeStringIds } from '../utils/dedupeStringIds'
 import type {
   BuiltScenarioNight,
@@ -152,6 +153,7 @@ export function mapBuiltScenarioNightToVerifiedOpportunity(params: {
   vibeLabel: string
   expandedProjection?: boolean
   contractConstraints?: ContractConstraints
+  starterPack?: StarterPack | null
 }): VerifiedCityOpportunity | null {
   const {
     night,
@@ -161,6 +163,7 @@ export function mapBuiltScenarioNightToVerifiedOpportunity(params: {
     vibeLabel,
     expandedProjection = false,
     contractConstraints,
+    starterPack,
   } = params
   if (!night.complete || night.stops.length === 0) {
     return null
@@ -176,6 +179,7 @@ export function mapBuiltScenarioNightToVerifiedOpportunity(params: {
     night,
     primaryDistrict: dominantDistrict,
     contractConstraints,
+    starterPack,
   })
   const windDownStop = resolvedWindDown.finalStop ?? resolvedWindDown.originalStop
   if (!highlightStop || !windDownStop) {
@@ -308,6 +312,7 @@ export function mapBuiltScenarioNightToVerifiedOpportunity(params: {
       originalRoleEligible: isBuiltScenarioStopRoleEligibleForWindDown({
         stop: resolvedWindDown.originalStop,
         contractConstraints,
+        starterPack,
       }),
       repairApplied: resolvedWindDown.repairApplied,
       repairReplacementVenueId: resolvedWindDown.repairReplacement?.venueId ?? null,
@@ -319,6 +324,7 @@ export function mapBuiltScenarioNightToVerifiedOpportunity(params: {
       finalRoleEligible: isBuiltScenarioStopRoleEligibleForWindDown({
         stop: resolvedWindDown.finalStop ?? windDownStop,
         contractConstraints,
+        starterPack,
       }),
     },
     starterSemanticRepresentation: night.starterSemanticRepresentation,
@@ -471,10 +477,14 @@ function isScenarioWindDownDisallowedCategory(
 function isBuiltScenarioStopRoleEligibleForWindDown(params: {
   stop: BuiltScenarioStop | undefined
   contractConstraints?: ContractConstraints
+  starterPack?: StarterPack | null
 }): boolean {
-  const { stop, contractConstraints } = params
+  const { stop, contractConstraints, starterPack } = params
   if (!stop) {
     return false
+  }
+  if (starterPack?.id === 'coffee-books') {
+    return isBuiltScenarioStopCoffeeBooksWindDownEligible(stop)
   }
   const category =
     stop.venueCategory ?? curatedVenues.find((venue) => venue.id === stop.venueId)?.category
@@ -506,6 +516,76 @@ function isBuiltScenarioStopRoleEligibleForWindDown(params: {
     return false
   }
   return true
+}
+
+function normalizeScenarioToken(value: string | undefined): string {
+  return (value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function scenarioStopCorpus(stop: BuiltScenarioStop): string {
+  return [
+    stop.name,
+    stop.venueCategory,
+    stop.venueSubcategory,
+    stop.venueTypeLabel,
+    stop.factualSummary,
+    ...(stop.venueTags ?? []),
+    ...(stop.sourceTypes ?? []),
+    ...stop.reasons,
+  ]
+    .map((entry) => normalizeScenarioToken(entry))
+    .filter(Boolean)
+    .join(' ')
+}
+
+function hasCoffeeBooksWindDownEvidence(stop: BuiltScenarioStop): boolean {
+  const corpus = scenarioStopCorpus(stop)
+  return [
+    'book',
+    'books',
+    'bookstore',
+    'book store',
+    'bookshop',
+    'book shop',
+    'library',
+    'literary',
+    'reading',
+    'museum',
+    'gallery',
+    'art',
+    'art gallery',
+    'exhibit',
+    'exhibition',
+    'cultural',
+    'cultural center',
+    'cultural venue',
+  ].some((token) => corpus.includes(token))
+}
+
+function isBuiltScenarioStopCoffeeBooksWindDownEligible(stop: BuiltScenarioStop): boolean {
+  const category =
+    stop.venueCategory ?? curatedVenues.find((venue) => venue.id === stop.venueId)?.category
+  const corpus = scenarioStopCorpus(stop)
+  if (stop.sourceType === 'event' || category === 'event' || category === 'live_music') {
+    return false
+  }
+  if (category === 'bar' || corpus.includes('cocktail') || corpus.includes('nightcap')) {
+    return (stop.roleFit.windDown ?? 0) >= 0.5
+  }
+  if ((stop.eventPotential ?? 0) >= 0.58 || (stop.performancePotential ?? 0) >= 0.66) {
+    return false
+  }
+  if (category === 'cafe' || category === 'dessert') {
+    return (stop.roleFit.windDown ?? 0) >= 0.34 || corpus.includes('quiet') || corpus.includes('calm')
+  }
+  if (category === 'museum' || category === 'activity' || category === 'park') {
+    return hasCoffeeBooksWindDownEvidence(stop)
+  }
+  return hasCoffeeBooksWindDownEvidence(stop) && (stop.roleFit.windDown ?? 0) >= 0.34
 }
 
 function scoreBuiltScenarioStopForWindDown(params: {
@@ -589,6 +669,7 @@ function resolveScenarioWindDownSelection(params: {
   night: BuiltScenarioNight
   primaryDistrict: string
   contractConstraints?: ContractConstraints
+  starterPack?: StarterPack | null
 }): {
   originalStop: BuiltScenarioStop | undefined
   finalStop: BuiltScenarioStop | null
@@ -597,12 +678,13 @@ function resolveScenarioWindDownSelection(params: {
   repairSource: string | null
   repairReason: string | null
 } {
-  const { night, primaryDistrict, contractConstraints } = params
+  const { night, primaryDistrict, contractConstraints, starterPack } = params
   const originalStop =
     getScenarioStopByPosition(night, 'closer') ?? night.stops[night.stops.length - 1]
   const originalRoleEligible = isBuiltScenarioStopRoleEligibleForWindDown({
     stop: originalStop,
     contractConstraints,
+    starterPack,
   })
   if (originalRoleEligible && originalStop) {
     return {
@@ -630,6 +712,7 @@ function resolveScenarioWindDownSelection(params: {
       isBuiltScenarioStopRoleEligibleForWindDown({
         stop,
         contractConstraints,
+        starterPack,
       }),
     )
     .sort(
@@ -669,6 +752,7 @@ function resolveScenarioWindDownSelection(params: {
       isBuiltScenarioStopRoleEligibleForWindDown({
         stop,
         contractConstraints,
+        starterPack,
       }),
     )
     .sort(
@@ -701,6 +785,7 @@ function resolveScenarioWindDownSelection(params: {
       isBuiltScenarioStopRoleEligibleForWindDown({
         stop,
         contractConstraints,
+        starterPack,
       }),
     )
     .sort(

@@ -11259,6 +11259,7 @@ export function SandboxConciergePage({
           vibeLabel: selectedVibeLabel,
           expandedProjection: isBuildWrapperActive,
           contractConstraints: canonicalContractConstraints,
+          starterPack: isCurateWrapperActive ? selectedStarterPack : null,
         }),
       )
       .filter((entry): entry is VerifiedCityOpportunity => Boolean(entry))
@@ -11278,10 +11279,12 @@ export function SandboxConciergePage({
     canonicalContractConstraints,
     districtDiscoveryCards,
     isBuildWrapperActive,
+    isCurateWrapperActive,
     resolvedScenarioFamily,
     scenarioBuiltNights,
     scenarioCandidateBoard,
     selectedPersonaLabel,
+    selectedStarterPack,
     selectedVibeLabel,
     surpriseContrastOpportunityRepairEntries,
     surpriseCrossPersonaOpportunityRepairEntries,

@@ -623,6 +623,24 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     semanticCandidateCount > 0,
     `${scenario.mode}: Coffee & Books candidate board must contain book/culture/reading-adjacent candidates.`,
   )
+  const coffeeBooksHighlightCandidates = board.candidatesByStopType.thoughtful_wine_or_lunch ?? []
+  assert(
+    coffeeBooksHighlightCandidates.some(candidateHasCoffeeBooksSemanticRepresentation),
+    `${scenario.mode}: bookstore/library/literary/cultural candidates must enter the Coffee & Books highlight scenario role.`,
+  )
+  const coffeeBooksWindDownCandidates = [
+    ...(board.candidatesByStopType.performance_or_fine_dining ?? []),
+    ...(board.candidatesByStopType.atmospheric_nightcap ?? []),
+  ]
+  assert(
+    coffeeBooksWindDownCandidates.some(
+      (candidate) =>
+        candidateHasCoffeeBooksSemanticRepresentation(candidate) &&
+        candidate.venueCategory !== 'bar' &&
+        candidate.venueCategory !== 'live_music',
+    ),
+    `${scenario.mode}: low-energy book/culture candidates must enter Coffee & Books wind-down scenario roles.`,
+  )
   const builtNights = buildScenarioNightsFromCandidateBoard(board)
   assert(
     builtNights.some((night) => night.complete),
@@ -674,6 +692,7 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
       directionCards: scenarioDirectionCards,
       personaLabel: 'Romantic',
       vibeLabel: 'Cozy',
+      starterPack: scenario.starterPack,
     })
     if (!opportunity) {
       continue
@@ -741,33 +760,25 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
   const representedBridgeDiagnostics = scenarioBridge.diagnostics.filter(
     (entry) => entry.starterSemanticStatus === 'represented',
   )
-  const buildabilityRejectedBridgeDiagnostics = representedBridgeDiagnostics.filter(
-    (entry) =>
-      entry.scenarioRouteBuildabilityStatus === 'rejected' &&
-      Boolean(entry.scenarioRouteBuildabilityReason),
+  assert(
+    scenarioBridge.candidateArtifacts.length > 0,
+    `${scenario.mode}: represented buildable Coffee & Books opportunity must become a scenario-backed candidate artifact.`,
   )
   assert(
-    scenarioBridge.candidateArtifacts.length > 0 ||
-      buildabilityRejectedBridgeDiagnostics.length > 0,
-    `${scenario.mode}: represented scenario-backed Coffee & Books opportunity must either become a candidate artifact or fail closed on buildability before qualification.`,
+    scenarioBridge.displayBackedArtifacts.length > 0,
+    `${scenario.mode}: represented buildable Coffee & Books artifact must be display-backed after buildability admission.`,
   )
   assert(
-    scenarioBridge.displayBackedArtifacts.length > 0 ||
-      buildabilityRejectedBridgeDiagnostics.length > 0,
-    `${scenario.mode}: scenario-backed Coffee & Books artifact must be display-backed only when it passes buildability admission.`,
-  )
-  assert(
-    scenarioBridge.qualificationCandidateArtifacts.length > 0 ||
-      buildabilityRejectedBridgeDiagnostics.length > 0,
-    `${scenario.mode}: represented scenario-backed artifact must enter qualification candidates only when buildable.`,
+    scenarioBridge.qualificationCandidateArtifacts.length > 0,
+    `${scenario.mode}: represented buildable Coffee & Books artifact must enter hard-commit qualification candidates.`,
   )
   assert(
     representedBridgeDiagnostics.some(
       (entry) =>
-        entry.includedInQualificationCandidateArtifacts ||
-        entry.scenarioRouteBuildabilityStatus === 'rejected',
+        entry.includedInQualificationCandidateArtifacts &&
+        entry.scenarioRouteBuildabilityStatus === 'passed',
     ),
-    `${scenario.mode}: shared bridge diagnostics must expose represented qualification inclusion or buildability rejection.`,
+    `${scenario.mode}: shared bridge diagnostics must expose represented buildable qualification inclusion.`,
   )
   assert(artifact, `${scenario.mode}: ContractEntryArtifact must be produced before reveal.`)
   assert(
@@ -1099,6 +1110,7 @@ function createCoffeeBooksBridgeOpportunity(
     personaLabel: 'Romantic',
     vibeLabel: 'Cultured',
     expandedProjection: true,
+    starterPack: findStarterPack('coffee-books'),
   })
   assert(opportunity, `${night.id}: fixture opportunity must map from built scenario night.`)
   return {

@@ -604,6 +604,7 @@ function getStopTypeFit(
   scoredVenue: ScoredVenue,
   stopType: StopType,
   scenarioFamily: ScenarioFamily,
+  starterPack?: StarterPack,
 ): StopTypeFitResult {
   const venue = scoredVenue.venue
   const tokens = uniqueLowerTokens(venue)
@@ -1126,6 +1127,18 @@ function getStopTypeFit(
   }
 
   const familyAlignment = getFamilyAlignment(scenarioFamily, signals, scoredVenue)
+  const coffeeBooksFitBoost = getCoffeeBooksScenarioRoleCompatibilityBoost({
+    scoredVenue,
+    stopType,
+    starterPack,
+    corpus,
+    tokens,
+    signals,
+  })
+  if (coffeeBooksFitBoost.boost > 0) {
+    fit = clamp01(fit + coffeeBooksFitBoost.boost)
+    reasons.push(coffeeBooksFitBoost.reason)
+  }
   const devFixtureBoost = getDevFixtureScenarioFitBoost({
     scoredVenue,
     stopType,
@@ -1143,6 +1156,98 @@ function getStopTypeFit(
     reasons.push('strong scenario-aware stop-type fit')
   }
   return { fit: scenarioAdjustedFit, reasons: reasons.slice(0, 3) }
+}
+
+function hasCoffeeBooksExplicitScenarioEvidence(params: {
+  venueCategory?: VenueCategory
+  corpus: string
+  tokens: Set<string>
+}): boolean {
+  const { venueCategory, corpus, tokens } = params
+  return (
+    venueCategory === 'museum' ||
+    hasAnyTokenOrPhrase(tokens, corpus, [
+      'book',
+      'books',
+      'bookstore',
+      'book store',
+      'bookshop',
+      'book shop',
+      'library',
+      'literary',
+      'reading',
+      'museum',
+      'gallery',
+      'art',
+      'art gallery',
+      'exhibit',
+      'exhibition',
+      'cultural center',
+      'cultural venue',
+      'cultural',
+    ])
+  )
+}
+
+function getCoffeeBooksScenarioRoleCompatibilityBoost(params: {
+  scoredVenue: ScoredVenue
+  stopType: StopType
+  starterPack?: StarterPack
+  corpus: string
+  tokens: Set<string>
+  signals: VenueSignals
+}): { boost: number; reason: string } {
+  const { scoredVenue, stopType, starterPack, corpus, tokens, signals } = params
+  if (starterPack?.id !== 'coffee-books') {
+    return { boost: 0, reason: '' }
+  }
+  const venue = scoredVenue.venue
+  const explicitEvidence = hasCoffeeBooksExplicitScenarioEvidence({
+    venueCategory: venue.category,
+    corpus,
+    tokens,
+  })
+  const lowEnergyLanding =
+    venue.energyLevel <= 2 ||
+    venue.category === 'cafe' ||
+    venue.category === 'dessert' ||
+    hasAnyTokenOrPhrase(tokens, corpus, ['quiet', 'calm', 'reading', 'tea', 'coffee'])
+  if (
+    stopType === 'thoughtful_wine_or_lunch' &&
+    explicitEvidence &&
+    (venue.category === 'museum' || venue.category === 'cafe' || venue.category === 'dessert')
+  ) {
+    return { boost: 0.42, reason: 'Coffee & Books highlight semantic compatibility' }
+  }
+  if (
+    stopType === 'performance_or_fine_dining' &&
+    explicitEvidence &&
+    lowEnergyLanding &&
+    venue.category !== 'bar' &&
+    venue.category !== 'live_music'
+  ) {
+    return { boost: 0.34, reason: 'Coffee & Books low-energy cultural wind-down compatibility' }
+  }
+  if (
+    stopType === 'atmospheric_nightcap' &&
+    lowEnergyLanding &&
+    (explicitEvidence || venue.category === 'cafe' || venue.category === 'dessert') &&
+    venue.category !== 'bar' &&
+    venue.category !== 'live_music'
+  ) {
+    return { boost: 0.46, reason: 'Coffee & Books quiet wind-down compatibility' }
+  }
+  if (
+    stopType === 'cultural_institution' &&
+    explicitEvidence &&
+    hasAnyTokenOrPhrase(tokens, corpus, ['book', 'bookstore', 'book store', 'library', 'literary', 'reading'])
+  ) {
+    return { boost: 0.18, reason: 'Coffee & Books bookstore cultural-anchor compatibility' }
+  }
+  if (signals.roleFit.windDown >= 0.62 && stopType === 'atmospheric_nightcap' && lowEnergyLanding) {
+    return { boost: 0.14, reason: 'Coffee & Books quiet landing role fit' }
+  }
+  return { boost: 0, reason: '' }
 }
 
 function isEnabledDevGreatStopFixture(scoredVenue: ScoredVenue): boolean {
@@ -1445,7 +1550,7 @@ export function buildStopTypeCandidateBoard(
     const tokens = uniqueLowerTokens(scoredVenue.venue)
     const corpus = buildVenueCorpus(scoredVenue.venue)
     for (const stopType of requiredStopTypes) {
-      const fitResult = getStopTypeFit(scoredVenue, stopType, scenarioFamily)
+      const fitResult = getStopTypeFit(scoredVenue, stopType, scenarioFamily, input.starterPack)
       const scenarioRelevance = clamp01(
         fitResult.fit * 0.62 + getFamilyAlignment(scenarioFamily, signals, scoredVenue) * 0.38,
       )
@@ -1489,6 +1594,15 @@ export function buildStopTypeCandidateBoard(
             (isEnabledDevGreatStopFixture(scoredVenue) &&
             (stopType === 'performance_anchor' || stopType === 'energetic_dinner')
               ? 0.18
+              : 0) +
+            (input.starterPack?.id === 'coffee-books' &&
+            stopType === 'thoughtful_wine_or_lunch' &&
+            hasCoffeeBooksExplicitScenarioEvidence({
+              venueCategory: scoredVenue.venue.category,
+              corpus,
+              tokens,
+            })
+              ? 0.24
               : 0),
         ),
         windDown: clamp01(
@@ -1496,6 +1610,15 @@ export function buildStopTypeCandidateBoard(
             (isEnabledDevGreatStopFixture(scoredVenue) &&
             (stopType === 'cocktail_bar' || stopType === 'late_night_food')
               ? 0.2
+              : 0) +
+            (input.starterPack?.id === 'coffee-books' &&
+            (stopType === 'performance_or_fine_dining' || stopType === 'atmospheric_nightcap') &&
+            hasCoffeeBooksExplicitScenarioEvidence({
+              venueCategory: scoredVenue.venue.category,
+              corpus,
+              tokens,
+            })
+              ? 0.26
               : 0),
         ),
       }
