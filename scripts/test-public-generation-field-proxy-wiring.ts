@@ -398,6 +398,51 @@ function assertDrySystemicStarterGeoCheck(): void {
     scatteredNights.some((night) => night.geoCoherence?.rejectionReason === 'scenario_route_geo_scattered'),
     'Arcade dry check must expose scenario_route_geo_scattered for fallback-scattered routes.',
   )
+
+  const mixedSourceBoard = buildManualStarterScenarioBoard({
+    starterPack: arcade,
+    scenarioFamily: 'friends_lively',
+    namePrefix: 'Arcade',
+    categoryByStopType: {
+      group_gathering_point: 'bar',
+      group_activity_anchor: 'activity',
+      cocktail_bar: 'bar',
+      late_energy_venue: 'bar',
+      late_night_food: 'restaurant',
+    },
+  })
+  Object.values(mixedSourceBoard.candidatesByStopType).forEach((candidates, index) => {
+    candidates.forEach((candidate) => {
+      if (index < 2) {
+        candidate.geoBucket = 'raw-pocket-arcade-district-seam'
+        candidate.geoBucketSource = 'district_intelligence'
+        candidate.geoAssignmentMethod = 'district_intelligence_direct'
+        candidate.geoLabel = 'Arcade District Seam'
+        candidate.coordinates = { lat: 37.333, lng: -121.889 }
+        return
+      }
+      candidate.geoBucket = `grid:arcade-fallback:${index}`
+      candidate.geoBucketSource = 'coordinate_fallback'
+      candidate.geoAssignmentMethod = 'coordinate_fallback'
+      candidate.geoLabel = `grid:arcade-fallback:${index}`
+      candidate.coordinates = { lat: 37.38 + index * 0.01, lng: -121.95 - index * 0.01 }
+    })
+  })
+  const mixedSourceNights = buildScenarioNightsFromCandidateBoard(mixedSourceBoard)
+  assert(
+    mixedSourceNights.every((night) => !night.complete),
+    'Arcade dry check must fail closed when DI and coordinate fallback buckets are scattered.',
+  )
+  assert(
+    mixedSourceNights.some(
+      (night) =>
+        night.geoCoherence?.rejectionReason === 'scenario_route_mixed_di_fallback_scattered' &&
+        night.geoCoherence.mixedSourceDiagnostic?.dominantDistrictIntelligenceBucket ===
+          'raw-pocket-arcade-district-seam' &&
+        night.geoCoherence.mixedSourceDiagnostic.fallbackNearEnoughToDominantPocket === false,
+    ),
+    'Arcade dry check must expose scenario_route_mixed_di_fallback_scattered with dominant DI pocket diagnostics.',
+  )
   process.stdout.write('Arcade dry systemic geo source check: passed\n')
 }
 
@@ -506,14 +551,59 @@ function assertDistrictIntelligenceGeoConsumerSeam(): void {
       providerRecordId: 'di_seam_4',
     }),
   ]
-  const index = buildDistrictCandidateGeoIndex(venues)
+  const nearLiveVenue = buildDistrictSeamVenue({
+    index: 5,
+    name: 'The Alameda Book Nook',
+    category: 'cafe',
+    lat: 37.339,
+    lng: -121.9135,
+    providerRecordId: 'di_seam_near',
+  })
+  const farLiveVenue = buildDistrictSeamVenue({
+    index: 6,
+    name: 'Faraway Book Counter',
+    category: 'cafe',
+    lat: 37.331286,
+    lng: -121.911065,
+    providerRecordId: 'di_seam_far',
+  })
+  const index = buildDistrictCandidateGeoIndex([...venues, nearLiveVenue, farLiveVenue])
   assert(index.profileCount > 0, 'District Intelligence must form a pocket over live-shaped candidates.')
   assert(
-    index.assignedVenueCount === venues.length,
-    'District Intelligence geo index must assign every admitted live-shaped candidate.',
+    index.assignedVenueCount === venues.length + 1,
+    'District Intelligence geo index must assign direct live candidates and the near admitted live candidate only.',
   )
   const assignment = index.assignmentsByVenueId.get(venues[0].id)
   assert(assignment, 'District Intelligence assignment must expose a stable pocket id.')
+  assert(
+    assignment.assignmentMethod === 'district_intelligence_direct',
+    'District Intelligence direct pocket members must expose district_intelligence_direct.',
+  )
+  const nearAssignment = index.assignmentsByVenueId.get(nearLiveVenue.id)
+  assert(
+    nearAssignment?.assignmentMethod === 'district_intelligence_nearest_pocket' &&
+      nearAssignment.nearestPocketDistanceM !== undefined &&
+      nearAssignment.nearestPocketThresholdM !== undefined,
+    'Admitted live candidate near an existing pocket must receive district_intelligence_nearest_pocket assignment.',
+  )
+  assert(
+    !index.assignmentsByVenueId.has(farLiveVenue.id),
+    'Admitted live candidate too far from any pocket must not receive DI assignment.',
+  )
+  const farDiagnostic = index.liveCandidateDiagnosticsByVenueId.get(farLiveVenue.id)
+  assert(
+    farDiagnostic?.assignmentMethod === 'coordinate_fallback' &&
+      farDiagnostic.finalGeoSource === 'coordinate_fallback' &&
+      farDiagnostic.assignmentBlockedReason === 'nearest_pocket_outside_threshold',
+    'Too-far admitted live candidate must remain coordinate_fallback with explicit DI assignment reason.',
+  )
+  const nearDiagnostic = index.liveCandidateDiagnosticsByVenueId.get(nearLiveVenue.id)
+  assert(
+    nearDiagnostic?.admissionStatus === 'admitted' &&
+      nearDiagnostic.assignmentMethod === 'district_intelligence_nearest_pocket' &&
+      nearDiagnostic.finalGeoSource === 'district_intelligence',
+    'Near admitted live candidate diagnostics must expose admission and DI assignment method.',
+  )
   assert(
     [...index.assignmentsByVenueId.values()].every(
       (entry) => entry.source === 'district_intelligence',
@@ -557,6 +647,7 @@ function assertDistrictIntelligenceGeoConsumerSeam(): void {
     stopTypeBoardSource.includes('buildDistrictCandidateGeoIndex') &&
       stopTypeBoardSource.includes('districtIntelligence') &&
       stopTypeBoardSource.includes('district_intelligence') &&
+      stopTypeBoardSource.includes('district_intelligence_nearest_pocket') &&
       stopTypeBoardSource.includes('coordinate_fallback') &&
       stopTypeBoardSource.includes('neighborhood_fallback') &&
       stopTypeBoardSource.includes('missing_geo'),
@@ -1566,6 +1657,7 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
       scenarioBuilderSource.includes('coffee_books_semantic_representation') &&
       scenarioBuilderSource.includes('starterSemanticRepresentation') &&
       scenarioBuilderSource.includes('scenario_route_geo_scattered') &&
+      scenarioBuilderSource.includes('scenario_route_mixed_di_fallback_scattered') &&
       scenarioBuilderSource.includes('geoCoherence'),
     'Scenario Builder diagnostics must keep Coffee & Books semantic and geo-coherence rejection reasons available.',
   )

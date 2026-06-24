@@ -5,7 +5,9 @@ import { normalizeIntent } from '../../intent/normalizeIntent'
 import { retrieveVenues } from '../../retrieval/retrieveVenues'
 import {
   buildDistrictCandidateGeoIndex,
+  type DistrictCandidateAssignmentMethod,
   type DistrictCandidateGeoAssignment,
+  type DistrictLiveCandidateGeoDiagnostic,
 } from '../../../engines/district/candidates/buildDistrictCandidateGeoIndex'
 import type { LiveProviderEnvelope } from '../../retrieval/liveEnvelope'
 import { scoreVenueCollection } from '../../retrieval/scoreVenueFit'
@@ -88,6 +90,8 @@ export type StopTypeCandidate = {
   geoBucket?: string
   geoBucketSource?: 'district_intelligence' | 'coordinate_fallback' | 'neighborhood_fallback' | 'missing_geo'
   geoLabel?: string
+  geoAssignmentMethod?: DistrictCandidateAssignmentMethod
+  districtIntelligenceDiagnostic?: DistrictLiveCandidateGeoDiagnostic
   stopType: StopType
   venueCategory?: VenueCategory
   venueSubcategory?: string
@@ -165,6 +169,8 @@ export type StopTypeCandidateBoard = {
           geoBucket?: string
           geoBucketSource?: StopTypeCandidate['geoBucketSource']
           geoLabel?: string
+          geoAssignmentMethod?: DistrictCandidateAssignmentMethod
+          districtIntelligenceDiagnostic?: DistrictLiveCandidateGeoDiagnostic
           venueCategory?: VenueCategory
           venueSubcategory?: string
           sourceType?: 'venue' | 'event' | 'hybrid'
@@ -194,6 +200,7 @@ export type StopTypeCandidateBoard = {
       blockedVenueCount: number
       selectedPocketIds: string[]
       notes: string[]
+      liveCandidateDiagnostics: DistrictLiveCandidateGeoDiagnostic[]
     }
   }
 }
@@ -413,6 +420,15 @@ function isAddressFragment(value: string | undefined): boolean {
   return /^\d+\b/.test(normalized) || /\b(ste|suite|unit|apt|blvd|ave|avenue|st|street|rd|road|way|dr|drive|ln|lane|ct|court)\b/.test(normalized)
 }
 
+function normalizeDistrictAssignmentMethod(
+  method: DistrictCandidateGeoAssignment['assignmentMethod'],
+): DistrictCandidateGeoAssignment['assignmentMethod'] {
+  if (method === 'district_intelligence_nearest_pocket') {
+    return 'district_intelligence_nearest_pocket'
+  }
+  return 'district_intelligence_direct'
+}
+
 function getScenarioGeoBucket(params: {
   districtAssignment?: DistrictCandidateGeoAssignment
   coordinates?: { lat: number; lng: number }
@@ -422,12 +438,14 @@ function getScenarioGeoBucket(params: {
   geoBucket?: string
   geoBucketSource?: StopTypeCandidate['geoBucketSource']
   geoLabel?: string
+  geoAssignmentMethod?: DistrictCandidateAssignmentMethod
 } {
   if (params.districtAssignment) {
     return {
       geoBucket: params.districtAssignment.pocketId,
       geoBucketSource: 'district_intelligence',
       geoLabel: params.districtAssignment.pocketLabel,
+      geoAssignmentMethod: normalizeDistrictAssignmentMethod(params.districtAssignment.assignmentMethod),
     }
   }
 
@@ -444,6 +462,7 @@ function getScenarioGeoBucket(params: {
       geoBucket,
       geoBucketSource: 'coordinate_fallback',
       geoLabel: geoBucket,
+      geoAssignmentMethod: 'coordinate_fallback',
     }
   }
 
@@ -453,6 +472,7 @@ function getScenarioGeoBucket(params: {
       geoBucket: `neighborhood:${neighborhood}`,
       geoBucketSource: 'neighborhood_fallback',
       geoLabel: params.neighborhood,
+      geoAssignmentMethod: 'neighborhood_fallback',
     }
   }
 
@@ -462,11 +482,13 @@ function getScenarioGeoBucket(params: {
       geoBucket: `district:${district}`,
       geoBucketSource: 'neighborhood_fallback',
       geoLabel: params.district,
+      geoAssignmentMethod: 'neighborhood_fallback',
     }
   }
 
   return {
     geoBucketSource: 'missing_geo',
+    geoAssignmentMethod: 'missing_geo',
   }
 }
 
@@ -1755,6 +1777,8 @@ export function buildStopTypeCandidateBoard(
         neighborhood: scoredVenue.venue.neighborhood,
         district: scoredVenue.venue.neighborhood,
       })
+      const districtIntelligenceDiagnostic =
+        districtGeoIndex.liveCandidateDiagnosticsByVenueId.get(scoredVenue.venue.id)
 
       const candidate: StopTypeCandidate & { __rankScore: number } = {
         venueId: scoredVenue.venue.id,
@@ -1767,6 +1791,7 @@ export function buildStopTypeCandidateBoard(
         providerPlaceId: scoredVenue.venue.source.providerRecordId,
         sourceLabel: scoredVenue.venue.source.sourceQueryLabel ?? scoredVenue.venue.source.sourceOrigin,
         ...geo,
+        ...(districtIntelligenceDiagnostic ? { districtIntelligenceDiagnostic } : {}),
         stopType,
         venueCategory: scoredVenue.venue.category,
         venueSubcategory: scoredVenue.venue.subcategory,
@@ -1828,6 +1853,7 @@ export function buildStopTypeCandidateBoard(
         blockedVenueCount: districtGeoIndex.blockedVenueCount,
         selectedPocketIds: districtGeoIndex.selectedPocketIds,
         notes: districtGeoIndex.notes,
+        liveCandidateDiagnostics: districtGeoIndex.liveCandidateDiagnostics,
       },
     },
   }
@@ -1936,6 +1962,8 @@ function buildFixtureCandidateBoardDebug(
           geoBucket: candidate.geoBucket,
           geoBucketSource: candidate.geoBucketSource,
           geoLabel: candidate.geoLabel,
+          geoAssignmentMethod: candidate.geoAssignmentMethod,
+          districtIntelligenceDiagnostic: candidate.districtIntelligenceDiagnostic,
           venueCategory: candidate.venueCategory,
           venueSubcategory: candidate.venueSubcategory,
           sourceType: candidate.sourceType,

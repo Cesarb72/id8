@@ -7,6 +7,7 @@ import type {
 } from '../discovery/stopTypeCandidateBoard'
 import { getScenarioRequiredStopTypes } from '../discovery/stopTypeCandidateBoard'
 import type { VenueCategory } from '../../types/venue'
+import { haversineDistanceM } from '../../../engines/district/clustering/geoDistance'
 
 export type BuiltScenarioStopPosition =
   | 'start'
@@ -133,6 +134,7 @@ export type BuiltScenarioStop = {
   geoBucket?: string
   geoBucketSource?: StopTypeCandidate['geoBucketSource']
   geoLabel?: string
+  geoAssignmentMethod?: StopTypeCandidate['geoAssignmentMethod']
   isHiddenGem?: boolean
   authorityScore: number
   currentRelevance: number
@@ -202,11 +204,27 @@ type CandidateNight = {
 
 export type ScenarioRouteGeoCoherence = {
   status: 'coherent' | 'controlled_adjacent' | 'scattered' | 'missing_geo'
-  rejectionReason?: 'scenario_route_geo_scattered' | 'scenario_route_missing_geo'
+  rejectionReason?:
+    | 'scenario_route_geo_scattered'
+    | 'scenario_route_missing_geo'
+    | 'scenario_route_mixed_di_fallback_scattered'
   geoBearingStopCount: number
   uniqueGeoBucketCount: number
   dominantGeoBucket?: string
   dominantGeoShare: number
+  mixedSourceDiagnostic?: {
+    dominantDistrictIntelligenceBucket?: string
+    fallbackBuckets: string[]
+    fallbackStops: Array<{
+      venueId: string
+      name: string
+      geoBucket?: string
+      distanceToDominantPocketM?: number
+      nearDominantPocket: boolean
+    }>
+    fallbackDistanceThresholdM: number
+    fallbackNearEnoughToDominantPocket: boolean
+  }
   routeGeoBuckets: Array<{
     venueId: string
     name: string
@@ -215,6 +233,7 @@ export type ScenarioRouteGeoCoherence = {
     geoBucket?: string
     geoBucketSource?: BuiltScenarioStop['geoBucketSource']
     geoLabel?: string
+    geoAssignmentMethod?: BuiltScenarioStop['geoAssignmentMethod']
     district?: string
     address?: string
     coordinates?: { lat: number; lng: number }
@@ -229,6 +248,7 @@ type DistinctNightSelectionResult = {
 // Only treat an alternate highlight as viable when the underlying night score remains
 // within a narrow band of the best remaining candidate for that selection slot.
 const HIGHLIGHT_DIVERSITY_VIABILITY_BAND = 0.035
+const MIXED_FALLBACK_DOMINANT_DISTANCE_THRESHOLD_M = 650
 
 function getHighlightStopName(night: CandidateNight): string {
   const highlight = night.stops[Math.min(2, night.stops.length - 1)]
@@ -786,6 +806,7 @@ function toBuiltStop(
     geoBucket: candidate.geoBucket,
     geoBucketSource: candidate.geoBucketSource,
     geoLabel: candidate.geoLabel,
+    geoAssignmentMethod: candidate.geoAssignmentMethod,
     isHiddenGem: candidate.hiddenGemScore >= 0.66,
     authorityScore: candidate.authorityScore,
     currentRelevance: candidate.currentRelevance,
@@ -886,6 +907,74 @@ function getDistrictPlausibility(stops: BuiltScenarioStop[]): number {
   return clamp01(0.94 - transitionPenalty - spreadPenalty - dominantPenalty)
 }
 
+function getMixedSourceDiagnostic(
+  routeGeoBuckets: ScenarioRouteGeoCoherence['routeGeoBuckets'],
+): ScenarioRouteGeoCoherence['mixedSourceDiagnostic'] | undefined {
+  const districtStops = routeGeoBuckets.filter(
+    (entry) => entry.geoBucketSource === 'district_intelligence' && entry.geoBucket,
+  )
+  const coordinateFallbackStops = routeGeoBuckets.filter(
+    (entry) => entry.geoBucketSource === 'coordinate_fallback' && entry.geoBucket,
+  )
+  if (districtStops.length === 0 || coordinateFallbackStops.length === 0) {
+    return undefined
+  }
+
+  const districtBucketCounts = districtStops.reduce<Record<string, number>>((acc, entry) => {
+    if (entry.geoBucket) {
+      acc[entry.geoBucket] = (acc[entry.geoBucket] ?? 0) + 1
+    }
+    return acc
+  }, {})
+  const dominantDistrictIntelligenceBucket = Object.entries(districtBucketCounts).sort(
+    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+  )[0]?.[0]
+  const dominantPocketCoordinates = districtStops
+    .filter((entry) => entry.geoBucket === dominantDistrictIntelligenceBucket)
+    .map((entry) => entry.coordinates)
+    .filter((entry): entry is { lat: number; lng: number } => Boolean(entry))
+  const dominantPoint =
+    dominantPocketCoordinates.length > 0
+      ? {
+          lat:
+            dominantPocketCoordinates.reduce((sum, point) => sum + point.lat, 0) /
+            dominantPocketCoordinates.length,
+          lng:
+            dominantPocketCoordinates.reduce((sum, point) => sum + point.lng, 0) /
+            dominantPocketCoordinates.length,
+        }
+      : undefined
+  const fallbackStops = coordinateFallbackStops.map((entry) => {
+    const distanceToDominantPocketM =
+      dominantPoint && entry.coordinates
+        ? Number(haversineDistanceM(dominantPoint, entry.coordinates).toFixed(1))
+        : undefined
+    return {
+      venueId: entry.venueId,
+      name: entry.name,
+      ...(entry.geoBucket ? { geoBucket: entry.geoBucket } : {}),
+      ...(distanceToDominantPocketM !== undefined ? { distanceToDominantPocketM } : {}),
+      nearDominantPocket:
+        distanceToDominantPocketM !== undefined &&
+        distanceToDominantPocketM <= MIXED_FALLBACK_DOMINANT_DISTANCE_THRESHOLD_M,
+    }
+  })
+  return {
+    ...(dominantDistrictIntelligenceBucket ? { dominantDistrictIntelligenceBucket } : {}),
+    fallbackBuckets: [
+      ...new Set(
+        coordinateFallbackStops
+          .map((entry) => entry.geoBucket)
+          .filter((entry): entry is string => Boolean(entry)),
+      ),
+    ].sort(),
+    fallbackStops,
+    fallbackDistanceThresholdM: MIXED_FALLBACK_DOMINANT_DISTANCE_THRESHOLD_M,
+    fallbackNearEnoughToDominantPocket:
+      fallbackStops.length > 0 && fallbackStops.every((entry) => entry.nearDominantPocket),
+  }
+}
+
 function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoherence {
   const routeGeoBuckets = stops.map((stop) => ({
     venueId: stop.venueId,
@@ -895,6 +984,7 @@ function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoher
     ...(stop.geoBucket ? { geoBucket: stop.geoBucket } : {}),
     ...(stop.geoBucketSource ? { geoBucketSource: stop.geoBucketSource } : {}),
     ...(stop.geoLabel ? { geoLabel: stop.geoLabel } : {}),
+    ...(stop.geoAssignmentMethod ? { geoAssignmentMethod: stop.geoAssignmentMethod } : {}),
     ...(stop.district ? { district: stop.district } : {}),
     ...(stop.address ? { address: stop.address } : {}),
     ...(stop.coordinates ? { coordinates: stop.coordinates } : {}),
@@ -920,6 +1010,7 @@ function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoher
       ? Number((sortedBuckets[0][1] / geoBearingStopCount).toFixed(3))
       : 0
   const requiredGeoBearingStopCount = Math.min(3, stops.length)
+  const mixedSourceDiagnostic = getMixedSourceDiagnostic(routeGeoBuckets)
 
   if (geoBearingStopCount < requiredGeoBearingStopCount) {
     return {
@@ -932,6 +1023,22 @@ function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoher
       routeGeoBuckets,
     }
   }
+  if (mixedSourceDiagnostic && !mixedSourceDiagnostic.fallbackNearEnoughToDominantPocket) {
+    return {
+      status: 'scattered',
+      rejectionReason: 'scenario_route_mixed_di_fallback_scattered',
+      geoBearingStopCount,
+      uniqueGeoBucketCount,
+      ...(mixedSourceDiagnostic.dominantDistrictIntelligenceBucket
+        ? { dominantGeoBucket: mixedSourceDiagnostic.dominantDistrictIntelligenceBucket }
+        : dominantGeoBucket
+          ? { dominantGeoBucket }
+          : {}),
+      dominantGeoShare,
+      mixedSourceDiagnostic,
+      routeGeoBuckets,
+    }
+  }
   if (uniqueGeoBucketCount <= 2) {
     return {
       status: 'coherent',
@@ -939,6 +1046,7 @@ function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoher
       uniqueGeoBucketCount,
       ...(dominantGeoBucket ? { dominantGeoBucket } : {}),
       dominantGeoShare,
+      ...(mixedSourceDiagnostic ? { mixedSourceDiagnostic } : {}),
       routeGeoBuckets,
     }
   }
@@ -949,6 +1057,7 @@ function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoher
       uniqueGeoBucketCount,
       ...(dominantGeoBucket ? { dominantGeoBucket } : {}),
       dominantGeoShare,
+      ...(mixedSourceDiagnostic ? { mixedSourceDiagnostic } : {}),
       routeGeoBuckets,
     }
   }
@@ -959,6 +1068,7 @@ function getRouteGeoCoherence(stops: BuiltScenarioStop[]): ScenarioRouteGeoCoher
     uniqueGeoBucketCount,
     ...(dominantGeoBucket ? { dominantGeoBucket } : {}),
     dominantGeoShare,
+    ...(mixedSourceDiagnostic ? { mixedSourceDiagnostic } : {}),
     routeGeoBuckets,
   }
 }
