@@ -918,25 +918,17 @@ function semanticCorpusIncludesAny(corpus: string, terms: string[]): boolean {
 
 function candidateHasCoffeeBooksSemanticRepresentation(candidate: StopTypeCandidate): boolean {
   const corpus = semanticCorpusFromCandidate(candidate)
-  return (
-    candidate.venueCategory === 'museum' ||
-    semanticCorpusIncludesAny(corpus, [
-      'book',
-      'books',
-      'bookstore',
-      'book store',
-      'library',
-      'reading',
-      'literary',
-      'museum',
-      'gallery',
-      'art',
-      'exhibit',
-      'exhibition',
-      'cultural center',
-      'cultural venue',
-    ])
-  )
+  return semanticCorpusIncludesAny(corpus, [
+    'book',
+    'books',
+    'bookstore',
+    'book store',
+    'book shop',
+    'bookshop',
+    'library',
+    'reading',
+    'literary',
+  ])
 }
 
 function builtNightHasCoffeeBooksSemanticRepresentation(
@@ -1087,6 +1079,7 @@ function buildFallbackGeneratePlanResult(
 function buildCoffeeBooksScenarioBoard(params: {
   starterPack: StarterPack
   includeSemanticCandidate: boolean
+  includeCulturalOnlyCandidate?: boolean
   includeCafeOnlyHighlightAlternative?: boolean
   scatteredGeo?: boolean
   addressFragmentSameGeo?: boolean
@@ -1146,6 +1139,17 @@ function buildCoffeeBooksScenarioBoard(params: {
             }
           : {}),
       })
+    : params.includeCulturalOnlyCandidate
+      ? createScenarioCandidate('cultural-gallery', 'Cultural Gallery', {
+          stopType: 'secondary_cultural_stop',
+          venueCategory: 'museum',
+          venueSubcategory: 'art_gallery',
+          shortDescription: 'A quiet gallery and cultural stop.',
+          sourceTypes: ['art_gallery'],
+          venueTags: ['gallery', 'art', 'exhibit', 'culture', 'quiet', 'curated'],
+          culturalAnchorPotential: 0.92,
+          reasons: ['gallery culture signal'],
+        })
     : createScenarioCandidate('generic-highlight-cafe', 'Generic Highlight Cafe', {
         stopType: 'secondary_cultural_stop',
         culturalAnchorPotential: 0.9,
@@ -1333,12 +1337,12 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     .filter(candidateHasCoffeeBooksSemanticRepresentation).length
   assert(
     semanticCandidateCount > 0,
-    `${scenario.mode}: Coffee & Books candidate board must contain book/culture/reading-adjacent candidates.`,
+    `${scenario.mode}: Coffee & Books candidate board must contain explicit book/library/literary/reading candidates.`,
   )
   const coffeeBooksHighlightCandidates = board.candidatesByStopType.thoughtful_wine_or_lunch ?? []
   assert(
     coffeeBooksHighlightCandidates.some(candidateHasCoffeeBooksSemanticRepresentation),
-    `${scenario.mode}: bookstore/library/literary/cultural candidates must enter the Coffee & Books highlight scenario role.`,
+    `${scenario.mode}: bookstore/library/literary/reading candidates must enter the Coffee & Books highlight scenario role.`,
   )
   const coffeeBooksWindDownCandidates = [
     ...(board.candidatesByStopType.performance_or_fine_dining ?? []),
@@ -1351,7 +1355,7 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
         candidate.venueCategory !== 'bar' &&
         candidate.venueCategory !== 'live_music',
     ),
-    `${scenario.mode}: low-energy book/culture candidates must enter Coffee & Books wind-down scenario roles.`,
+    `${scenario.mode}: low-energy book/library/literary/reading candidates must enter Coffee & Books wind-down scenario roles.`,
   )
   const builtNights = buildScenarioNightsFromCandidateBoard(board)
   assert(
@@ -1654,6 +1658,19 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
     ),
     'Coffee & Books generic quiet/curated tags and culturalAnchorPotential alone must not satisfy Books.',
   )
+  const culturalOnlyBoard = buildCoffeeBooksScenarioBoard({
+    starterPack,
+    includeSemanticCandidate: false,
+    includeCulturalOnlyCandidate: true,
+  })
+  const culturalOnlyNights = buildScenarioNightsFromCandidateBoard(culturalOnlyBoard)
+  assert(
+    culturalOnlyNights.every((night) => !night.complete) &&
+      culturalOnlyNights.every(
+        (night) => night.starterSemanticRepresentation?.status === 'missing',
+      ),
+    'Coffee & Books museum/gallery/cultural-only Scenario Builder route must not satisfy public Books representation.',
+  )
 
   const semanticBoard = buildCoffeeBooksScenarioBoard({
     starterPack,
@@ -1707,11 +1724,14 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
     (night) => night.complete && builtNightHasCoffeeBooksSemanticRepresentation(night),
   )
   assert(
-    destinationJumpNight?.geoCoherence?.spatialLadder?.routeShapeClassification ===
+      destinationJumpNight?.geoCoherence?.spatialLadder?.routeShapeClassification ===
       'destination_outing' &&
       destinationJumpNight.geoCoherence.spatialLadder.jumpCount === 1 &&
-      destinationJumpNight.geoCoherence.spatialLadder.expectedHardCommitMaterializable,
-    'Coffee & Books one-destination-jump route must remain eligible when semantically represented and contract-approved.',
+      destinationJumpNight.geoCoherence.spatialLadder.spatialRouteContractApproved &&
+      !destinationJumpNight.geoCoherence.spatialLadder.expectedHardCommitMaterializable &&
+      destinationJumpNight.geoCoherence.spatialLadder.hardCommitFeasibility.status ===
+        'not_checked',
+    'Coffee & Books one-destination-jump route must remain spatial-contract eligible without claiming exact hard-commit materialization.',
   )
 
   const addressFragmentBoard = buildCoffeeBooksScenarioBoard({
@@ -1790,9 +1810,12 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
       scenarioBuilderSource.includes('scenario_route_geo_scattered') &&
       scenarioBuilderSource.includes('scenario_route_mixed_di_fallback_scattered') &&
       scenarioBuilderSource.includes('spatialLadder') &&
+      scenarioBuilderSource.includes('spatialRouteContractApproved') &&
+      scenarioBuilderSource.includes('hardCommitFeasibility') &&
+      scenarioBuilderSource.includes('missing_explicit_book_reading_literary_library_or_bookstore_stop') &&
       scenarioBuilderSource.includes('routeShapeClassification') &&
       scenarioBuilderSource.includes('geoCoherence'),
-    'Scenario Builder diagnostics must keep Coffee & Books semantic and geo-coherence rejection reasons available.',
+    'Scenario Builder diagnostics must keep Coffee & Books explicit semantic, spatial contract, hard-commit, and geo-coherence rejection reasons available.',
   )
   process.stdout.write('Coffee & Books semantic Scenario Builder gate: passed\n')
 }
@@ -1957,6 +1980,26 @@ function assertCoffeeBooksScenarioBackedBuildabilityAdmission(starterPack: Start
       windDownStopType: 'atmospheric_nightcap',
     }),
   )
+  const semanticRejectedOpportunity: VerifiedCityOpportunity = {
+    ...validOpportunity,
+    id: 'coffee-books-semantic-contract-rejected',
+    starterSemanticRepresentation: {
+      starterPackId: 'coffee-books',
+      status: 'missing',
+      evidence: [],
+      rejectionReasons: ['missing_explicit_book_reading_literary_library_or_bookstore_stop'],
+    },
+    scenarioNight: {
+      ...validOpportunity.scenarioNight!,
+      id: 'coffee-books-semantic-contract-rejected',
+      starterSemanticRepresentation: {
+        starterPackId: 'coffee-books',
+        status: 'missing',
+        evidence: [],
+        rejectionReasons: ['missing_explicit_book_reading_literary_library_or_bookstore_stop'],
+      },
+    },
+  }
   const directionCards: RealityDirectionCard[] = [invalidOpportunity, validOpportunity].map(
     (opportunity) => ({
       id: opportunity.selection.directionId ?? `${opportunity.id}-direction`,
@@ -2003,6 +2046,36 @@ function assertCoffeeBooksScenarioBackedBuildabilityAdmission(starterPack: Start
         !entry.includedInQualificationCandidateArtifacts,
     ),
     'Coffee & Books buildability diagnostics must expose wind-down energy rejection without runtime_error.',
+  )
+
+  const semanticRejectedBridge = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [semanticRejectedOpportunity],
+    fallbackOpportunities: [semanticRejectedOpportunity],
+    ecsState: {
+      exploration: 'focused',
+      discovery: 'reliable',
+      highlight: 'standout',
+    },
+    directionCards,
+    allDirectionCards: directionCards,
+    starterPack,
+  })
+  assert(
+    semanticRejectedBridge.candidateArtifacts.length === 0 &&
+      semanticRejectedBridge.displayBackedArtifacts.length === 0 &&
+      semanticRejectedBridge.qualificationCandidateArtifacts.length === 0,
+    'Coffee & Books scenario-backed route without explicit book/library/literary evidence must not enter artifact or hard-commit qualification pools.',
+  )
+  assert(
+    semanticRejectedBridge.diagnostics.some(
+      (entry) =>
+        entry.scenarioRouteBuildabilityStatus === 'rejected' &&
+        entry.scenarioRouteBuildabilityReason === 'coffee_books_semantic_representation_missing' &&
+        entry.hardCommitFeasibility.status === 'failed' &&
+        entry.hardCommitFeasibility.failureClass === 'semantic_contract_failed' &&
+        !entry.includedInQualificationCandidateArtifacts,
+    ),
+    'Coffee & Books semantic-contract rejection must be preserved as diagnostics with hardCommitFeasibility failure class.',
   )
 
   const validBridge = buildCurateScenarioBackedArtifactBridge({
@@ -2183,6 +2256,33 @@ function assertCoffeeBooksCommittedRouteFallbackGate(): void {
     'Coffee & Books committed_route_fallback artifact without semantic representation must not become visible.',
   )
 
+  const culturalOnlyResult = buildFallbackGeneratePlanResult([
+    createFallbackPlannerStop('warmup', 'fallback-tea', 'Fallback Tea Atelier'),
+    createFallbackPlannerStop('peak', 'fallback-gallery', 'Fallback Culture Gallery', {
+      category: 'museum',
+      subcategory: 'art_gallery',
+      tags: ['gallery', 'art', 'exhibit', 'culture'],
+      shortDescription: 'Small gallery with cultural programming.',
+      narrativeFlavor: 'Cultural anchor.',
+    }),
+    createFallbackPlannerStop('cooldown', 'fallback-bakery', 'Fallback Bakehouse', {
+      category: 'dessert',
+      subcategory: 'bakery',
+    }),
+  ])
+  const rejectedCulturalOnlyCoffeeBooksFallback = buildCurateCommittedRouteFallbackDecision({
+    starterPack: coffeeBooksStarterPack,
+    result: culturalOnlyResult,
+    selectedDirectionId: 'direction-willow-glen',
+    selectedPocketId: 'willow-glen',
+  })
+  assert(
+    rejectedCulturalOnlyCoffeeBooksFallback.status === 'rejected' &&
+      rejectedCulturalOnlyCoffeeBooksFallback.rejectedReason ===
+        'coffee_books_semantic_representation_missing',
+    'Coffee & Books committed_route_fallback museum/gallery/cultural-only route must not become visible.',
+  )
+
   const representedResult = buildFallbackGeneratePlanResult([
     createFallbackPlannerStop('warmup', 'fallback-tea', 'Fallback Tea Atelier'),
     createFallbackPlannerStop('peak', 'fallback-gallery', 'Fallback Reading Gallery', {
@@ -2207,7 +2307,7 @@ function assertCoffeeBooksCommittedRouteFallbackGate(): void {
     acceptedCoffeeBooksFallback.status === 'accepted' &&
       acceptedCoffeeBooksFallback.artifact.enrichment?.starterSemanticRepresentation?.status ===
         'represented',
-    'Coffee & Books committed_route_fallback with explicit cultural/book evidence must remain eligible.',
+    'Coffee & Books committed_route_fallback with explicit reading/literary/book evidence must remain eligible.',
   )
 
   const acceptedNonCoffeeFallback = buildCurateCommittedRouteFallbackDecision({
@@ -2316,19 +2416,11 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
     'Coffee & Books semantic evidence must preserve selected stop name, field, term, match type, and admissibility.',
   )
 
-  for (const category of [
-    'library',
-    'museum',
-    'gallery',
-    'art_gallery',
-    'cultural_center',
-    'exhibit',
-    'exhibition',
-  ]) {
+  for (const category of ['library', 'bookstore', 'book_store']) {
     const categoryRepresentation = buildCoffeeBooksSemanticRepresentationFromRouteStops([
       {
         venueId: `valid-${category}`,
-        name: category === 'library' ? 'Community Library' : 'Selected cultural stop',
+        name: category === 'library' ? 'Community Library' : 'Selected bookstore',
         position: 'highlight',
         evidenceParts: [{ field: 'venueSubcategory', value: category }],
       },
@@ -2336,6 +2428,20 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
     assert(
       categoryRepresentation.status === 'represented',
       `Coffee & Books selected stop category/subcategory "${category}" must satisfy representation.`,
+    )
+  }
+  for (const category of ['museum', 'gallery', 'art_gallery', 'cultural_center', 'exhibit', 'exhibition']) {
+    const categoryRepresentation = buildCoffeeBooksSemanticRepresentationFromRouteStops([
+      {
+        venueId: `invalid-${category}`,
+        name: 'Selected cultural stop',
+        position: 'highlight',
+        evidenceParts: [{ field: 'venueSubcategory', value: category }],
+      },
+    ])
+    assert(
+      categoryRepresentation.status === 'missing',
+      `Coffee & Books selected stop category/subcategory "${category}" must remain diagnostic-only without explicit book/library/literary evidence.`,
     )
   }
 
@@ -2374,6 +2480,10 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
   assert(
     sandboxSource.includes('activeCurateStarterPackId =') &&
       sandboxSource.includes('selectedStarterPack?.id ?? selectedStarterPackId') &&
+      sandboxSource.includes('bookstoreCandidateDisposition') &&
+      sandboxSource.includes('liveCandidateDispositionRows') &&
+      sandboxSource.includes('hardCommitFeasibility') &&
+      sandboxSource.includes('diagnostic_rejected') &&
       sandboxSource.includes('params.starterPackId !== \'coffee-books\'') &&
       sandboxSource.includes('if (!params.finalRoute)') &&
       sandboxSource.includes('semanticRepresentationStatus: \'missing\''),
@@ -2433,23 +2543,23 @@ function createTruthInvariantArtifact(): ContractEntryArtifact {
     id: 'step2_scenario_built_romantic_cultured_1',
     sourceOpportunityId: 'step2_scenario_built_romantic_cultured_1',
     sourceMode: 'curated',
-    anchorVenueId: 'rosicrucian-museum',
+    anchorVenueId: 'rosicrucian-reading-library',
     anchorRole: 'highlight',
-    anchorName: 'Rosicrucian Egyptian Museum',
+    anchorName: 'Rosicrucian Reading Library',
     routeTitle: 'Scenario-backed Coffee & Books route',
     flavorLine: 'A cultured route with a literary anchor.',
-    routeSummary: 'Academic Coffee, Rosicrucian Egyptian Museum, and Willow Glen Bakehouse form the approved scenario-backed route.',
+    routeSummary: 'Academic Coffee, Rosicrucian Reading Library, and Willow Glen Bakehouse form the approved scenario-backed route.',
     traits: ['focused', 'reliable', 'intimate'],
     storySpine: {
       start: 'Academic Coffee',
-      highlight: 'Rosicrucian Egyptian Museum',
+      highlight: 'Rosicrucian Reading Library',
       windDown: 'Willow Glen Bakehouse',
     },
     districtLine: 'Mostly in San Jose',
     districtAnchorLine: 'District anchor: San Jose',
     authorityLine: 'Adega regional flight window is the highlight for this route.',
     whyChooseLine:
-      'Rosicrucian Egyptian Museum anchors the route, with Academic Coffee to start and Willow Glen Bakehouse to wind down.',
+      'Rosicrucian Reading Library anchors the route, with Academic Coffee to start and Willow Glen Bakehouse to wind down.',
     selection: {
       directionId: 'direction-romantic-cultured',
       pocketId: 'san-jose',
@@ -2506,7 +2616,7 @@ function createTruthInvariantArtifact(): ContractEntryArtifact {
       },
       canonicalRouteRoleCoverage: {
         start: 'Academic Coffee',
-        highlight: 'Rosicrucian Egyptian Museum',
+        highlight: 'Rosicrucian Reading Library',
         windDown: 'Willow Glen Bakehouse',
       },
       runtimeLockEligibility: {
@@ -2618,7 +2728,7 @@ function assertCurateApprovedPayloadVisibleCardTruthInvariant(): void {
     routeId: 'aligned-scenario-backed',
     directionId: 'direction-romantic-cultured',
     start: 'Academic Coffee',
-    highlight: 'Rosicrucian Egyptian Museum',
+    highlight: 'Rosicrucian Reading Library',
     windDown: 'Willow Glen Bakehouse',
   })
   const alignedPayload = {
@@ -2634,7 +2744,7 @@ function assertCurateApprovedPayloadVisibleCardTruthInvariant(): void {
   assert(
     alignedTruth.allowedToRender &&
       alignedTruth.coffeeBooksSemanticRepresentationStatus === 'represented',
-    'Aligned scenario-backed approved payload with explicit cultural evidence must remain visible.',
+    'Aligned scenario-backed approved payload with explicit literary/library evidence must remain visible.',
   )
   const alignedModel = buildPublicCurateCardTruthModel({
     selectedStarterPack: starterPack,
@@ -2682,7 +2792,7 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
     routeId: 'aligned-scenario-backed',
     directionId: 'direction-romantic-cultured',
     start: 'Academic Coffee',
-    highlight: 'Rosicrucian Egyptian Museum',
+    highlight: 'Rosicrucian Reading Library',
     windDown: 'Willow Glen Bakehouse',
   })
 

@@ -446,6 +446,16 @@ function inferCategoryTokens(stop: PublicCurateRouteStopInput): Set<string> {
   if (corpus.includes('gallery') || corpus.includes('museum') || corpus.includes('tech interactive')) {
     addCategory('museum')
   }
+  if (
+    corpus.includes('library') ||
+    corpus.includes('bookstore') ||
+    corpus.includes('book store') ||
+    corpus.includes('bookshop') ||
+    corpus.includes('book shop')
+  ) {
+    addCategory('library')
+    addCategory('bookstore')
+  }
   if (corpus.includes('park') || corpus.includes('garden') || corpus.includes('promenade')) {
     addCategory('park')
   }
@@ -470,6 +480,13 @@ function hasRequiredCategoryFit(params: {
     return false
   }
   const categoryTokens = inferCategoryTokens(params.stop)
+  if (
+    params.starterPack.id === 'coffee-books' &&
+    params.role === 'highlight' &&
+    (categoryTokens.has('library') || categoryTokens.has('bookstore'))
+  ) {
+    return true
+  }
   return requiredCategories.some((category) => categoryTokens.has(normalizeText(category)))
 }
 

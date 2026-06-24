@@ -90,6 +90,7 @@ import type { ConstraintTraceEntry } from './types/constraints'
 import type {
   BuildFallbackTraceDiagnostics,
   CurateHardCommitCandidateDiagnostics,
+  CurateHardCommitDiagnostics,
   GenerationDiagnostics,
   RoleWinnerFrequencyEntry,
 } from './types/diagnostics'
@@ -472,6 +473,18 @@ function getArcCandidateRoleStop(
   return candidate.stops.find((stop) => stop.role === expectedRole)
 }
 
+function expectedArcRoleForCurateHardCommitRole(
+  role: 'start' | 'highlight' | 'windDown',
+): 'warmup' | 'peak' | 'cooldown' {
+  if (role === 'start') {
+    return 'warmup'
+  }
+  if (role === 'highlight') {
+    return 'peak'
+  }
+  return 'cooldown'
+}
+
 function buildCurateHardCommitCandidateDiagnostics(
   candidate: ArcCandidate,
   preferences: NonNullable<IntentProfile['discoveryPreferences']>,
@@ -498,16 +511,43 @@ function buildCurateHardCommitCandidateDiagnostics(
     start: {
       venueId: startVenueId,
       venueName: startStop?.scoredVenue.venue.name,
+      targetVenueId: startPreference?.venueId,
+      expectedArcRole: expectedArcRoleForCurateHardCommitRole('start'),
+      ...(!startPreference?.venueId
+        ? { failureClass: 'missing_discovery_preference_identity' as const }
+        : !startVenueId
+          ? { failureClass: 'planner_inventory_mismatch' as const }
+          : !startMatch
+            ? { failureClass: 'role_mapping_mismatch' as const }
+            : {}),
       exactMatch: startMatch,
     },
     highlight: {
       venueId: highlightVenueId,
       venueName: highlightStop?.scoredVenue.venue.name,
+      targetVenueId: highlightPreference?.venueId,
+      expectedArcRole: expectedArcRoleForCurateHardCommitRole('highlight'),
+      ...(!highlightPreference?.venueId
+        ? { failureClass: 'missing_discovery_preference_identity' as const }
+        : !highlightVenueId
+          ? { failureClass: 'planner_inventory_mismatch' as const }
+          : !highlightMatch
+            ? { failureClass: 'role_mapping_mismatch' as const }
+            : {}),
       exactMatch: highlightMatch,
     },
     windDown: {
       venueId: windDownVenueId,
       venueName: windDownStop?.scoredVenue.venue.name,
+      targetVenueId: windDownPreference?.venueId,
+      expectedArcRole: expectedArcRoleForCurateHardCommitRole('windDown'),
+      ...(!windDownPreference?.venueId
+        ? { failureClass: 'missing_discovery_preference_identity' as const }
+        : !windDownVenueId
+          ? { failureClass: 'planner_inventory_mismatch' as const }
+          : !windDownMatch
+            ? { failureClass: 'role_mapping_mismatch' as const }
+            : {}),
       exactMatch: windDownMatch,
     },
     overallMatch: startMatch && highlightMatch && windDownMatch,
@@ -3131,6 +3171,41 @@ async function runGeneratePlanInternal(
               curateHardCommitRequired && curateHardCommitCandidates.length === 0
                 ? 'curate_selected_artifact_structurally_infeasible'
                 : undefined
+            type CurateHardCommitFeasibilityFailureClass = NonNullable<
+              NonNullable<CurateHardCommitDiagnostics['hardCommitFeasibility']>['failureClass']
+            >
+            const roleDiagnostics = (['start', 'highlight', 'windDown'] as const).map((role) => {
+              const target = selectedCurateCommitTarget[role]
+              const preference = curateCommitPreferences.find((entry) => entry.role === role)
+              const finalRole = finalWinner[role]
+              const presentInProjectedRoleSet = finalRole.exactMatch
+              const failureClass: CurateHardCommitFeasibilityFailureClass | undefined =
+                !target?.venueId
+                  ? 'missing_seed_identity'
+                  : !preference?.venueId
+                    ? 'missing_discovery_preference_identity'
+                    : !finalRole.venueId
+                      ? 'planner_inventory_mismatch'
+                      : !presentInProjectedRoleSet
+                        ? 'role_mapping_mismatch'
+                        : undefined
+              return {
+                role,
+                expectedArcRole: expectedArcRoleForCurateHardCommitRole(role),
+                selectedStopId: target?.venueId ?? null,
+                selectedStopName: null,
+                seedVenueId: target?.venueId ?? null,
+                discoveryPreferenceVenueId: preference?.venueId ?? null,
+                presentInProjectedRoleSet,
+                failed: Boolean(failureClass),
+                ...(failureClass ? { failureClass } : {}),
+              }
+            })
+            const failedRoleDiagnostic = roleDiagnostics.find((entry) => entry.failed)
+            const hardCommitFeasibilityFailureClass =
+              curateHardCommitRequired && curateHardCommitCandidates.length === 0
+                ? failedRoleDiagnostic?.failureClass ?? 'exact_preservation_failed'
+                : undefined
             return {
               curateCommitSemantics:
                 curateCommitSemantics ?? 'approved_route_hard_commit',
@@ -3168,6 +3243,46 @@ async function runGeneratePlanInternal(
                 : failedRoles.length < 3
                   ? 'partial_role_match'
                   : 'pure_fallback',
+              hardCommitFeasibility: {
+                routeArtifactId: selectedArtifactLineage?.artifactId,
+                status: !curateHardCommitRequired
+                  ? 'not_applicable'
+                  : curateHardCommitCandidates.length > 0
+                    ? 'passed'
+                    : 'failed',
+                ...(hardCommitFeasibilityFailureClass
+                  ? { failureClass: hardCommitFeasibilityFailureClass }
+                  : {}),
+                ...(failedRoleDiagnostic ? { failedRole: failedRoleDiagnostic.role } : {}),
+                ...(failedRoleDiagnostic?.selectedStopId
+                  ? { failedStopId: failedRoleDiagnostic.selectedStopId }
+                  : {}),
+                ...(failedRoleDiagnostic?.selectedStopName
+                  ? { failedStopName: failedRoleDiagnostic.selectedStopName }
+                  : {}),
+                selectedStopIds: {
+                  start: selectedCurateCommitTarget.start?.venueId ?? null,
+                  highlight: selectedCurateCommitTarget.highlight?.venueId ?? null,
+                  windDown: selectedCurateCommitTarget.windDown?.venueId ?? null,
+                },
+                seedVenueIds: {
+                  start: selectedCurateCommitTarget.start?.venueId ?? null,
+                  highlight: selectedCurateCommitTarget.highlight?.venueId ?? null,
+                  windDown: selectedCurateCommitTarget.windDown?.venueId ?? null,
+                },
+                discoveryPreferenceVenueIds: {
+                  start:
+                    curateCommitPreferences.find((entry) => entry.role === 'start')?.venueId ??
+                    null,
+                  highlight:
+                    curateCommitPreferences.find((entry) => entry.role === 'highlight')?.venueId ??
+                    null,
+                  windDown:
+                    curateCommitPreferences.find((entry) => entry.role === 'windDown')?.venueId ??
+                    null,
+                },
+                roleDiagnostics,
+              },
             }
           })()
         : undefined,

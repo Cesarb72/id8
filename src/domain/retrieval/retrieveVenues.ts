@@ -33,7 +33,10 @@ import {
   type LiveRetrievalPocketHint,
 } from './liveEnvelope'
 import { buildDistrictCandidateGeoIndex } from '../../engines/district/candidates/buildDistrictCandidateGeoIndex'
-import type { LiveDedupeLossDiagnostics } from '../types/diagnostics'
+import type {
+  LiveDedupeLossDiagnostics,
+  LiveQueryCandidateDiagnostics,
+} from '../types/diagnostics'
 import type { LiveTrustBreakdownDiagnostics } from '../types/diagnostics'
 import type { FallbackRelaxationLevel } from '../types/diagnostics'
 import type { ExperienceLens } from '../types/experienceLens'
@@ -197,17 +200,7 @@ export interface RetrieveVenuesResult {
     dispatchQueriesPlannedWithinCap: boolean
     liveQueryTemplatesUsed: string[]
     liveQueryLabelsUsed: string[]
-    liveCandidatesByQuery: Array<{
-      label: string
-      template: string
-      roleHint: string
-      fetchedCount: number
-      mappedCount: number
-      normalizedCount: number
-      approvedCount: number
-      demotedCount: number
-      suppressedCount: number
-    }>
+    liveCandidatesByQuery: LiveQueryCandidateDiagnostics[]
     liveRoleIntentQueryNotes: string[]
     fetchedCount: number
     rawFetchedCount: number
@@ -800,17 +793,7 @@ export async function retrieveVenues(
             dispatchQueriesPlannedWithinCap: true,
             liveQueryTemplatesUsed: [] as string[],
             liveQueryLabelsUsed: [] as string[],
-            liveCandidatesByQuery: [] as Array<{
-              label: string
-              template: string
-              roleHint: string
-              fetchedCount: number
-              mappedCount: number
-              normalizedCount: number
-              approvedCount: number
-              demotedCount: number
-              suppressedCount: number
-            }>,
+            liveCandidatesByQuery: [] as LiveQueryCandidateDiagnostics[],
             liveRoleIntentQueryNotes: [] as string[],
             fetchedCount: 0,
             rawFetchedCount: 0,

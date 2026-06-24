@@ -19,6 +19,7 @@ import {
   readDevGreatStopFixturesEnabled,
 } from '../../sources/devGreatStopFixtures'
 import type { ScoredVenue } from '../../types/arc'
+import type { LiveQueryCandidateDiagnostics } from '../../types/diagnostics'
 import type {
   BudgetPreference,
   DistanceMode,
@@ -216,6 +217,7 @@ export type StopTypeCandidateBoard = {
       queryLocationLabel?: string
       queryRadiusM?: number
       queryCentersUsed?: Array<{ id: string; lat: number; lng: number }>
+      liveCandidatesByQuery?: LiveQueryCandidateDiagnostics[]
     }
   }
 }
@@ -2072,6 +2074,7 @@ export async function buildStopTypeCandidateBoardFromIntent(
       queryLocationLabel: retrieval.sourceMode.queryLocationLabel,
       queryRadiusM: retrieval.sourceMode.queryRadiusM,
       queryCentersUsed: retrieval.sourceMode.queryCentersUsed,
+      liveCandidatesByQuery: retrieval.sourceMode.liveCandidatesByQuery,
     },
     scoredVenues,
   })

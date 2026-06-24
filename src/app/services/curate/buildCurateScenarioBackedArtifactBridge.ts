@@ -10,6 +10,7 @@ import {
 } from '../../../domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity'
 import type {
   BuiltScenarioStop,
+  StarterSemanticEvidenceKind,
   StarterSemanticRepresentation,
 } from '../../../domain/interpretation/construction/scenarioBuilder'
 import type { VerifiedCityOpportunity } from '../../../domain/interpretation/verifiedCityOpportunity'
@@ -24,6 +25,39 @@ type CurateScenarioBuildabilityAdmissionReason =
   | 'coffee_books_wind_down_energy_mismatch'
   | 'coffee_books_semantic_representation_missing'
   | 'scenario_route_seed_projection_missing'
+type CurateHardCommitFeasibilityFailureClass =
+  | 'missing_seed_identity'
+  | 'missing_discovery_preference_identity'
+  | 'role_mapping_mismatch'
+  | 'planner_inventory_mismatch'
+  | 'exact_preservation_failed'
+  | 'semantic_contract_failed'
+type CurateHardCommitFeasibilityRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
+
+interface CurateHardCommitFeasibilityRoleDiagnostic {
+  role: CurateHardCommitFeasibilityRole
+  expectedArcRole: 'warmup' | 'peak' | 'cooldown'
+  selectedStopId: string | null
+  selectedStopName: string | null
+  seedVenueId: string | null
+  discoveryPreferenceVenueId: string | null
+  presentInProjectedRoleSet: boolean
+  failed: boolean
+  failureClass: CurateHardCommitFeasibilityFailureClass | null
+}
+
+interface CurateHardCommitFeasibilityDiagnostic {
+  routeArtifactId: string | null
+  status: 'passed' | 'failed' | 'not_applicable'
+  failureClass: CurateHardCommitFeasibilityFailureClass | null
+  failedRole: CurateHardCommitFeasibilityRole | null
+  failedStopId: string | null
+  failedStopName: string | null
+  selectedStopIds: Record<CurateHardCommitFeasibilityRole, string | null>
+  seedVenueIds: Record<CurateHardCommitFeasibilityRole, string | null>
+  discoveryPreferenceVenueIds: Record<CurateHardCommitFeasibilityRole, string | null>
+  roleDiagnostics: CurateHardCommitFeasibilityRoleDiagnostic[]
+}
 
 export interface CurateScenarioBackedArtifactBridgeDiagnostic {
   opportunityId: string
@@ -45,6 +79,7 @@ export interface CurateScenarioBackedArtifactBridgeDiagnostic {
   scenarioRouteBuildabilityReason: CurateScenarioBuildabilityAdmissionReason | null
   scenarioRouteBuildabilityFailedRoles: Array<Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>>
   scenarioRouteBuildabilitySeedProjectionAvailable: boolean
+  hardCommitFeasibility: CurateHardCommitFeasibilityDiagnostic
 }
 
 export interface CurateScenarioBackedArtifactBridgeResult {
@@ -83,6 +118,39 @@ function starterSemanticRepresentationIsSelectedStopBacked(
     representation?.status === 'represented' &&
       representation.evidence.some((entry) => entry.source === 'selected_route_stop'),
   )
+}
+
+const COFFEE_BOOKS_PUBLIC_EVIDENCE_TYPES = new Set<StarterSemanticEvidenceKind>([
+  'book',
+  'reading',
+  'literary',
+  'library',
+  'bookstore',
+])
+
+function starterSemanticRepresentationHasPublicCoffeeBooksEvidence(
+  representation: StarterSemanticRepresentation | undefined,
+): boolean {
+  return Boolean(
+    representation?.status === 'represented' &&
+      representation.evidence.some(
+        (entry) =>
+          entry.source === 'selected_route_stop' &&
+          entry.evidenceTypes.some((type) => COFFEE_BOOKS_PUBLIC_EVIDENCE_TYPES.has(type)),
+      ),
+  )
+}
+
+function expectedArcRoleFor(
+  role: CurateHardCommitFeasibilityRole,
+): CurateHardCommitFeasibilityRoleDiagnostic['expectedArcRole'] {
+  if (role === 'start') {
+    return 'warmup'
+  }
+  if (role === 'highlight') {
+    return 'peak'
+  }
+  return 'cooldown'
 }
 
 function findScenarioStopByVenueId(
@@ -236,8 +304,68 @@ function assessCoffeeBooksScenarioBuildability(params: {
   reason: CurateScenarioBuildabilityAdmissionReason | null
   failedRoles: Array<Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>>
   seedProjectionAvailable: boolean
+  hardCommitFeasibility: CurateHardCommitFeasibilityDiagnostic
 } {
   const { opportunity, artifact, starterPack } = params
+  const buildFeasibility = (overrides: Partial<CurateHardCommitFeasibilityDiagnostic> = {}) => {
+    const roles = ['start', 'highlight', 'windDown'] as const
+    const roleDiagnostics = roles.map((role) => {
+      const stop = artifact && opportunity.scenarioNight
+        ? resolveScenarioCoreStop({ opportunity, artifact, role })
+        : undefined
+      const selectedStopId = stop?.venueId ?? null
+      const selectedStopName = stop?.name ?? null
+      const failed = !selectedStopId || overrides.failureClass === 'semantic_contract_failed'
+      return {
+        role,
+        expectedArcRole: expectedArcRoleFor(role),
+        selectedStopId,
+        selectedStopName,
+        seedVenueId: selectedStopId,
+        discoveryPreferenceVenueId: selectedStopId,
+        presentInProjectedRoleSet: Boolean(selectedStopId),
+        failed,
+        failureClass: failed
+          ? overrides.failureClass ?? 'missing_seed_identity'
+          : null,
+      }
+    })
+    const failedDiagnostic = roleDiagnostics.find((entry) => entry.failed)
+    return {
+      routeArtifactId: artifact?.id ?? null,
+      status: overrides.status ?? (failedDiagnostic ? 'failed' : 'passed'),
+      failureClass:
+        overrides.failureClass ??
+        failedDiagnostic?.failureClass ??
+        null,
+      failedRole: overrides.failedRole ?? failedDiagnostic?.role ?? null,
+      failedStopId: overrides.failedStopId ?? failedDiagnostic?.selectedStopId ?? null,
+      failedStopName: overrides.failedStopName ?? failedDiagnostic?.selectedStopName ?? null,
+      selectedStopIds: {
+        start: roleDiagnostics.find((entry) => entry.role === 'start')?.selectedStopId ?? null,
+        highlight: roleDiagnostics.find((entry) => entry.role === 'highlight')?.selectedStopId ?? null,
+        windDown: roleDiagnostics.find((entry) => entry.role === 'windDown')?.selectedStopId ?? null,
+      },
+      seedVenueIds: {
+        start: roleDiagnostics.find((entry) => entry.role === 'start')?.seedVenueId ?? null,
+        highlight: roleDiagnostics.find((entry) => entry.role === 'highlight')?.seedVenueId ?? null,
+        windDown: roleDiagnostics.find((entry) => entry.role === 'windDown')?.seedVenueId ?? null,
+      },
+      discoveryPreferenceVenueIds: {
+        start:
+          roleDiagnostics.find((entry) => entry.role === 'start')?.discoveryPreferenceVenueId ??
+          null,
+        highlight:
+          roleDiagnostics.find((entry) => entry.role === 'highlight')?.discoveryPreferenceVenueId ??
+          null,
+        windDown:
+          roleDiagnostics.find((entry) => entry.role === 'windDown')?.discoveryPreferenceVenueId ??
+          null,
+      },
+      roleDiagnostics,
+      ...overrides,
+    } satisfies CurateHardCommitFeasibilityDiagnostic
+  }
   if (starterPack?.id !== 'coffee-books') {
     return {
       allowed: true,
@@ -245,6 +373,7 @@ function assessCoffeeBooksScenarioBuildability(params: {
       reason: null,
       failedRoles: [],
       seedProjectionAvailable: true,
+      hardCommitFeasibility: buildFeasibility({ status: 'not_applicable' }),
     }
   }
   if (
@@ -257,6 +386,10 @@ function assessCoffeeBooksScenarioBuildability(params: {
       reason: 'scenario_route_mixed_di_fallback_scattered',
       failedRoles: [],
       seedProjectionAvailable: false,
+      hardCommitFeasibility: buildFeasibility({
+        status: 'failed',
+        failureClass: 'planner_inventory_mismatch',
+      }),
     }
   }
   if (!artifact || !opportunity.scenarioNight) {
@@ -266,6 +399,10 @@ function assessCoffeeBooksScenarioBuildability(params: {
       reason: 'scenario_route_seed_projection_missing',
       failedRoles: ['start', 'highlight', 'windDown'],
       seedProjectionAvailable: false,
+      hardCommitFeasibility: buildFeasibility({
+        status: 'failed',
+        failureClass: 'missing_seed_identity',
+      }),
     }
   }
 
@@ -273,13 +410,20 @@ function assessCoffeeBooksScenarioBuildability(params: {
     artifact.enrichment?.starterSemanticRepresentation ??
     opportunity.starterSemanticRepresentation ??
     opportunity.scenarioNight.starterSemanticRepresentation
-  if (!starterSemanticRepresentationIsSelectedStopBacked(representation)) {
+  if (
+    !starterSemanticRepresentationIsSelectedStopBacked(representation) ||
+    !starterSemanticRepresentationHasPublicCoffeeBooksEvidence(representation)
+  ) {
     return {
       allowed: false,
       status: 'rejected',
       reason: 'coffee_books_semantic_representation_missing',
       failedRoles: [],
       seedProjectionAvailable: true,
+      hardCommitFeasibility: buildFeasibility({
+        status: 'failed',
+        failureClass: 'semantic_contract_failed',
+      }),
     }
   }
 
@@ -302,6 +446,11 @@ function assessCoffeeBooksScenarioBuildability(params: {
       reason: 'scenario_route_seed_projection_missing',
       failedRoles: [...missingRoles],
       seedProjectionAvailable: false,
+      hardCommitFeasibility: buildFeasibility({
+        status: 'failed',
+        failureClass: 'missing_seed_identity',
+        failedRole: missingRoles[0] ?? null,
+      }),
     }
   }
 
@@ -333,6 +482,11 @@ function assessCoffeeBooksScenarioBuildability(params: {
           : 'scenario_route_buildability_mismatch',
       failedRoles: [...failedRoles],
       seedProjectionAvailable: true,
+      hardCommitFeasibility: buildFeasibility({
+        status: 'failed',
+        failureClass: 'role_mapping_mismatch',
+        failedRole: failedRoles[0] ?? null,
+      }),
     }
   }
 
@@ -342,6 +496,7 @@ function assessCoffeeBooksScenarioBuildability(params: {
     reason: null,
     failedRoles: [],
     seedProjectionAvailable: true,
+    hardCommitFeasibility: buildFeasibility(),
   }
 }
 
@@ -406,6 +561,7 @@ function buildArtifactsForPool(params: {
       scenarioRouteBuildabilityReason: admission.reason,
       scenarioRouteBuildabilityFailedRoles: admission.failedRoles,
       scenarioRouteBuildabilitySeedProjectionAvailable: admission.seedProjectionAvailable,
+      hardCommitFeasibility: admission.hardCommitFeasibility,
     })
   })
 

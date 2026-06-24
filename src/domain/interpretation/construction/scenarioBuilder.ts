@@ -225,7 +225,13 @@ export type ScenarioSpatialLadderVerdict = {
   notes: string[]
   starterId?: string
   routeContractPresent: boolean
+  spatialLadderApproved: boolean
+  spatialRouteContractApproved: boolean
   approvedForCurrentRouteContract: boolean
+  hardCommitFeasibility: {
+    status: 'not_checked'
+    reason: 'requires_run_generate_plan_exact_preservation'
+  }
   expectedHardCommitMaterializable: boolean
   rejectionReason?: 'scenario_spatial_ladder_scattered' | 'scenario_spatial_ladder_route_contract_rejected'
 }
@@ -439,6 +445,20 @@ const COFFEE_BOOKS_SEMANTIC_MATCHERS: Array<{
   { evidenceType: 'cultural', terms: ['cultural center', 'cultural venue'] },
 ]
 
+const COFFEE_BOOKS_EXPLICIT_EVIDENCE_TYPES = new Set<StarterSemanticEvidenceKind>([
+  'book',
+  'reading',
+  'literary',
+  'library',
+  'bookstore',
+])
+
+function isExplicitCoffeeBooksEvidenceType(
+  evidenceType: StarterSemanticEvidenceKind,
+): boolean {
+  return COFFEE_BOOKS_EXPLICIT_EVIDENCE_TYPES.has(evidenceType)
+}
+
 function findCoffeeBooksSemanticMatchesForValue(
   rawValue: string,
 ): Array<{
@@ -500,14 +520,14 @@ function collectCoffeeBooksSemanticMatches(stop: BuiltScenarioStop): StarterSema
           evidenceType: match.evidenceType,
           matchType: match.matchType,
           sourceScope: 'selected_stop_field',
-          admissible: true,
+          admissible: isExplicitCoffeeBooksEvidenceType(match.evidenceType),
         })),
       )
   })
 }
 
 function collectCoffeeBooksSemanticEvidence(stop: BuiltScenarioStop): StarterSemanticEvidence[] {
-  const matches = collectCoffeeBooksSemanticMatches(stop)
+  const matches = collectCoffeeBooksSemanticMatches(stop).filter((match) => match.admissible)
   const evidenceTypes: StarterSemanticEvidenceKind[] = []
   const matchedTerms: string[] = []
   for (const match of matches) {
@@ -552,7 +572,7 @@ function buildCoffeeBooksSemanticRepresentation(
     status: 'missing',
     evidence: [],
     matchedEvidence,
-    rejectionReasons: ['missing_explicit_book_reading_literary_or_cultural_stop'],
+    rejectionReasons: ['missing_explicit_book_reading_literary_library_or_bookstore_stop'],
   }
 }
 
@@ -1123,10 +1143,8 @@ function buildSpatialLadderVerdict(params: {
     geoStatus: params.geoStatus,
   })
   const approvedForCurrentRouteContract = routeContractApprovesShape(routeShapeClassification)
-  const expectedHardCommitMaterializable =
-    approvedForCurrentRouteContract &&
-    routeShapeClassification !== 'scattered' &&
-    spatial.repeatedClusterEscapeCount <= 1
+  const spatialLadderApproved = routeShapeClassification !== 'scattered'
+  const spatialRouteContractApproved = approvedForCurrentRouteContract
   const jumpCount = spatial.transitions.filter((transition) => transition.jumpUsed).length
   const rejected = !approvedForCurrentRouteContract || routeShapeClassification === 'scattered'
   return {
@@ -1142,8 +1160,14 @@ function buildSpatialLadderVerdict(params: {
     notes: spatial.notes,
     ...(params.evaluationContract?.starterId ? { starterId: params.evaluationContract.starterId } : {}),
     routeContractPresent: Boolean(params.evaluationContract?.routeContract),
+    spatialLadderApproved,
+    spatialRouteContractApproved,
     approvedForCurrentRouteContract,
-    expectedHardCommitMaterializable,
+    hardCommitFeasibility: {
+      status: 'not_checked',
+      reason: 'requires_run_generate_plan_exact_preservation',
+    },
+    expectedHardCommitMaterializable: false,
     ...(rejected
       ? {
           rejectionReason:
@@ -2003,20 +2027,20 @@ export function buildScenarioNightsFromCandidateBoard(
         flavorLine: SCENARIO_FLAVOR_LINE[board.scenarioFamily],
         stops: [],
         whyThisWorks:
-          'Coffee & Books requires at least one selected stop with explicit book, reading, literary, library, bookstore, museum, gallery, art, exhibit, or cultural evidence.',
+          'Coffee & Books requires at least one selected stop with explicit book, reading, literary, library, or bookstore evidence.',
         complete: false,
         missingStopTypes: requiredStopTypes,
         evaluation: {
           stopEvaluations: [],
           passesGreatStopStandard: false,
           failedStops: ['coffee_books_semantic_representation'],
-          notes: ['Coffee & Books semantic representation gate rejected route supply without explicit Books/culture evidence.'],
+          notes: ['Coffee & Books semantic representation gate rejected route supply without explicit book, library, literary, or bookstore evidence.'],
         },
         starterSemanticRepresentation: {
           starterPackId: 'coffee-books',
           status: 'missing',
           evidence: [],
-          rejectionReasons: ['missing_explicit_book_reading_literary_or_cultural_stop'],
+          rejectionReasons: ['missing_explicit_book_reading_literary_library_or_bookstore_stop'],
         },
       },
     ]

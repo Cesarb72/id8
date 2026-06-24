@@ -82,6 +82,14 @@ const coffeeBooksExplicitSemanticMatchers: Array<{
   { evidenceType: 'cultural', terms: ['cultural center', 'cultural venue'] },
 ]
 
+const publicCoffeeBooksEvidenceTypes = new Set<StarterSemanticEvidenceKind>([
+  'book',
+  'reading',
+  'literary',
+  'library',
+  'bookstore',
+])
+
 function normalizeToken(value: string): string {
   return value
     .toLowerCase()
@@ -163,7 +171,7 @@ export function collectCoffeeBooksSemanticEvidenceMatchesFromRouteStop(
         evidenceType: match.evidenceType,
         matchType: match.matchType,
         sourceScope,
-        admissible: admissibleField,
+        admissible: admissibleField && publicCoffeeBooksEvidenceTypes.has(match.evidenceType),
       })),
     )
   })

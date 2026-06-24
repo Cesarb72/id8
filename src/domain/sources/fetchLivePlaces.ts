@@ -37,6 +37,17 @@ interface LiveCandidatesByQueryDiagnostics {
   approvedCount: number
   demotedCount: number
   suppressedCount: number
+  candidates?: Array<{
+    name: string
+    venueId?: string
+    providerPlaceId?: string
+    sourceTypes: string[]
+    providerResultSummary: boolean
+    normalizedResult: boolean
+    candidateBoardAdmission: boolean
+    pocketFilter: 'admitted' | 'outside_pocket_envelope' | 'not_applicable' | 'unknown_drop_stage'
+    dropReason?: string
+  }>
 }
 
 export interface LiveSourceDiagnostics {
@@ -758,12 +769,47 @@ export async function fetchLivePlaces(
   const deduped = dedupeByPlaceId(normalized.venues)
   const pocketFiltered = applyPocketFilter(deduped.venues, pocketHint)
   const venues = pocketFiltered.venues
+  const selectedVenueIds = new Set(venues.map((venue) => venue.id))
+  const normalizedVenueIds = new Set(normalized.venues.map((venue) => venue.id))
   const successfulQueries = providerResults.queryCounts.length
   const liveCandidatesByQuery: LiveCandidatesByQueryDiagnostics[] = queryPlan.map((query) => {
     const mapped = rawPlaces.filter((rawPlace) => rawPlace.sourceQueryLabel === query.label)
     const normalizedForQuery = normalized.venues.filter(
       (venue) => venue.source.sourceQueryLabel === query.label,
     )
+    const normalizedByRawId = new Map(normalizedForQuery.map((venue) => [venue.id, venue]))
+    const candidates = mapped.map((rawPlace) => {
+      const normalizedVenue = normalizedByRawId.get(rawPlace.id)
+      const normalizedResult = Boolean(normalizedVenue)
+      const candidateBoardAdmission = Boolean(normalizedVenue && selectedVenueIds.has(normalizedVenue.id))
+      const pocketFilter: NonNullable<
+        LiveCandidatesByQueryDiagnostics['candidates']
+      >[number]['pocketFilter'] =
+        !pocketHint
+          ? 'not_applicable'
+          : candidateBoardAdmission
+            ? 'admitted'
+            : normalizedResult
+              ? 'outside_pocket_envelope'
+              : 'unknown_drop_stage'
+      return {
+        name: rawPlace.name,
+        venueId: normalizedVenue?.id ?? rawPlace.id,
+        ...((normalizedVenue?.source.providerRecordId ?? rawPlace.providerRecordId)
+          ? { providerPlaceId: normalizedVenue?.source.providerRecordId ?? rawPlace.providerRecordId }
+          : {}),
+        sourceTypes: normalizedVenue?.source.sourceTypes ?? rawPlace.sourceTypes ?? [],
+        providerResultSummary: true,
+        normalizedResult,
+        candidateBoardAdmission,
+        pocketFilter,
+        ...(!normalizedResult && !normalizedVenueIds.has(rawPlace.id)
+          ? { dropReason: 'normalization_or_dedupe_drop' }
+          : pocketFilter === 'outside_pocket_envelope'
+            ? { dropReason: pocketFiltered.reason ?? 'outside_pocket_envelope' }
+            : {}),
+      }
+    })
     return {
       label: query.label,
       template: query.template,
@@ -774,6 +820,7 @@ export async function fetchLivePlaces(
       approvedCount: countByGateStatus(normalizedForQuery, 'approved'),
       demotedCount: countByGateStatus(normalizedForQuery, 'demoted'),
       suppressedCount: countByGateStatus(normalizedForQuery, 'suppressed'),
+      candidates,
     }
   })
 

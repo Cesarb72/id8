@@ -1,4 +1,5 @@
 import type { DirectionContractBuildability } from '../../../domain/bearings/assessDirectionContractBuildability'
+import type { CurateHardCommitDiagnostics } from '../../../domain/types/diagnostics'
 
 type CurateFailureKind = 'structural_infeasibility' | 'validation_failure' | 'runtime_error'
 type CurateRepairQualificationStatus = 'committable' | 'infeasible'
@@ -39,6 +40,7 @@ export interface CuratePreviewCommitabilityStateLike<
   errorMessageRaw?: string | null
   curateCommitSemantics?: CurateCommitSemantics
   hardCommitRequired?: boolean
+  hardCommitFeasibility?: CurateHardCommitDiagnostics['hardCommitFeasibility']
   failedRoles: CurateStopRole[]
   contractBuildabilityStatus?: DirectionContractBuildability['contractBuildabilityStatus']
   missingRoleForContract: TDirectionCoreRole | null

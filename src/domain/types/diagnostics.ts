@@ -128,6 +128,18 @@ export interface LiveRoleLeaderDiagnostics {
   timeConfidence: number
 }
 
+export interface LiveQueryCandidateDispositionDiagnostics {
+  name: string
+  venueId?: string
+  providerPlaceId?: string
+  sourceTypes: string[]
+  providerResultSummary: boolean
+  normalizedResult: boolean
+  candidateBoardAdmission: boolean
+  pocketFilter: 'admitted' | 'outside_pocket_envelope' | 'not_applicable' | 'unknown_drop_stage'
+  dropReason?: string
+}
+
 export interface LiveQueryCandidateDiagnostics {
   label: string
   template: string
@@ -138,6 +150,7 @@ export interface LiveQueryCandidateDiagnostics {
   approvedCount: number
   demotedCount: number
   suppressedCount: number
+  candidates?: LiveQueryCandidateDispositionDiagnostics[]
 }
 
 export type LiveCompetitionStage =
@@ -758,6 +771,16 @@ export interface PreRankingAnchorRoleLockTrace {
 export interface CurateHardCommitRoleMatchDiagnostics {
   venueId?: string
   venueName?: string
+  targetVenueId?: string
+  targetVenueName?: string
+  expectedArcRole?: 'warmup' | 'peak' | 'cooldown'
+  failureClass?:
+    | 'missing_seed_identity'
+    | 'missing_discovery_preference_identity'
+    | 'role_mapping_mismatch'
+    | 'planner_inventory_mismatch'
+    | 'exact_preservation_failed'
+    | 'semantic_contract_failed'
   exactMatch: boolean
 }
 
@@ -788,6 +811,52 @@ export interface CurateHardCommitDiagnostics {
   sampledCandidates: CurateHardCommitCandidateDiagnostics[]
   finalWinner: CurateHardCommitCandidateDiagnostics
   finalWinnerMatchType: 'exact_selected_artifact_match' | 'partial_role_match' | 'pure_fallback'
+  hardCommitFeasibility?: {
+    routeArtifactId?: string | null
+    status: 'passed' | 'failed' | 'not_applicable'
+    failureClass?:
+      | 'missing_seed_identity'
+      | 'missing_discovery_preference_identity'
+      | 'role_mapping_mismatch'
+      | 'planner_inventory_mismatch'
+      | 'exact_preservation_failed'
+      | 'semantic_contract_failed'
+    failedRole?: 'start' | 'highlight' | 'windDown' | null
+    failedStopId?: string | null
+    failedStopName?: string | null
+    selectedStopIds: {
+      start: string | null
+      highlight: string | null
+      windDown: string | null
+    }
+    seedVenueIds: {
+      start: string | null
+      highlight: string | null
+      windDown: string | null
+    }
+    discoveryPreferenceVenueIds: {
+      start: string | null
+      highlight: string | null
+      windDown: string | null
+    }
+    roleDiagnostics: Array<{
+      role: 'start' | 'highlight' | 'windDown'
+      expectedArcRole: 'warmup' | 'peak' | 'cooldown'
+      selectedStopId: string | null
+      selectedStopName: string | null
+      seedVenueId: string | null
+      discoveryPreferenceVenueId: string | null
+      presentInProjectedRoleSet: boolean
+      failed: boolean
+      failureClass?:
+        | 'missing_seed_identity'
+        | 'missing_discovery_preference_identity'
+        | 'role_mapping_mismatch'
+        | 'planner_inventory_mismatch'
+        | 'exact_preservation_failed'
+        | 'semantic_contract_failed'
+    }>
+  }
 }
 
 export interface GenerationDiagnostics {

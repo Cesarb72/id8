@@ -561,6 +561,10 @@ interface CuratePreviewCommitabilityState {
   errorMessageRaw?: string | null
   curateCommitSemantics?: 'seed_guided' | 'approved_route_hard_commit' | null
   hardCommitRequired?: boolean
+  hardCommitFeasibility?: CuratePreviewCommitabilityStateLike<
+    DirectionCoreRole,
+    CurateApprovedRefinementPayload
+  >['hardCommitFeasibility']
   failedRoles: Array<'start' | 'highlight' | 'windDown'>
   contractBuildabilityStatus?: DirectionContractBuildability['contractBuildabilityStatus']
   missingRoleForContract: DirectionCoreRole | null
@@ -872,7 +876,7 @@ interface CurateVisibleCardModel {
   happeningsLine?: string
   whyChooseLine: string
   whyTonightProofLine?: string
-  cardDisplaySource: 'approved_payload' | 'candidate_draft' | 'fallback_unqualified'
+  cardDisplaySource: 'approved_payload' | 'candidate_draft' | 'diagnostic_rejected'
   qualificationDisplayStatus: 'unchecked' | 'checking' | 'qualified' | 'rejected' | 'runtime_error'
   qualificationStatus: 'unchecked' | 'checking' | 'qualified' | 'rejected' | 'runtime_error'
   hasApprovedPayload: boolean
@@ -3119,7 +3123,7 @@ function buildCurateVisibleCardModelFromArtifact(params: {
       hasApprovedPayload
         ? 'approved_payload'
         : qualificationStatus === 'rejected' || qualificationStatus === 'runtime_error'
-          ? 'fallback_unqualified'
+          ? 'diagnostic_rejected'
           : 'candidate_draft',
     isSelectable: hasApprovedPayload,
   } as const
@@ -13179,8 +13183,11 @@ export function SandboxConciergePage({
     )
     const namedBookstoreTargets = [
       'recycle bookstore',
+      'motata',
+      'hicklebee',
       'authors bookstore',
       'kinokuniya bookstore',
+      'barnes & noble',
       'books inc',
       'recycle bookstore west',
     ]
@@ -13248,13 +13255,55 @@ export function SandboxConciergePage({
         ...candidate,
       })),
     )
+    const normalizeBookstoreDiagnosticName = (value: string): string =>
+      value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
+    const liveCandidateDispositionRows = (
+      scenarioCandidateBoard?.debug?.liveRetrieval?.liveCandidatesByQuery ?? []
+    ).flatMap((query) =>
+      (query.candidates ?? []).map((candidate) => ({
+        queryLabel: query.label,
+        queryTemplate: query.template,
+        queryRoleHint: query.roleHint,
+        ...candidate,
+      })),
+    )
     const bookstoreCandidateDisposition = namedBookstoreTargets.map((targetName) => {
+      const normalizedTargetName = normalizeBookstoreDiagnosticName(targetName)
       const matches = allDiagnosticCandidates.filter((candidate) =>
-        candidate.name.toLowerCase().includes(targetName),
+        normalizeBookstoreDiagnosticName(candidate.name).includes(normalizedTargetName),
+      )
+      const liveMatches = liveCandidateDispositionRows.filter((candidate) =>
+        normalizeBookstoreDiagnosticName(candidate.name).includes(normalizedTargetName),
       )
       return {
         targetName,
+        seenInProviderResults: liveMatches.some((candidate) => candidate.providerResultSummary),
+        normalizedResult: liveMatches.some((candidate) => candidate.normalizedResult),
+        pocketFilterDisposition:
+          liveMatches.find((candidate) => candidate.pocketFilter !== 'not_applicable')?.pocketFilter ??
+          liveMatches[0]?.pocketFilter ??
+          null,
+        liveDropReasons: [...new Set(liveMatches.map((candidate) => candidate.dropReason).filter(Boolean))],
+        liveCandidateAppearances: liveMatches.map((candidate) => ({
+          queryLabel: candidate.queryLabel,
+          queryTemplate: candidate.queryTemplate,
+          queryRoleHint: candidate.queryRoleHint,
+          venueId: candidate.venueId ?? null,
+          providerPlaceId: candidate.providerPlaceId ?? null,
+          name: candidate.name,
+          sourceTypes: candidate.sourceTypes,
+          providerResultSummary: candidate.providerResultSummary,
+          normalizedResult: candidate.normalizedResult,
+          candidateBoardAdmission: candidate.candidateBoardAdmission,
+          pocketFilter: candidate.pocketFilter,
+          dropReason: candidate.dropReason ?? null,
+        })),
         seenInCandidateBoard: matches.length > 0,
+        candidateBoardAdmission:
+          matches.length > 0 || liveMatches.some((candidate) => candidate.candidateBoardAdmission),
+        finalSelectedRouteStop:
+          matches.some((candidate) => selectedScenarioVenueIds.has(candidate.venueId)) ||
+          liveMatches.some((candidate) => candidate.venueId && selectedScenarioVenueIds.has(candidate.venueId)),
         appearances: matches.map((candidate) => ({
           stopType: candidate.stopType,
           venueId: candidate.venueId,
@@ -13435,6 +13484,7 @@ export function SandboxConciergePage({
         ),
         visibleCardModelProduced: Boolean(model),
         qualificationStatus: model?.qualificationStatus ?? getCurateQualificationStatus(preflight),
+        hardCommitFeasibility: preflight?.hardCommitFeasibility ?? null,
         hasApprovedPayload: model?.hasApprovedPayload ?? false,
         rejectionReason:
           preflight?.failedCheck ??
@@ -21106,6 +21156,9 @@ export function SandboxConciergePage({
         'none'
       : 'n/a'
     const exactFailedRoles = preflight?.failedRoles.join(', ') || 'none'
+    const hardCommitFeasibility = preflight?.hardCommitFeasibility
+      ? `${preflight.hardCommitFeasibility.status}:${preflight.hardCommitFeasibility.failureClass ?? 'none'}`
+      : 'n/a'
     return [
       `artifactId:${artifact.id}`,
       `selectedStartId/name:${formatSelectedVenue(selectedStartId)}`,
@@ -21115,6 +21168,7 @@ export function SandboxConciergePage({
       `candidatePoolSufficiencyByRole:${candidatePoolSufficiencyByRole}`,
       `missingRoleForContract:${preflight?.missingRoleForContract ?? 'none'}`,
       `hardCommitCandidateCount:${preflight?.hardCommitCandidateCount == null ? 'n/a' : String(preflight.hardCommitCandidateCount)}`,
+      `hardCommitFeasibility:${hardCommitFeasibility}`,
       `windDownPoolIds/names:${windDownPoolIdsAndNames}`,
       `sampledCandidates:${preflight?.sampledCandidatesSummary ?? 'n/a'}`,
       `exactFailedRole(s):${exactFailedRoles}`,

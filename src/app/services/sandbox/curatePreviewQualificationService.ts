@@ -28,6 +28,65 @@ import {
 } from './sandboxPlannerParityService'
 
 type CurateStopRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
+type HardCommitFeasibilityState = CuratePreviewCommitabilityStateLike['hardCommitFeasibility']
+
+function expectedArcRoleForCuratePreviewRole(
+  role: CurateStopRole,
+): 'warmup' | 'peak' | 'cooldown' {
+  if (role === 'start') {
+    return 'warmup'
+  }
+  if (role === 'highlight') {
+    return 'peak'
+  }
+  return 'cooldown'
+}
+
+function buildFailedCuratePreviewHardCommitFeasibility(params: {
+  artifactId: string
+  failedRoles: CurateStopRole[]
+  failureClass: NonNullable<NonNullable<HardCommitFeasibilityState>['failureClass']>
+}): HardCommitFeasibilityState {
+  const roles = ['start', 'highlight', 'windDown'] as const
+  const failedRoleSet = new Set<CurateStopRole>(params.failedRoles)
+  return {
+    routeArtifactId: params.artifactId,
+    status: 'failed',
+    failureClass: params.failureClass,
+    failedRole: params.failedRoles[0] ?? null,
+    failedStopId: null,
+    failedStopName: null,
+    selectedStopIds: {
+      start: null,
+      highlight: null,
+      windDown: null,
+    },
+    seedVenueIds: {
+      start: null,
+      highlight: null,
+      windDown: null,
+    },
+    discoveryPreferenceVenueIds: {
+      start: null,
+      highlight: null,
+      windDown: null,
+    },
+    roleDiagnostics: roles.map((role) => {
+      const failed = failedRoleSet.size === 0 || failedRoleSet.has(role)
+      return {
+        role,
+        expectedArcRole: expectedArcRoleForCuratePreviewRole(role),
+        selectedStopId: null,
+        selectedStopName: null,
+        seedVenueId: null,
+        discoveryPreferenceVenueId: null,
+        presentInProjectedRoleSet: false,
+        failed,
+        ...(failed ? { failureClass: params.failureClass } : {}),
+      }
+    }),
+  }
+}
 type CurateCommitSemantics = 'seed_guided' | 'approved_route_hard_commit'
 
 const approvedPayloadRouteMaterializationUnavailableReason =
@@ -444,6 +503,11 @@ export async function runCuratePreviewQualificationAttempt<
         errorMessageRaw: null,
         curateCommitSemantics,
         hardCommitRequired: true,
+        hardCommitFeasibility: buildFailedCuratePreviewHardCommitFeasibility({
+          artifactId: params.artifactId,
+          failedRoles: missingScenarioHardCommitSeedRoles,
+          failureClass: 'missing_seed_identity',
+        }),
         failedRoles: missingScenarioHardCommitSeedRoles,
         missingRoleForContract: null,
         selectedDirectionId: params.activeDirectionContract.id,
@@ -623,6 +687,9 @@ export async function runCuratePreviewQualificationAttempt<
           errorMessageRaw: null,
           curateCommitSemantics: 'seed_guided',
           hardCommitRequired: false,
+          ...(curateHardCommit?.hardCommitFeasibility
+            ? { hardCommitFeasibility: curateHardCommit.hardCommitFeasibility }
+            : {}),
           failedRoles:
             curateHardCommit?.failedRoles ?? ['start', 'highlight', 'windDown'],
           contractBuildabilityStatus:
@@ -722,6 +789,9 @@ export async function runCuratePreviewQualificationAttempt<
       curateCommitSemantics:
         curateHardCommit?.curateCommitSemantics ?? 'seed_guided',
       hardCommitRequired: curateHardCommit?.hardCommitRequired ?? false,
+      ...(curateHardCommit?.hardCommitFeasibility
+        ? { hardCommitFeasibility: curateHardCommit.hardCommitFeasibility }
+        : {}),
       failedRoles: commitParitySucceeded
         ? curateHardCommit?.failedRoles ?? []
         : curateHardCommit?.failedRoles ?? ['start', 'highlight', 'windDown'],
@@ -813,6 +883,11 @@ export async function runCuratePreviewQualificationAttempt<
           errorMessageRaw,
           curateCommitSemantics,
           hardCommitRequired: true,
+          hardCommitFeasibility: buildFailedCuratePreviewHardCommitFeasibility({
+            artifactId: params.artifactId,
+            failedRoles: ['start', 'highlight', 'windDown'],
+            failureClass: 'exact_preservation_failed',
+          }),
           failedRoles: ['start', 'highlight', 'windDown'],
           missingRoleForContract: null,
           selectedDirectionId: params.activeDirectionContract.id,
