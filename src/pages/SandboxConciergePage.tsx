@@ -11690,6 +11690,7 @@ export function SandboxConciergePage({
       directionCards,
       allDirectionCards,
       maxQualificationCandidateCount: 8,
+      starterPack: selectedStarterPack ?? null,
     })
   }, [
     admittedScenarioBackedVerifiedCityOpportunities,

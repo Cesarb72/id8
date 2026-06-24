@@ -21,8 +21,12 @@ import {
   type ContractEntryArtifact,
 } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import { buildContractEntryArtifactFromVerifiedOpportunity } from '../src/domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity.ts'
-import { buildScenarioNightsFromCandidateBoard } from '../src/domain/interpretation/construction/scenarioBuilder.ts'
+import {
+  buildScenarioNightsFromCandidateBoard,
+  type BuiltScenarioNight,
+} from '../src/domain/interpretation/construction/scenarioBuilder.ts'
 import type {
+  StopType,
   StopTypeCandidate,
   StopTypeCandidateBoard,
 } from '../src/domain/interpretation/discovery/stopTypeCandidateBoard.ts'
@@ -732,26 +736,38 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     },
     directionCards: bridgeDirectionCards,
     allDirectionCards: bridgeDirectionCards,
+    starterPack: scenario.starterPack,
   })
-  assert(
-    scenarioBridge.candidateArtifacts.length > 0,
-    `${scenario.mode}: scenario-backed Coffee & Books opportunity must become a candidate artifact through the shared Curate bridge.`,
+  const representedBridgeDiagnostics = scenarioBridge.diagnostics.filter(
+    (entry) => entry.starterSemanticStatus === 'represented',
+  )
+  const buildabilityRejectedBridgeDiagnostics = representedBridgeDiagnostics.filter(
+    (entry) =>
+      entry.scenarioRouteBuildabilityStatus === 'rejected' &&
+      Boolean(entry.scenarioRouteBuildabilityReason),
   )
   assert(
-    scenarioBridge.displayBackedArtifacts.length > 0,
-    `${scenario.mode}: scenario-backed Coffee & Books artifact must be direction-backed for display admission.`,
+    scenarioBridge.candidateArtifacts.length > 0 ||
+      buildabilityRejectedBridgeDiagnostics.length > 0,
+    `${scenario.mode}: represented scenario-backed Coffee & Books opportunity must either become a candidate artifact or fail closed on buildability before qualification.`,
   )
   assert(
-    scenarioBridge.qualificationCandidateArtifacts.length > 0,
-    `${scenario.mode}: represented scenario-backed artifact must enter qualification candidates.`,
+    scenarioBridge.displayBackedArtifacts.length > 0 ||
+      buildabilityRejectedBridgeDiagnostics.length > 0,
+    `${scenario.mode}: scenario-backed Coffee & Books artifact must be display-backed only when it passes buildability admission.`,
   )
   assert(
-    scenarioBridge.diagnostics.some(
+    scenarioBridge.qualificationCandidateArtifacts.length > 0 ||
+      buildabilityRejectedBridgeDiagnostics.length > 0,
+    `${scenario.mode}: represented scenario-backed artifact must enter qualification candidates only when buildable.`,
+  )
+  assert(
+    representedBridgeDiagnostics.some(
       (entry) =>
-        entry.starterSemanticStatus === 'represented' &&
-        entry.includedInQualificationCandidateArtifacts,
+        entry.includedInQualificationCandidateArtifacts ||
+        entry.scenarioRouteBuildabilityStatus === 'rejected',
     ),
-    `${scenario.mode}: shared bridge diagnostics must expose represented qualification candidate inclusion.`,
+    `${scenario.mode}: shared bridge diagnostics must expose represented qualification inclusion or buildability rejection.`,
   )
   assert(artifact, `${scenario.mode}: ContractEntryArtifact must be produced before reveal.`)
   assert(
@@ -959,6 +975,259 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
     'Scenario Builder diagnostics must keep Coffee & Books semantic rejection reasons available.',
   )
   process.stdout.write('Coffee & Books semantic Scenario Builder gate: passed\n')
+}
+
+function createCoffeeBooksBridgeScenarioStop(params: {
+  venueId: string
+  name: string
+  position: BuiltScenarioNight['stops'][number]['position']
+  stopType: StopType
+  venueCategory: VenueCategory
+  venueSubcategory: string
+  roleFit: BuiltScenarioNight['stops'][number]['roleFit']
+}): BuiltScenarioNight['stops'][number] {
+  return {
+    venueId: params.venueId,
+    name: params.name,
+    position: params.position,
+    stopType: params.stopType,
+    venueCategory: params.venueCategory,
+    venueSubcategory: params.venueSubcategory,
+    sourceTypes: [params.venueCategory, params.venueSubcategory],
+    venueTags: [params.venueCategory, params.venueSubcategory],
+    authorityScore: 0.86,
+    currentRelevance: 0.82,
+    reasons: [`${params.name} fits the Coffee & Books test scenario.`],
+    momentLabel: params.name,
+    whyThisStop: `${params.name} is part of the exact scenario-backed route.`,
+    roleFit: params.roleFit,
+  }
+}
+
+function createCoffeeBooksBridgeScenarioNight(params: {
+  id: string
+  windDownVenueId: string
+  windDownName: string
+  windDownCategory: VenueCategory
+  windDownSubcategory: string
+  windDownStopType: StopType
+}): BuiltScenarioNight {
+  const stops: BuiltScenarioNight['stops'] = [
+    createCoffeeBooksBridgeScenarioStop({
+      venueId: `${params.id}-start`,
+      name: 'Rosicrucian Reading Gallery',
+      position: 'start',
+      stopType: 'cultural_institution',
+      venueCategory: 'museum',
+      venueSubcategory: 'gallery',
+      roleFit: { start: 0.86, highlight: 0.74, windDown: 0.5 },
+    }),
+    createCoffeeBooksBridgeScenarioStop({
+      venueId: `${params.id}-highlight`,
+      name: 'Literary Culture Museum',
+      position: 'highlight',
+      stopType: 'cultural_institution',
+      venueCategory: 'museum',
+      venueSubcategory: 'museum',
+      roleFit: { start: 0.58, highlight: 0.9, windDown: 0.42 },
+    }),
+    createCoffeeBooksBridgeScenarioStop({
+      venueId: params.windDownVenueId,
+      name: params.windDownName,
+      position: 'closer',
+      stopType: params.windDownStopType,
+      venueCategory: params.windDownCategory,
+      venueSubcategory: params.windDownSubcategory,
+      roleFit: { start: 0.32, highlight: 0.34, windDown: 0.88 },
+    }),
+  ]
+  const starterSemanticRepresentation = buildCoffeeBooksSemanticRepresentationFromRouteStops(
+    stops.map((stop) => ({
+      venueId: stop.venueId,
+      name: stop.name,
+      position: stop.position,
+      stopType: stop.stopType,
+      evidenceParts: [
+        { field: 'venueCategory', value: stop.venueCategory },
+        { field: 'venueSubcategory', value: stop.venueSubcategory },
+        { field: 'sourceTypes', value: stop.sourceTypes },
+        { field: 'tags', value: stop.venueTags },
+      ],
+    })),
+  )
+
+  return {
+    id: params.id,
+    city: 'San Jose',
+    persona: 'romantic',
+    vibe: 'cultured',
+    scenarioFamily: 'romantic_cultured',
+    title: `${params.id} Coffee & Books scenario`,
+    flavorLine: 'A Coffee & Books exact-route buildability fixture.',
+    stops,
+    whyThisWorks: 'The route is represented and exact-route backed.',
+    complete: true,
+    starterSemanticRepresentation,
+  }
+}
+
+function createCoffeeBooksBridgeOpportunity(
+  night: BuiltScenarioNight,
+): VerifiedCityOpportunity {
+  const directionCards: RealityDirectionCard[] = [
+    {
+      id: `${night.id}-direction`,
+      cluster: 'chill',
+      card: {
+        title: `${night.title} direction`,
+        whyNow: 'Scenario-backed route.',
+        whyYou: 'Coffee & Books route.',
+        proofLine: 'Buildability fixture.',
+        confirmation: 'Coffee & Books scenario route',
+      },
+      debugMeta: {
+        pocketId: `${night.id}-pocket`,
+        archetype: 'cultural',
+        confidence: 0.9,
+      },
+    },
+  ]
+  const opportunity = mapBuiltScenarioNightToVerifiedOpportunity({
+    night,
+    districtDiscoveryCards: [{ id: 'san-jose', name: 'San Jose' }],
+    directionCards,
+    personaLabel: 'Romantic',
+    vibeLabel: 'Cultured',
+    expandedProjection: true,
+  })
+  assert(opportunity, `${night.id}: fixture opportunity must map from built scenario night.`)
+  return {
+    ...opportunity,
+    selection: {
+      pocketId: `${night.id}-pocket`,
+      directionId: `${night.id}-direction`,
+    },
+  }
+}
+
+function assertCoffeeBooksScenarioBackedBuildabilityAdmission(starterPack: StarterPack): void {
+  const invalidOpportunity = createCoffeeBooksBridgeOpportunity(
+    createCoffeeBooksBridgeScenarioNight({
+      id: 'coffee-books-invalid-hedley',
+      windDownVenueId: 'sj-hedley-club-lounge',
+      windDownName: 'Hedley Club Lounge',
+      windDownCategory: 'bar',
+      windDownSubcategory: 'cocktails',
+      windDownStopType: 'atmospheric_nightcap',
+    }),
+  )
+  const validOpportunity = createCoffeeBooksBridgeOpportunity(
+    createCoffeeBooksBridgeScenarioNight({
+      id: 'coffee-books-valid-low-energy',
+      windDownVenueId: 'coffee-books-valid-low-energy-wind-down',
+      windDownName: 'Quiet Reading Cafe',
+      windDownCategory: 'cafe',
+      windDownSubcategory: 'quiet',
+      windDownStopType: 'atmospheric_nightcap',
+    }),
+  )
+  const directionCards: RealityDirectionCard[] = [invalidOpportunity, validOpportunity].map(
+    (opportunity) => ({
+      id: opportunity.selection.directionId ?? `${opportunity.id}-direction`,
+      cluster: 'chill',
+      card: {
+        title: `${opportunity.id} direction`,
+        whyNow: 'Scenario-backed route.',
+        whyYou: 'Coffee & Books route.',
+        proofLine: 'Buildability fixture.',
+        confirmation: 'Coffee & Books scenario route',
+      },
+      debugMeta: {
+        pocketId: opportunity.selection.pocketId ?? `${opportunity.id}-pocket`,
+        archetype: 'cultural',
+        confidence: 0.9,
+      },
+    }),
+  )
+
+  const invalidBridge = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [invalidOpportunity],
+    fallbackOpportunities: [invalidOpportunity],
+    ecsState: {
+      exploration: 'focused',
+      discovery: 'reliable',
+      highlight: 'standout',
+    },
+    directionCards,
+    allDirectionCards: directionCards,
+    starterPack,
+  })
+  assert(
+    invalidBridge.candidateArtifacts.length === 0 &&
+      invalidBridge.displayBackedArtifacts.length === 0 &&
+      invalidBridge.qualificationCandidateArtifacts.length === 0,
+    'Coffee & Books scenario-backed route with bar/energy-3 windDown must be rejected before hard-commit qualification.',
+  )
+  assert(
+    invalidBridge.diagnostics.some(
+      (entry) =>
+        entry.scenarioRouteBuildabilityStatus === 'rejected' &&
+        entry.scenarioRouteBuildabilityReason === 'coffee_books_wind_down_energy_mismatch' &&
+        entry.scenarioRouteBuildabilityFailedRoles.includes('windDown') &&
+        !entry.includedInQualificationCandidateArtifacts,
+    ),
+    'Coffee & Books buildability diagnostics must expose wind-down energy rejection without runtime_error.',
+  )
+
+  const validBridge = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [validOpportunity],
+    fallbackOpportunities: [validOpportunity],
+    ecsState: {
+      exploration: 'focused',
+      discovery: 'reliable',
+      highlight: 'standout',
+    },
+    directionCards,
+    allDirectionCards: directionCards,
+    starterPack,
+  })
+  assert(
+    validBridge.candidateArtifacts.length > 0 &&
+      validBridge.displayBackedArtifacts.length > 0 &&
+      validBridge.qualificationCandidateArtifacts.length > 0,
+    'Represented Coffee & Books scenario-backed route with low-energy windDown must enter hard-commit qualification.',
+  )
+  assert(
+    validBridge.diagnostics.some(
+      (entry) =>
+        entry.scenarioRouteBuildabilityStatus === 'passed' &&
+        entry.includedInQualificationCandidateArtifacts,
+    ),
+    'Coffee & Books buildability diagnostics must expose admitted represented scenario-backed routes.',
+  )
+
+  const mixedBridge = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [invalidOpportunity, validOpportunity],
+    fallbackOpportunities: [invalidOpportunity, validOpportunity],
+    ecsState: {
+      exploration: 'focused',
+      discovery: 'reliable',
+      highlight: 'standout',
+    },
+    directionCards,
+    allDirectionCards: directionCards,
+    starterPack,
+  })
+  assert(
+    mixedBridge.qualificationCandidateArtifacts.some(
+      (artifact) => artifact.sourceOpportunityId === validOpportunity.id,
+    ) &&
+      !mixedBridge.qualificationCandidateArtifacts.some(
+        (artifact) => artifact.sourceOpportunityId === invalidOpportunity.id,
+      ),
+    'Coffee & Books bridge must allow a represented buildable scenario while keeping unbuildable scenarios out of qualification.',
+  )
+  process.stdout.write('Coffee & Books scenario-backed buildability admission: passed\n')
 }
 
 function assertCoffeeBooksCommittedRouteFallbackGate(): void {
@@ -1906,6 +2175,7 @@ async function main(): Promise<void> {
     }
   }
   assertCoffeeBooksScenarioGate(findStarterPack('coffee-books'))
+  assertCoffeeBooksScenarioBackedBuildabilityAdmission(findStarterPack('coffee-books'))
   assertCoffeeBooksCommittedRouteFallbackGate()
   assertCoffeeBooksCommittedRuntimeSummaryGate()
   assertCurateApprovedPayloadVisibleCardTruthInvariant()

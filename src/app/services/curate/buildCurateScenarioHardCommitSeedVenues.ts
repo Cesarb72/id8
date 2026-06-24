@@ -43,6 +43,55 @@ function roleAffinityFor(role: CurateHardCommitRole): Partial<Venue['roleAffinit
   }
 }
 
+function energyLevelForScenarioStop(
+  stop: BuiltScenarioStop,
+  role: CurateHardCommitRole,
+): number {
+  if (role === 'start') {
+    return 2
+  }
+  if (role === 'highlight' || role === 'windDown') {
+    if (
+      stop.venueCategory === 'cafe' ||
+      stop.venueCategory === 'dessert' ||
+      stop.venueCategory === 'museum' ||
+      stop.venueCategory === 'park'
+    ) {
+      return 2
+    }
+    if (stop.venueCategory === 'bar' || stop.venueCategory === 'restaurant') {
+      return 3
+    }
+    if (
+      stop.venueCategory === 'activity' ||
+      stop.venueCategory === 'event' ||
+      stop.venueCategory === 'live_music'
+    ) {
+      return 4
+    }
+    return 3
+  }
+  return 3
+}
+
+function socialDensityForScenarioStop(
+  stop: BuiltScenarioStop,
+  role: CurateHardCommitRole,
+): number {
+  if (role !== 'windDown') {
+    return 4
+  }
+  if (
+    stop.venueCategory === 'cafe' ||
+    stop.venueCategory === 'dessert' ||
+    stop.venueCategory === 'museum' ||
+    stop.venueCategory === 'park'
+  ) {
+    return 2
+  }
+  return 3
+}
+
 function scenarioStopToSeedVenue(params: {
   stop: BuiltScenarioStop
   role: CurateHardCommitRole
@@ -89,8 +138,8 @@ function scenarioStopToSeedVenue(params: {
       repeatVisitorScore: Math.max(0.52, stop.authorityScore - 0.08),
     },
     roleAffinity: roleAffinityFor(role),
-    energyLevel: role === 'windDown' ? 3 : role === 'start' ? 2 : 4,
-    socialDensity: role === 'windDown' ? 3 : 4,
+    energyLevel: energyLevelForScenarioStop(stop, role),
+    socialDensity: socialDensityForScenarioStop(stop, role),
     uniquenessScore: Math.max(0.62, stop.authorityScore),
     distinctivenessScore: Math.max(0.62, stop.authorityScore),
     underexposureScore: stop.isHiddenGem ? 0.74 : 0.48,
