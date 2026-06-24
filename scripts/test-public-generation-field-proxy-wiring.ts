@@ -1512,6 +1512,7 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       hardCommitRequired?: boolean
       hardCommitPreservationSucceeded?: boolean
       hardCommitCandidateCount?: number
+      throwFromPlanBuild?: Error
     } = {},
   ) => {
     let approvedPayloadBuildCount = 0
@@ -1551,6 +1552,9 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
     }, {
       runPlanBuild: async (_input, options) => {
         observedCurateCommitSemantics = options?.curateCommitSemantics ?? null
+        if (hardCommit.throwFromPlanBuild) {
+          throw hardCommit.throwFromPlanBuild
+        }
         return {
           trace: {
             curateHardCommit: {
@@ -1626,9 +1630,10 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       formatCurateFinalWinnerSummary: () => 'final winner',
       formatCurateHardCommitSampleCandidatesSummary: () => 'sample candidates',
       getCurateDiscoveryPreferenceVenueId: () => 'n/a',
-      getErrorName: () => 'n/a',
-      getErrorMessageRaw: () => 'n/a',
-      getCuratePreflightRuntimeReason: () => 'n/a',
+      getErrorName: (error) => error instanceof Error ? error.name : typeof error,
+      getErrorMessageRaw: (error) => error instanceof Error ? error.message : String(error),
+      getCuratePreflightRuntimeReason: (error) =>
+        error instanceof Error ? `curate_preflight_runtime_error:${error.name}` : 'curate_preflight_runtime_error',
     })
     return { result, approvedPayloadBuildCount, observedCurateCommitSemantics }
   }
@@ -1670,6 +1675,36 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
     'Scenario-backed Curate preflight must fail closed with a precise materialization reason when no exact-preserving route exists.',
   )
 
+  const thrownMaterializationAttempt = await runAttempt(alignedRoute, {
+    throwFromPlanBuild: new Error(
+      'Fallback arc recovery failed (no_honest_route_available). full=0 partial=0 highlightOnly=0',
+    ),
+  })
+  assert(
+    thrownMaterializationAttempt.result.kind === 'infeasible' &&
+      thrownMaterializationAttempt.approvedPayloadBuildCount === 0 &&
+      thrownMaterializationAttempt.observedCurateCommitSemantics ===
+        'approved_route_hard_commit' &&
+      thrownMaterializationAttempt.result.state.failedCheck ===
+        'approved_payload_route_materialization_unavailable' &&
+      thrownMaterializationAttempt.result.state.explicitFallbackReason ===
+        'approved_payload_route_materialization_unavailable' &&
+      thrownMaterializationAttempt.result.state.failureKind === 'structural_infeasibility',
+    'Known hard-commit fallback recovery errors must be classified as materialization unavailable, not runtime_error.',
+  )
+
+  const unexpectedAttempt = await runAttempt(alignedRoute, {
+    throwFromPlanBuild: new Error('unexpected planner failure'),
+  })
+  assert(
+    unexpectedAttempt.result.kind === 'unexpectedFailure' &&
+      unexpectedAttempt.approvedPayloadBuildCount === 0 &&
+      unexpectedAttempt.observedCurateCommitSemantics === 'approved_route_hard_commit' &&
+      unexpectedAttempt.result.state.failureKind === 'runtime_error' &&
+      unexpectedAttempt.result.state.failedCheck === null,
+    'Unexpected hard-commit planner errors must remain runtime_error.',
+  )
+
   const serviceSource = readFileSync(
     'src/app/services/sandbox/curatePreviewQualificationService.ts',
     'utf8',
@@ -1680,6 +1715,7 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       serviceSource.includes('approvedPayloadTruthFailureReason') &&
       serviceSource.includes('approved_route_hard_commit') &&
       serviceSource.includes('approved_payload_route_materialization_unavailable') &&
+      serviceSource.includes('isKnownHardCommitMaterializationError') &&
       serviceSource.includes('baseCommitParitySucceeded && !approvedPayloadTruthFailureReason'),
     'Curate preflight qualification must share the approved-payload truth invariant before payload construction.',
   )

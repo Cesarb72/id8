@@ -280,6 +280,16 @@ function shouldUseApprovedRouteHardCommit(params: {
   )
 }
 
+function isKnownHardCommitMaterializationError(params: {
+  errorName: string
+  errorMessageRaw: string
+}): boolean {
+  return (
+    params.errorName === 'Error' &&
+    params.errorMessageRaw.startsWith('Fallback arc recovery failed (')
+  )
+}
+
 function buildRepairDiagnostics<
   TDirectionCoreRole extends string,
   TApprovedPayload,
@@ -380,15 +390,15 @@ export async function runCuratePreviewQualificationAttempt<
     getCurateDiscoveryPreferenceVenueId:
       dependencies.getCurateDiscoveryPreferenceVenueId,
   })
+  const curateCommitSemantics: CurateCommitSemantics = shouldUseApprovedRouteHardCommit({
+    activeCandidateOpportunity: params.activeCandidateOpportunity,
+    selectedArtifactLineage: params.selectedArtifactLineage,
+    selectedArtifactDiscoveryPreferences: params.selectedArtifactDiscoveryPreferences,
+  })
+    ? 'approved_route_hard_commit'
+    : 'seed_guided'
 
   try {
-    const curateCommitSemantics: CurateCommitSemantics = shouldUseApprovedRouteHardCommit({
-      activeCandidateOpportunity: params.activeCandidateOpportunity,
-      selectedArtifactLineage: params.selectedArtifactLineage,
-      selectedArtifactDiscoveryPreferences: params.selectedArtifactDiscoveryPreferences,
-    })
-      ? 'approved_route_hard_commit'
-      : 'seed_guided'
     const result = await dependencies.runPlanBuild(
       {
         mode: 'curate',
@@ -713,6 +723,48 @@ export async function runCuratePreviewQualificationAttempt<
       preflightError instanceof PostPlannerCommitParityValidationError
     const errorName = dependencies.getErrorName(preflightError)
     const errorMessageRaw = dependencies.getErrorMessageRaw(preflightError)
+    const hardCommitMaterializationFailed =
+      curateCommitSemantics === 'approved_route_hard_commit' &&
+      isKnownHardCommitMaterializationError({
+        errorName,
+        errorMessageRaw,
+      })
+
+    if (hardCommitMaterializationFailed) {
+      return {
+        kind: 'infeasible',
+        artifactId: params.artifactId,
+        state: {
+          status: 'infeasible',
+          artifactId: params.artifactId,
+          hardCommitCandidateCount: 0,
+          rankedCandidateCount: 0,
+          explicitFallbackReason: approvedPayloadRouteMaterializationUnavailableReason,
+          failureKind: 'structural_infeasibility',
+          failedCheck: approvedPayloadRouteMaterializationUnavailableReason,
+          errorName,
+          errorMessageRaw,
+          curateCommitSemantics,
+          hardCommitRequired: true,
+          failedRoles: ['start', 'highlight', 'windDown'],
+          missingRoleForContract: null,
+          selectedDirectionId: params.activeDirectionContract.id,
+          activeDistrictPocketId: params.activeDistrictPocketId,
+          selectedArtifactLineageSummary: params.selectedArtifactLineageSummary,
+          plannerInputSummary: params.plannerInputSummary,
+          approvedRefinementEntryPayload: undefined,
+          ...repairDiagnostics,
+          windDownRepairSucceeded: false,
+          repairedHardCommitCandidateCount: params.repairState?.attempted ? 0 : null,
+          repairedFailureReason: params.repairState?.attempted
+            ? approvedPayloadRouteMaterializationUnavailableReason
+            : null,
+          repairedQualificationStatus: params.repairState?.attempted
+            ? 'infeasible'
+            : null,
+        },
+      }
+    }
 
     return {
       kind: 'unexpectedFailure',
@@ -730,8 +782,8 @@ export async function runCuratePreviewQualificationAttempt<
         failedCheck: isValidationFailure ? preflightError.failedCheck : null,
         errorName,
         errorMessageRaw,
-        curateCommitSemantics: 'seed_guided',
-        hardCommitRequired: false,
+        curateCommitSemantics,
+        hardCommitRequired: curateCommitSemantics === 'approved_route_hard_commit',
         failedRoles: [],
         contractBuildabilityStatus: isValidationFailure
           ? preflightError.directionValidation.contractBuildabilityStatus
