@@ -1899,6 +1899,98 @@ function assertCoffeeBooksScenarioBackedBuildabilityAdmission(starterPack: Start
     'Coffee & Books buildability diagnostics must expose admitted represented scenario-backed routes.',
   )
 
+  const rejectedMixedSourceOpportunity: VerifiedCityOpportunity = {
+    ...validOpportunity,
+    id: 'coffee-books-mixed-source-rejected',
+    scenarioNight: {
+      ...validOpportunity.scenarioNight!,
+      id: 'coffee-books-mixed-source-rejected',
+      complete: false,
+      geoCoherence: {
+        status: 'scattered',
+        rejectionReason: 'scenario_route_mixed_di_fallback_scattered',
+        geoBearingStopCount: 3,
+        uniqueGeoBucketCount: 3,
+        dominantGeoBucket: 'raw-pocket-rose-garden',
+        dominantGeoShare: 0.667,
+        mixedSourceDiagnostic: {
+          dominantDistrictIntelligenceBucket: 'raw-pocket-rose-garden',
+          fallbackBuckets: ['grid:2074:-6772'],
+          fallbackStops: [
+            {
+              venueId: 'live_google_bookstore',
+              name: 'Fallback Bookstore',
+              geoBucket: 'grid:2074:-6772',
+              distanceToDominantPocketM: 1091.7,
+              nearDominantPocket: false,
+            },
+          ],
+          fallbackDistanceThresholdM: 650,
+          fallbackNearEnoughToDominantPocket: false,
+        },
+        routeGeoBuckets: [
+          {
+            venueId: 'rose-garden-museum',
+            name: 'Rose Garden Museum',
+            position: 'highlight',
+            stopType: 'thoughtful_wine_or_lunch',
+            geoBucket: 'raw-pocket-rose-garden',
+            geoBucketSource: 'district_intelligence',
+            geoAssignmentMethod: 'district_intelligence_direct',
+          },
+          {
+            venueId: 'rose-garden-walk',
+            name: 'Rose Garden Walk',
+            position: 'mid',
+            stopType: 'atmospheric_detour',
+            geoBucket: 'raw-pocket-rose-garden',
+            geoBucketSource: 'district_intelligence',
+            geoAssignmentMethod: 'district_intelligence_direct',
+          },
+          {
+            venueId: 'live_google_bookstore',
+            name: 'Fallback Bookstore',
+            position: 'windDown',
+            stopType: 'atmospheric_nightcap',
+            geoBucket: 'grid:2074:-6772',
+            geoBucketSource: 'coordinate_fallback',
+            geoAssignmentMethod: 'coordinate_fallback',
+          },
+        ],
+      },
+    },
+  }
+  const rejectedMixedBridge = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [rejectedMixedSourceOpportunity],
+    fallbackOpportunities: [rejectedMixedSourceOpportunity],
+    ecsState: {
+      exploration: 'focused',
+      discovery: 'reliable',
+      highlight: 'standout',
+    },
+    directionCards,
+    allDirectionCards: directionCards,
+    starterPack,
+  })
+  assert(
+    rejectedMixedBridge.candidateArtifacts.length === 0 &&
+      rejectedMixedBridge.fallbackArtifacts.length === 0 &&
+      rejectedMixedBridge.displayBackedArtifacts.length === 0 &&
+      rejectedMixedBridge.fallbackDisplayBackedArtifacts.length === 0 &&
+      rejectedMixedBridge.qualificationCandidateArtifacts.length === 0,
+    'Mixed DI/fallback scattered scenario diagnostics must not produce candidate, fallback, display, or qualification artifacts.',
+  )
+  assert(
+    rejectedMixedBridge.diagnostics.some(
+      (entry) =>
+        entry.scenarioRouteBuildabilityStatus === 'rejected' &&
+        entry.scenarioRouteBuildabilityReason === 'scenario_route_mixed_di_fallback_scattered' &&
+        !entry.contractEntryArtifactProduced &&
+        !entry.includedInQualificationCandidateArtifacts,
+    ),
+    'Mixed DI/fallback scattered scenario diagnostics must be preserved without artifact production.',
+  )
+
   const mixedBridge = buildCurateScenarioBackedArtifactBridge({
     primaryOpportunities: [invalidOpportunity, validOpportunity],
     fallbackOpportunities: [invalidOpportunity, validOpportunity],
@@ -2128,6 +2220,14 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
   )
 
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
+  const scenarioBridgeSource = readFileSync(
+    'src/app/services/curate/buildCurateScenarioBackedArtifactBridge.ts',
+    'utf8',
+  )
+  const artifactBuilderSource = readFileSync(
+    'src/domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity.ts',
+    'utf8',
+  )
   assert(
     sandboxSource.includes('evaluateCoffeeBooksCommittedRouteSummaryAdmission') &&
       sandboxSource.includes('starterPackId: activeCurateStarterPackId') &&
@@ -2156,6 +2256,19 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
     sandboxSource.includes('activeCurateStarterPackId === \'coffee-books\'') &&
       sandboxSource.includes('!effectiveCurateSelectedArtifact'),
     'Coffee & Books no-card direction fallback summaries must not render without a starter-valid artifact.',
+  )
+  assert(
+    sandboxSource.includes(
+      'isCurateWrapperActive && resolvedScenarioFamily && scenarioCandidateBoard',
+    ) &&
+      sandboxSource.includes('return admittedScenarioBackedVerifiedCityOpportunities'),
+    'Supported Curate scenario boards must fail closed instead of falling back to legacy card artifacts when no coherent scenario route is admitted.',
+  )
+  assert(
+    scenarioBridgeSource.includes('scenario_route_mixed_di_fallback_scattered') &&
+      scenarioBridgeSource.includes('contract_entry_artifact_not_produced') &&
+      artifactBuilderSource.includes('canonicalNight?.complete === false'),
+    'Mixed DI/fallback scattered routes must remain diagnostic-only and avoid ContractEntryArtifact production.',
   )
   assert(
     sandboxSource.includes('data-id8-step-b-coffee-books-diagnostics') &&

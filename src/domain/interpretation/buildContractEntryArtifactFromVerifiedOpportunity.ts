@@ -25,6 +25,7 @@ interface VerifiedOpportunityArtifactBuilderScenarioStop {
 }
 
 interface VerifiedOpportunityArtifactBuilderScenarioNight {
+  complete?: boolean
   stops: VerifiedOpportunityArtifactBuilderScenarioStop[]
   evaluation?: ContractEntryArtifact['scenarioEvaluation']
   starterSemanticRepresentation?: StarterSemanticRepresentation
@@ -92,6 +93,9 @@ export function buildContractEntryArtifactFromVerifiedOpportunity(params: {
       return null
     }
     const canonicalNight = opportunity.scenarioNight
+    if (canonicalNight?.complete === false) {
+      return null
+    }
     const canonicalStart = canonicalNight?.stops.find((stop) => stop.position === 'start')
     const canonicalHighlight = canonicalNight?.stops.find((stop) => stop.position === 'highlight')
     const canonicalWindDownName =

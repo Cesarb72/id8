@@ -11387,6 +11387,9 @@ export function SandboxConciergePage({
       })
       return [...dedupedById.values()]
     }
+    if (isCurateWrapperActive && resolvedScenarioFamily && scenarioCandidateBoard) {
+      return admittedScenarioBackedVerifiedCityOpportunities
+    }
     // TODO(step2-integration): Scenario Builder output is the primary source of truth for supported families.
     if (resolvedScenarioFamily && admittedScenarioBackedVerifiedCityOpportunities.length > 0) {
       return admittedScenarioBackedVerifiedCityOpportunities
@@ -11395,7 +11398,9 @@ export function SandboxConciergePage({
   }, [
     admittedScenarioBackedVerifiedCityOpportunities,
     isBuildWrapperActive,
+    isCurateWrapperActive,
     resolvedScenarioFamily,
+    scenarioCandidateBoard,
     verifiedCityOpportunities,
   ])
 

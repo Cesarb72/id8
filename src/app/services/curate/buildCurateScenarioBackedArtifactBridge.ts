@@ -20,6 +20,7 @@ export type CurateScenarioBackedArtifactBridgeSourcePool = 'primary' | 'fallback
 type CurateScenarioBuildabilityAdmissionStatus = 'not_applicable' | 'passed' | 'rejected'
 type CurateScenarioBuildabilityAdmissionReason =
   | 'scenario_route_buildability_mismatch'
+  | 'scenario_route_mixed_di_fallback_scattered'
   | 'coffee_books_wind_down_energy_mismatch'
   | 'coffee_books_semantic_representation_missing'
   | 'scenario_route_seed_projection_missing'
@@ -244,6 +245,18 @@ function assessCoffeeBooksScenarioBuildability(params: {
       reason: null,
       failedRoles: [],
       seedProjectionAvailable: true,
+    }
+  }
+  if (
+    opportunity.scenarioNight?.geoCoherence?.rejectionReason ===
+    'scenario_route_mixed_di_fallback_scattered'
+  ) {
+    return {
+      allowed: false,
+      status: 'rejected',
+      reason: 'scenario_route_mixed_di_fallback_scattered',
+      failedRoles: [],
+      seedProjectionAvailable: false,
     }
   }
   if (!artifact || !opportunity.scenarioNight) {
