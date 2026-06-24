@@ -14,13 +14,17 @@ import type { RawPlace } from '../types/rawPlace'
 import type { SourceMode } from '../types/sourceMode'
 import type { StarterPack } from '../types/starterPack'
 import type { Venue } from '../types/venue'
+import type { LiveRetrievalPocketHint } from '../retrieval/liveEnvelope'
 
 type LivePlaceMapperInput = Parameters<typeof mapLivePlaceToRawPlaceWithDiagnostics>[0]
 
 interface QueryCenter {
-  id: 'core' | 'north' | 'south' | 'east' | 'west'
+  id: 'core' | 'north' | 'south' | 'east' | 'west' | 'pocket'
   lat: number
   lng: number
+  source?: LiveRetrievalPocketHint['source']
+  pocketId?: string
+  label?: string
 }
 
 interface LiveCandidatesByQueryDiagnostics {
@@ -42,6 +46,13 @@ export interface LiveSourceDiagnostics {
   queryCentersCount: number
   queryCentersUsed: Array<{ id: string; lat: number; lng: number }>
   queryRadiusM: number
+  pocketHint?: LiveRetrievalPocketHint
+  pocketCenteredRetrievalApplied: boolean
+  pocketFilterReason?: string
+  pocketFilterInputCount: number
+  pocketFilterInsideEnvelopeCount: number
+  pocketFilterCoordinateClusterCount: number
+  pocketFilterDroppedCount: number
   requestedKinds: LivePlaceKind[]
   queryCount: number
   labelsConsidered: number
@@ -91,6 +102,7 @@ export interface FetchLivePlacesResult {
 export interface FetchLivePlacesOptions {
   liveQueryLabels?: string[]
   maxQueryCenters?: number
+  pocketHint?: LiveRetrievalPocketHint
   sourceMode?: SourceMode
   envelope?: {
     maxProviderCalls?: number
@@ -134,6 +146,12 @@ const KNOWN_CITY_CENTERS: Record<string, { lat: number; lng: number }> = {
   denver: { lat: 39.7392, lng: -104.9903 },
   austin: { lat: 30.2672, lng: -97.7431 },
 }
+
+const POCKET_QUERY_RADIUS_MIN_M = 650
+const POCKET_QUERY_RADIUS_MAX_M = 1200
+const POCKET_RADIUS_BUFFER_M = 240
+const COORDINATE_CLUSTER_MAX_PAIRWISE_M = 650
+const COORDINATE_CLUSTER_MIN_VENUES = 3
 
 function normalizeCity(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/\./g, '')
@@ -207,6 +225,149 @@ function deriveQueryCenters(city: string, maxCenters: number, offsetM: number): 
     },
   ]
   return allCenters.slice(0, Math.max(1, Math.min(5, maxCenters)))
+}
+
+function derivePocketQueryCenter(hint: LiveRetrievalPocketHint): QueryCenter {
+  return {
+    id: 'pocket',
+    lat: Number(hint.centroid.lat.toFixed(5)),
+    lng: Number(hint.centroid.lng.toFixed(5)),
+    source: hint.source,
+    pocketId: hint.pocketId,
+    label: hint.pocketLabel,
+  }
+}
+
+function getPocketQueryRadiusM(hint: LiveRetrievalPocketHint | undefined, fallbackRadiusM: number): number {
+  if (!hint) {
+    return fallbackRadiusM
+  }
+  return Math.min(
+    POCKET_QUERY_RADIUS_MAX_M,
+    Math.max(POCKET_QUERY_RADIUS_MIN_M, Math.ceil(hint.radiusM + POCKET_RADIUS_BUFFER_M)),
+  )
+}
+
+function distanceM(
+  left: { lat: number; lng: number },
+  right: { lat: number; lng: number },
+): number {
+  const earthRadiusM = 6371000
+  const toRadians = (value: number) => (value * Math.PI) / 180
+  const deltaLat = toRadians(right.lat - left.lat)
+  const deltaLng = toRadians(right.lng - left.lng)
+  const leftLat = toRadians(left.lat)
+  const rightLat = toRadians(right.lat)
+  const haversine =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(leftLat) * Math.cos(rightLat) * Math.sin(deltaLng / 2) ** 2
+  return 2 * earthRadiusM * Math.asin(Math.sqrt(haversine))
+}
+
+function getVenueCoordinates(venue: Venue): { lat: number; lng: number } | undefined {
+  const latitude = venue.source.latitude
+  const longitude = venue.source.longitude
+  if (
+    typeof latitude !== 'number' ||
+    !Number.isFinite(latitude) ||
+    typeof longitude !== 'number' ||
+    !Number.isFinite(longitude)
+  ) {
+    return undefined
+  }
+  return { lat: latitude, lng: longitude }
+}
+
+function findCoherentCoordinateCluster(venues: Venue[]): Venue[] {
+  const coordinateVenues = venues.filter((venue) => getVenueCoordinates(venue))
+  let bestCluster: Venue[] = []
+
+  for (const anchor of coordinateVenues) {
+    const anchorCoordinates = getVenueCoordinates(anchor)
+    if (!anchorCoordinates) {
+      continue
+    }
+    const cluster = coordinateVenues.filter((candidate) => {
+      const candidateCoordinates = getVenueCoordinates(candidate)
+      return (
+        candidateCoordinates &&
+        distanceM(anchorCoordinates, candidateCoordinates) <= COORDINATE_CLUSTER_MAX_PAIRWISE_M
+      )
+    })
+    if (cluster.length > bestCluster.length) {
+      bestCluster = cluster
+    }
+  }
+
+  if (bestCluster.length < COORDINATE_CLUSTER_MIN_VENUES) {
+    return []
+  }
+
+  const internallyCoherent = bestCluster.every((left) => {
+    const leftCoordinates = getVenueCoordinates(left)
+    return (
+      leftCoordinates &&
+      bestCluster.every((right) => {
+        const rightCoordinates = getVenueCoordinates(right)
+        return (
+          rightCoordinates &&
+          distanceM(leftCoordinates, rightCoordinates) <= COORDINATE_CLUSTER_MAX_PAIRWISE_M
+        )
+      })
+    )
+  })
+
+  return internallyCoherent ? bestCluster : []
+}
+
+function applyPocketFilter(venues: Venue[], hint: LiveRetrievalPocketHint | undefined): {
+  venues: Venue[]
+  reason?: string
+  inputCount: number
+  insideEnvelopeCount: number
+  coordinateClusterCount: number
+  droppedCount: number
+} {
+  if (!hint) {
+    return {
+      venues,
+      inputCount: venues.length,
+      insideEnvelopeCount: 0,
+      coordinateClusterCount: 0,
+      droppedCount: 0,
+    }
+  }
+
+  const envelopeRadiusM = getPocketQueryRadiusM(hint, POCKET_QUERY_RADIUS_MIN_M)
+  const insideEnvelope = venues.filter((venue) => {
+    const coordinates = getVenueCoordinates(venue)
+    return coordinates && distanceM(hint.centroid, coordinates) <= envelopeRadiusM
+  })
+  const coordinateCluster =
+    insideEnvelope.length >= COORDINATE_CLUSTER_MIN_VENUES
+      ? []
+      : findCoherentCoordinateCluster(venues.filter((venue) => !insideEnvelope.includes(venue)))
+  const selected =
+    insideEnvelope.length > 0
+      ? insideEnvelope
+      : coordinateCluster.length > 0
+        ? coordinateCluster
+        : []
+  const selectedIds = new Set(selected.map((venue) => venue.id))
+
+  return {
+    venues: selected,
+    reason:
+      selected.length === 0
+        ? 'no_viable_pocket'
+        : insideEnvelope.length > 0
+          ? 'pocket_envelope_admitted'
+          : 'coordinate_only_cluster_admitted',
+    inputCount: venues.length,
+    insideEnvelopeCount: insideEnvelope.length,
+    coordinateClusterCount: coordinateCluster.length,
+    droppedCount: venues.filter((venue) => !selectedIds.has(venue.id)).length,
+  }
 }
 
 function countByGateStatus(venues: Venue[], status: QualityGateStatus): number {
@@ -381,8 +542,11 @@ export async function fetchLivePlaces(
   options: FetchLivePlacesOptions = {},
 ): Promise<FetchLivePlacesResult> {
   const config = getGooglePlacesConfig()
-  const queryLocationLabel = formatLocationLabel(intent)
-  const allBaseQueryPlan = buildLiveQueryPlan(intent, starterPack)
+  const pocketHint = starterPack?.id === 'coffee-books' ? options.pocketHint : undefined
+  const queryLocationLabel = pocketHint?.locationLabel ?? formatLocationLabel(intent)
+  const allBaseQueryPlan = buildLiveQueryPlan(intent, starterPack, {
+    ...(pocketHint?.locationLabel ? { locationLabelOverride: pocketHint.locationLabel } : {}),
+  })
   const allowedLabels = new Set(options.liveQueryLabels ?? [])
   const baseQueryPlanBeforeEnvelope =
     allowedLabels.size > 0
@@ -393,11 +557,13 @@ export async function fetchLivePlaces(
       ? Math.max(0, options.envelope.maxQueryLabels)
       : baseQueryPlanBeforeEnvelope.length
   const baseQueryPlan = baseQueryPlanBeforeEnvelope.slice(0, maxQueryLabels)
-  const queryCentersBeforeEnvelope = deriveQueryCenters(
-    intent.city,
-    config.maxCenters,
-    config.centerOffsetM,
-  )
+  const queryCentersBeforeEnvelope = pocketHint
+    ? [derivePocketQueryCenter(pocketHint)]
+    : deriveQueryCenters(
+        intent.city,
+        config.maxCenters,
+        config.centerOffsetM,
+      )
   const maxQueryCenters =
     typeof options.maxQueryCenters === 'number'
       ? Math.max(0, options.maxQueryCenters)
@@ -407,6 +573,7 @@ export async function fetchLivePlaces(
     typeof options.envelope?.maxProviderCalls === 'number'
       ? Math.max(0, options.envelope.maxProviderCalls)
       : Number.POSITIVE_INFINITY
+  const queryRadiusM = getPocketQueryRadiusM(pocketHint, config.queryRadiusM)
   const queryPlan: Array<
     (typeof baseQueryPlan)[number] & {
       center: QueryCenter
@@ -423,7 +590,7 @@ export async function fetchLivePlaces(
         ...entry,
         label: `${entry.label}@${center.id}`,
         center,
-        radiusM: config.queryRadiusM,
+        radiusM: queryRadiusM,
       })
     }
     if (queryPlan.length >= maxProviderCalls) {
@@ -514,7 +681,13 @@ export async function fetchLivePlaces(
         queryLocationLabel,
         queryCentersCount: queryCenters.length,
         queryCentersUsed: queryCenters,
-        queryRadiusM: config.queryRadiusM,
+        queryRadiusM,
+        ...(pocketHint ? { pocketHint } : {}),
+        pocketCenteredRetrievalApplied: Boolean(pocketHint),
+        pocketFilterInputCount: 0,
+        pocketFilterInsideEnvelopeCount: 0,
+        pocketFilterCoordinateClusterCount: 0,
+        pocketFilterDroppedCount: 0,
         requestedKinds: requestedKindsForPlan,
         queryCount: 0,
         labelsConsidered: baseQueryPlanBeforeEnvelope.length,
@@ -583,7 +756,8 @@ export async function fetchLivePlaces(
 
   const normalized = normalizeRawPlaces(rawPlaces, intent)
   const deduped = dedupeByPlaceId(normalized.venues)
-  const venues = deduped.venues
+  const pocketFiltered = applyPocketFilter(deduped.venues, pocketHint)
+  const venues = pocketFiltered.venues
   const successfulQueries = providerResults.queryCounts.length
   const liveCandidatesByQuery: LiveCandidatesByQueryDiagnostics[] = queryPlan.map((query) => {
     const mapped = rawPlaces.filter((rawPlace) => rawPlace.sourceQueryLabel === query.label)
@@ -611,7 +785,14 @@ export async function fetchLivePlaces(
       queryLocationLabel,
       queryCentersCount: queryCenters.length,
       queryCentersUsed: queryCenters,
-      queryRadiusM: config.queryRadiusM,
+      queryRadiusM,
+      ...(pocketHint ? { pocketHint } : {}),
+      pocketCenteredRetrievalApplied: Boolean(pocketHint),
+      ...(pocketFiltered.reason ? { pocketFilterReason: pocketFiltered.reason } : {}),
+      pocketFilterInputCount: pocketFiltered.inputCount,
+      pocketFilterInsideEnvelopeCount: pocketFiltered.insideEnvelopeCount,
+      pocketFilterCoordinateClusterCount: pocketFiltered.coordinateClusterCount,
+      pocketFilterDroppedCount: pocketFiltered.droppedCount,
       requestedKinds: requestedKindsForPlan,
       queryCount: queryPlan.length,
       labelsConsidered: baseQueryPlanBeforeEnvelope.length,

@@ -9,7 +9,10 @@ import {
   type DistrictCandidateGeoAssignment,
   type DistrictLiveCandidateGeoDiagnostic,
 } from '../../../engines/district/candidates/buildDistrictCandidateGeoIndex'
-import type { LiveProviderEnvelope } from '../../retrieval/liveEnvelope'
+import type {
+  LiveProviderEnvelope,
+  LiveRetrievalPocketHint,
+} from '../../retrieval/liveEnvelope'
 import { scoreVenueCollection } from '../../retrieval/scoreVenueFit'
 import {
   devGreatStopFixtureVenueIds,
@@ -202,6 +205,18 @@ export type StopTypeCandidateBoard = {
       notes: string[]
       liveCandidateDiagnostics: DistrictLiveCandidateGeoDiagnostic[]
     }
+    liveRetrieval?: {
+      livePocketHint?: LiveRetrievalPocketHint
+      pocketCenteredRetrievalApplied?: boolean
+      pocketFilterReason?: string
+      pocketFilterInputCount?: number
+      pocketFilterInsideEnvelopeCount?: number
+      pocketFilterCoordinateClusterCount?: number
+      pocketFilterDroppedCount?: number
+      queryLocationLabel?: string
+      queryRadiusM?: number
+      queryCentersUsed?: Array<{ id: string; lat: number; lng: number }>
+    }
   }
 }
 
@@ -211,6 +226,7 @@ type BuildStopTypeCandidateBoardInput = {
   vibe: string
   starterPack?: StarterPack
   scenarioFamilyOverride?: ScenarioFamily
+  liveRetrievalDiagnostics?: NonNullable<StopTypeCandidateBoard['debug']>['liveRetrieval']
   scoredVenues: ScoredVenue[]
 }
 
@@ -224,6 +240,7 @@ export type BuildStopTypeCandidateBoardFromIntentInput = {
   budget?: BudgetPreference
   sourceMode?: SourceMode
   liveEnvelope?: LiveProviderEnvelope
+  livePocketHint?: LiveRetrievalPocketHint
   starterPack?: StarterPack
 }
 
@@ -1855,6 +1872,9 @@ export function buildStopTypeCandidateBoard(
         notes: districtGeoIndex.notes,
         liveCandidateDiagnostics: districtGeoIndex.liveCandidateDiagnostics,
       },
+      ...(input.liveRetrievalDiagnostics
+        ? { liveRetrieval: input.liveRetrievalDiagnostics }
+        : {}),
     },
   }
 }
@@ -2020,6 +2040,7 @@ export async function buildStopTypeCandidateBoardFromIntent(
   const retrieval = await retrieveVenues(intent, lens, {
     requestedSourceMode: input.sourceMode ?? 'curated',
     liveEnvelope: input.liveEnvelope,
+    livePocketHint: input.livePocketHint,
     starterPack: input.starterPack,
   })
   const scoredVenues = scoreVenueCollection(
@@ -2036,6 +2057,22 @@ export async function buildStopTypeCandidateBoardFromIntent(
     vibe,
     starterPack: input.starterPack,
     scenarioFamilyOverride: scenarioFamily,
+    liveRetrievalDiagnostics: {
+      ...(retrieval.sourceMode.livePocketHint
+        ? { livePocketHint: retrieval.sourceMode.livePocketHint }
+        : {}),
+      pocketCenteredRetrievalApplied: retrieval.sourceMode.pocketCenteredRetrievalApplied,
+      ...(retrieval.sourceMode.pocketFilterReason
+        ? { pocketFilterReason: retrieval.sourceMode.pocketFilterReason }
+        : {}),
+      pocketFilterInputCount: retrieval.sourceMode.pocketFilterInputCount,
+      pocketFilterInsideEnvelopeCount: retrieval.sourceMode.pocketFilterInsideEnvelopeCount,
+      pocketFilterCoordinateClusterCount: retrieval.sourceMode.pocketFilterCoordinateClusterCount,
+      pocketFilterDroppedCount: retrieval.sourceMode.pocketFilterDroppedCount,
+      queryLocationLabel: retrieval.sourceMode.queryLocationLabel,
+      queryRadiusM: retrieval.sourceMode.queryRadiusM,
+      queryCentersUsed: retrieval.sourceMode.queryCentersUsed,
+    },
     scoredVenues,
   })
 }

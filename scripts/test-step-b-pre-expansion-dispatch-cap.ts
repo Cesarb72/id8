@@ -47,6 +47,40 @@ async function main(): Promise<void> {
     assert(url === '/api/field/text-search', `Expected Field proxy path, received ${url}.`)
     const body = JSON.parse(String(init?.body)) as FieldTextSearchRequest
     requests.push(body)
+    const mockedResults = body.queryLabel.startsWith('coffee-books-')
+      ? [
+          {
+            provider: 'google_places',
+            providerRecordId: `inside-${body.queryLabel}`,
+            displayName: `Inside ${body.queryLabel}`,
+            primaryType: body.queryLabel.includes('highlight') ? 'book_store' : 'cafe',
+            types: body.queryLabel.includes('highlight')
+              ? ['book_store', 'store']
+              : ['cafe', 'coffee_shop'],
+            formattedAddress: '1 Pocket Way, San Jose, CA',
+            shortFormattedAddress: '1 Pocket Way',
+            businessStatus: 'OPERATIONAL',
+            rating: 4.7,
+            userRatingCount: 120,
+            location: { latitude: 37.32124, longitude: -121.91235 },
+          },
+          {
+            provider: 'google_places',
+            providerRecordId: `outside-${body.queryLabel}`,
+            displayName: `Outside ${body.queryLabel}`,
+            primaryType: body.queryLabel.includes('highlight') ? 'book_store' : 'cafe',
+            types: body.queryLabel.includes('highlight')
+              ? ['book_store', 'store']
+              : ['cafe', 'coffee_shop'],
+            formattedAddress: '99 Far Way, San Jose, CA',
+            shortFormattedAddress: '99 Far Way',
+            businessStatus: 'OPERATIONAL',
+            rating: 4.5,
+            userRatingCount: 90,
+            location: { latitude: 37.36981, longitude: -121.92986 },
+          },
+        ]
+      : []
     return {
       ok: true,
       status: 200,
@@ -60,7 +94,7 @@ async function main(): Promise<void> {
             used: requests.length,
             remaining: Math.max(0, 32 - requests.length),
           },
-          results: [],
+          results: mockedResults,
           diagnostics: {
             purpose: body.purpose,
             queryHash: 'mock-query-hash',
@@ -119,6 +153,90 @@ async function main(): Promise<void> {
     'Expected dispatch plan cap assertion to pass.',
   )
   assert(requests.length === 3, `Expected exactly 3 mocked proxy calls, received ${requests.length}.`)
+
+  requests.length = 0
+  const pocketResult = await fetchLivePlaces(
+    {
+      city: 'San Jose',
+      crew: 'romantic',
+      mode: 'curate',
+      primaryAnchor: 'cultured',
+      secondaryAnchor: 'cozy',
+      timeWindow: 'evening',
+    } as any,
+    coffeeBooksStarterPack,
+    {
+      maxQueryCenters: 1,
+      sourceMode: 'live',
+      envelope: {
+        maxProviderCalls: 3,
+        maxQueryLabels: 3,
+      },
+      pocketHint: {
+        pocketId: 'raw-pocket-test',
+        pocketLabel: 'Test Reading Pocket',
+        centroid: { lat: 37.32123, lng: -121.91234 },
+        radiusM: 180,
+        source: 'district_intelligence',
+        city: 'San Jose',
+        locationLabel: 'Test Reading Pocket, San Jose',
+      },
+      stepBCurateLiveSmokeActive: true,
+    },
+  )
+
+  assert(
+    pocketResult.diagnostics.pocketCenteredRetrievalApplied,
+    'Coffee & Books pocket hint must activate pocket-centered retrieval.',
+  )
+  assert(
+    pocketResult.diagnostics.queryCentersUsed.length === 1 &&
+      pocketResult.diagnostics.queryCentersUsed[0]?.id === 'pocket',
+    `Coffee & Books pocket hint must use one pocket center; received ${JSON.stringify(pocketResult.diagnostics.queryCentersUsed)}.`,
+  )
+  assert(
+    pocketResult.diagnostics.queryRadiusM === 650,
+    `Coffee & Books pocket radius must be DI-derived with bounded floor; received ${pocketResult.diagnostics.queryRadiusM}.`,
+  )
+  assert(
+    requests.length === 3,
+    `Expected exactly 3 pocket-centered mocked proxy calls, received ${requests.length}.`,
+  )
+  const pocketCenters = requests.map((request) => request.center)
+  assert(
+    pocketCenters.every(
+      (center) => center?.lat === 37.32123 && center.lng === -121.91234,
+    ),
+    `Coffee & Books provider requests must use the pocket center, received ${JSON.stringify(pocketCenters)}.`,
+  )
+  assert(
+    pocketCenters.every((center) => center?.lat !== 37.3382 || center.lng !== -121.8863),
+    'Coffee & Books provider requests must not use the broad San Jose city center when a pocket hint exists.',
+  )
+  assert(
+    requests.every((request) => request.radiusMeters === 650),
+    `Coffee & Books provider requests must use the bounded pocket radius, received ${requests.map((request) => request.radiusMeters).join(', ')}.`,
+  )
+  assert(
+    requests.every((request) => request.textQuery.includes('Test Reading Pocket, San Jose')),
+    `Coffee & Books pocket queries must be location-parameterized, received ${requests.map((request) => request.textQuery).join(' | ')}.`,
+  )
+  assert(
+    pocketResult.diagnostics.pocketFilterInputCount === 6,
+    `Coffee & Books pocket filter must inspect normalized live candidates, received ${pocketResult.diagnostics.pocketFilterInputCount}.`,
+  )
+  assert(
+    pocketResult.diagnostics.pocketFilterInsideEnvelopeCount === 3,
+    `Coffee & Books pocket filter must admit in-pocket candidates, received ${pocketResult.diagnostics.pocketFilterInsideEnvelopeCount}.`,
+  )
+  assert(
+    pocketResult.diagnostics.pocketFilterDroppedCount === 3,
+    `Coffee & Books pocket filter must drop scattered fallback candidates, received ${pocketResult.diagnostics.pocketFilterDroppedCount}.`,
+  )
+  assert(
+    pocketResult.venues.every((venue) => venue.name.startsWith('Inside')),
+    `Coffee & Books pocket-filtered venues must not include far-away records, received ${pocketResult.venues.map((venue) => venue.name).join(', ')}.`,
+  )
 
   process.stdout.write(
     [

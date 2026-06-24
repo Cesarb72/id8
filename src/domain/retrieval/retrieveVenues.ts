@@ -28,7 +28,11 @@ import {
 import { fetchLivePlaces } from '../sources/fetchLivePlaces'
 import { isDevOrSandboxCloseoutFlow } from '../sources/getSourceMode'
 import { resolveDessertConversationProviderProof } from '../providers/providerProofGate'
-import type { LiveProviderEnvelope } from './liveEnvelope'
+import {
+  type LiveProviderEnvelope,
+  type LiveRetrievalPocketHint,
+} from './liveEnvelope'
+import { buildDistrictCandidateGeoIndex } from '../../engines/district/candidates/buildDistrictCandidateGeoIndex'
 import type { LiveDedupeLossDiagnostics } from '../types/diagnostics'
 import type { LiveTrustBreakdownDiagnostics } from '../types/diagnostics'
 import type { FallbackRelaxationLevel } from '../types/diagnostics'
@@ -90,11 +94,67 @@ function ensureVenueHasHappenings(venue: Venue): Venue {
   }
 }
 
+function deriveDistrictIntelligencePocketHint(params: {
+  city: string
+  venues: Venue[]
+}): LiveRetrievalPocketHint | undefined {
+  const cityQuery = sanitizeCity(params.city)
+  const cityVenues = params.venues.filter((venue) => sanitizeCity(venue.city) === cityQuery)
+  if (cityVenues.length === 0) {
+    return undefined
+  }
+
+  const geoIndex = buildDistrictCandidateGeoIndex(cityVenues)
+  const selectedPocketIds = new Set(geoIndex.selectedPocketIds)
+  const assignments = [...geoIndex.assignmentsByVenueId.values()]
+    .filter((assignment) => selectedPocketIds.size === 0 || selectedPocketIds.has(assignment.pocketId))
+  const scored = new Map<
+    string,
+    {
+      assignment: (typeof assignments)[number]
+      count: number
+    }
+  >()
+
+  for (const assignment of assignments) {
+    const current = scored.get(assignment.pocketId)
+    if (!current) {
+      scored.set(assignment.pocketId, { assignment, count: 1 })
+      continue
+    }
+    current.count += 1
+  }
+
+  const winner = [...scored.values()].sort((left, right) => {
+    if (right.count !== left.count) {
+      return right.count - left.count
+    }
+    return left.assignment.pocketLabel.localeCompare(right.assignment.pocketLabel)
+  })[0]
+
+  if (!winner) {
+    return undefined
+  }
+
+  const cityLabel = params.city.trim()
+  const pocketLabel = winner.assignment.pocketLabel.trim() || winner.assignment.pocketId
+  return {
+    pocketId: winner.assignment.pocketId,
+    pocketLabel,
+    centroid: winner.assignment.centroid,
+    radiusM: winner.assignment.radiusM,
+    source: 'district_intelligence',
+    city: cityLabel,
+    locationLabel: `${pocketLabel}, ${cityLabel}`,
+  }
+}
+
 interface RetrieveVenuesOptions {
   seedVenues?: Venue[]
   requestedSourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
   liveEnvelope?: LiveProviderEnvelope
+  livePocketHint?: LiveRetrievalPocketHint
   stepBCurateLiveSmokeActive?: boolean
   starterPack?: StarterPack
 }
@@ -120,6 +180,13 @@ export interface RetrieveVenuesResult {
     queryCentersCount?: number
     queryCentersUsed?: Array<{ id: string; lat: number; lng: number }>
     queryRadiusM?: number
+    livePocketHint?: LiveRetrievalPocketHint
+    pocketCenteredRetrievalApplied?: boolean
+    pocketFilterReason?: string
+    pocketFilterInputCount?: number
+    pocketFilterInsideEnvelopeCount?: number
+    pocketFilterCoordinateClusterCount?: number
+    pocketFilterDroppedCount?: number
     queryCount: number
     labelsConsidered: number
     labelsAdmitted: number
@@ -671,6 +738,14 @@ export async function retrieveVenues(
     ...baseCuratedPool,
     ...curateStaticCorpus.venues,
   ].map(ensureVenueHasHappenings)
+  const stepBCoffeeBooksPocketHint =
+    options.livePocketHint ??
+    (options.liveEnvelope?.liveProviderAllowed === true && options.starterPack?.id === 'coffee-books'
+      ? deriveDistrictIntelligencePocketHint({
+          city: intent.city,
+          venues: curatedVenues,
+        })
+      : undefined)
   const providerProof = resolveDessertConversationProviderProof({
     mode: intent.mode,
     requestedSourceMode,
@@ -708,6 +783,12 @@ export async function retrieveVenues(
             queryCentersCount: 0,
             queryCentersUsed: [] as Array<{ id: string; lat: number; lng: number }>,
             queryRadiusM: 0,
+            ...(stepBCoffeeBooksPocketHint ? { livePocketHint: stepBCoffeeBooksPocketHint } : {}),
+            pocketCenteredRetrievalApplied: false,
+            pocketFilterInputCount: 0,
+            pocketFilterInsideEnvelopeCount: 0,
+            pocketFilterCoordinateClusterCount: 0,
+            pocketFilterDroppedCount: 0,
             requestedKinds: ['restaurant', 'bar', 'cafe'] as const,
             queryCount: 0,
             labelsConsidered: 0,
@@ -759,6 +840,7 @@ export async function retrieveVenues(
           maxQueryCenters:
             options.liveEnvelope?.maxCenters ??
             (providerProof.allowed ? providerProof.maxQueryCenters : undefined),
+          pocketHint: stepBCoffeeBooksPocketHint,
           sourceMode: retrievalSourceMode,
           envelope: {
             maxProviderCalls: options.liveEnvelope?.maxProviderCalls,
@@ -980,6 +1062,12 @@ export async function retrieveVenues(
     } else if (fallbackUsed && retrievalSourceMode !== 'curated') {
       inventoryTruth = 'fallback_filled'
     }
+    const livePocketHintDiagnostic =
+      'pocketHint' in liveFetch.diagnostics ? liveFetch.diagnostics.pocketHint : undefined
+    const livePocketFilterReason =
+      'pocketFilterReason' in liveFetch.diagnostics
+        ? liveFetch.diagnostics.pocketFilterReason
+        : undefined
     const bearingsRuntimeHours = buildRuntimeHoursValidationDiagnostics(venues)
     const result: RetrieveVenuesResult = {
       venues,
@@ -1000,6 +1088,17 @@ export async function retrieveVenues(
         queryCentersCount: liveFetch.diagnostics.queryCentersCount,
         queryCentersUsed: liveFetch.diagnostics.queryCentersUsed,
         queryRadiusM: liveFetch.diagnostics.queryRadiusM,
+        ...(livePocketHintDiagnostic
+          ? { livePocketHint: livePocketHintDiagnostic }
+          : {}),
+        pocketCenteredRetrievalApplied: liveFetch.diagnostics.pocketCenteredRetrievalApplied,
+        ...(livePocketFilterReason
+          ? { pocketFilterReason: livePocketFilterReason }
+          : {}),
+        pocketFilterInputCount: liveFetch.diagnostics.pocketFilterInputCount,
+        pocketFilterInsideEnvelopeCount: liveFetch.diagnostics.pocketFilterInsideEnvelopeCount,
+        pocketFilterCoordinateClusterCount: liveFetch.diagnostics.pocketFilterCoordinateClusterCount,
+        pocketFilterDroppedCount: liveFetch.diagnostics.pocketFilterDroppedCount,
         queryCount: liveFetch.diagnostics.queryCount,
         labelsConsidered: liveFetch.diagnostics.labelsConsidered,
         labelsAdmitted: liveFetch.diagnostics.labelsAdmitted,

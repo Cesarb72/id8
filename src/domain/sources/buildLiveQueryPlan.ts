@@ -84,8 +84,9 @@ function isCoffeeBooksStarter(starterPack?: StarterPack): boolean {
 export function buildLiveQueryPlan(
   intent: IntentProfile,
   starterPack?: StarterPack,
+  options: { locationLabelOverride?: string } = {},
 ): LiveQueryPlanEntry[] {
-  const locationLabel = buildLocationLabel(intent)
+  const locationLabel = options.locationLabelOverride?.trim() || buildLocationLabel(intent)
   const timeSignal = getTimeWindowSignal(intent)
   const personaTerms = getPersonaTerms(intent)
   const vibeTerms = getVibeTerms(intent)

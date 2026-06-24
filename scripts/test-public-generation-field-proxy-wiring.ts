@@ -728,8 +728,8 @@ function buildProviderVenue(request: FieldTextSearchRequest, index: number): Pro
   const types = request.queryLabel.includes('coffee-books')
     ? [primaryType, 'book_store', 'point_of_interest', 'establishment']
     : [primaryType, 'point_of_interest', 'establishment']
-  const latitude = 37.331 + index * 0.002
-  const longitude = -121.889 - index * 0.002
+  const latitude = (request.center?.lat ?? 37.331) + index * 0.002
+  const longitude = (request.center?.lng ?? -121.889) - index * 0.002
   return {
     provider: 'google_places',
     providerRecordId: `mock-field-${request.mode}-${request.queryLabel}-${index + 1}`,
@@ -1232,6 +1232,21 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     requestLabels.length > 0 &&
       requestLabels.every((label) => label.startsWith('coffee-books-')),
     `${scenario.mode}: Coffee & Books Step B supply labels must be starter-semantic; received ${requestLabels.join(', ')}.`,
+  )
+  const requestCenters = calls.map((call) => call.body.center)
+  assert(
+    requestCenters.every((center) => center && (center.lat !== 37.3382 || center.lng !== -121.8863)),
+    `${scenario.mode}: Coffee & Books Step B supply must use a DI pocket center instead of the broad city center.`,
+  )
+  assert(
+    calls.every((call) => typeof call.body.radiusMeters === 'number' && call.body.radiusMeters <= 1200),
+    `${scenario.mode}: Coffee & Books Step B supply must use a bounded DI pocket radius.`,
+  )
+  assert(
+    board.debug?.liveRetrieval?.pocketCenteredRetrievalApplied &&
+      board.debug.liveRetrieval.livePocketHint?.source === 'district_intelligence' &&
+      board.debug.liveRetrieval.pocketFilterDroppedCount !== undefined,
+    `${scenario.mode}: Coffee & Books Step B diagnostics must expose DI pocket-centered retrieval and pocket filtering.`,
   )
   const semanticCandidateCount = Object.values(board.candidatesByStopType)
     .flat()
