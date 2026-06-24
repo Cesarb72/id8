@@ -30,6 +30,7 @@ import type {
 import type { SourceMode } from '../../types/sourceMode'
 import type { StarterPack, StarterPackRoleContractMap } from '../../types/starterPack'
 import type { Venue, VenueCategory } from '../../types/venue'
+import { resolveCurateStarterScenarioFamily } from '../../curate/starterScenarioFamily'
 
 export type ScenarioFamily =
   | 'romantic_cozy'
@@ -423,7 +424,6 @@ function buildScenarioEvaluationContract(params: {
   return {
     scenarioFamily: params.scenarioFamily,
     ...(params.starterPack?.id ? { starterId: params.starterPack.id } : {}),
-    ...(params.starterPack?.roleContracts ? { routeContract: params.starterPack.roleContracts } : {}),
   }
 }
 
@@ -2021,6 +2021,7 @@ export async function buildStopTypeCandidateBoardFromIntent(
   }
   const scenarioFamily =
     input.scenarioFamilyOverride ??
+    resolveCurateStarterScenarioFamily(input.starterPack) ??
     resolveScenarioFamily({
       city: input.city,
       persona,

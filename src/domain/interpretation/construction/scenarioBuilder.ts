@@ -576,10 +576,6 @@ function buildCoffeeBooksSemanticRepresentation(
   }
 }
 
-function hasCoffeeBooksRouteRepresentation(night: CandidateNight): boolean {
-  return buildCoffeeBooksSemanticRepresentation(night.stops).status === 'represented'
-}
-
 function withCoffeeBooksSemanticRepresentation(night: CandidateNight): CandidateNight {
   const starterSemanticRepresentation = buildCoffeeBooksSemanticRepresentation(night.stops)
   const evidenceLift =
@@ -2006,48 +2002,13 @@ export function buildScenarioNightsFromCandidateBoard(
     requiredStopTypes,
     pools,
   })
-  const candidateNightsWithStarterSemantics =
+  const candidateNightsWithStarterDiagnostics =
     board.starterPack?.id === 'coffee-books'
       ? candidateNights.map(withCoffeeBooksSemanticRepresentation)
       : candidateNights
-  const starterRepresentativeCandidates =
-    board.starterPack?.id === 'coffee-books'
-      ? candidateNightsWithStarterSemantics.filter(hasCoffeeBooksRouteRepresentation)
-      : candidateNightsWithStarterSemantics
-  if (board.starterPack?.id === 'coffee-books' && starterRepresentativeCandidates.length === 0) {
-    return [
-      {
-        id: `built_${board.scenarioFamily}_coffee_books_semantic_incomplete`,
-        city: board.city,
-        persona: board.persona,
-        vibe: board.vibe,
-        scenarioFamily: board.scenarioFamily,
-        evaluationContract: board.evaluationContract,
-        title: `${SCENARIO_FLAVOR_LINE[board.scenarioFamily]} (incomplete)`,
-        flavorLine: SCENARIO_FLAVOR_LINE[board.scenarioFamily],
-        stops: [],
-        whyThisWorks:
-          'Coffee & Books requires at least one selected stop with explicit book, reading, literary, library, or bookstore evidence.',
-        complete: false,
-        missingStopTypes: requiredStopTypes,
-        evaluation: {
-          stopEvaluations: [],
-          passesGreatStopStandard: false,
-          failedStops: ['coffee_books_semantic_representation'],
-          notes: ['Coffee & Books semantic representation gate rejected route supply without explicit book, library, literary, or bookstore evidence.'],
-        },
-        starterSemanticRepresentation: {
-          starterPackId: 'coffee-books',
-          status: 'missing',
-          evidence: [],
-          rejectionReasons: ['missing_explicit_book_reading_literary_library_or_bookstore_stop'],
-        },
-      },
-    ]
-  }
-  const geoCoherentCandidates = starterRepresentativeCandidates.filter(isGeoCoherentScenarioNight)
+  const geoCoherentCandidates = candidateNightsWithStarterDiagnostics.filter(isGeoCoherentScenarioNight)
   if (geoCoherentCandidates.length === 0) {
-    const diagnosticCandidate = starterRepresentativeCandidates
+    const diagnosticCandidate = candidateNightsWithStarterDiagnostics
       .slice()
       .sort((left, right) => {
         if (right.geoCoherence.dominantGeoShare !== left.geoCoherence.dominantGeoShare) {

@@ -5,7 +5,6 @@ import type { IntentInput } from '../../../domain/types/intent'
 import type { StarterPack } from '../../../domain/types/starterPack'
 import {
   buildCoffeeBooksSemanticRepresentationFromRouteStops,
-  coffeeBooksSemanticRepresentationMissingReason,
 } from './coffeeBooksSemanticRepresentation'
 
 type PublicRouteRole = 'start' | 'highlight' | 'windDown'
@@ -20,7 +19,6 @@ export type CurateCommittedRouteFallbackRejectedReason =
   | 'missing_start_role'
   | 'missing_highlight_role'
   | 'missing_windDown_role'
-  | typeof coffeeBooksSemanticRepresentationMissingReason
 
 export interface CurateCommittedRouteFallbackAccepted {
   status: 'accepted'
@@ -218,17 +216,6 @@ export function buildCurateCommittedRouteFallbackDecision(params: {
     params.starterPack.id === 'coffee-books'
       ? buildCoffeeBooksFallbackSemanticRepresentation(fallbackRouteStops)
       : null
-  if (
-    params.starterPack.id === 'coffee-books' &&
-    coffeeBooksSemanticRepresentation?.status !== 'represented'
-  ) {
-    return {
-      status: 'rejected',
-      rejectedReason: coffeeBooksSemanticRepresentationMissingReason,
-      routeStops,
-      sourceMode,
-    }
-  }
 
   const routeSummary =
     params.result.itinerary.storySpine?.routeSummary ?? params.result.itinerary.shareSummary

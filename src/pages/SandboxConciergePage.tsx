@@ -191,6 +191,7 @@ import {
 } from '../domain/sources/devGreatStopFixtures'
 import { isDevOrSandboxCloseoutFlow } from '../domain/sources/getSourceMode'
 import { resolveCurateProofSourceMode } from '../domain/providers/providerProofGate'
+import { resolveCurateStarterScenarioFamily } from '../domain/curate/starterScenarioFamily'
 import { CLOSED_PREVIEW_LIVE_ENVELOPE } from '../domain/retrieval/liveEnvelope'
 import { mapVenueToTasteInput } from '../domain/interpretation/taste/mapVenueToTasteInput'
 import { interpretVenueTaste } from '../domain/interpretation/taste/interpretVenueTaste'
@@ -2822,7 +2823,7 @@ function buildFinalRouteClusterConfirmation(
 type CoffeeBooksCommittedRouteSummaryAdmission =
   | {
       status: 'accepted'
-      semanticRepresentationStatus: 'represented'
+      semanticRepresentationStatus: 'represented' | 'missing'
       evidenceCount: number
       matchedEvidence: StarterSemanticEvidenceMatch[]
       rejectedReason: null
@@ -2904,21 +2905,15 @@ function evaluateCoffeeBooksCommittedRouteSummaryAdmission(params: {
       }
     }),
   )
-  if (representation.status === 'represented') {
-    return {
-      status: 'accepted',
-      semanticRepresentationStatus: 'represented',
-      evidenceCount: representation.evidence.length,
-      matchedEvidence: representation.matchedEvidence?.filter((match) => match.admissible) ?? [],
-      rejectedReason: null,
-    }
-  }
   return {
-    status: 'rejected',
-    semanticRepresentationStatus: 'missing',
-    evidenceCount: 0,
-    matchedEvidence: representation.matchedEvidence ?? [],
-    rejectedReason: coffeeBooksSemanticRepresentationMissingReason,
+    status: 'accepted',
+    semanticRepresentationStatus: representation.status,
+    evidenceCount: representation.evidence.length,
+    matchedEvidence:
+      representation.status === 'represented'
+        ? representation.matchedEvidence?.filter((match) => match.admissible) ?? []
+        : representation.matchedEvidence ?? [],
+    rejectedReason: null,
   }
 }
 
@@ -10164,12 +10159,15 @@ export function SandboxConciergePage({
   const showStep2SecondarySurfaces = !isPublicSurface && verticalDebugEnabled && showDebug
   const resolvedScenarioFamily = useMemo(
     () =>
+      (isCurateWrapperActive
+        ? resolveCurateStarterScenarioFamily(selectedStarterPack)
+        : null) ??
       resolveScenarioFamily({
         city: districtLocationQuery,
         persona,
         vibe: primaryVibe,
       }),
-    [districtLocationQuery, persona, primaryVibe],
+    [districtLocationQuery, isCurateWrapperActive, persona, primaryVibe, selectedStarterPack],
   )
   const surpriseContrastScenarioFamily = useMemo(
     () =>

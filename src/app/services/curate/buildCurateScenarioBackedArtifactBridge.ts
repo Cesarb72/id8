@@ -22,8 +22,6 @@ type CurateScenarioBuildabilityAdmissionStatus = 'not_applicable' | 'passed' | '
 type CurateScenarioBuildabilityAdmissionReason =
   | 'scenario_route_buildability_mismatch'
   | 'scenario_route_mixed_di_fallback_scattered'
-  | 'coffee_books_wind_down_energy_mismatch'
-  | 'coffee_books_semantic_representation_missing'
   | 'scenario_route_seed_projection_missing'
 type CurateHardCommitFeasibilityFailureClass =
   | 'missing_seed_identity'
@@ -366,16 +364,6 @@ function assessCoffeeBooksScenarioBuildability(params: {
       ...overrides,
     } satisfies CurateHardCommitFeasibilityDiagnostic
   }
-  if (starterPack?.id !== 'coffee-books') {
-    return {
-      allowed: true,
-      status: 'not_applicable',
-      reason: null,
-      failedRoles: [],
-      seedProjectionAvailable: true,
-      hardCommitFeasibility: buildFeasibility({ status: 'not_applicable' }),
-    }
-  }
   if (
     opportunity.scenarioNight?.geoCoherence?.rejectionReason ===
     'scenario_route_mixed_di_fallback_scattered'
@@ -406,27 +394,6 @@ function assessCoffeeBooksScenarioBuildability(params: {
     }
   }
 
-  const representation =
-    artifact.enrichment?.starterSemanticRepresentation ??
-    opportunity.starterSemanticRepresentation ??
-    opportunity.scenarioNight.starterSemanticRepresentation
-  if (
-    !starterSemanticRepresentationIsSelectedStopBacked(representation) ||
-    !starterSemanticRepresentationHasPublicCoffeeBooksEvidence(representation)
-  ) {
-    return {
-      allowed: false,
-      status: 'rejected',
-      reason: 'coffee_books_semantic_representation_missing',
-      failedRoles: [],
-      seedProjectionAvailable: true,
-      hardCommitFeasibility: buildFeasibility({
-        status: 'failed',
-        failureClass: 'semantic_contract_failed',
-      }),
-    }
-  }
-
   const roles = ['start', 'highlight', 'windDown'] as const
   const stopsByRole = new Map(
     roles.map((role) => [
@@ -450,42 +417,6 @@ function assessCoffeeBooksScenarioBuildability(params: {
         status: 'failed',
         failureClass: 'missing_seed_identity',
         failedRole: missingRoles[0] ?? null,
-      }),
-    }
-  }
-
-  const failedRoles = roles.filter((role) => {
-    const stop = stopsByRole.get(role)
-    return stop
-      ? !scenarioStopSatisfiesRoleContract({
-          starterPack,
-          stop,
-          role,
-        })
-      : true
-  })
-  if (failedRoles.length > 0) {
-    const windDownStop = stopsByRole.get('windDown')
-    const windDownMaxEnergy = starterPack.roleContracts?.windDown?.maxEnergyLevel
-    const windDownEnergy = windDownStop
-      ? estimateCoffeeBooksScenarioStopEnergy(windDownStop, 'windDown')
-      : null
-    return {
-      allowed: false,
-      status: 'rejected',
-      reason:
-        failedRoles.includes('windDown') &&
-        typeof windDownMaxEnergy === 'number' &&
-        typeof windDownEnergy === 'number' &&
-        windDownEnergy > windDownMaxEnergy
-          ? 'coffee_books_wind_down_energy_mismatch'
-          : 'scenario_route_buildability_mismatch',
-      failedRoles: [...failedRoles],
-      seedProjectionAvailable: true,
-      hardCommitFeasibility: buildFeasibility({
-        status: 'failed',
-        failureClass: 'role_mapping_mismatch',
-        failedRole: failedRoles[0] ?? null,
       }),
     }
   }

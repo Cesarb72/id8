@@ -369,9 +369,6 @@ export function validatePublicCurateApprovedPayloadTruth(params: {
       routeStopsToCoffeeBooksInputs(routeStops),
     )
     coffeeBooksSemanticRepresentationStatus = representation.status
-    if (representation.status !== 'represented') {
-      rejectionReasons.add('approved_payload_final_route_semantic_mismatch')
-    }
   }
 
   return {
@@ -575,26 +572,6 @@ export function validatePublicCurateStarterFit(params: {
       rejectionReasons.add('missing_required_role')
     }
   })
-
-  const starterPack = params.selectedStarterPack
-  if (starterPack) {
-    requiredRoles.forEach((role) => {
-      if (!hasRequiredCategoryFit({
-        starterPack,
-        role,
-        stop: routeStopsByRole[role],
-      })) {
-        rejectionReasons.add('category_family_mismatch')
-      }
-    })
-    if (!hasStarterPromiseFit({
-      starterPack,
-      normalizedRoles,
-      routeStopsByRole,
-    })) {
-      rejectionReasons.add('card_promise_mismatch')
-    }
-  }
 
   if (
     params.approvedRefinementEntryPayload?.starterPackId &&

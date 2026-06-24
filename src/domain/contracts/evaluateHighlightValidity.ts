@@ -320,7 +320,7 @@ export function evaluateHighlightValidity({
     if (
       venue.category === 'museum' &&
       hasAnyTag(tags, ['hands-on', 'learning', 'interactive']) &&
-      starterPack?.id !== 'coffee-books'
+      intent.primaryAnchor !== 'cultured'
     ) {
       personaVetoes.push('Romantic highlight vetoed: generic daytime educational centerpiece.')
     }
@@ -347,28 +347,6 @@ export function evaluateHighlightValidity({
   if (rules.dateCentered && (familyCoded || kidFocused)) {
     contextVetoes.push('Date-centered highlight vetoed: family or kid-coded venue.')
   }
-  if (starterPack?.id === 'dessert-conversation') {
-    if (hasCategory(venue, ['activity', 'live_music', 'event']) || venue.energyLevel >= 4) {
-      contextVetoes.push('Dessert & Conversation vetoed: highlight is too noisy or activity-heavy.')
-    }
-  }
-  if (starterPack?.id === 'coffee-books') {
-    if (hasCategory(venue, ['activity', 'live_music', 'event', 'bar', 'park']) || venue.energyLevel >= 4) {
-      contextVetoes.push('Coffee & Books vetoed: highlight is outside the quiet cafe, book, or cultural scope.')
-    }
-  }
-  if (starterPack?.id === 'cozy-date-night') {
-    if (
-      hasCategory(venue, ['activity']) ||
-      (hasCategory(venue, ['live_music', 'event']) && !quietLingering)
-    ) {
-      contextVetoes.push('Cozy Date Night vetoed: highlight is too performance-led or activity-heavy.')
-    }
-  }
-  if (starterPack?.id === 'sunset-stroll' && !outdoorAnchor && venue.category === 'museum') {
-    contextVetoes.push('Sunset Stroll vetoed: indoor cultural highlight displaced the outdoor anchor.')
-  }
-
   if (rules.literalRequirementLabel && packLiteralRequirementSatisfied) {
     matchedSignals.push('pack literal requirement satisfied')
   }

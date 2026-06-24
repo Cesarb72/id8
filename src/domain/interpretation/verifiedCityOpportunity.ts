@@ -483,9 +483,7 @@ function isBuiltScenarioStopRoleEligibleForWindDown(params: {
   if (!stop) {
     return false
   }
-  if (starterPack?.id === 'coffee-books') {
-    return isBuiltScenarioStopCoffeeBooksWindDownEligible(stop)
-  }
+  void starterPack
   const category =
     stop.venueCategory ?? curatedVenues.find((venue) => venue.id === stop.venueId)?.category
   const roleFitWindDown = stop.roleFit.windDown ?? 0
@@ -516,76 +514,6 @@ function isBuiltScenarioStopRoleEligibleForWindDown(params: {
     return false
   }
   return true
-}
-
-function normalizeScenarioToken(value: string | undefined): string {
-  return (value ?? '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function scenarioStopCorpus(stop: BuiltScenarioStop): string {
-  return [
-    stop.name,
-    stop.venueCategory,
-    stop.venueSubcategory,
-    stop.venueTypeLabel,
-    stop.factualSummary,
-    ...(stop.venueTags ?? []),
-    ...(stop.sourceTypes ?? []),
-    ...stop.reasons,
-  ]
-    .map((entry) => normalizeScenarioToken(entry))
-    .filter(Boolean)
-    .join(' ')
-}
-
-function hasCoffeeBooksWindDownEvidence(stop: BuiltScenarioStop): boolean {
-  const corpus = scenarioStopCorpus(stop)
-  return [
-    'book',
-    'books',
-    'bookstore',
-    'book store',
-    'bookshop',
-    'book shop',
-    'library',
-    'literary',
-    'reading',
-    'museum',
-    'gallery',
-    'art',
-    'art gallery',
-    'exhibit',
-    'exhibition',
-    'cultural',
-    'cultural center',
-    'cultural venue',
-  ].some((token) => corpus.includes(token))
-}
-
-function isBuiltScenarioStopCoffeeBooksWindDownEligible(stop: BuiltScenarioStop): boolean {
-  const category =
-    stop.venueCategory ?? curatedVenues.find((venue) => venue.id === stop.venueId)?.category
-  const corpus = scenarioStopCorpus(stop)
-  if (stop.sourceType === 'event' || category === 'event' || category === 'live_music') {
-    return false
-  }
-  if (category === 'bar' || corpus.includes('cocktail') || corpus.includes('nightcap')) {
-    return (stop.roleFit.windDown ?? 0) >= 0.5
-  }
-  if ((stop.eventPotential ?? 0) >= 0.58 || (stop.performancePotential ?? 0) >= 0.66) {
-    return false
-  }
-  if (category === 'cafe' || category === 'dessert') {
-    return (stop.roleFit.windDown ?? 0) >= 0.34 || corpus.includes('quiet') || corpus.includes('calm')
-  }
-  if (category === 'museum' || category === 'activity' || category === 'park') {
-    return hasCoffeeBooksWindDownEvidence(stop)
-  }
-  return hasCoffeeBooksWindDownEvidence(stop) && (stop.roleFit.windDown ?? 0) >= 0.34
 }
 
 function scoreBuiltScenarioStopForWindDown(params: {

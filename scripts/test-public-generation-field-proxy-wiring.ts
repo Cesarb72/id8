@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import {
   buildPublicCurateCardTruthModel,
+  validatePublicCurateStarterFit,
   validatePublicCurateApprovedPayloadTruth,
 } from '../src/app/services/curate/publicCurateCardTruthService.ts'
 import { buildCurateCommittedRouteFallbackDecision } from '../src/app/services/curate/buildCurateCommittedRouteFallback.ts'
@@ -10,6 +11,10 @@ import {
   coffeeBooksSemanticRepresentationMissingReason,
 } from '../src/app/services/curate/coffeeBooksSemanticRepresentation.ts'
 import { buildCurateScenarioBackedArtifactBridge } from '../src/app/services/curate/buildCurateScenarioBackedArtifactBridge.ts'
+import {
+  curateStarterScenarioFamilyById,
+  resolveCurateStarterScenarioFamily,
+} from '../src/domain/curate/starterScenarioFamily.ts'
 import {
   runStepBCurateLiveSmokeCandidateSupply,
   shouldApplyStepBCurateLiveSmokeCandidateSupply,
@@ -48,6 +53,7 @@ import type { ExperienceMode, IntentInput } from '../src/domain/types/intent.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
 import type { Venue } from '../src/domain/types/venue.ts'
 import type { VenueCategory } from '../src/domain/types/venue.ts'
+import { curateStaticFieldCorpusStarterAliases } from '../src/domain/field/corpus/resolveCurateStaticFieldCorpusVenues.ts'
 
 const FIELD_PROXY_PATH = '/api/field/text-search'
 const originalFetch = globalThis.fetch
@@ -210,9 +216,6 @@ function buildManualStarterScenarioBoard(params: {
     evaluationContract: {
       scenarioFamily: params.scenarioFamily,
       starterId: params.starterPack.id,
-      ...(params.starterPack.roleContracts
-        ? { routeContract: params.starterPack.roleContracts }
-        : {}),
     },
     requiredStopTypes,
     candidatesByStopType,
@@ -244,7 +247,7 @@ function assertBuiltNightGreatStopReceivedStarterContract(params: {
   assert(
     firstEvaluation.placeRightDiagnostic.scenarioFamily === params.board.scenarioFamily &&
       firstEvaluation.placeRightDiagnostic.starterId === params.starterPack.id,
-    `${params.label}: place_right diagnostics must expose contract used and starter id.`,
+    `${params.label}: place_right diagnostics must expose scenario family and starter id.`,
   )
 }
 
@@ -254,7 +257,6 @@ function assertGeneralStarterContractPropagationToGreatStop(): void {
     evaluationContract: {
       scenarioFamily: 'romantic_cultured',
       starterId: coffeeBooks.id,
-      routeContract: coffeeBooks.roleContracts,
     },
     stops: [
       {
@@ -282,8 +284,8 @@ function assertGeneralStarterContractPropagationToGreatStop(): void {
   const coffeeBooksStopEvaluation = coffeeBooksEvaluation.stopEvaluations[0]?.evaluation
   assert(
     coffeeBooksStopEvaluation?.evaluationContract.starterId === 'coffee-books' &&
-      coffeeBooksStopEvaluation.placeRightDiagnostic.contractUsed === 'starter_route_contract',
-    'Coffee & Books direct Great Stop evaluation must receive starter route contract.',
+      coffeeBooksStopEvaluation.placeRightDiagnostic.contractUsed === 'scenario_family_only',
+    'Coffee & Books direct Great Stop evaluation must preserve starter identity while using scenario-family route truth.',
   )
 
   const arcade = findStarterPack('arcade-and-drinks')
@@ -321,7 +323,75 @@ function assertGeneralStarterContractPropagationToGreatStop(): void {
       },
     }),
   })
-  process.stdout.write('General starter contract propagation to Great Stop: passed\n')
+  process.stdout.write('General starter identity propagation to Great Stop: passed\n')
+}
+
+function assertCurateStarterScenarioFamilyMapping(): void {
+  const validFamilies: ScenarioFamily[] = [
+    'romantic_cozy',
+    'romantic_lively',
+    'romantic_cultured',
+    'friends_cozy',
+    'friends_lively',
+    'friends_cultured',
+    'family_cozy',
+    'family_lively',
+    'family_cultured',
+  ]
+  const validFamilySet = new Set(validFamilies)
+  for (const starterPack of starterPacks) {
+    const scenarioFamily = resolveCurateStarterScenarioFamily(starterPack)
+    assert(
+      scenarioFamily && validFamilySet.has(scenarioFamily),
+      `${starterPack.id}: Curate starter must map to exactly one validated scenario family.`,
+    )
+  }
+  assert(
+    Object.keys(curateStarterScenarioFamilyById).length === starterPacks.length,
+    'Canonical Curate starter mapping must cover every starter and no extras.',
+  )
+  assert(
+    resolveCurateStarterScenarioFamily(findStarterPack('coffee-books')) === 'romantic_cultured' &&
+      resolveCurateStarterScenarioFamily(findStarterPack('arcade-and-drinks')) === 'friends_lively' &&
+      resolveCurateStarterScenarioFamily(findStarterPack('park-and-ice-cream')) === 'family_cultured',
+    'Canonical mapping must preserve accepted starter-to-family assignments.',
+  )
+  assert(
+    curateStaticFieldCorpusStarterAliases['park-and-ice-cream'] === 'park-ice-cream',
+    'Park + Ice Cream starter must resolve to the provider corpus park-ice-cream support key.',
+  )
+  process.stdout.write('Curate starter scenario-family mapping: passed\n')
+}
+
+function assertStarterPromiseChecksDoNotBlockPublicFit(): void {
+  const starterIds = [
+    'coffee-books',
+    'live-music-loop',
+    'arcade-and-drinks',
+    'hidden-cocktail-corners',
+    'wine-slow-evening',
+    'dessert-conversation',
+    'sunset-stroll',
+    'park-and-ice-cream',
+  ]
+  const familyValidRouteStops = [
+    { role: 'start', name: 'Academic Coffee' },
+    { role: 'highlight', name: 'Rosicrucian Culture Gallery' },
+    { role: 'windDown', name: 'Willow Glen Bakehouse' },
+  ]
+  for (const starterId of starterIds) {
+    const result = validatePublicCurateStarterFit({
+      selectedStarterPack: findStarterPack(starterId),
+      routeStops: familyValidRouteStops,
+    })
+    assert(
+      result.allowedToRender &&
+        !result.rejectionReasons.includes('card_promise_mismatch') &&
+        !result.rejectionReasons.includes('category_family_mismatch'),
+      `${starterId}: starter literal promise checks must not independently block public card truth.`,
+    )
+  }
+  process.stdout.write('Starter promise public admission normalization: passed\n')
 }
 
 function assertDrySystemicStarterGeoCheck(): void {
@@ -1207,7 +1277,6 @@ function buildCoffeeBooksScenarioBoard(params: {
     evaluationContract: {
       scenarioFamily: 'romantic_cultured',
       starterId: params.starterPack.id,
-      routeContract: params.starterPack.roleContracts,
     },
     requiredStopTypes: ['cultural_institution', 'secondary_cultural_stop', 'thematic_lunch'],
     candidatesByStopType: {
@@ -1298,8 +1367,8 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     `${scenario.mode}: candidate board must carry starter identity into scenario evaluation contract.`,
   )
   assert(
-    board.evaluationContract.routeContract === scenario.starterPack?.roleContracts,
-    `${scenario.mode}: candidate board must carry starter route contract into scenario evaluation contract.`,
+    !board.evaluationContract.routeContract,
+    `${scenario.mode}: candidate board must use scenario-family route truth instead of starter-specific route contract.`,
   )
   const liveCandidateWithGeo = Object.values(board.candidatesByStopType)
     .flat()
@@ -1384,11 +1453,10 @@ async function assertPublicCurateCandidateSupplyUsesPrivateEnvelope(
     `${scenario.mode}: Great Stop must receive Coffee & Books starter identity.`,
   )
   assert(
-    firstGreatStopEvaluation.placeRightDiagnostic.contractUsed === 'starter_route_contract' &&
+    firstGreatStopEvaluation.placeRightDiagnostic.contractUsed === 'scenario_family_only' &&
       firstGreatStopEvaluation.placeRightDiagnostic.starterId === 'coffee-books' &&
-      firstGreatStopEvaluation.placeRightDiagnostic.routeContractSummary?.roles.includes('highlight') &&
-      firstGreatStopEvaluation.placeRightDiagnostic.routeContractSummary.roles.includes('windDown'),
-    `${scenario.mode}: place_right diagnostics must expose Coffee & Books contract usage.`,
+      !firstGreatStopEvaluation.placeRightDiagnostic.routeContractSummary,
+    `${scenario.mode}: place_right diagnostics must retain Coffee & Books identity while using scenario-family route truth.`,
   )
   const scenarioDirectionCards: RealityDirectionCard[] = [
     {
@@ -1648,15 +1716,14 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
     includeSemanticCandidate: false,
   })
   const genericOnlyNights = buildScenarioNightsFromCandidateBoard(genericOnlyBoard)
+  const genericOnlyCompleteNight = genericOnlyNights.find((night) => night.complete)
   assert(
-    genericOnlyNights.every((night) => !night.complete),
-    'Coffee & Books tea/coffee/bakery-only Scenario Builder route must fail the semantic representation gate.',
+    genericOnlyCompleteNight,
+    'Coffee & Books tea/coffee/bakery-only Scenario Builder route must be eligible when romantic_cultured scenario-family truth passes.',
   )
   assert(
-    genericOnlyNights.every(
-      (night) => night.starterSemanticRepresentation?.status === 'missing',
-    ),
-    'Coffee & Books generic quiet/curated tags and culturalAnchorPotential alone must not satisfy Books.',
+    genericOnlyCompleteNight?.starterSemanticRepresentation?.status === 'missing',
+    'Coffee & Books generic quiet/curated tags must remain diagnostic-only missing bookstore evidence.',
   )
   const culturalOnlyBoard = buildCoffeeBooksScenarioBoard({
     starterPack,
@@ -1664,12 +1731,10 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
     includeCulturalOnlyCandidate: true,
   })
   const culturalOnlyNights = buildScenarioNightsFromCandidateBoard(culturalOnlyBoard)
+  const culturalOnlyCompleteNight = culturalOnlyNights.find((night) => night.complete)
   assert(
-    culturalOnlyNights.every((night) => !night.complete) &&
-      culturalOnlyNights.every(
-        (night) => night.starterSemanticRepresentation?.status === 'missing',
-      ),
-    'Coffee & Books museum/gallery/cultural-only Scenario Builder route must not satisfy public Books representation.',
+    culturalOnlyCompleteNight?.starterSemanticRepresentation?.status === 'missing',
+    'Coffee & Books museum/gallery/cultural-only Scenario Builder route must pass family truth while keeping Books evidence diagnostic-only.',
   )
 
   const semanticBoard = buildCoffeeBooksScenarioBoard({
@@ -1776,13 +1841,13 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
   const completeMixedNights = mixedNights.filter((night) => night.complete)
   assert(
     completeMixedNights.length > 0,
-    'Coffee & Books mixed board must produce at least one representative route.',
+    'Coffee & Books mixed board must produce at least one route.',
   )
   assert(
-    completeMixedNights.every((night) =>
+    completeMixedNights.some((night) =>
       night.stops.some((stop) => stop.venueId === 'reading-gallery'),
     ),
-    'Coffee & Books representative routes must outrank/filter above cafe-only highlight alternatives.',
+    'Coffee & Books semantic evidence should remain available as ranking/diagnostic signal without being mandatory.',
   )
   const stopTypeBoardSource = readFileSync(
     'src/domain/interpretation/discovery/stopTypeCandidateBoard.ts',
@@ -1804,8 +1869,7 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
     'utf8',
   )
   assert(
-      scenarioBuilderSource.includes('coffee_books_semantic_incomplete') &&
-      scenarioBuilderSource.includes('coffee_books_semantic_representation') &&
+      !scenarioBuilderSource.includes('coffee_books_semantic_incomplete') &&
       scenarioBuilderSource.includes('starterSemanticRepresentation') &&
       scenarioBuilderSource.includes('scenario_route_geo_scattered') &&
       scenarioBuilderSource.includes('scenario_route_mixed_di_fallback_scattered') &&
@@ -1815,9 +1879,9 @@ function assertCoffeeBooksScenarioGate(starterPack: StarterPack): void {
       scenarioBuilderSource.includes('missing_explicit_book_reading_literary_library_or_bookstore_stop') &&
       scenarioBuilderSource.includes('routeShapeClassification') &&
       scenarioBuilderSource.includes('geoCoherence'),
-    'Scenario Builder diagnostics must keep Coffee & Books explicit semantic, spatial contract, hard-commit, and geo-coherence rejection reasons available.',
+    'Scenario Builder diagnostics must keep Coffee & Books explicit semantic, spatial contract, hard-commit, and geo-coherence evidence available without a semantic admission gate.',
   )
-  process.stdout.write('Coffee & Books semantic Scenario Builder gate: passed\n')
+  process.stdout.write('Coffee & Books semantic Scenario Builder diagnostics: passed\n')
 }
 
 function createCoffeeBooksBridgeScenarioStop(params: {
@@ -1908,7 +1972,6 @@ function createCoffeeBooksBridgeScenarioNight(params: {
     evaluationContract: {
       scenarioFamily: 'romantic_cultured',
       starterId: 'coffee-books',
-      routeContract: findStarterPack('coffee-books').roleContracts,
     },
     title: `${params.id} Coffee & Books scenario`,
     flavorLine: 'A Coffee & Books exact-route buildability fixture.',
@@ -2032,20 +2095,19 @@ function assertCoffeeBooksScenarioBackedBuildabilityAdmission(starterPack: Start
     starterPack,
   })
   assert(
-    invalidBridge.candidateArtifacts.length === 0 &&
-      invalidBridge.displayBackedArtifacts.length === 0 &&
-      invalidBridge.qualificationCandidateArtifacts.length === 0,
-    'Coffee & Books scenario-backed route with bar/energy-3 windDown must be rejected before hard-commit qualification.',
+    invalidBridge.candidateArtifacts.length > 0 &&
+      invalidBridge.displayBackedArtifacts.length > 0 &&
+      invalidBridge.qualificationCandidateArtifacts.length > 0,
+    'Coffee & Books scenario-backed route with bar/energy-3 windDown must not be rejected by starter-specific public truth.',
   )
   assert(
     invalidBridge.diagnostics.some(
       (entry) =>
-        entry.scenarioRouteBuildabilityStatus === 'rejected' &&
-        entry.scenarioRouteBuildabilityReason === 'coffee_books_wind_down_energy_mismatch' &&
-        entry.scenarioRouteBuildabilityFailedRoles.includes('windDown') &&
-        !entry.includedInQualificationCandidateArtifacts,
+        entry.scenarioRouteBuildabilityStatus === 'passed' &&
+        entry.scenarioRouteBuildabilityReason === null &&
+        entry.includedInQualificationCandidateArtifacts,
     ),
-    'Coffee & Books buildability diagnostics must expose wind-down energy rejection without runtime_error.',
+    'Coffee & Books buildability diagnostics must keep materialization checks generic.',
   )
 
   const semanticRejectedBridge = buildCurateScenarioBackedArtifactBridge({
@@ -2061,21 +2123,20 @@ function assertCoffeeBooksScenarioBackedBuildabilityAdmission(starterPack: Start
     starterPack,
   })
   assert(
-    semanticRejectedBridge.candidateArtifacts.length === 0 &&
-      semanticRejectedBridge.displayBackedArtifacts.length === 0 &&
-      semanticRejectedBridge.qualificationCandidateArtifacts.length === 0,
-    'Coffee & Books scenario-backed route without explicit book/library/literary evidence must not enter artifact or hard-commit qualification pools.',
+    semanticRejectedBridge.candidateArtifacts.length > 0 &&
+      semanticRejectedBridge.displayBackedArtifacts.length > 0 &&
+      semanticRejectedBridge.qualificationCandidateArtifacts.length > 0,
+    'Coffee & Books scenario-backed route without explicit book/library/literary evidence must remain eligible when family contract passes.',
   )
   assert(
     semanticRejectedBridge.diagnostics.some(
       (entry) =>
-        entry.scenarioRouteBuildabilityStatus === 'rejected' &&
-        entry.scenarioRouteBuildabilityReason === 'coffee_books_semantic_representation_missing' &&
-        entry.hardCommitFeasibility.status === 'failed' &&
-        entry.hardCommitFeasibility.failureClass === 'semantic_contract_failed' &&
-        !entry.includedInQualificationCandidateArtifacts,
+        entry.scenarioRouteBuildabilityStatus === 'passed' &&
+        entry.scenarioRouteBuildabilityReason === null &&
+        entry.hardCommitFeasibility.status === 'passed' &&
+        entry.includedInQualificationCandidateArtifacts,
     ),
-    'Coffee & Books semantic-contract rejection must be preserved as diagnostics with hardCommitFeasibility failure class.',
+    'Coffee & Books missing semantic representation must remain diagnostic instead of a hardCommitFeasibility failure class.',
   )
 
   const validBridge = buildCurateScenarioBackedArtifactBridge({
@@ -2213,12 +2274,12 @@ function assertCoffeeBooksScenarioBackedBuildabilityAdmission(starterPack: Start
     mixedBridge.qualificationCandidateArtifacts.some(
       (artifact) => artifact.sourceOpportunityId === validOpportunity.id,
     ) &&
-      !mixedBridge.qualificationCandidateArtifacts.some(
+      mixedBridge.qualificationCandidateArtifacts.some(
         (artifact) => artifact.sourceOpportunityId === invalidOpportunity.id,
       ),
-    'Coffee & Books bridge must allow a represented buildable scenario while keeping unbuildable scenarios out of qualification.',
+    'Coffee & Books bridge must allow starter-promise variants when generic scenario-family materialization passes.',
   )
-  process.stdout.write('Coffee & Books scenario-backed buildability admission: passed\n')
+  process.stdout.write('Coffee & Books scenario-backed buildability normalization: passed\n')
 }
 
 function assertCoffeeBooksCommittedRouteFallbackGate(): void {
@@ -2242,18 +2303,18 @@ function assertCoffeeBooksCommittedRouteFallbackGate(): void {
     selectedPocketId: 'willow-glen',
   })
   assert(
-    rejectedCoffeeBooksFallback.status === 'rejected' &&
-      rejectedCoffeeBooksFallback.rejectedReason ===
-        'coffee_books_semantic_representation_missing',
-    'Coffee & Books committed_route_fallback cafe-only route must be rejected before card admission.',
+    rejectedCoffeeBooksFallback.status === 'accepted' &&
+      rejectedCoffeeBooksFallback.artifact.enrichment?.starterSemanticRepresentation?.status ===
+        'missing',
+    'Coffee & Books committed_route_fallback cafe-only route must remain eligible with missing semantic evidence as diagnostics.',
   )
   const visibleFallbackArtifacts =
     rejectedCoffeeBooksFallback.status === 'accepted'
       ? [rejectedCoffeeBooksFallback.artifact]
       : []
   assert(
-    visibleFallbackArtifacts.length === 0,
-    'Coffee & Books committed_route_fallback artifact without semantic representation must not become visible.',
+    visibleFallbackArtifacts.length === 1,
+    'Coffee & Books committed_route_fallback artifact without semantic representation may become visible after generic materialization truth passes.',
   )
 
   const culturalOnlyResult = buildFallbackGeneratePlanResult([
@@ -2277,10 +2338,10 @@ function assertCoffeeBooksCommittedRouteFallbackGate(): void {
     selectedPocketId: 'willow-glen',
   })
   assert(
-    rejectedCulturalOnlyCoffeeBooksFallback.status === 'rejected' &&
-      rejectedCulturalOnlyCoffeeBooksFallback.rejectedReason ===
-        'coffee_books_semantic_representation_missing',
-    'Coffee & Books committed_route_fallback museum/gallery/cultural-only route must not become visible.',
+    rejectedCulturalOnlyCoffeeBooksFallback.status === 'accepted' &&
+      rejectedCulturalOnlyCoffeeBooksFallback.artifact.enrichment?.starterSemanticRepresentation?.status ===
+        'missing',
+    'Coffee & Books committed_route_fallback museum/gallery/cultural-only route must not be blocked by literal Books evidence.',
   )
 
   const representedResult = buildFallbackGeneratePlanResult([
@@ -2320,7 +2381,7 @@ function assertCoffeeBooksCommittedRouteFallbackGate(): void {
     acceptedNonCoffeeFallback.status === 'accepted',
     'Non-Coffee starters must keep existing committed_route_fallback behavior.',
   )
-  process.stdout.write('Coffee & Books committed-route fallback gate: passed\n')
+  process.stdout.write('Coffee & Books committed-route fallback normalization: passed\n')
 }
 
 function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
@@ -2364,7 +2425,7 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
       cafeOnlyRepresentation.rejectionReasons?.includes(
         coffeeBooksSemanticRepresentationMissingReason,
       ),
-    'Coffee & Books committed runtime summary must reject tea/coffee/bakery-only routes.',
+    'Coffee & Books semantic diagnostics must mark tea/coffee/bakery-only routes as missing literal book evidence.',
   )
   assert(
     (cafeOnlyRepresentation.matchedEvidence ?? []).every((match) => !match.admissible),
@@ -2493,7 +2554,7 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
     sandboxSource.includes('!coffeeBooksCommittedRouteSummarySuppressed') &&
       sandboxSource.includes('const renderSharedPlanPreview = Boolean') &&
       sandboxSource.includes('const showPrimaryContinueAction = Boolean'),
-    'Coffee & Books runtime summary suppression must hide both the generated summary and Review CTA.',
+    'Coffee & Books runtime summary suppression must be limited to missing materialized route context and still gate generated summary and Review CTA through materialization truth.',
   )
   assert(
     sandboxSource.includes('activeCurateStarterPackId === \'coffee-books\'') &&
@@ -2701,8 +2762,8 @@ function assertCurateApprovedPayloadVisibleCardTruthInvariant(): void {
   assert(
     !staleTruth.allowedToRender &&
       staleTruth.rejectionReasons.includes('approved_payload_route_mismatch') &&
-      staleTruth.rejectionReasons.includes('approved_payload_final_route_semantic_mismatch'),
-    'Stale Willow Glen approved payload must not produce a visible Coffee & Books card.',
+      staleTruth.coffeeBooksSemanticRepresentationStatus === 'missing',
+    'Stale Willow Glen approved payload must not produce a visible card because route truth diverges, while Coffee & Books semantics remain diagnostic.',
   )
   const rejectedModel = buildPublicCurateCardTruthModel({
     selectedStarterPack: starterPack,
@@ -2764,6 +2825,68 @@ function assertCurateApprovedPayloadVisibleCardTruthInvariant(): void {
       alignedModel.actionsAllowed.review &&
       alignedModel.visibleCards[0]?.artifactId === artifact.id,
     'Aligned artifact, approved payload, visible card, and Review CTA truth must render together.',
+  )
+
+  const culturalOnlyArtifact: ContractEntryArtifact = {
+    ...artifact,
+    id: 'step2_scenario_built_romantic_cultured_cultural_only',
+    sourceOpportunityId: 'step2_scenario_built_romantic_cultured_cultural_only',
+    anchorVenueId: 'rosicrucian-culture-gallery',
+    anchorName: 'Rosicrucian Culture Gallery',
+    storySpine: {
+      start: 'Academic Coffee',
+      highlight: 'Rosicrucian Culture Gallery',
+      windDown: 'Willow Glen Bakehouse',
+    },
+    enrichment: {
+      ...artifact.enrichment,
+      canonicalRouteRoleCoverage: {
+        start: 'Academic Coffee',
+        highlight: 'Rosicrucian Culture Gallery',
+        windDown: 'Willow Glen Bakehouse',
+      },
+    },
+  }
+  const culturalOnlyRoute = createTruthInvariantFinalRoute({
+    routeId: 'aligned-cultural-only',
+    directionId: 'direction-romantic-cultured',
+    start: 'Academic Coffee',
+    highlight: 'Rosicrucian Culture Gallery',
+    windDown: 'Willow Glen Bakehouse',
+  })
+  const culturalOnlyPayload = {
+    artifactId: culturalOnlyArtifact.id,
+    starterPackId: starterPack.id,
+    finalRoute: culturalOnlyRoute,
+  }
+  const culturalOnlyTruth = validatePublicCurateApprovedPayloadTruth({
+    selectedStarterPack: starterPack,
+    artifact: culturalOnlyArtifact,
+    approvedRefinementEntryPayload: culturalOnlyPayload,
+  })
+  assert(
+    culturalOnlyTruth.allowedToRender &&
+      !culturalOnlyTruth.rejectionReasons.includes(
+        'approved_payload_final_route_semantic_mismatch',
+      ),
+    `Coffee & Books cultural romantic_cultured approved payload must pass when route truth aligns, with bookstore evidence diagnostic-only. rejectionReasons=${culturalOnlyTruth.rejectionReasons.join(',')}`,
+  )
+  const culturalOnlyModel = buildPublicCurateCardTruthModel({
+    selectedStarterPack: starterPack,
+    artifactCandidates: [culturalOnlyArtifact],
+    selectedArtifactId: culturalOnlyArtifact.id,
+    qualificationByArtifactId: {
+      [culturalOnlyArtifact.id]: {
+        status: 'committable',
+        hasApprovedPayload: true,
+        approvedRefinementEntryPayload: culturalOnlyPayload,
+      },
+    },
+    committedRouteFallbackRenderEnabled: false,
+  })
+  assert(
+    culturalOnlyModel.visibleCards.length === 1 && culturalOnlyModel.actionsAllowed.review,
+    'Coffee & Books cultural-only route must not be blocked by starter-specific semantic truth.',
   )
 
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
@@ -3223,6 +3346,8 @@ async function main(): Promise<void> {
       )
     }
   }
+  assertCurateStarterScenarioFamilyMapping()
+  assertStarterPromiseChecksDoNotBlockPublicFit()
   assertCoffeeBooksScenarioGate(findStarterPack('coffee-books'))
   assertCoffeeBooksScenarioBackedBuildabilityAdmission(findStarterPack('coffee-books'))
   assertCoffeeBooksCommittedRouteFallbackGate()

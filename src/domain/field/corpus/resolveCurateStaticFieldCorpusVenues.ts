@@ -14,6 +14,7 @@ import type { Venue } from '../../types/venue'
 
 export const curateStaticFieldCorpusStarterAliases: Record<string, string> = {
   'arcade-and-drinks': 'arcade-drinks',
+  'park-and-ice-cream': 'park-ice-cream',
 }
 
 export type CurateStaticFieldCorpusReason =
