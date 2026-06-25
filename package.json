@@ -13,6 +13,7 @@
     "test:bearings-hours-admissibility": "tsx scripts/test-bearings-hours-admissibility-policy.ts",
     "test:build-anchor-truth": "tsx scripts/test-build-anchor-truth.ts",
     "test:build-candidate-admission": "tsx scripts/test-build-candidate-admission.ts",
+    "test:build-card-truth": "tsx scripts/test-build-card-truth.ts",
     "provider:dry-run": "tsx scripts/run-provider-dry-run.ts",
     "provider:build-supply-dry-run": "tsx scripts/run-build-provider-supply-dry-run.ts"
   },

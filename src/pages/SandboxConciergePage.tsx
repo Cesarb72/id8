@@ -79,6 +79,7 @@ import {
   buildRouteAuthoritySnapshot,
 } from '../app/services/routeAuthority/routeAuthorityService'
 import { evaluateBuildCandidateAdmission } from '../app/services/buildCandidateAdmission/buildCandidateAdmissionService'
+import { buildBuildCardTruthModel } from '../app/services/canonicalPublicRouteTruthService'
 import {
   buildPlanPreviewV01FromSelectedRouteArtifacts,
   comparePlanPreviewV01ToRenderedPreview,
@@ -1188,6 +1189,10 @@ interface SurpriseTryAnotherDebug {
   buildCandidateAdmissionAdmittedCount: number
   buildCandidateAdmissionRejectedSummaries: string[]
   buildProviderShadowAdmissionSummary: string | null
+  buildApprovedPayloadTruthAllowed: boolean
+  buildReviewTruthEligible: boolean
+  buildCardSelectable: boolean
+  buildCardTruthRejectionReasons: string[]
   step2TryAnotherAlternatesCount: number
   surpriseArtifactSafetyKnownSafeIds: string[]
   surpriseArtifactSafetyKnownFailedIds: string[]
@@ -17442,6 +17447,82 @@ export function SandboxConciergePage({
     const warnings = entry.warningReasons.join(',') || 'none'
     return `${entry.artifactId}:admitted=${String(entry.admitted)};truth=${entry.truthGateStatus};geo=${entry.geoPosture};penalty=${entry.geoPenalty};hard=${hardReasons};warnings=${warnings}`
   }, [buildCandidateAdmissionDiagnostics])
+  const buildSelectedCardTruthDiagnostic = useMemo(() => {
+    if (!isBuildWrapperActive || !selectedBuildAnchor?.venueId || !selectedCandidateRouteArtifact) {
+      return null
+    }
+    const anchorContract = buildAnchorTruthContract({
+      identity: {
+        venueId: selectedBuildAnchor.venueId,
+        sourceVenueId: selectedBuildAnchor.sourceVenueId,
+        providerRecordId: selectedBuildAnchor.providerRecordId,
+        displayName: selectedBuildAnchor.name,
+        sourceOrigin: selectedBuildAnchorVenue?.source.sourceOrigin,
+        provider: selectedBuildAnchorVenue?.source.provider,
+        latitude: selectedBuildAnchorVenue?.source.latitude,
+        longitude: selectedBuildAnchorVenue?.source.longitude,
+      },
+      role: {
+        role: selectedCandidateRouteArtifact.anchorRole,
+        roleResolutionSource: selectedCandidateRouteArtifact.anchorRole ? 'inferred' : 'missing',
+      },
+    })
+    const candidateAdmission = evaluateBuildCandidateAdmission({
+      mode: 'build',
+      anchorContract,
+      contractEntryArtifact: selectedCandidateRouteArtifact,
+      runtimeRouteArtifact: canonicalRouteArtifact?.finalRoute ?? null,
+      buildParked: {
+        providerSelectionAllowed: buildProviderSelectionAllowed,
+        providerMergedIntoVisiblePool: buildProviderMergedIntoVisiblePool,
+      },
+    })
+    return buildBuildCardTruthModel({
+      artifact: selectedCandidateRouteArtifact,
+      selectedArtifactId: selectedCandidateRouteArtifact.id,
+      selectedDirectionId:
+        selectedDirectionId ?? selectedCandidateRouteArtifact.selection.directionId ?? null,
+      approvedPayload:
+        canonicalRouteArtifact && plan
+          ? {
+              artifactId: selectedCandidateRouteArtifact.id,
+              selectedDirectionId: canonicalRouteArtifact.selectedDirectionId,
+              finalRoute: canonicalRouteArtifact.finalRoute,
+              selectedClusterConfirmation: canonicalRouteArtifact.selectedClusterConfirmation,
+              itinerary: canonicalRouteArtifact.itinerary,
+              sourceKind: 'static',
+            }
+          : null,
+      candidateAdmission,
+      anchorTruthContract: anchorContract,
+      sourceKind: 'static',
+      buildProviderSelectionAllowed,
+      buildProviderMergedIntoVisiblePool,
+      activeRole,
+      fallbackCity: city.trim() || districtLocationQuery,
+    })
+  }, [
+    activeRole,
+    buildProviderMergedIntoVisiblePool,
+    buildProviderSelectionAllowed,
+    canonicalRouteArtifact,
+    city,
+    districtLocationQuery,
+    isBuildWrapperActive,
+    plan,
+    selectedBuildAnchor,
+    selectedBuildAnchorVenue,
+    selectedCandidateRouteArtifact,
+    selectedDirectionId,
+  ])
+  const buildApprovedPayloadTruthAllowed =
+    buildSelectedCardTruthDiagnostic?.approvedPayloadTruthAllowed ?? false
+  const buildReviewTruthEligible =
+    buildSelectedCardTruthDiagnostic?.reviewEligible ?? false
+  const buildCardSelectable =
+    buildSelectedCardTruthDiagnostic?.cardSelectable ?? false
+  const buildCardTruthRejectionReasons =
+    buildSelectedCardTruthDiagnostic?.rejectionReasons ?? []
   const buildAnchorSuppressedAdmissions = useMemo(
     () =>
       !isBuildWrapperActive || !selectedBuildAnchor?.venueId
@@ -20105,6 +20186,10 @@ export function SandboxConciergePage({
       buildCandidateAdmissionAdmittedCount,
       buildCandidateAdmissionRejectedSummaries,
       buildProviderShadowAdmissionSummary,
+      buildApprovedPayloadTruthAllowed,
+      buildReviewTruthEligible,
+      buildCardSelectable,
+      buildCardTruthRejectionReasons,
       step2TryAnotherAlternatesCount: step2TryAnotherAlternates.length,
       surpriseArtifactSafetyKnownSafeIds,
       surpriseArtifactSafetyKnownFailedIds,
@@ -20226,6 +20311,9 @@ export function SandboxConciergePage({
   }, [
     allDirectionCards,
     admittedScenarioBackedVerifiedCityOpportunities,
+    buildApprovedPayloadTruthAllowed,
+    buildCardSelectable,
+    buildCardTruthRejectionReasons,
     buildCandidateAdmissionAdmittedCount,
     buildCandidateAdmissionEvaluatedCount,
     buildCandidateAdmissionRejectedSummaries,
@@ -20251,6 +20339,7 @@ export function SandboxConciergePage({
     buildProviderVisibleMergeEnabled,
     buildProviderVerifiedOpportunityCount,
     buildProviderVerifiedOpportunityId,
+    buildReviewTruthEligible,
     buildStaticCandidateArtifactCount,
     buildStaticSourceOpportunityCount,
     candidateRouteArtifactByIdForDisplay,
@@ -22156,6 +22245,16 @@ export function SandboxConciergePage({
               <div>
                 buildProviderShadowAdmissionSummary:{' '}
                 {buildProviderShadowAdmissionSummary ?? 'n/a'}
+              </div>
+              <div>
+                buildApprovedPayloadTruthAllowed:{' '}
+                {String(buildApprovedPayloadTruthAllowed)}
+              </div>
+              <div>buildReviewTruthEligible: {String(buildReviewTruthEligible)}</div>
+              <div>buildCardSelectable: {String(buildCardSelectable)}</div>
+              <div>
+                buildCardTruthRejectionReasons:{' '}
+                {buildCardTruthRejectionReasons.join(',') || 'none'}
               </div>
               <div>
                 buildAnchorAllowedDirectionIds:{' '}

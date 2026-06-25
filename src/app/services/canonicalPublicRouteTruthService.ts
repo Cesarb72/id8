@@ -4,6 +4,12 @@ import {
   type ContractEntryArtifact,
 } from '../../domain/artifacts/contractEntryArtifact'
 import {
+  buildAnchorTruthContract,
+  validateRuntimeRouteBuildAnchor,
+  type BuildAnchorTruthContract,
+} from '../../domain/artifacts/buildAnchorTruthContract'
+import type { RuntimeRouteArtifact } from '../../domain/artifacts/runtimeRouteArtifact'
+import {
   buildContractEntryLockProjection,
   buildContractEntryPlansSummaryProjection,
   buildContractEntryReviewProjection,
@@ -11,9 +17,20 @@ import {
   buildContractEntryVisibleCardProjection,
 } from '../../domain/artifacts/contractEntryArtifactProjection'
 import type { ExperienceMode } from '../../domain/types/intent'
-import type { Itinerary } from '../../domain/types/itinerary'
+import type { Itinerary, UserStopRole } from '../../domain/types/itinerary'
 import type { StarterPack } from '../../domain/types/starterPack'
-import { validatePublicCurateStarterFit } from './curate/publicCurateCardTruthService'
+import {
+  buildPublicCurateCardTruthModel,
+  validatePublicCurateStarterFit,
+  type PublicCurateCardTruthInput,
+  type PublicCurateCardTruthModel,
+} from './curate/publicCurateCardTruthService'
+import {
+  buildLockInputFromRouteAuthoritySnapshot,
+  buildRouteAuthoritySnapshot,
+} from './routeAuthority/routeAuthorityService'
+import type { BuildCandidateAdmissionResult } from './buildCandidateAdmission/buildCandidateAdmissionService'
+import type { BuildAnchorSelection } from './buildAnchorOrchestrationService'
 
 export interface PublicContractEntryArtifactTruthContext {
   mode: ExperienceMode | null
@@ -25,6 +42,97 @@ export interface PublicContractEntryArtifactTruthResult {
   artifact: ContractEntryArtifact | null
   rejectionReasons: string[]
 }
+
+export type BuildApprovedRouteSourceKind = 'static' | 'provider_shadow' | 'debug_only'
+
+export type BuildCardTruthRejectionReason =
+  | 'build_admission_missing'
+  | 'build_admission_failed'
+  | 'build_anchor_truth_missing'
+  | 'build_anchor_not_preserved'
+  | 'build_anchor_wrong_role'
+  | 'build_hours_blocked'
+  | 'build_route_authority_unavailable'
+  | 'build_provider_shadow_not_selectable'
+  | 'build_debug_candidate_not_selectable'
+  | 'build_selected_artifact_mismatch'
+  | 'build_selected_direction_mismatch'
+  | 'build_final_route_missing'
+  | 'build_non_canonical_route_ids'
+  | 'build_review_truth_unavailable'
+
+export interface BuildApprovedPayloadReference {
+  artifactId?: string | null
+  selectedDirectionId?: string | null
+  finalRoute?: RuntimeRouteArtifact | null
+  selectedClusterConfirmation?: string | null
+  itinerary?: Itinerary | null
+  sourceKind?: BuildApprovedRouteSourceKind
+}
+
+export interface BuildCardTruthInput {
+  artifact: ContractEntryArtifact | null | undefined
+  selectedArtifactId?: string | null
+  selectedDirectionId?: string | null
+  approvedPayload?: BuildApprovedPayloadReference | null
+  candidateAdmission?: BuildCandidateAdmissionResult | null
+  anchorTruthContract?: BuildAnchorTruthContract | null
+  selectedBuildAnchor?: BuildAnchorSelection | null
+  sourceKind?: BuildApprovedRouteSourceKind
+  buildProviderSelectionAllowed: boolean
+  buildProviderMergedIntoVisiblePool: boolean
+  activeRole?: UserStopRole
+  fallbackCity?: string
+}
+
+export interface BuildCardTruthResult {
+  approvedPayloadTruthAllowed: boolean
+  visibleCardEligible: boolean
+  cardSelectable: boolean
+  reviewEligible: boolean
+  routeAuthorityLockReady: boolean
+  sourceKind: BuildApprovedRouteSourceKind
+  rejectionReasons: BuildCardTruthRejectionReason[]
+  warningReasons: string[]
+  diagnostics: {
+    artifactId: string | null
+    selectedArtifactId: string | null
+    selectedDirectionId: string | null
+    approvedPayloadArtifactId: string | null
+    approvedPayloadDirectionId: string | null
+    finalRoutePresent: boolean
+    routeAuthorityStatus: string
+    routeAuthoritySourceLabel: string
+    routeAuthorityRejectionReasons: string[]
+    routeAuthorityMismatchReasons: string[]
+    lockInputAvailable: boolean
+    buildAdmissionAdmitted: boolean | null
+    buildAdmissionTruthGateStatus: string | null
+    buildAnchorValidationStatus: string | null
+    buildProviderSelectionAllowed: boolean
+    buildProviderMergedIntoVisiblePool: boolean
+  }
+}
+
+export type CanonicalModePublicRouteTruthInput =
+  | {
+      mode: 'curate'
+      input: PublicCurateCardTruthInput
+    }
+  | {
+      mode: 'build'
+      input: BuildCardTruthInput
+    }
+
+export type CanonicalModePublicRouteTruthResult =
+  | {
+      mode: 'curate'
+      truth: PublicCurateCardTruthModel
+    }
+  | {
+      mode: 'build'
+      truth: BuildCardTruthResult
+    }
 
 function normalizeRouteText(value: string | null | undefined): string {
   return String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
@@ -163,5 +271,203 @@ export function buildCanonicalPublicRouteFlowTruth(
     reveal: buildContractEntryRevealProjection(truth.artifact),
     lock: buildContractEntryLockProjection(truth.artifact),
     plans: buildContractEntryPlansSummaryProjection(truth.artifact),
+  }
+}
+
+function addBuildTruthReason(
+  reasons: BuildCardTruthRejectionReason[],
+  reason: BuildCardTruthRejectionReason,
+): void {
+  if (!reasons.includes(reason)) {
+    reasons.push(reason)
+  }
+}
+
+function resolveBuildAnchorTruthContract(
+  input: BuildCardTruthInput,
+): BuildAnchorTruthContract | null {
+  if (input.anchorTruthContract) {
+    return input.anchorTruthContract
+  }
+  if (!input.selectedBuildAnchor?.venueId || !input.artifact?.anchorRole) {
+    return null
+  }
+  return buildAnchorTruthContract({
+    identity: {
+      venueId: input.selectedBuildAnchor.venueId,
+      sourceVenueId: input.selectedBuildAnchor.sourceVenueId,
+      providerRecordId: input.selectedBuildAnchor.providerRecordId,
+      displayName: input.selectedBuildAnchor.name,
+    },
+    role: {
+      role: input.artifact.anchorRole,
+      roleResolutionSource: 'inferred',
+    },
+  })
+}
+
+function hasCanonicalThreeRoleFinalRoute(
+  finalRoute: RuntimeRouteArtifact | null | undefined,
+): boolean {
+  if (!finalRoute) {
+    return false
+  }
+  return (['start', 'highlight', 'windDown'] as const).every((role) =>
+    finalRoute.stops.some((stop) => stop.role === role && Boolean(stop.venueId.trim())),
+  )
+}
+
+export function buildBuildCardTruthModel(input: BuildCardTruthInput): BuildCardTruthResult {
+  const artifact = input.artifact ?? null
+  const approvedPayload = input.approvedPayload ?? null
+  const finalRoute = approvedPayload?.finalRoute ?? null
+  const sourceKind = input.sourceKind ?? approvedPayload?.sourceKind ?? 'static'
+  const rejectionReasons: BuildCardTruthRejectionReason[] = []
+  const warningReasons = [...(input.candidateAdmission?.warningReasons ?? [])]
+
+  if (!input.candidateAdmission) {
+    addBuildTruthReason(rejectionReasons, 'build_admission_missing')
+  } else if (!input.candidateAdmission.admitted) {
+    addBuildTruthReason(rejectionReasons, 'build_admission_failed')
+    if (
+      input.candidateAdmission.rejectionReasons.includes('closed_for_plan_window') ||
+      input.candidateAdmission.rejectionReasons.includes('explicit_time_requires_known_open_hours')
+    ) {
+      addBuildTruthReason(rejectionReasons, 'build_hours_blocked')
+    }
+    if (input.candidateAdmission.rejectionReasons.includes('stale_or_non_canonical_route_ids')) {
+      addBuildTruthReason(rejectionReasons, 'build_non_canonical_route_ids')
+    }
+  } else if (!input.candidateAdmission.hoursAdmissibility?.admitted) {
+    addBuildTruthReason(rejectionReasons, 'build_hours_blocked')
+  }
+
+  const anchorTruthContract = resolveBuildAnchorTruthContract(input)
+  let anchorValidationStatus: string | null = null
+  if (!anchorTruthContract) {
+    addBuildTruthReason(rejectionReasons, 'build_anchor_truth_missing')
+  } else if (finalRoute) {
+    const anchorValidation = validateRuntimeRouteBuildAnchor(anchorTruthContract, finalRoute)
+    anchorValidationStatus = anchorValidation.status
+    if (anchorValidation.status === 'invalid' || !anchorValidation.preserved) {
+      if (anchorValidation.reasons.includes('anchor_not_in_required_role')) {
+        addBuildTruthReason(rejectionReasons, 'build_anchor_wrong_role')
+      }
+      addBuildTruthReason(rejectionReasons, 'build_anchor_not_preserved')
+    }
+  }
+
+  if (!finalRoute) {
+    addBuildTruthReason(rejectionReasons, 'build_final_route_missing')
+  } else if (!hasCanonicalThreeRoleFinalRoute(finalRoute)) {
+    addBuildTruthReason(rejectionReasons, 'build_non_canonical_route_ids')
+  }
+
+  if (artifact?.id && input.selectedArtifactId && artifact.id !== input.selectedArtifactId) {
+    addBuildTruthReason(rejectionReasons, 'build_selected_artifact_mismatch')
+  }
+  if (
+    approvedPayload?.artifactId &&
+    (input.selectedArtifactId ?? artifact?.id) &&
+    approvedPayload.artifactId !== (input.selectedArtifactId ?? artifact?.id)
+  ) {
+    addBuildTruthReason(rejectionReasons, 'build_selected_artifact_mismatch')
+  }
+  const expectedDirectionId = input.selectedDirectionId ?? artifact?.selection.directionId ?? null
+  const observedDirectionId = approvedPayload?.selectedDirectionId ?? finalRoute?.selectedDirectionId
+  if (expectedDirectionId && observedDirectionId && observedDirectionId !== expectedDirectionId) {
+    addBuildTruthReason(rejectionReasons, 'build_selected_direction_mismatch')
+  }
+
+  if (sourceKind === 'provider_shadow') {
+    addBuildTruthReason(rejectionReasons, 'build_provider_shadow_not_selectable')
+  }
+  if (sourceKind === 'debug_only') {
+    addBuildTruthReason(rejectionReasons, 'build_debug_candidate_not_selectable')
+  }
+
+  const routeAuthoritySnapshot = buildRouteAuthoritySnapshot({
+    contractEntryArtifact: artifact,
+    selectedDirectionId: expectedDirectionId,
+    selectedArtifactId: input.selectedArtifactId ?? artifact?.id ?? approvedPayload?.artifactId ?? null,
+    approvedPayload,
+    selectedClusterConfirmation: approvedPayload?.selectedClusterConfirmation ?? undefined,
+    itinerary: approvedPayload?.itinerary ?? undefined,
+  })
+  const routeAuthorityLockReady = Boolean(
+    routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate &&
+      routeAuthoritySnapshot.validationStatus === 'valid',
+  )
+  if (!routeAuthorityLockReady) {
+    addBuildTruthReason(rejectionReasons, 'build_route_authority_unavailable')
+  }
+
+  const lockInput =
+    input.activeRole && input.fallbackCity
+      ? buildLockInputFromRouteAuthoritySnapshot({
+          snapshot: routeAuthoritySnapshot,
+          activeRole: input.activeRole,
+          fallbackCity: input.fallbackCity,
+        })
+      : null
+  const lockInputAvailable = lockInput?.ok ?? routeAuthorityLockReady
+
+  const approvedPayloadTruthAllowed =
+    rejectionReasons.length === 0 &&
+    Boolean(artifact && finalRoute && input.candidateAdmission?.admitted)
+  const visibleCardEligible = approvedPayloadTruthAllowed
+  const cardSelectable = Boolean(
+    visibleCardEligible &&
+      sourceKind === 'static' &&
+      input.buildProviderSelectionAllowed &&
+      input.buildProviderMergedIntoVisiblePool,
+  )
+  const reviewEligible = Boolean(visibleCardEligible && routeAuthorityLockReady)
+  if (!reviewEligible) {
+    addBuildTruthReason(rejectionReasons, 'build_review_truth_unavailable')
+  }
+
+  return {
+    approvedPayloadTruthAllowed,
+    visibleCardEligible,
+    cardSelectable,
+    reviewEligible,
+    routeAuthorityLockReady,
+    sourceKind,
+    rejectionReasons,
+    warningReasons,
+    diagnostics: {
+      artifactId: artifact?.id ?? null,
+      selectedArtifactId: input.selectedArtifactId ?? null,
+      selectedDirectionId: expectedDirectionId,
+      approvedPayloadArtifactId: approvedPayload?.artifactId ?? null,
+      approvedPayloadDirectionId: approvedPayload?.selectedDirectionId ?? null,
+      finalRoutePresent: Boolean(finalRoute),
+      routeAuthorityStatus: routeAuthoritySnapshot.validationStatus,
+      routeAuthoritySourceLabel: routeAuthoritySnapshot.sourceLabel,
+      routeAuthorityRejectionReasons: routeAuthoritySnapshot.rejectionReasons,
+      routeAuthorityMismatchReasons: routeAuthoritySnapshot.mismatchReasons,
+      lockInputAvailable,
+      buildAdmissionAdmitted: input.candidateAdmission?.admitted ?? null,
+      buildAdmissionTruthGateStatus: input.candidateAdmission?.truthGateStatus ?? null,
+      buildAnchorValidationStatus: anchorValidationStatus,
+      buildProviderSelectionAllowed: input.buildProviderSelectionAllowed,
+      buildProviderMergedIntoVisiblePool: input.buildProviderMergedIntoVisiblePool,
+    },
+  }
+}
+
+export function buildModeAwarePublicRouteTruth(
+  input: CanonicalModePublicRouteTruthInput,
+): CanonicalModePublicRouteTruthResult {
+  if (input.mode === 'curate') {
+    return {
+      mode: 'curate',
+      truth: buildPublicCurateCardTruthModel(input.input),
+    }
+  }
+  return {
+    mode: 'build',
+    truth: buildBuildCardTruthModel(input.input),
   }
 }
