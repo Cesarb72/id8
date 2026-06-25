@@ -69,6 +69,7 @@ interface EvidenceState {
   routeSourceEvidence: Array<Record<string, JsonValue>>
   candidateEvidence: Array<Record<string, JsonValue>>
   stepBDiagnosticEvidence: Array<Record<string, JsonValue>>
+  downstreamEvidence: Array<Record<string, JsonValue>>
   routeCardsBeforeClick: Array<Record<string, JsonValue>>
   selectedRouteCard: Record<string, JsonValue> | null
   revealedRouteText: string | null
@@ -720,6 +721,341 @@ async function readStepBCoffeeBooksDiagnostics(cdp: CdpClient): Promise<Record<s
   )
 }
 
+async function readDownstreamHandoffDiagnostics(
+  cdp: CdpClient,
+  label: string,
+): Promise<Record<string, JsonValue>> {
+  return evaluate<Record<string, JsonValue>>(
+    cdp,
+    `
+      (() => {
+        const label = ${JSON.stringify(label)}
+        const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim()
+        const visible = (element) => {
+          const rect = element.getBoundingClientRect()
+          const style = window.getComputedStyle(element)
+          return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+        }
+        const visibleActions = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+          .filter(visible)
+          .map((element, index) => ({
+            index,
+            tag: element.tagName,
+            text: normalize(element.innerText || element.textContent || element.getAttribute('aria-label')),
+            href: element instanceof HTMLAnchorElement ? element.href : null,
+            disabled: Boolean(element.disabled) || element.getAttribute('aria-disabled') === 'true',
+            className: typeof element.className === 'string' ? element.className : '',
+          }))
+          .filter((entry) => entry.text)
+          .slice(0, 80)
+        const routeCards = Array.from(document.querySelectorAll('button.step2-night-option'))
+          .filter(visible)
+          .map((element, index) => ({
+            index,
+            artifactId: element.getAttribute('data-id8-route-card-artifact-id') || null,
+            sourceOpportunityId: element.getAttribute('data-id8-route-card-source-opportunity-id') || null,
+            cardDisplaySource: element.getAttribute('data-id8-route-card-display-source') || null,
+            ariaPressed: element.getAttribute('aria-pressed'),
+            disabled: Boolean(element.disabled),
+            text: normalize(element.innerText || element.textContent).slice(0, 800),
+          }))
+        const selectedRouteCards = routeCards.filter((card) => card.ariaPressed === 'true')
+        const summaryElement = document.querySelector('[data-id8-route-summary-source], [data-id8-route-summary-suppressed]')
+        const routeSummary = summaryElement ? {
+          text: normalize(summaryElement.innerText || summaryElement.textContent).slice(0, 2500),
+          source: summaryElement.getAttribute('data-id8-route-summary-source') || null,
+          provenance: summaryElement.getAttribute('data-id8-route-summary-provenance') || null,
+          renderedRouteSource: summaryElement.getAttribute('data-id8-route-summary-rendered-route-source') || null,
+          activeStarterId: summaryElement.getAttribute('data-id8-route-summary-active-starter-id') || null,
+          semanticStatus: summaryElement.getAttribute('data-id8-route-summary-semantic-status') || null,
+          rejectionReason: summaryElement.getAttribute('data-id8-route-summary-rejection-reason') || null,
+          suppressed: summaryElement.getAttribute('data-id8-route-summary-suppressed') || null,
+        } : null
+        let stepBDiagnostic = null
+        const diagnosticElement = document.querySelector('[data-id8-step-b-coffee-books-diagnostics]')
+        if (diagnosticElement) {
+          try {
+            stepBDiagnostic = JSON.parse(diagnosticElement.getAttribute('data-id8-step-b-coffee-books-diagnostics') || '{}')
+          } catch {
+            stepBDiagnostic = null
+          }
+        }
+        const selectedVisibleCardId = selectedRouteCards[0]?.artifactId || null
+        const visibleCardDiagnostics = stepBDiagnostic?.artifactCardAdmission?.visibleCardDiagnostics || []
+        const selectedVisibleCardDiagnostic =
+          visibleCardDiagnostics.find((entry) => entry.artifactId === selectedVisibleCardId) ||
+          visibleCardDiagnostics.find((entry) => entry.artifactId === routeCards[0]?.artifactId) ||
+          null
+        const qualificationDiagnostics = stepBDiagnostic?.artifactCardAdmission?.qualificationDiagnostics || []
+        const selectedQualificationDiagnostic =
+          qualificationDiagnostics.find((entry) => entry.artifactId === selectedVisibleCardId) ||
+          qualificationDiagnostics.find((entry) => entry.artifactId === routeCards[0]?.artifactId) ||
+          null
+        const reviewCandidates = visibleActions.filter((entry) =>
+          /review\\s+(this\\s+)?route|review\\s+your\\s+route/i.test(entry.text)
+        )
+        const lockCandidates = visibleActions.filter((entry) =>
+          /lock\\s+(this\\s+)?(night|route|plan)|finalize|start\\s+live/i.test(entry.text)
+        )
+        const bodyText = normalize(document.body?.innerText)
+        return {
+          timestamp: new Date().toISOString(),
+          action: label,
+          url: location.href,
+          bodyExcerpt: bodyText.slice(0, 4000),
+          routeCards,
+          selectedRouteCards,
+          selectedVisibleCardId,
+          selectedCardSource: selectedRouteCards[0]?.cardDisplaySource || null,
+          routeSummary,
+          visibleActions,
+          reviewCandidates,
+          lockCandidates,
+          reviewCtaVisible: reviewCandidates.length > 0,
+          lockCtaVisible: lockCandidates.length > 0,
+          noCardState: stepBDiagnostic?.publicNoCardState || null,
+          reviewCtaDiagnostic: stepBDiagnostic?.reviewCta || null,
+          availability: stepBDiagnostic?.availability || null,
+          selectedVisibleCardDiagnostic,
+          selectedQualificationDiagnostic,
+          approvedPayloadPresent:
+            selectedQualificationDiagnostic?.approvedPayloadPresent ??
+            selectedVisibleCardDiagnostic?.approvedPayloadPresent ??
+            null,
+          hasApprovedPayload: selectedVisibleCardDiagnostic?.hasApprovedPayload ?? null,
+          approvedPayloadTruthAllowed: selectedVisibleCardDiagnostic?.approvedPayloadTruthAllowed ?? null,
+          publicTruthAllowed: selectedVisibleCardDiagnostic?.approvedPayloadTruthAllowed ?? null,
+          publicCurateSelectedCardTruthReady:
+            Boolean(
+              selectedVisibleCardDiagnostic?.hasApprovedPayload &&
+              selectedVisibleCardDiagnostic?.approvedPayloadTruthAllowed &&
+              selectedQualificationDiagnostic?.qualificationStatus === 'qualified'
+            ),
+          runtimeSummary: stepBDiagnostic?.runtimeSummary || null,
+          artifactAdmissionSummary: stepBDiagnostic?.artifactCardAdmission
+            ? {
+                primaryCardDisplayMode: stepBDiagnostic.artifactCardAdmission.primaryCardDisplayMode ?? null,
+                primaryVisibleQualifiedCount: stepBDiagnostic.artifactCardAdmission.primaryVisibleQualifiedCount ?? null,
+                qualifiedRouteCardCount: stepBDiagnostic.artifactCardAdmission.qualifiedRouteCardCount ?? null,
+                visibleCardModelCount: stepBDiagnostic.artifactCardAdmission.visibleCardModelCount ?? null,
+              }
+            : null,
+        }
+      })()
+    `,
+  )
+}
+
+async function readLiveArtifactStorage(cdp: CdpClient, label: string): Promise<Record<string, JsonValue>> {
+  return evaluate<Record<string, JsonValue>>(
+    cdp,
+    `
+      (() => {
+        const label = ${JSON.stringify(label)}
+        const parse = (value) => {
+          try {
+            return value ? JSON.parse(value) : null
+          } catch {
+            return null
+          }
+        }
+        const activeSessionId = window.sessionStorage.getItem('id8.liveArtifact.activeSessionId.v1')
+        const keyedPayload = activeSessionId
+          ? parse(window.sessionStorage.getItem('id8.liveArtifact.session.v1.' + activeSessionId))
+          : null
+        const currentPayload = parse(window.sessionStorage.getItem('id8.liveArtifact.v1'))
+        const payload = keyedPayload || currentPayload
+        const sharedPlanKeys = []
+        for (let index = 0; index < window.localStorage.length; index += 1) {
+          const key = window.localStorage.key(index)
+          if (key && key.startsWith('id8.liveArtifact.sharedPlan.v1.')) {
+            sharedPlanKeys.push(key)
+          }
+        }
+        const finalRouteStops = Array.isArray(payload?.finalRoute?.stops)
+          ? payload.finalRoute.stops.map((stop) => ({
+              id: stop.id || null,
+              role: stop.role || null,
+              stopIndex: stop.stopIndex ?? null,
+              venueId: stop.venueId || null,
+              sourceStopId: stop.sourceStopId || null,
+              displayName: stop.displayName || null,
+            }))
+          : []
+        const itineraryStops = Array.isArray(payload?.itinerary?.stops)
+          ? payload.itinerary.stops.map((stop) => ({
+              id: stop.id || null,
+              role: stop.role || null,
+              venueId: stop.venueId || null,
+              venueName: stop.venueName || null,
+            }))
+          : []
+        return {
+          timestamp: new Date().toISOString(),
+          action: label,
+          url: location.href,
+          activeSessionId,
+          keyedPayloadPresent: Boolean(keyedPayload),
+          currentPayloadPresent: Boolean(currentPayload),
+          sharedPlanKeyCount: sharedPlanKeys.length,
+          payloadPresent: Boolean(payload),
+          sessionId: payload?.sessionId || null,
+          lockedAt: typeof payload?.lockedAt === 'number' ? payload.lockedAt : null,
+          city: payload?.city || null,
+          finalRoutePresent: Boolean(payload?.finalRoute),
+          finalRouteId: payload?.finalRoute?.routeId || null,
+          selectedDirectionId: payload?.finalRoute?.selectedDirectionId || null,
+          finalRouteStopCount: finalRouteStops.length,
+          finalRouteStops,
+          itineraryStopCount: itineraryStops.length,
+          itineraryStops,
+        }
+      })()
+    `,
+  )
+}
+
+async function findReviewRouteCta(cdp: CdpClient): Promise<Record<string, JsonValue>> {
+  return evaluate<Record<string, JsonValue>>(
+    cdp,
+    `
+      (() => {
+        const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim()
+        const visible = (element) => {
+          const rect = element.getBoundingClientRect()
+          const style = window.getComputedStyle(element)
+          return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+        }
+        const elements = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+        const candidates = elements
+          .filter(visible)
+          .map((element, index) => ({
+            element,
+            index,
+            text: normalize(element.innerText || element.textContent || element.getAttribute('aria-label')),
+            tag: element.tagName,
+            href: element instanceof HTMLAnchorElement ? element.href : null,
+          }))
+          .filter((entry) =>
+            /review\\s+this\\s+route|review\\s+route|review\\s+your\\s+route/i.test(entry.text)
+          )
+        const selected = candidates[0]
+        if (!selected) {
+          return {
+            found: false,
+            visibleActions: elements
+              .filter(visible)
+              .map((element) => normalize(element.innerText || element.textContent || element.getAttribute('aria-label')))
+              .filter(Boolean)
+              .slice(0, 80),
+          }
+        }
+        return {
+          found: true,
+          index: selected.index,
+          text: selected.text,
+          tag: selected.tag,
+          href: selected.href,
+        }
+      })()
+    `,
+  )
+}
+
+async function clickReviewRouteCta(cdp: CdpClient): Promise<Record<string, JsonValue>> {
+  return evaluate<Record<string, JsonValue>>(
+    cdp,
+    `
+      (() => {
+        const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim()
+        const visible = (element) => {
+          const rect = element.getBoundingClientRect()
+          const style = window.getComputedStyle(element)
+          return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+        }
+        const candidates = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+          .filter(visible)
+          .map((element, index) => ({
+            element,
+            index,
+            text: normalize(element.innerText || element.textContent || element.getAttribute('aria-label')),
+          }))
+          .filter((entry) =>
+            /review\\s+this\\s+route|review\\s+route|review\\s+your\\s+route/i.test(entry.text)
+          )
+        const selected = candidates[0]
+        if (!selected) {
+          return {
+            ok: false,
+            reason: 'review-cta-not-found',
+            visibleActions: Array.from(document.querySelectorAll('button, a, [role="button"]'))
+              .filter(visible)
+              .map((element) => normalize(element.innerText || element.textContent || element.getAttribute('aria-label')))
+              .filter(Boolean)
+              .slice(0, 80),
+          }
+        }
+        selected.element.scrollIntoView({ block: 'center', inline: 'center' })
+        selected.element.click()
+        return { ok: true, selectedText: selected.text, selectedIndex: selected.index }
+      })()
+    `,
+  )
+}
+
+async function scrollForReviewCta(cdp: CdpClient): Promise<void> {
+  await evaluate<null>(
+    cdp,
+    `
+      (() => {
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' })
+        return null
+      })()
+    `,
+  )
+}
+
+async function clickLockRouteCta(cdp: CdpClient): Promise<Record<string, JsonValue>> {
+  return evaluate<Record<string, JsonValue>>(
+    cdp,
+    `
+      (() => {
+        const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim()
+        const visible = (element) => {
+          const rect = element.getBoundingClientRect()
+          const style = window.getComputedStyle(element)
+          return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+        }
+        const candidates = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+          .filter(visible)
+          .map((element, index) => ({
+            element,
+            index,
+            text: normalize(element.innerText || element.textContent || element.getAttribute('aria-label')),
+          }))
+          .filter((entry) =>
+            /lock\\s+this\\s+night|lock\\s+(route|plan|night)|finalize|start\\s+live/i.test(entry.text)
+          )
+        const selected = candidates[0]
+        if (!selected) {
+          return {
+            ok: false,
+            reason: 'lock-cta-not-found',
+            visibleActions: Array.from(document.querySelectorAll('button, a, [role="button"]'))
+              .filter(visible)
+              .map((element) => normalize(element.innerText || element.textContent || element.getAttribute('aria-label')))
+              .filter(Boolean)
+              .slice(0, 80),
+          }
+        }
+        selected.element.scrollIntoView({ block: 'center', inline: 'center' })
+        selected.element.click()
+        return { ok: true, selectedText: selected.text, selectedIndex: selected.index }
+      })()
+    `,
+  )
+}
+
 async function clickTextButton(cdp: CdpClient, label: string): Promise<Record<string, JsonValue>> {
   return evaluate<Record<string, JsonValue>>(
     cdp,
@@ -926,6 +1262,7 @@ async function runDryRun(): Promise<void> {
     routeSourceEvidence: [],
     candidateEvidence: [],
     stepBDiagnosticEvidence: [],
+    downstreamEvidence: [],
     routeCardsBeforeClick: [],
     selectedRouteCard: null,
     revealedRouteText: null,
@@ -977,6 +1314,7 @@ async function runHostedObservation(): Promise<void> {
     routeSourceEvidence: [],
     candidateEvidence: [],
     stepBDiagnosticEvidence: [],
+    downstreamEvidence: [],
     routeCardsBeforeClick: [],
     selectedRouteCard: null,
     revealedRouteText: null,
@@ -1314,6 +1652,18 @@ async function runHostedObservation(): Promise<void> {
       throw new Error('Could not click first visible route card.')
     }
     await checkpoint('after_click_route_card')
+    const fieldProxyCallCountAfterCurateGeneration = evidence.fieldProxyCalls.length
+    const postClickDiagnostics = await readDownstreamHandoffDiagnostics(cdp, 'after_click_route_card_post_click')
+    evidence.downstreamEvidence.push({
+      ...postClickDiagnostics,
+      selectedCardId: evidence.selectedRouteCard.artifactId ?? null,
+      selectedCardSource: selectedCard.cardDisplaySource ?? null,
+      fieldProxyCallCountAtCheckpoint: fieldProxyCallCountAfterCurateGeneration,
+      providerPatternHitCountAtCheckpoint: evidence.providerPatternHits.length,
+      pageErrorCountAtCheckpoint: evidence.pageErrors.length,
+    })
+    await recordEvent('downstream_handoff_diagnostics', evidence.downstreamEvidence[evidence.downstreamEvidence.length - 1])
+    await persist('downstream_after_click_route_card_post_click')
     const routeSourceAfterCardClick = await readRouteSourceEvidence(cdp)
     evidence.routeSourceEvidence.push({
       timestamp: isoNow(),
@@ -1333,8 +1683,41 @@ async function runHostedObservation(): Promise<void> {
     )
     await persist('route_source_after_card_click')
 
+    let reviewCta = await findReviewRouteCta(cdp)
+    if (!reviewCta.found) {
+      await scrollForReviewCta(cdp)
+      await new Promise((resolve) => setTimeout(resolve, 750))
+      const scrolledDiagnostics = await readDownstreamHandoffDiagnostics(cdp, 'after_review_cta_scroll_retry')
+      evidence.downstreamEvidence.push({
+        ...scrolledDiagnostics,
+        selectedCardId: evidence.selectedRouteCard.artifactId ?? null,
+        selectedCardSource: selectedCard.cardDisplaySource ?? null,
+        fieldProxyCallCountAtCheckpoint: evidence.fieldProxyCalls.length,
+        providerPatternHitCountAtCheckpoint: evidence.providerPatternHits.length,
+        pageErrorCountAtCheckpoint: evidence.pageErrors.length,
+      })
+      await recordEvent('downstream_handoff_diagnostics', evidence.downstreamEvidence[evidence.downstreamEvidence.length - 1])
+      await persist('downstream_after_review_cta_scroll_retry')
+      reviewCta = await findReviewRouteCta(cdp)
+    }
+    if (!reviewCta.found) {
+      const missingReviewDiagnostics = await readDownstreamHandoffDiagnostics(cdp, 'review_cta_not_found_stop')
+      evidence.downstreamEvidence.push({
+        ...missingReviewDiagnostics,
+        selectedCardId: evidence.selectedRouteCard.artifactId ?? null,
+        selectedCardSource: selectedCard.cardDisplaySource ?? null,
+        fieldProxyCallCountAtCheckpoint: evidence.fieldProxyCalls.length,
+        providerPatternHitCountAtCheckpoint: evidence.providerPatternHits.length,
+        pageErrorCountAtCheckpoint: evidence.pageErrors.length,
+      })
+      await recordEvent('downstream_handoff_diagnostics', evidence.downstreamEvidence[evidence.downstreamEvidence.length - 1])
+      await persist('downstream_review_cta_not_found_stop')
+      throw new Error('Review CTA not found after approved route-card click.')
+    }
+
     await checkpoint('before_click_review_this_route')
-    const reviewResult = await clickTextButton(cdp, 'Review this route')
+    await recordEvent('review_cta_detected', reviewCta)
+    const reviewResult = await clickReviewRouteCta(cdp)
     await recordEvent('action_result', { action: 'click_review_this_route', result: reviewResult })
     if (!reviewResult.ok) {
       throw new Error('Could not click Review this route.')
@@ -1344,6 +1727,83 @@ async function runHostedObservation(): Promise<void> {
     const finalSnapshot = await collectPageSnapshot(cdp)
     evidence.revealedRouteText =
       typeof finalSnapshot.bodyText === 'string' ? truncate(finalSnapshot.bodyText, 8000) : null
+    const reviewSurfaceDiagnostics = await readDownstreamHandoffDiagnostics(cdp, 'after_click_review_this_route')
+    evidence.downstreamEvidence.push({
+      ...reviewSurfaceDiagnostics,
+      selectedCardId: evidence.selectedRouteCard.artifactId ?? null,
+      selectedCardSource: selectedCard.cardDisplaySource ?? null,
+      fieldProxyCallCountAtCheckpoint: evidence.fieldProxyCalls.length,
+      additionalFieldProxyCallsSinceCurateGeneration:
+        evidence.fieldProxyCalls.length - fieldProxyCallCountAfterCurateGeneration,
+      providerPatternHitCountAtCheckpoint: evidence.providerPatternHits.length,
+      pageErrorCountAtCheckpoint: evidence.pageErrors.length,
+    })
+    await recordEvent('downstream_handoff_diagnostics', evidence.downstreamEvidence[evidence.downstreamEvidence.length - 1])
+    await persist('downstream_after_click_review_this_route')
+
+    const lockResult = await clickLockRouteCta(cdp)
+    await recordEvent('action_result', { action: 'click_lock_route', result: lockResult })
+    if (!lockResult.ok) {
+      const missingLockDiagnostics = await readDownstreamHandoffDiagnostics(cdp, 'lock_cta_not_found_stop')
+      evidence.downstreamEvidence.push({
+        ...missingLockDiagnostics,
+        selectedCardId: evidence.selectedRouteCard.artifactId ?? null,
+        selectedCardSource: selectedCard.cardDisplaySource ?? null,
+        fieldProxyCallCountAtCheckpoint: evidence.fieldProxyCalls.length,
+        additionalFieldProxyCallsSinceCurateGeneration:
+          evidence.fieldProxyCalls.length - fieldProxyCallCountAfterCurateGeneration,
+        providerPatternHitCountAtCheckpoint: evidence.providerPatternHits.length,
+        pageErrorCountAtCheckpoint: evidence.pageErrors.length,
+      })
+      await recordEvent('downstream_handoff_diagnostics', evidence.downstreamEvidence[evidence.downstreamEvidence.length - 1])
+      await persist('downstream_lock_cta_not_found_stop')
+      throw new Error('Lock CTA not found after Review route surface.')
+    }
+    await waitUntil('locked live artifact session or live page', async () => {
+      if (!cdp) {
+        return false
+      }
+      const storage = await readLiveArtifactStorage(cdp, 'lock_wait_poll')
+      const url = typeof storage.url === 'string' ? storage.url : ''
+      return Boolean(storage.finalRoutePresent) || url.includes('/journey/live') || url.includes('/dev/live')
+    }, 15000)
+    await checkpoint('after_click_lock_route')
+    const liveStorage = await readLiveArtifactStorage(cdp, 'after_click_lock_route')
+    evidence.downstreamEvidence.push({
+      ...liveStorage,
+      fieldProxyCallCountAtCheckpoint: evidence.fieldProxyCalls.length,
+      additionalFieldProxyCallsSinceCurateGeneration:
+        evidence.fieldProxyCalls.length - fieldProxyCallCountAfterCurateGeneration,
+      providerPatternHitCountAtCheckpoint: evidence.providerPatternHits.length,
+      pageErrorCountAtCheckpoint: evidence.pageErrors.length,
+    })
+    await recordEvent('live_artifact_storage', evidence.downstreamEvidence[evidence.downstreamEvidence.length - 1])
+    await persist('downstream_after_click_lock_route')
+
+    await cdp.send('Page.navigate', { url: `${getHostedValidationUrl()}/plans` })
+    await waitUntil('Plans Hub projection', async () => {
+      if (!cdp) {
+        return false
+      }
+      const snapshot = await collectPageSnapshot(cdp)
+      return (
+        typeof snapshot.bodyText === 'string' &&
+        snapshot.bodyText.includes('Plans Hub') &&
+        snapshot.bodyText.includes('Live co-pilot is active')
+      )
+    }, 15000)
+    await checkpoint('after_open_plans_hub')
+    const plansStorage = await readLiveArtifactStorage(cdp, 'after_open_plans_hub')
+    evidence.downstreamEvidence.push({
+      ...plansStorage,
+      fieldProxyCallCountAtCheckpoint: evidence.fieldProxyCalls.length,
+      additionalFieldProxyCallsSinceCurateGeneration:
+        evidence.fieldProxyCalls.length - fieldProxyCallCountAfterCurateGeneration,
+      providerPatternHitCountAtCheckpoint: evidence.providerPatternHits.length,
+      pageErrorCountAtCheckpoint: evidence.pageErrors.length,
+    })
+    await recordEvent('live_artifact_storage', evidence.downstreamEvidence[evidence.downstreamEvidence.length - 1])
+    await persist('downstream_after_open_plans_hub')
   } catch (error: unknown) {
     evidence.finalError = error instanceof Error ? error.stack ?? error.message : String(error)
     await recordEvent('fatal_error', evidence.finalError)
