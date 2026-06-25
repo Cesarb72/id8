@@ -44,47 +44,84 @@ function expectedArcRoleForCuratePreviewRole(
 
 function buildFailedCuratePreviewHardCommitFeasibility(params: {
   artifactId: string
-  failedRoles: CurateStopRole[]
+  failedRoles?: CurateStopRole[]
   failureClass: NonNullable<NonNullable<HardCommitFeasibilityState>['failureClass']>
+  discoveryPreferences?: NonNullable<IntentInput['discoveryPreferences']>
+  seedVenues?: Venue[]
+  failedRole?: CurateStopRole | 'unknown' | null
 }): HardCommitFeasibilityState {
   const roles = ['start', 'highlight', 'windDown'] as const
-  const failedRoleSet = new Set<CurateStopRole>(params.failedRoles)
+  const failedRoleSet = new Set<CurateStopRole>(params.failedRoles ?? [])
+  const seedVenueById = new Map((params.seedVenues ?? []).map((venue) => [venue.id, venue] as const))
+  const preferenceByRole = new Map(
+    (params.discoveryPreferences ?? [])
+      .filter(
+        (preference): preference is NonNullable<IntentInput['discoveryPreferences']>[number] =>
+          preference.role === 'start' ||
+          preference.role === 'highlight' ||
+          preference.role === 'windDown',
+      )
+      .map((preference) => [preference.role, preference] as const),
+  )
+  const roleDiagnostics = roles.map((role) => {
+    const preference = preferenceByRole.get(role)
+    const seedVenue = preference?.venueId ? seedVenueById.get(preference.venueId) : undefined
+    const selectedStopId = preference?.venueId ?? null
+    const failed =
+      params.failedRole === 'unknown'
+        ? false
+        : failedRoleSet.size === 0
+          ? false
+          : failedRoleSet.has(role)
+    return {
+      role,
+      expectedArcRole: expectedArcRoleForCuratePreviewRole(role),
+      selectedStopId,
+      selectedStopName: seedVenue?.name ?? null,
+      seedVenueId: seedVenue?.id ?? null,
+      discoveryPreferenceVenueId: preference?.venueId ?? null,
+      presentInProjectedRoleSet: Boolean(seedVenue?.id && preference?.venueId),
+      failed,
+      ...(failed ? { failureClass: params.failureClass } : {}),
+    }
+  })
   return {
     routeArtifactId: params.artifactId,
     status: 'failed',
     failureClass: params.failureClass,
-    failedRole: params.failedRoles[0] ?? null,
-    failedStopId: null,
-    failedStopName: null,
+    failedRole: params.failedRole ?? params.failedRoles?.[0] ?? 'unknown',
+    failedStopId:
+      params.failedRole && params.failedRole !== 'unknown'
+        ? roleDiagnostics.find((entry) => entry.role === params.failedRole)?.selectedStopId ?? null
+        : null,
+    failedStopName:
+      params.failedRole && params.failedRole !== 'unknown'
+        ? roleDiagnostics.find((entry) => entry.role === params.failedRole)?.selectedStopName ?? null
+        : null,
     selectedStopIds: {
-      start: null,
-      highlight: null,
-      windDown: null,
+      start: roleDiagnostics.find((entry) => entry.role === 'start')?.selectedStopId ?? null,
+      highlight:
+        roleDiagnostics.find((entry) => entry.role === 'highlight')?.selectedStopId ?? null,
+      windDown:
+        roleDiagnostics.find((entry) => entry.role === 'windDown')?.selectedStopId ?? null,
     },
     seedVenueIds: {
-      start: null,
-      highlight: null,
-      windDown: null,
+      start: roleDiagnostics.find((entry) => entry.role === 'start')?.seedVenueId ?? null,
+      highlight: roleDiagnostics.find((entry) => entry.role === 'highlight')?.seedVenueId ?? null,
+      windDown: roleDiagnostics.find((entry) => entry.role === 'windDown')?.seedVenueId ?? null,
     },
     discoveryPreferenceVenueIds: {
-      start: null,
-      highlight: null,
-      windDown: null,
+      start:
+        roleDiagnostics.find((entry) => entry.role === 'start')?.discoveryPreferenceVenueId ??
+        null,
+      highlight:
+        roleDiagnostics.find((entry) => entry.role === 'highlight')
+          ?.discoveryPreferenceVenueId ?? null,
+      windDown:
+        roleDiagnostics.find((entry) => entry.role === 'windDown')?.discoveryPreferenceVenueId ??
+        null,
     },
-    roleDiagnostics: roles.map((role) => {
-      const failed = failedRoleSet.size === 0 || failedRoleSet.has(role)
-      return {
-        role,
-        expectedArcRole: expectedArcRoleForCuratePreviewRole(role),
-        selectedStopId: null,
-        selectedStopName: null,
-        seedVenueId: null,
-        discoveryPreferenceVenueId: null,
-        presentInProjectedRoleSet: false,
-        failed,
-        ...(failed ? { failureClass: params.failureClass } : {}),
-      }
-    }),
+    roleDiagnostics,
   }
 }
 type CurateCommitSemantics = 'seed_guided' | 'approved_route_hard_commit'
@@ -506,7 +543,9 @@ export async function runCuratePreviewQualificationAttempt<
         hardCommitFeasibility: buildFailedCuratePreviewHardCommitFeasibility({
           artifactId: params.artifactId,
           failedRoles: missingScenarioHardCommitSeedRoles,
-          failureClass: 'missing_seed_identity',
+          failureClass: 'canonical_role_missing_seed',
+          discoveryPreferences: params.selectedArtifactDiscoveryPreferences,
+          seedVenues: scenarioHardCommitSeedVenues,
         }),
         failedRoles: missingScenarioHardCommitSeedRoles,
         missingRoleForContract: null,
@@ -885,10 +924,12 @@ export async function runCuratePreviewQualificationAttempt<
           hardCommitRequired: true,
           hardCommitFeasibility: buildFailedCuratePreviewHardCommitFeasibility({
             artifactId: params.artifactId,
-            failedRoles: ['start', 'highlight', 'windDown'],
-            failureClass: 'exact_preservation_failed',
+            failureClass: 'materialization_unresolved',
+            discoveryPreferences: params.selectedArtifactDiscoveryPreferences,
+            seedVenues: scenarioHardCommitSeedVenues,
+            failedRole: 'unknown',
           }),
-          failedRoles: ['start', 'highlight', 'windDown'],
+          failedRoles: [],
           missingRoleForContract: null,
           selectedDirectionId: params.activeDirectionContract.id,
           activeDistrictPocketId: params.activeDistrictPocketId,

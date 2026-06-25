@@ -781,6 +781,14 @@ export interface CurateHardCommitRoleMatchDiagnostics {
     | 'planner_inventory_mismatch'
     | 'exact_preservation_failed'
     | 'semantic_contract_failed'
+    | 'canonical_start_not_planner_compatible'
+    | 'canonical_highlight_not_planner_compatible'
+    | 'canonical_windDown_not_planner_compatible'
+    | 'canonical_role_missing_seed'
+    | 'canonical_role_missing_discovery_preference'
+    | 'canonical_role_not_in_planner_pool'
+    | 'canonical_exact_preservation_failed'
+    | 'materialization_unresolved'
   exactMatch: boolean
 }
 
@@ -821,7 +829,15 @@ export interface CurateHardCommitDiagnostics {
       | 'planner_inventory_mismatch'
       | 'exact_preservation_failed'
       | 'semantic_contract_failed'
-    failedRole?: 'start' | 'highlight' | 'windDown' | null
+      | 'canonical_start_not_planner_compatible'
+      | 'canonical_highlight_not_planner_compatible'
+      | 'canonical_windDown_not_planner_compatible'
+      | 'canonical_role_missing_seed'
+      | 'canonical_role_missing_discovery_preference'
+      | 'canonical_role_not_in_planner_pool'
+      | 'canonical_exact_preservation_failed'
+      | 'materialization_unresolved'
+    failedRole?: 'start' | 'highlight' | 'windDown' | 'unknown' | null
     failedStopId?: string | null
     failedStopName?: string | null
     selectedStopIds: {
@@ -855,6 +871,14 @@ export interface CurateHardCommitDiagnostics {
         | 'planner_inventory_mismatch'
         | 'exact_preservation_failed'
         | 'semantic_contract_failed'
+        | 'canonical_start_not_planner_compatible'
+        | 'canonical_highlight_not_planner_compatible'
+        | 'canonical_windDown_not_planner_compatible'
+        | 'canonical_role_missing_seed'
+        | 'canonical_role_missing_discovery_preference'
+        | 'canonical_role_not_in_planner_pool'
+        | 'canonical_exact_preservation_failed'
+        | 'materialization_unresolved'
     }>
   }
 }

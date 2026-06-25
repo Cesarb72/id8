@@ -455,6 +455,110 @@ function matchesPreferredDiscoveryRole(
   )
 }
 
+type CurateHardCommitRole = 'start' | 'highlight' | 'windDown'
+type CurateHardCommitFeasibilityFailureClass = NonNullable<
+  NonNullable<CurateHardCommitDiagnostics['hardCommitFeasibility']>['failureClass']
+>
+
+function rolePoolForCurateHardCommitRole(
+  rolePools: RolePools,
+  role: CurateHardCommitRole,
+): ScoredVenue[] {
+  if (role === 'start') {
+    return rolePools.warmup
+  }
+  if (role === 'highlight') {
+    return rolePools.peak
+  }
+  return rolePools.cooldown
+}
+
+function findCurateHardCommitRolePoolVenue(params: {
+  rolePools: RolePools
+  role: CurateHardCommitRole
+  venueId: string | undefined
+}): ScoredVenue | undefined {
+  const normalizedVenueId = params.venueId?.trim()
+  if (!normalizedVenueId) {
+    return undefined
+  }
+  return rolePoolForCurateHardCommitRole(params.rolePools, params.role).find(
+    (candidate) => candidate.venue.id === normalizedVenueId,
+  )
+}
+
+function isLikelyScenarioMomentIdentity(venueId: string | undefined): boolean {
+  return Boolean(venueId?.trim().startsWith('moment-'))
+}
+
+function canonicalPlannerCompatibilityFailureClass(
+  role: CurateHardCommitRole,
+  venueId: string | undefined,
+): CurateHardCommitFeasibilityFailureClass {
+  if (!isLikelyScenarioMomentIdentity(venueId)) {
+    return 'canonical_role_not_in_planner_pool'
+  }
+  if (role === 'start') {
+    return 'canonical_start_not_planner_compatible'
+  }
+  if (role === 'highlight') {
+    return 'canonical_highlight_not_planner_compatible'
+  }
+  return 'canonical_windDown_not_planner_compatible'
+}
+
+function buildCanonicalCurateHardCommitCandidate(params: {
+  rolePools: RolePools
+  intent: IntentProfile
+  crewPolicy: ReturnType<typeof getCrewPolicy>
+  lens: ExperienceLens
+  preferences: NonNullable<IntentProfile['discoveryPreferences']>
+}): ArcCandidate | null {
+  const startPreference = params.preferences.find((entry) => entry.role === 'start')
+  const highlightPreference = params.preferences.find((entry) => entry.role === 'highlight')
+  const windDownPreference = params.preferences.find((entry) => entry.role === 'windDown')
+  const warmup = findCurateHardCommitRolePoolVenue({
+    rolePools: params.rolePools,
+    role: 'start',
+    venueId: startPreference?.venueId,
+  })
+  const peak = findCurateHardCommitRolePoolVenue({
+    rolePools: params.rolePools,
+    role: 'highlight',
+    venueId: highlightPreference?.venueId,
+  })
+  const cooldown = findCurateHardCommitRolePoolVenue({
+    rolePools: params.rolePools,
+    role: 'windDown',
+    venueId: windDownPreference?.venueId,
+  })
+  if (!warmup || !peak || !cooldown) {
+    return null
+  }
+
+  const stops: ArcStop[] = [
+    { role: 'warmup', scoredVenue: warmup },
+    { role: 'peak', scoredVenue: peak },
+    { role: 'cooldown', scoredVenue: cooldown },
+  ]
+  const score = scoreArcAssembly(
+    stops,
+    params.intent,
+    params.crewPolicy,
+    params.lens,
+    params.rolePools,
+  )
+  return {
+    id: createId('arc_curate_hard_commit'),
+    stops,
+    totalScore: score.totalScore,
+    scoreBreakdown: score.scoreBreakdown,
+    pacing: score.pacing,
+    spatial: score.spatial,
+    hasWildcard: false,
+  }
+}
+
 function candidateMatchesCurateCommitPreferences(
   candidate: ArcCandidate,
   discoveryPreferences: NonNullable<IntentProfile['discoveryPreferences']>,
@@ -2012,9 +2116,29 @@ async function runGeneratePlanInternal(
       ? options.curateCommitSemantics ??
         (selectedArtifactLineage ? 'approved_route_hard_commit' : 'seed_guided')
       : null
+  const canonicalCurateHardCommitCandidate =
+    selectedArtifactLineage &&
+    planningIntent.mode === 'curate' &&
+    curateCommitSemantics === 'approved_route_hard_commit' &&
+    curateCommitPreferences.length > 0
+      ? buildCanonicalCurateHardCommitCandidate({
+          rolePools,
+          intent: planningIntent,
+          crewPolicy,
+          lens,
+          preferences: curateCommitPreferences,
+        })
+      : null
+  const rankedCandidatesWithCanonicalHardCommit =
+    canonicalCurateHardCommitCandidate &&
+    !rankedCandidates.some((candidate) =>
+      candidateMatchesCurateCommitPreferences(candidate, curateCommitPreferences),
+    )
+      ? [canonicalCurateHardCommitCandidate, ...rankedCandidates]
+      : rankedCandidates
   const curateHardCommitCandidates =
     curateCommitPreferences.length > 0
-      ? rankedCandidates.filter((candidate) =>
+      ? rankedCandidatesWithCanonicalHardCommit.filter((candidate) =>
           candidateMatchesCurateCommitPreferences(candidate, curateCommitPreferences),
         )
       : []
@@ -2039,7 +2163,7 @@ async function runGeneratePlanInternal(
     })
   const curateHardCommitSampleCandidates =
     curateHardCommitRequired && curateCommitPreferences.length > 0
-      ? rankedCandidates
+      ? rankedCandidatesWithCanonicalHardCommit
           .slice(0, 5)
           .map((candidate) =>
             buildCurateHardCommitCandidateDiagnostics(candidate, curateCommitPreferences),
@@ -3171,24 +3295,28 @@ async function runGeneratePlanInternal(
               curateHardCommitRequired && curateHardCommitCandidates.length === 0
                 ? 'curate_selected_artifact_structurally_infeasible'
                 : undefined
-            type CurateHardCommitFeasibilityFailureClass = NonNullable<
-              NonNullable<CurateHardCommitDiagnostics['hardCommitFeasibility']>['failureClass']
-            >
             const roleDiagnostics = (['start', 'highlight', 'windDown'] as const).map((role) => {
               const target = selectedCurateCommitTarget[role]
               const preference = curateCommitPreferences.find((entry) => entry.role === role)
               const finalRole = finalWinner[role]
-              const presentInProjectedRoleSet = finalRole.exactMatch
+              const rolePoolVenue = findCurateHardCommitRolePoolVenue({
+                rolePools,
+                role,
+                venueId: preference?.venueId ?? target?.venueId,
+              })
+              const presentInProjectedRoleSet = Boolean(rolePoolVenue)
               const failureClass: CurateHardCommitFeasibilityFailureClass | undefined =
                 !target?.venueId
-                  ? 'missing_seed_identity'
+                  ? 'canonical_role_missing_seed'
                   : !preference?.venueId
-                    ? 'missing_discovery_preference_identity'
-                    : !finalRole.venueId
-                      ? 'planner_inventory_mismatch'
-                      : !presentInProjectedRoleSet
-                        ? 'role_mapping_mismatch'
-                        : undefined
+                    ? 'canonical_role_missing_discovery_preference'
+                    : !presentInProjectedRoleSet
+                      ? canonicalPlannerCompatibilityFailureClass(role, preference.venueId)
+                      : !finalRole.venueId
+                        ? 'planner_inventory_mismatch'
+                        : !finalRole.exactMatch
+                          ? 'canonical_exact_preservation_failed'
+                          : undefined
               return {
                 role,
                 expectedArcRole: expectedArcRoleForCurateHardCommitRole(role),
@@ -3215,20 +3343,23 @@ async function runGeneratePlanInternal(
                 start: selectedCurateCommitTarget.start
                   ? {
                       venueId: selectedCurateCommitTarget.start.venueId,
+                      venueName: finalWinner.start.targetVenueName,
                     }
                   : undefined,
                 highlight: selectedCurateCommitTarget.highlight
                   ? {
                       venueId: selectedCurateCommitTarget.highlight.venueId,
+                      venueName: finalWinner.highlight.targetVenueName,
                     }
                   : undefined,
                 windDown: selectedCurateCommitTarget.windDown
                   ? {
                       venueId: selectedCurateCommitTarget.windDown.venueId,
+                      venueName: finalWinner.windDown.targetVenueName,
                     }
                   : undefined,
               },
-              rankedCandidateCount: rankedCandidates.length,
+              rankedCandidateCount: rankedCandidatesWithCanonicalHardCommit.length,
               hardCommitCandidateCount: curateHardCommitCandidates.length,
               hardCommitPreservationSucceeded: curateHardCommitCandidates.length > 0,
               explicitFallbackTriggered:

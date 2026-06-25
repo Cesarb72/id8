@@ -30,6 +30,14 @@ type CurateHardCommitFeasibilityFailureClass =
   | 'planner_inventory_mismatch'
   | 'exact_preservation_failed'
   | 'semantic_contract_failed'
+  | 'canonical_start_not_planner_compatible'
+  | 'canonical_highlight_not_planner_compatible'
+  | 'canonical_windDown_not_planner_compatible'
+  | 'canonical_role_missing_seed'
+  | 'canonical_role_missing_discovery_preference'
+  | 'canonical_role_not_in_planner_pool'
+  | 'canonical_exact_preservation_failed'
+  | 'materialization_unresolved'
 type CurateHardCommitFeasibilityRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
 
 interface CurateHardCommitFeasibilityRoleDiagnostic {

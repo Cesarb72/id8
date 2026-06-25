@@ -20,6 +20,7 @@ interface VerifiedOpportunityArtifactBuilderStopOption {
 
 interface VerifiedOpportunityArtifactBuilderScenarioStop {
   position: BuiltScenarioStopPosition
+  venueId?: string
   name: string
   whyThisStop?: string
 }
@@ -100,6 +101,19 @@ export function buildContractEntryArtifactFromVerifiedOpportunity(params: {
     const canonicalHighlight = canonicalNight?.stops.find((stop) => stop.position === 'highlight')
     const canonicalWindDownName =
       opportunity.scenarioWindDownDebug?.finalName ?? opportunity.storySpine.windDown
+    const canonicalRoleNames = new Set(
+      [canonicalStart?.name, canonicalHighlight?.name, canonicalWindDownName]
+        .map((name) => name?.trim().toLowerCase())
+        .filter((name): name is string => Boolean(name)),
+    )
+    const supportStops =
+      canonicalNight?.stops
+        .filter((stop) => !canonicalRoleNames.has(stop.name.trim().toLowerCase()))
+        .map((stop) => ({
+          role: stop.position,
+          name: stop.name,
+          ...(stop.venueId ? { venueId: stop.venueId } : {}),
+        })) ?? []
     const starterSemanticRepresentation =
       opportunity.starterSemanticRepresentation ?? canonicalNight?.starterSemanticRepresentation
 
@@ -130,9 +144,26 @@ export function buildContractEntryArtifactFromVerifiedOpportunity(params: {
       ...(starterSemanticRepresentation
         ? {
             enrichment: {
+              canonicalRouteRoleCoverage: {
+                start: canonicalStart?.name ?? opportunity.storySpine.start,
+                highlight: canonicalHighlight?.name ?? opportunity.storySpine.highlight,
+                windDown: canonicalWindDownName,
+                ...(supportStops.length > 0 ? { support: supportStops } : {}),
+              },
               starterSemanticRepresentation,
             },
           }
+        : supportStops.length > 0
+          ? {
+              enrichment: {
+                canonicalRouteRoleCoverage: {
+                  start: canonicalStart?.name ?? opportunity.storySpine.start,
+                  highlight: canonicalHighlight?.name ?? opportunity.storySpine.highlight,
+                  windDown: canonicalWindDownName,
+                  support: supportStops,
+                },
+              },
+            }
         : {}),
     }
   }

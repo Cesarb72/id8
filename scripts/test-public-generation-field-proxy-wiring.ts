@@ -3137,7 +3137,13 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       missingSeedIdentityAttempt.result.state.failedCheck ===
         'approved_payload_route_materialization_unavailable' &&
       missingSeedIdentityAttempt.result.state.explicitFallbackReason ===
-        'approved_payload_route_materialization_unavailable',
+        'approved_payload_route_materialization_unavailable' &&
+      missingSeedIdentityAttempt.result.state.hardCommitFeasibility?.failureClass ===
+        'canonical_role_missing_seed' &&
+      missingSeedIdentityAttempt.result.state.hardCommitFeasibility.seedVenueIds.start ===
+        'aligned-scenario-backed_start_venue' &&
+      missingSeedIdentityAttempt.result.state.hardCommitFeasibility.discoveryPreferenceVenueIds
+        .highlight === 'aligned-scenario-backed_highlight_venue',
     'Scenario-backed hard-commit qualification must fail closed before planning when exact seed identity is missing.',
   )
 
@@ -3171,8 +3177,18 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
         'approved_payload_route_materialization_unavailable' &&
       thrownMaterializationAttempt.result.state.explicitFallbackReason ===
         'approved_payload_route_materialization_unavailable' &&
-      thrownMaterializationAttempt.result.state.failureKind === 'structural_infeasibility',
-    'Known hard-commit fallback recovery errors must be classified as materialization unavailable, not runtime_error.',
+      thrownMaterializationAttempt.result.state.failureKind === 'structural_infeasibility' &&
+      thrownMaterializationAttempt.result.state.hardCommitFeasibility?.failureClass ===
+        'materialization_unresolved' &&
+      thrownMaterializationAttempt.result.state.hardCommitFeasibility.failedRole === 'unknown' &&
+      thrownMaterializationAttempt.result.state.failedRoles.length === 0 &&
+      thrownMaterializationAttempt.result.state.hardCommitFeasibility.selectedStopIds.start ===
+        'aligned-scenario-backed_start_venue' &&
+      thrownMaterializationAttempt.result.state.hardCommitFeasibility.seedVenueIds.highlight ===
+        'aligned-scenario-backed_highlight_venue' &&
+      thrownMaterializationAttempt.result.state.hardCommitFeasibility
+        .discoveryPreferenceVenueIds.windDown === 'aligned-scenario-backed_windDown_venue',
+    'Known hard-commit fallback recovery errors must preserve canonical ids and avoid defaulting unknown failures to start.',
   )
 
   const unexpectedAttempt = await runAttempt(alignedRoute, {
@@ -3200,8 +3216,23 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       serviceSource.includes('isKnownHardCommitMaterializationError') &&
       serviceSource.includes('scenarioHardCommitSeedVenues') &&
       serviceSource.includes('getMissingScenarioHardCommitSeedRoles') &&
-      serviceSource.includes('baseCommitParitySucceeded && !approvedPayloadTruthFailureReason'),
+      serviceSource.includes('baseCommitParitySucceeded && !approvedPayloadTruthFailureReason') &&
+      serviceSource.includes('materialization_unresolved') &&
+      serviceSource.includes("failedRole: 'unknown'"),
     'Curate preflight qualification must share the approved-payload truth invariant before payload construction.',
+  )
+  const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf8')
+  const artifactBuilderSource = readFileSync(
+    'src/domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity.ts',
+    'utf8',
+  )
+  assert(
+    runGeneratePlanSource.includes('buildCanonicalCurateHardCommitCandidate') &&
+      runGeneratePlanSource.includes('rankedCandidatesWithCanonicalHardCommit') &&
+      runGeneratePlanSource.includes('canonical_exact_preservation_failed') &&
+      artifactBuilderSource.includes('canonicalRouteRoleCoverage') &&
+      artifactBuilderSource.includes('supportStops'),
+    'Scenario-backed hard commit must expose a canonical 3-role materialization target while preserving support stops as diagnostics.',
   )
   process.stdout.write('Curate preflight approved-payload truth invariant: passed\n')
 }
