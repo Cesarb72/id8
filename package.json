@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "test:curate-green-path": "tsx scripts/test-curate-green-path-regression.ts",
     "provider:dry-run": "tsx scripts/run-provider-dry-run.ts",
     "provider:build-supply-dry-run": "tsx scripts/run-build-provider-supply-dry-run.ts"
   },
