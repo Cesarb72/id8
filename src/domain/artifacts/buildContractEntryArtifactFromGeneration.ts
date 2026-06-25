@@ -1,4 +1,8 @@
 import { createId } from '../../lib/ids'
+import {
+  isBuildAnchorCanonicalRole,
+  type BuildAnchorCanonicalRole,
+} from './buildAnchorTruthContract'
 import type {
   ContractEntryArtifact,
   ContractEntryArtifactCanonicalRouteRoleCoverage,
@@ -39,6 +43,44 @@ function formatPercent(value: number): string {
 
 function getRoleStop(itinerary: Itinerary, role: UserStopRole): ItineraryStop | undefined {
   return itinerary.stops.find((stop) => stop.role === role)
+}
+
+function resolveGeneratedAnchor(params: {
+  itinerary: Itinerary
+  intentProfile: IntentProfile
+  selectedArtifactLineage?: ContractEntryArtifactLineage
+}): {
+  anchorVenueId: string
+  anchorRole?: BuildAnchorCanonicalRole
+  anchorName: string
+} {
+  const { itinerary, intentProfile, selectedArtifactLineage } = params
+  const buildAnchorRole =
+    intentProfile.mode === 'build' && isBuildAnchorCanonicalRole(intentProfile.anchor?.role)
+      ? intentProfile.anchor.role
+      : undefined
+  const buildAnchorStop =
+    buildAnchorRole && intentProfile.anchor?.venueId
+      ? getRoleStop(itinerary, buildAnchorRole)
+      : undefined
+  if (
+    buildAnchorRole &&
+    intentProfile.anchor?.venueId &&
+    buildAnchorStop?.venueId === intentProfile.anchor.venueId
+  ) {
+    return {
+      anchorVenueId: intentProfile.anchor.venueId,
+      anchorRole: buildAnchorRole,
+      anchorName: buildAnchorStop.venueName,
+    }
+  }
+
+  const highlight = getRoleStop(itinerary, 'highlight') ?? itinerary.stops[0]
+  return {
+    anchorVenueId: highlight?.venueId ?? selectedArtifactLineage?.anchorVenueId ?? 'unknown-anchor',
+    anchorRole: highlight ? 'highlight' : selectedArtifactLineage?.anchorRole,
+    anchorName: highlight?.venueName ?? 'Unknown highlight',
+  }
 }
 
 function buildRoleCoverage(itinerary: Itinerary): ContractEntryArtifactCanonicalRouteRoleCoverage {
@@ -212,6 +254,11 @@ export function buildContractEntryArtifactFromGeneration(
   const highlight = getRoleStop(itinerary, 'highlight') ?? itinerary.stops[0]
   const start = getRoleStop(itinerary, 'start') ?? itinerary.stops[0]
   const locationStop = start ?? highlight
+  const generatedAnchor = resolveGeneratedAnchor({
+    itinerary,
+    intentProfile,
+    selectedArtifactLineage,
+  })
   const sourceMode = mapSourceModeToEngineSourceMode(
     diagnostics.retrievalDiagnostics.liveSource.effectiveMode,
   )
@@ -291,9 +338,9 @@ export function buildContractEntryArtifactFromGeneration(
     id: createId('contract_entry'),
     sourceOpportunityId: selectedArtifactLineage?.sourceOpportunityId ?? selectedArc.id,
     sourceMode,
-    anchorVenueId: highlight?.venueId ?? selectedArtifactLineage?.anchorVenueId ?? 'unknown-anchor',
-    anchorRole: highlight ? 'highlight' : selectedArtifactLineage?.anchorRole,
-    anchorName: highlight?.venueName ?? 'Unknown highlight',
+    anchorVenueId: generatedAnchor.anchorVenueId,
+    ...(generatedAnchor.anchorRole ? { anchorRole: generatedAnchor.anchorRole } : {}),
+    anchorName: generatedAnchor.anchorName,
     routeTitle: itinerary.storySpine?.title ?? itinerary.title,
     flavorLine: itinerary.story.subtitle,
     routeSummary: itinerary.storySpine?.routeSummary ?? itinerary.shareSummary,

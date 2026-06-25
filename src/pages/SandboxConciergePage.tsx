@@ -125,6 +125,12 @@ import type {
   ContractEntryArtifactLineage,
 } from '../domain/artifacts/contractEntryArtifact'
 import { buildContractEntryArtifactLineage } from '../domain/artifacts/contractEntryArtifact'
+import {
+  buildAnchorTruthContract,
+  validateContractEntryArtifactBuildAnchor,
+  validateRuntimeRouteBuildAnchor,
+  type BuildAnchorRoleResolutionSource,
+} from '../domain/artifacts/buildAnchorTruthContract'
 import type {
   RuntimeRouteArtifact,
   RuntimeRouteStop,
@@ -14321,6 +14327,27 @@ export function SandboxConciergePage({
           selectedBuildAnchor,
           activeCandidateAnchorRole: activeCandidateRouteArtifact?.anchorRole,
         })
+        const buildAnchorRoleResolutionSource: BuildAnchorRoleResolutionSource =
+          activeCandidateRouteArtifact?.anchorRole ? 'inferred' : 'defaulted_highlight'
+        const buildAnchorTruthContractForGeneration =
+          isBuildWrapperActive && selectedBuildAnchor?.venueId && buildPlannerAnchor
+            ? buildAnchorTruthContract({
+                identity: {
+                  venueId: selectedBuildAnchor.venueId,
+                  sourceVenueId: selectedBuildAnchor.sourceVenueId,
+                  providerRecordId: selectedBuildAnchor.providerRecordId,
+                  displayName: selectedBuildAnchor.name,
+                  sourceOrigin: selectedBuildAnchorVenue?.source.sourceOrigin,
+                  provider: selectedBuildAnchorVenue?.source.provider,
+                  latitude: selectedBuildAnchorVenue?.source.latitude,
+                  longitude: selectedBuildAnchorVenue?.source.longitude,
+                },
+                role: {
+                  role: buildPlannerAnchor.role,
+                  roleResolutionSource: buildAnchorRoleResolutionSource,
+                },
+              })
+            : null
         const generationMode = isSurpriseWrapperActive
           ? 'surprise'
           : isCurateWrapperActive
@@ -14369,6 +14396,17 @@ export function SandboxConciergePage({
           selectedArtifactLineage: activeSelectedArtifactLineage,
         }
         const result = await runPlanBuild(planBuildInput, planBuildOptions)
+        if (buildAnchorTruthContractForGeneration) {
+          const generatedArtifactAnchorValidation = validateContractEntryArtifactBuildAnchor(
+            buildAnchorTruthContractForGeneration,
+            result.contractEntryArtifact,
+          )
+          if (generatedArtifactAnchorValidation.status === 'invalid') {
+            throw new Error(
+              `Required anchor could not be preserved in generated route artifact: ${generatedArtifactAnchorValidation.reasons.join(',')}`,
+            )
+          }
+        }
         const requiredBuildAnchorForPostPlanner = deriveRequiredBuildAnchorForPostPlanner({
           isBuildWrapperActive,
           selectedBuildAnchor,
@@ -14463,15 +14501,14 @@ export function SandboxConciergePage({
             }),
           },
         )
-        if (isBuildWrapperActive && selectedBuildAnchor?.venueId) {
-          const requiredAnchorVenueId =
-            result.intentProfile.anchor?.venueId ?? selectedBuildAnchor.venueId
-          const anchorPreserved = anchoredPlan.itinerary.stops.some(
-            (stop) => stop.venueId === requiredAnchorVenueId,
+        if (buildAnchorTruthContractForGeneration) {
+          const runtimeAnchorValidation = validateRuntimeRouteBuildAnchor(
+            buildAnchorTruthContractForGeneration,
+            nextFinalRoute,
           )
-          if (!anchorPreserved) {
+          if (runtimeAnchorValidation.status === 'invalid') {
             throw new Error(
-              'Required anchor could not be preserved in this route. Choose another direction or anchor.',
+              `Required anchor could not be preserved in this route: ${runtimeAnchorValidation.reasons.join(',')}`,
             )
           }
         }
@@ -14725,7 +14762,8 @@ export function SandboxConciergePage({
       plannerDistrictTasteBridgeArtifacts,
       persona,
       primaryVibe,
-      selectedBuildAnchor?.venueId,
+      selectedBuildAnchor,
+      selectedBuildAnchorVenue,
       selectedStep2CandidateArtifactId,
       candidateRouteArtifactByDirectionIdForDisplay,
       resolveUniqueCandidateRouteArtifactForDirection,

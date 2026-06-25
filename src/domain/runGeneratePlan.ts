@@ -1953,15 +1953,14 @@ async function runGeneratePlanInternal(
       : 0
   const shouldApplyUserLedFinalRoleLock =
     planningIntent.planningMode === 'user-led' &&
-    anchorRole === 'highlight' &&
-    anchorInternalRole === 'peak' &&
+    Boolean(anchorInternalRole) &&
     anchorSurvivedToArc === true
   const anchorLockedArcCandidates =
-    shouldApplyUserLedFinalRoleLock && planningIntent.anchor?.venueId
+    shouldApplyUserLedFinalRoleLock && planningIntent.anchor?.venueId && anchorInternalRole
       ? arcCandidates.filter((candidate) =>
           candidate.stops.some(
             (stop) =>
-              stop.role === 'peak' &&
+              stop.role === anchorInternalRole &&
               stop.scoredVenue.venue.id === planningIntent.anchor!.venueId,
           ),
         )
@@ -1971,7 +1970,7 @@ async function runGeneratePlanInternal(
   const userLedFinalRoleLockApplied = finalArcFilteredToAnchorRole
   const userLedFinalRoleLockFallbackReason =
     shouldApplyUserLedFinalRoleLock && anchorLockedArcCandidates.length === 0
-      ? 'anchor_highlight_missing_from_final_winner_set'
+      ? `anchor_${anchorRole ?? 'unknown'}_missing_from_final_winner_set`
       : undefined
   const boundaryCandidates = finalArcFilteredToAnchorRole
     ? anchorLockedArcCandidates
@@ -2506,7 +2505,7 @@ async function runGeneratePlanInternal(
   }
   if (userLedFinalRoleLockApplied) {
     faultIsolationNotes.push(
-      `User-led final role lock restricted winner comparison to ${survivingAnchorArcCount} anchor-preserving highlight arcs.`,
+      `User-led final role lock restricted winner comparison to ${survivingAnchorArcCount} anchor-preserving ${anchorRole ?? 'unknown'} arcs.`,
     )
   }
   if (userLedFinalRoleLockFallbackReason) {
