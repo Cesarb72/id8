@@ -78,6 +78,7 @@ import {
   buildLockInputFromRouteAuthoritySnapshot,
   buildRouteAuthoritySnapshot,
 } from '../app/services/routeAuthority/routeAuthorityService'
+import { evaluateBuildCandidateAdmission } from '../app/services/buildCandidateAdmission/buildCandidateAdmissionService'
 import {
   buildPlanPreviewV01FromSelectedRouteArtifacts,
   comparePlanPreviewV01ToRenderedPreview,
@@ -1183,6 +1184,10 @@ interface SurpriseTryAnotherDebug {
   buildProviderMergedIntoVisiblePool: boolean
   buildStaticCandidateArtifactCount: number
   buildLiveCandidateArtifactCount: number
+  buildCandidateAdmissionEvaluatedCount: number
+  buildCandidateAdmissionAdmittedCount: number
+  buildCandidateAdmissionRejectedSummaries: string[]
+  buildProviderShadowAdmissionSummary: string | null
   step2TryAnotherAlternatesCount: number
   surpriseArtifactSafetyKnownSafeIds: string[]
   surpriseArtifactSafetyKnownFailedIds: string[]
@@ -17342,6 +17347,101 @@ export function SandboxConciergePage({
     })
     return `start:${counts.start} | highlight:${counts.highlight} | windDown:${counts.windDown} | none:${counts.none}`
   }, [buildAnchorMatchedCandidateArtifacts, isBuildWrapperActive, selectedBuildAnchor?.venueId])
+  const buildCandidateAdmissionDiagnostics = useMemo(() => {
+    if (!isBuildWrapperActive || !selectedBuildAnchor?.venueId) {
+      return []
+    }
+    const artifacts = [
+      ...buildAnchorMatchedCandidateArtifacts.map((artifact) => ({
+        artifact,
+        sourceOpportunity:
+          verifiedCityOpportunityById.get(artifact.sourceOpportunityId) ?? null,
+        source: 'static' as const,
+      })),
+      ...(shadowBuildProviderArtifact
+        ? [
+            {
+              artifact: shadowBuildProviderArtifact,
+              sourceOpportunity: shadowBuildProviderVerifiedOpportunity,
+              source: 'provider_shadow' as const,
+            },
+          ]
+        : []),
+    ]
+    return artifacts.map(({ artifact, sourceOpportunity, source }) => {
+      const anchorContract = buildAnchorTruthContract({
+        identity: {
+          venueId: selectedBuildAnchor.venueId,
+          sourceVenueId: selectedBuildAnchor.sourceVenueId,
+          providerRecordId: selectedBuildAnchor.providerRecordId,
+          displayName: selectedBuildAnchor.name,
+          sourceOrigin: selectedBuildAnchorVenue?.source.sourceOrigin,
+          provider: selectedBuildAnchorVenue?.source.provider,
+          latitude: selectedBuildAnchorVenue?.source.latitude,
+          longitude: selectedBuildAnchorVenue?.source.longitude,
+        },
+        role: {
+          role: artifact.anchorRole,
+          roleResolutionSource: artifact.anchorRole ? 'inferred' : 'missing',
+        },
+      })
+      const admission = evaluateBuildCandidateAdmission({
+        mode: 'build',
+        anchorContract,
+        contractEntryArtifact: artifact,
+        geoCoherence: sourceOpportunity?.scenarioNight?.geoCoherence ?? null,
+        buildParked: {
+          providerSelectionAllowed: buildProviderSelectionAllowed,
+          providerMergedIntoVisiblePool: buildProviderMergedIntoVisiblePool,
+        },
+      })
+      return {
+        artifactId: artifact.id,
+        source,
+        admitted: admission.admitted,
+        truthGateStatus: admission.truthGateStatus,
+        geoPosture: admission.geoPosture,
+        geoPenalty: admission.geoPenalty,
+        rejectionReasons: admission.rejectionReasons,
+        warningReasons: admission.warningReasons,
+      }
+    })
+  }, [
+    buildAnchorMatchedCandidateArtifacts,
+    buildProviderMergedIntoVisiblePool,
+    buildProviderSelectionAllowed,
+    isBuildWrapperActive,
+    selectedBuildAnchor,
+    selectedBuildAnchorVenue,
+    shadowBuildProviderArtifact,
+    shadowBuildProviderVerifiedOpportunity,
+    verifiedCityOpportunityById,
+  ])
+  const buildCandidateAdmissionEvaluatedCount = buildCandidateAdmissionDiagnostics.length
+  const buildCandidateAdmissionAdmittedCount = buildCandidateAdmissionDiagnostics.filter(
+    (entry) => entry.admitted,
+  ).length
+  const buildCandidateAdmissionRejectedSummaries = useMemo(
+    () =>
+      buildCandidateAdmissionDiagnostics
+        .filter((entry) => !entry.admitted)
+        .map((entry) => {
+          const reasons = entry.rejectionReasons.join(',') || 'unknown'
+          return `${entry.source}:${entry.artifactId}:${reasons}`
+        }),
+    [buildCandidateAdmissionDiagnostics],
+  )
+  const buildProviderShadowAdmissionSummary = useMemo(() => {
+    const entry = buildCandidateAdmissionDiagnostics.find(
+      (candidateAdmission) => candidateAdmission.source === 'provider_shadow',
+    )
+    if (!entry) {
+      return null
+    }
+    const hardReasons = entry.rejectionReasons.join(',') || 'none'
+    const warnings = entry.warningReasons.join(',') || 'none'
+    return `${entry.artifactId}:admitted=${String(entry.admitted)};truth=${entry.truthGateStatus};geo=${entry.geoPosture};penalty=${entry.geoPenalty};hard=${hardReasons};warnings=${warnings}`
+  }, [buildCandidateAdmissionDiagnostics])
   const buildAnchorSuppressedAdmissions = useMemo(
     () =>
       !isBuildWrapperActive || !selectedBuildAnchor?.venueId
@@ -20001,6 +20101,10 @@ export function SandboxConciergePage({
       buildProviderMergedIntoVisiblePool,
       buildStaticCandidateArtifactCount,
       buildLiveCandidateArtifactCount,
+      buildCandidateAdmissionEvaluatedCount,
+      buildCandidateAdmissionAdmittedCount,
+      buildCandidateAdmissionRejectedSummaries,
+      buildProviderShadowAdmissionSummary,
       step2TryAnotherAlternatesCount: step2TryAnotherAlternates.length,
       surpriseArtifactSafetyKnownSafeIds,
       surpriseArtifactSafetyKnownFailedIds,
@@ -20122,6 +20226,9 @@ export function SandboxConciergePage({
   }, [
     allDirectionCards,
     admittedScenarioBackedVerifiedCityOpportunities,
+    buildCandidateAdmissionAdmittedCount,
+    buildCandidateAdmissionEvaluatedCount,
+    buildCandidateAdmissionRejectedSummaries,
     buildLiveCandidateArtifactCount,
     buildLiveSourceOpportunityCount,
     buildProviderAttempted,
@@ -20135,6 +20242,7 @@ export function SandboxConciergePage({
     buildProviderShadowArtifactCount,
     buildProviderShadowArtifactFailureReason,
     buildProviderShadowArtifactId,
+    buildProviderShadowAdmissionSummary,
     buildProviderFallbackPreviewVisible,
     buildProviderSourceOpportunityId,
     buildProviderSourceOpportunityAvailable,
@@ -22032,6 +22140,22 @@ export function SandboxConciergePage({
               <div>
                 buildAnchorMatchedCandidateArtifactRoleSummary:{' '}
                 {buildAnchorMatchedCandidateArtifactRoleSummary}
+              </div>
+              <div>
+                buildCandidateAdmissionEvaluatedCount:{' '}
+                {buildCandidateAdmissionEvaluatedCount}
+              </div>
+              <div>
+                buildCandidateAdmissionAdmittedCount:{' '}
+                {buildCandidateAdmissionAdmittedCount}
+              </div>
+              <div>
+                buildCandidateAdmissionRejectedSummaries:{' '}
+                {buildCandidateAdmissionRejectedSummaries.join(' | ') || 'none'}
+              </div>
+              <div>
+                buildProviderShadowAdmissionSummary:{' '}
+                {buildProviderShadowAdmissionSummary ?? 'n/a'}
               </div>
               <div>
                 buildAnchorAllowedDirectionIds:{' '}
