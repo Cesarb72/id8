@@ -50,7 +50,7 @@ export interface SwapDebugBreadcrumbLike {
   postSwapCanonicalStopIdBySlot?: string[]
   postSwapRenderedStopIdBySlot?: string[]
   swapCommitSucceeded: boolean
-  swapRenderSource: 'finalRoute'
+  swapRenderSource: 'renderOnlyFinalRoute'
   routeVersion: number
   mismatch: boolean
 }
@@ -327,7 +327,7 @@ export function applyPreviewSwapCommit<
       .map((stop) => stop.venueId),
     postSwapRenderedStopIdBySlot: canonicalItineraryAfterSwap.stops.map((stop) => stop.venueId),
     swapCommitSucceeded: !swapMismatch,
-    swapRenderSource: 'finalRoute',
+    swapRenderSource: 'renderOnlyFinalRoute',
     routeVersion: swapMismatch ? routeVersionAtClick : routeVersionAtClick + 1,
     mismatch: swapMismatch,
   }

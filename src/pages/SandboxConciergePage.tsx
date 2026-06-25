@@ -478,7 +478,7 @@ interface SwapDebugBreadcrumb {
   postSwapCanonicalStopIdBySlot?: string[]
   postSwapRenderedStopIdBySlot?: string[]
   swapCommitSucceeded: boolean
-  swapRenderSource: 'finalRoute'
+  swapRenderSource: 'renderOnlyFinalRoute'
   routeVersion: number
   mismatch: boolean
 }
@@ -9926,7 +9926,7 @@ export function SandboxConciergePage({
     null,
   )
   const [plan, setPlan] = useState<DemoPlanState>()
-  const [finalRoute, setFinalRoute] = useState<RuntimeRouteArtifact | null>(null)
+  const [renderOnlyFinalRoute, setRenderOnlyFinalRoute] = useState<RuntimeRouteArtifact | null>(null)
   const [curateRefinementEntryPayload, setCurateRefinementEntryPayload] = useState<
     LegacyCurateRefinementEntryPayload<
       DemoPlanState,
@@ -10375,7 +10375,7 @@ export function SandboxConciergePage({
   const previousCurateStarterPackIdRef = useRef<string | null>(selectedStarterPack?.id ?? null)
   const autoDirectionSyncAttemptRef = useRef<string | null>(null)
   const planRef = useRef<DemoPlanState | undefined>(plan)
-  const finalRouteRef = useRef<RuntimeRouteArtifact | null>(finalRoute)
+  const renderOnlyFinalRouteRef = useRef<RuntimeRouteArtifact | null>(renderOnlyFinalRoute)
   const lastGeneratedVisibleNightFingerprintRef = useRef<string | null>(null)
   const canonicalStopByRoleRef =
     useRef<Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>>(canonicalStopByRole)
@@ -10398,8 +10398,8 @@ export function SandboxConciergePage({
   >(new Map())
   const buildProviderActiveAttemptTokenByAnchorKeyRef = useRef<Map<string, number>>(new Map())
   const buildProviderAttemptSequenceRef = useRef(0)
-  const updateFinalRoute = useCallback((nextRoute: RuntimeRouteArtifact | null) => {
-    setFinalRoute(nextRoute)
+  const updateRenderOnlyFinalRoute = useCallback((nextRoute: RuntimeRouteArtifact | null) => {
+    setRenderOnlyFinalRoute(nextRoute)
     setRouteVersion((current) => (nextRoute ? current + 1 : 0))
   }, [])
   useEffect(() => {
@@ -10428,14 +10428,14 @@ export function SandboxConciergePage({
     setCanonicalStopByRole({})
     setRejectedStopRoles([])
     setPlan(undefined)
-    updateFinalRoute(null)
+    updateRenderOnlyFinalRoute(null)
     setHasRevealed(false)
     setPreviewSwap(undefined)
     setExpandedRole(null)
     setAppliedSwapRole(null)
     setNearbySummaryByRole({})
     setError(undefined)
-  }, [isCurateWrapperActive, selectedStarterPack?.id, updateFinalRoute])
+  }, [isCurateWrapperActive, selectedStarterPack?.id, updateRenderOnlyFinalRoute])
   const applyCurateRefinementEntryPayload = useCallback(
     (
       nextPayload: LegacyCurateRefinementEntryPayload<
@@ -10448,18 +10448,18 @@ export function SandboxConciergePage({
         return
       }
       setPlan(nextPayload.planSnapshot)
-      updateFinalRoute(nextPayload.finalRoute)
+      updateRenderOnlyFinalRoute(nextPayload.finalRoute)
       setCanonicalStopByRole(nextPayload.canonicalStopByRole)
       setRejectedStopRoles(nextPayload.rejectedStopRoles)
     },
-    [updateFinalRoute],
+    [updateRenderOnlyFinalRoute],
   )
   useEffect(() => {
     planRef.current = plan
   }, [plan])
   useEffect(() => {
-    finalRouteRef.current = finalRoute
-  }, [finalRoute])
+    renderOnlyFinalRouteRef.current = renderOnlyFinalRoute
+  }, [renderOnlyFinalRoute])
   useEffect(() => {
     canonicalStopByRoleRef.current = canonicalStopByRole
   }, [canonicalStopByRole])
@@ -14569,7 +14569,7 @@ export function SandboxConciergePage({
           selectedCandidateRouteArtifactId: activeCandidateRouteArtifact?.id ?? null,
         })
         setCurateRefinementEntryPayload(null)
-        updateFinalRoute(nextFinalRoute)
+        updateRenderOnlyFinalRoute(nextFinalRoute)
         setCanonicalStopByRole(canonicalStopByRoleForState)
         setRejectedStopRoles(anchoredPlan.rejectedStopRoles)
         setActiveRole('start')
@@ -14734,7 +14734,7 @@ export function SandboxConciergePage({
       step2PrimarySourceOpportunities,
       toUserSafeGenerateError,
       unresolvedLocationReason,
-      updateFinalRoute,
+      updateRenderOnlyFinalRoute,
       verifiedCityOpportunityById,
     ],
   )
@@ -14767,7 +14767,7 @@ export function SandboxConciergePage({
       setCanonicalStopByRole({})
       setRejectedStopRoles([])
       setPlan(undefined)
-      updateFinalRoute(null)
+      updateRenderOnlyFinalRoute(null)
       setHasRevealed(false)
       setPreviewSwap(undefined)
       setExpandedRole(null)
@@ -14775,7 +14775,7 @@ export function SandboxConciergePage({
       setNearbySummaryByRole({})
       setError(undefined)
     },
-    [updateFinalRoute],
+    [updateRenderOnlyFinalRoute],
   )
 
   const handleCurateStarterContinue = useCallback(() => {
@@ -14823,9 +14823,9 @@ export function SandboxConciergePage({
     setCanonicalStopByRole({})
     setRejectedStopRoles([])
     setPlan(undefined)
-    updateFinalRoute(null)
+    updateRenderOnlyFinalRoute(null)
     setError(undefined)
-  }, [updateFinalRoute])
+  }, [updateRenderOnlyFinalRoute])
 
   const handleBuildAnchorQueryChange = useCallback(
     (value: string) => {
@@ -14976,11 +14976,11 @@ export function SandboxConciergePage({
         setCanonicalStopByRole({})
         setRejectedStopRoles([])
         setPlan(undefined)
-        updateFinalRoute(null)
+        updateRenderOnlyFinalRoute(null)
         setError(undefined)
       }
     },
-    [directionSetKey, selectedDirectionId, updateFinalRoute],
+    [directionSetKey, selectedDirectionId, updateRenderOnlyFinalRoute],
   )
 
   const handleSelectStep2NightOption = useCallback(
@@ -15109,7 +15109,7 @@ export function SandboxConciergePage({
       setHasRevealed(false)
       setCurateRefinementEntryPayload(null)
       setPlan(undefined)
-      updateFinalRoute(null)
+      updateRenderOnlyFinalRoute(null)
       return
     }
     if (selectedDirectionId && allowedDirectionIds.has(selectedDirectionId)) {
@@ -15130,9 +15130,9 @@ export function SandboxConciergePage({
 
   const surpriseAutoGenerationSettled = Boolean(
     plan &&
-      finalRoute &&
+      renderOnlyFinalRoute &&
       selectedDirectionId &&
-      finalRoute.selectedDirectionId === selectedDirectionId &&
+      renderOnlyFinalRoute.selectedDirectionId === selectedDirectionId &&
       (!selectedCandidateRouteArtifact ||
         plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id),
   )
@@ -15178,9 +15178,9 @@ export function SandboxConciergePage({
     }
     const buildPlanSynced = Boolean(
       plan &&
-        finalRoute &&
+        renderOnlyFinalRoute &&
         plan.selectedDirectionContract.id === selectedDirectionId &&
-        finalRoute.selectedDirectionId === selectedDirectionId &&
+        renderOnlyFinalRoute.selectedDirectionId === selectedDirectionId &&
         plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id,
     )
     if (buildPlanSynced) {
@@ -15194,7 +15194,7 @@ export function SandboxConciergePage({
     buildValidationAttemptRef.current = buildValidationAttemptKey
     void generatePlan(selectedDirectionId, selectedCandidateRouteArtifact.id)
   }, [
-    finalRoute,
+    renderOnlyFinalRoute,
     generatePlan,
     hasRevealed,
     buildAnchorReady,
@@ -15208,10 +15208,10 @@ export function SandboxConciergePage({
 
   useEffect(() => {
     const currentDirectionId = selectedDirectionId ?? plan?.selectedDirectionContract.id ?? null
-    if (!plan || !finalRoute || loading || !currentDirectionId) {
+    if (!plan || !renderOnlyFinalRoute || loading || !currentDirectionId) {
       return
     }
-    if (finalRoute.selectedDirectionId === currentDirectionId) {
+    if (renderOnlyFinalRoute.selectedDirectionId === currentDirectionId) {
       autoDirectionSyncAttemptRef.current = null
       return
     }
@@ -15233,7 +15233,7 @@ export function SandboxConciergePage({
       }
     })()
   }, [
-    finalRoute,
+    renderOnlyFinalRoute,
     generatePlan,
     isCurateWrapperActive,
     loading,
@@ -15833,9 +15833,9 @@ export function SandboxConciergePage({
     setCanonicalStopByRole({})
     setRejectedStopRoles([])
     setPlan(undefined)
-    updateFinalRoute(null)
+    updateRenderOnlyFinalRoute(null)
     setError(undefined)
-  }, [districtLocationQuery, persona, primaryVibe, updateFinalRoute])
+  }, [districtLocationQuery, persona, primaryVibe, updateRenderOnlyFinalRoute])
 
   useEffect(() => {
     if (activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID) {
@@ -15868,7 +15868,7 @@ export function SandboxConciergePage({
       setSwapInteractionBreadcrumb(null)
       setSwapCompatibilityDebug(null)
       setGenerationContractDebug(null)
-      updateFinalRoute(null)
+      updateRenderOnlyFinalRoute(null)
       previousDirectionIdentityRef.current = new Map()
       previousPersonaVibeRef.current = { persona, vibe: primaryVibe }
       return
@@ -15951,7 +15951,7 @@ export function SandboxConciergePage({
     selectedDirectionId,
     selectedCandidateRouteArtifact,
     selectedStep2CandidateArtifactId,
-    updateFinalRoute,
+    updateRenderOnlyFinalRoute,
     userSelectedDirection,
     visibleDirectionCardsForSelection,
   ])
@@ -16092,7 +16092,7 @@ export function SandboxConciergePage({
     })
 
     const activePlan = planRef.current
-    const activeFinalRoute = finalRouteRef.current
+    const activeFinalRoute = renderOnlyFinalRouteRef.current
     if (!activePlan) {
       markPreviewGuardFailure('plan_missing_at_click', 'Swap preview did not start: plan missing at click.')
       return
@@ -16152,7 +16152,7 @@ export function SandboxConciergePage({
         swapRequestedReplacementId: replacement.venue.id,
         swapAppliedReplacementId: null,
         swapCommitSucceeded: false,
-        swapRenderSource: 'finalRoute',
+        swapRenderSource: 'renderOnlyFinalRoute',
         routeVersion: routeVersionRef.current,
         mismatch: false,
       })
@@ -16422,7 +16422,7 @@ export function SandboxConciergePage({
         selectedArc: commitResult.nextSelectedArc,
       })
       setCurateRefinementEntryPayload(null)
-      updateFinalRoute(commitResult.nextFinalRoute)
+      updateRenderOnlyFinalRoute(commitResult.nextFinalRoute)
       setCanonicalStopByRole(commitResult.nextCanonicalStopByRole)
       setPreviewSwap(undefined)
       setAppliedSwapRole(role)
@@ -16522,7 +16522,7 @@ export function SandboxConciergePage({
       role: swapSnapshot.role,
       swapSnapshot,
       planSnapshot: plan,
-      finalRouteSnapshot: finalRoute ?? undefined,
+      finalRouteSnapshot: renderOnlyFinalRoute ?? undefined,
       routeVersionAtClick: routeVersion,
     })
   }
@@ -16557,14 +16557,14 @@ export function SandboxConciergePage({
         null,
       approvedPayload,
       legacyCurateRefinementEntryPayload: activeCurateRefinementEntryPayload,
-      pageLocalFinalRoute: finalRoute,
+      pageLocalFinalRoute: renderOnlyFinalRoute,
       selectedClusterConfirmation: activePlan?.selectedClusterConfirmation,
       itinerary: activePlan?.itinerary,
     })
   }, [
     activeCurateRefinementEntryPayload,
     explicitQualifiedCurateSelectedArtifact,
-    finalRoute,
+    renderOnlyFinalRoute,
     plan,
     selectedCandidateRouteArtifact,
     selectedCuratePreviewCommitability?.approvedRefinementEntryPayload,
@@ -16577,7 +16577,7 @@ export function SandboxConciergePage({
       routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute ?? null
     const activeFinalRoute = activeCurateRefinementEntryPayload
       ? routeAuthorityFinalRoute
-      : finalRoute
+      : renderOnlyFinalRoute
     const activeCanonicalStopByRole =
       activeCurateRefinementEntryPayload?.canonicalStopByRole ?? canonicalStopByRole
     if (!activePlan || !activeFinalRoute) {
@@ -16598,7 +16598,7 @@ export function SandboxConciergePage({
   }, [
     activeCurateRefinementEntryPayload,
     canonicalStopByRole,
-    finalRoute,
+    renderOnlyFinalRoute,
     plan,
     routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute,
   ])
@@ -16753,12 +16753,12 @@ export function SandboxConciergePage({
   }, [canonicalRouteArtifact])
   const postSwapCanonicalStopIdBySlot = useMemo(
     () =>
-      finalRoute
-        ? [...finalRoute.stops]
+      renderOnlyFinalRoute
+        ? [...renderOnlyFinalRoute.stops]
             .sort((left, right) => left.stopIndex - right.stopIndex)
             .map((stop) => stop.venueId)
         : [],
-    [finalRoute],
+    [renderOnlyFinalRoute],
   )
   const postSwapRenderedStopIdBySlot = useMemo(
     () => planningDisplayStops.map((stop) => stop.venueId),
@@ -17431,7 +17431,7 @@ export function SandboxConciergePage({
     tasteCurationDebug?.signatureHighlightShortlistIds ?? [],
   )
   const finalStopVenueIds = dedupeStringIds(
-    finalRoute?.stops
+    renderOnlyFinalRoute?.stops
       .slice()
       .sort((left, right) => left.stopIndex - right.stopIndex)
       .map((stop) => stop.venueId) ?? [],
@@ -17946,9 +17946,9 @@ export function SandboxConciergePage({
     selectedRouteArtifact?.directionId ?? selectedDirectionId ?? previewDirectionId ?? null
   const committedPlanMatchesGenerateDirection = Boolean(
     plan &&
-      finalRoute &&
+      renderOnlyFinalRoute &&
       previewGenerateDirectionId &&
-      finalRoute.selectedDirectionId === previewGenerateDirectionId &&
+      renderOnlyFinalRoute.selectedDirectionId === previewGenerateDirectionId &&
       (!selectedCandidateRouteArtifact ||
         plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id),
   )
@@ -18633,7 +18633,7 @@ export function SandboxConciergePage({
     ]
     const canonicalSelectedCandidateRouteArtifactId =
       canonicalRouteArtifact?.planSnapshot.selectedCandidateRouteArtifactId ?? 'n/a'
-    const finalRouteSelectedDirectionId = finalRoute?.selectedDirectionId ?? 'n/a'
+    const finalRouteSelectedDirectionId = renderOnlyFinalRoute?.selectedDirectionId ?? 'n/a'
     const planSelectedDirectionContractId = plan?.selectedDirectionContract.id ?? 'n/a'
     const planSelectedCandidateRouteArtifactId = plan?.selectedCandidateRouteArtifactId ?? 'n/a'
     const selectedDirectionCoherencePlanState = [
@@ -20128,7 +20128,7 @@ export function SandboxConciergePage({
     suppressedScenarioBackedOpportunityAdmissions,
     canonicalRouteArtifact,
     directionSyncMismatch,
-    finalRoute,
+    renderOnlyFinalRoute,
     generationDriftReason,
     plan,
     resolvedSelectedDirectionContext,
@@ -20875,8 +20875,8 @@ export function SandboxConciergePage({
   }, [postSwapCanonicalStopIdBySlot, postSwapRenderedStopIdBySlot, swapDebugBreadcrumb])
   const guidedRouteStops = useMemo(
     () =>
-      finalRoute
-        ? [...finalRoute.stops]
+      renderOnlyFinalRoute
+        ? [...renderOnlyFinalRoute.stops]
             .filter((stop) => stop.role !== 'surprise')
             .sort((left, right) => left.stopIndex - right.stopIndex)
             .map((stop) => ({
@@ -20889,7 +20889,7 @@ export function SandboxConciergePage({
               longitude: stop.longitude,
             }))
         : [],
-    [finalRoute],
+    [renderOnlyFinalRoute],
   )
   const guidedWaypointOverrides = useMemo(
     () =>
@@ -20947,7 +20947,7 @@ export function SandboxConciergePage({
             nearbySummary: nearbySummaryByRole[stop.role],
             routeShapeContract: plan.routeShapeContract,
             baselineItinerary: plan.itinerary,
-            finalRouteSnapshot: finalRoute ?? undefined,
+            finalRouteSnapshot: renderOnlyFinalRoute ?? undefined,
             canonicalSwapIdentityByVenueId: swapCanonicalIdentityByVenueId,
             experienceContract: plan.experienceContract,
             contractConstraints: plan.contractConstraints,
@@ -21003,7 +21003,7 @@ export function SandboxConciergePage({
     }
   }, [
     canonicalStopByRole,
-    finalRoute,
+    renderOnlyFinalRoute,
     nearbySummaryByRole,
     plan,
     planningDisplayStops,
@@ -21266,7 +21266,7 @@ export function SandboxConciergePage({
         publicPreviewFeatureEnabled: PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED,
         publicCardPreviewQueryGateActive,
         hasPlan: Boolean(plan),
-        hasFinalRoute: Boolean(finalRoute),
+        hasFinalRoute: Boolean(renderOnlyFinalRoute),
         hasRevealed,
         renderSharedPlanPreview,
         hasSelectedCandidateRouteArtifact: Boolean(selectedCandidateRouteArtifact),
@@ -21277,7 +21277,7 @@ export function SandboxConciergePage({
     [
       cardFlowState,
       cardPreviewDraft,
-      finalRoute,
+      renderOnlyFinalRoute,
       hasRevealed,
       hintLabel,
       isCurateWrapperActive,
@@ -25662,14 +25662,4 @@ export function SandboxConciergePage({
     </PageShell>
   )
 }
-
-
-
-
-
-
-
-
-
-
 
