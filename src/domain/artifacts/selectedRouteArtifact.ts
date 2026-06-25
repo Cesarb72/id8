@@ -23,7 +23,7 @@ export interface ActiveHighlightProjection {
 }
 
 /**
- * ARC BOUNDARY: application-projection-owned active route artifact.
+ * ARC BOUNDARY: legacy application-projection-owned active route artifact.
  *
  * This contract projects the currently active route truth for Step 2 / preview
  * surfaces. It may point at either candidate (`ContractEntryArtifact`) truth or
@@ -31,9 +31,11 @@ export interface ActiveHighlightProjection {
  *
  * P0-A: subsumed as a projection target. It remains for compatibility until
  * public surfaces migrate to derived projections over enriched
- * `ContractEntryArtifact` and `RuntimeRouteArtifact`.
+ * `ContractEntryArtifact` and `RuntimeRouteArtifact`. It may remain as a render
+ * adapter, test fixture, diagnostic source, or compatibility projection, but it
+ * must not independently author canonical route truth.
  */
-export interface SelectedRouteArtifact<TRuntimeArtifact = unknown> {
+export interface LegacySelectedRouteArtifact<TRuntimeArtifact = unknown> {
   source: 'candidate' | 'committed'
   directionId: string
   candidateArtifactId?: string
@@ -54,8 +56,15 @@ export interface SelectedRouteArtifact<TRuntimeArtifact = unknown> {
   scenarioEvaluationNotes?: string[]
 }
 
+/**
+ * @deprecated Use `LegacySelectedRouteArtifact` to make the compatibility
+ * projection boundary explicit.
+ */
+export type SelectedRouteArtifact<TRuntimeArtifact = unknown> =
+  LegacySelectedRouteArtifact<TRuntimeArtifact>
+
 export interface SelectedRouteSummaryArtifact {
-  source: SelectedRouteArtifact['source']
+  source: LegacySelectedRouteArtifact['source']
   activeHighlight: ActiveHighlightProjection
   preview: DirectionPreviewModel
   routeTitle: string

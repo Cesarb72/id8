@@ -137,7 +137,7 @@ import { buildPreviewFromFinalRoute } from '../domain/artifacts/selectedRoutePro
 import type {
   DirectionPreviewModel,
   DirectionPreviewStop,
-  SelectedRouteArtifact,
+  LegacySelectedRouteArtifact,
   SelectedRouteSummaryArtifact,
 } from '../domain/artifacts/selectedRouteArtifact'
 import {
@@ -3209,7 +3209,7 @@ function buildSelectedRouteArtifactProjection(params: {
   selectedDirectionId: string | null
   activeCurateStarterPackId: string | null
   city: string
-}): SelectedRouteArtifact<CanonicalRouteArtifact> | null {
+}): LegacySelectedRouteArtifact<CanonicalRouteArtifact> | null {
   const {
     effectiveCurateSelectedArtifact,
     explicitSelectedCandidateArtifactId,
@@ -3530,7 +3530,7 @@ function buildVisibleCardArtifactParityRow(params: {
     droppedBySingleArtifactDirectionCollapse: boolean
   }
   isCurateWrapperActive: boolean
-  selectedRouteArtifact: SelectedRouteArtifact<CanonicalRouteArtifact> | null
+  selectedRouteArtifact: LegacySelectedRouteArtifact<CanonicalRouteArtifact> | null
   visibleCardModelByArtifactId: Map<string, CurateVisibleCardModel>
   curatePreviewCommitabilityByArtifactId: Record<
     string,
@@ -17603,7 +17603,7 @@ export function SandboxConciergePage({
   const routeShapeWindDownInvariantSummary = activeRouteShapeContract
     ? formatRoleInvariantSummary(activeRouteShapeContract.roleInvariants.windDown)
     : 'n/a'
-  const selectedRouteArtifact = useMemo<SelectedRouteArtifact<CanonicalRouteArtifact> | null>(() => {
+  const selectedRouteArtifact = useMemo<LegacySelectedRouteArtifact<CanonicalRouteArtifact> | null>(() => {
     const effectiveCurateSelectedArtifact =
       explicitQualifiedCurateSelectedArtifact ?? selectedCandidateRouteArtifact
     const explicitSelectedCandidateArtifactId =
@@ -17680,10 +17680,10 @@ export function SandboxConciergePage({
   const previewDirectionId = preview?.directionId ?? null
   const previewRenderSource = useMemo(() => {
     if (selectedRouteArtifact?.source === 'candidate') {
-      return 'selectedRouteArtifact.candidateRouteArtifact'
+      return 'legacySelectedRouteArtifact.candidateRouteArtifact'
     }
     if (selectedRouteArtifact?.source === 'committed') {
-      return 'selectedRouteArtifact.canonicalRouteArtifact'
+      return 'legacySelectedRouteArtifact.canonicalRouteArtifact'
     }
     return selectedRouteSummaryArtifact ? 'selectedRouteSummaryArtifact' : null
   }, [selectedRouteArtifact, selectedRouteSummaryArtifact])
@@ -20363,17 +20363,11 @@ export function SandboxConciergePage({
     previewHighlightProvenanceLine ??
     'Start, Highlight, and Wind-down are ready. Review the full route.'
   const renderedCommittedRouteArtifactForSummary =
-    selectedRouteArtifact?.source === 'committed' && selectedRouteArtifact.canonicalRouteArtifact
-      ? selectedRouteArtifact.canonicalRouteArtifact
-      : selectedRouteArtifact?.source === 'committed'
-        ? canonicalRouteArtifact
-        : null
+    selectedRouteArtifact?.source === 'committed' ? canonicalRouteArtifact : null
   const renderedCommittedRouteSummarySource =
-    selectedRouteArtifact?.source === 'committed' && selectedRouteArtifact.canonicalRouteArtifact
-      ? 'selectedRouteArtifact.canonicalRouteArtifact'
-      : selectedRouteArtifact?.source === 'committed' && canonicalRouteArtifact
-        ? 'canonicalRouteArtifact'
-        : 'none'
+    selectedRouteArtifact?.source === 'committed' && canonicalRouteArtifact
+      ? 'canonicalRouteArtifact'
+      : 'none'
   const coffeeBooksCommittedRouteSummaryAdmission = useMemo(
     () =>
       evaluateCoffeeBooksCommittedRouteSummaryAdmission({

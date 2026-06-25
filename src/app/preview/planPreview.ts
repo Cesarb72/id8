@@ -3,7 +3,7 @@ import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../../domain/artifa
 import type {
   DirectionPreviewModel,
   DirectionPreviewStop,
-  SelectedRouteArtifact,
+  LegacySelectedRouteArtifact,
   SelectedRouteSummaryArtifact,
 } from '../../domain/artifacts/selectedRouteArtifact'
 import type { ItineraryStop } from '../../domain/types/itinerary'
@@ -73,7 +73,7 @@ function findPreviewStopName(
 }
 
 function readStorySpine(params: {
-  routeArtifact: SelectedRouteArtifact<unknown> | null
+  routeArtifact: LegacySelectedRouteArtifact<unknown> | null
   routeSummaryArtifact: SelectedRouteSummaryArtifact | null
 }): PlanPreviewV01StorySpine {
   const preview = params.routeArtifact?.preview ?? params.routeSummaryArtifact?.preview
@@ -85,7 +85,7 @@ function readStorySpine(params: {
 }
 
 function readStops(params: {
-  routeArtifact: SelectedRouteArtifact<unknown> | null
+  routeArtifact: LegacySelectedRouteArtifact<unknown> | null
   routeSummaryArtifact: SelectedRouteSummaryArtifact | null
 }): PlanPreviewV01Stop[] {
   const previewStops = params.routeArtifact?.preview.stops ?? params.routeSummaryArtifact?.preview.stops
@@ -162,7 +162,7 @@ function deriveRuntimeVenueTypeLabel(stop: ItineraryStop | undefined): string | 
 }
 
 function readRuntimeStopContext(
-  routeArtifact: SelectedRouteArtifact<unknown> | null,
+  routeArtifact: LegacySelectedRouteArtifact<unknown> | null,
 ): {
   byRole: Map<DirectionPreviewStop['role'], RuntimeRouteStop>
   itineraryStopByRole: Map<DirectionPreviewStop['role'], ItineraryStop>
@@ -190,7 +190,7 @@ function readRuntimeStopContext(
 }
 
 function readFallbackStopFields(params: {
-  routeArtifact: SelectedRouteArtifact<unknown> | null
+  routeArtifact: LegacySelectedRouteArtifact<unknown> | null
   routeSummaryArtifact: SelectedRouteSummaryArtifact | null
 }): Partial<
   Record<
@@ -242,7 +242,7 @@ function readFallbackStopFields(params: {
 }
 
 function readWhyThisWorksLines(params: {
-  routeArtifact: SelectedRouteArtifact<unknown> | null
+  routeArtifact: LegacySelectedRouteArtifact<unknown> | null
   routeSummaryArtifact: SelectedRouteSummaryArtifact | null
 }): string[] {
   const artifact = params.routeArtifact
@@ -287,7 +287,7 @@ function summarizeValidation(artifact: ContractEntryArtifact | undefined): strin
 }
 
 function resolvePlanPreviewSource(
-  selectedRouteArtifact: SelectedRouteArtifact<unknown>,
+  selectedRouteArtifact: LegacySelectedRouteArtifact<unknown>,
 ): Pick<PlanPreviewV01, 'source' | 'provenance'> {
   if (selectedRouteArtifact.source === 'committed') {
     return {
@@ -327,7 +327,7 @@ function buildPlanPreviewId(params: {
 }
 
 export function buildPlanPreviewV01FromSelectedRouteArtifacts(params: {
-  selectedRouteArtifact: SelectedRouteArtifact<unknown> | null
+  selectedRouteArtifact: LegacySelectedRouteArtifact<unknown> | null
   selectedRouteSummaryArtifact: SelectedRouteSummaryArtifact | null
   committedCandidateArtifactId?: string | null
 }): PlanPreviewV01 | null {
@@ -416,7 +416,7 @@ export function buildPlanPreviewV01FromSelectedRouteArtifacts(params: {
 
 export function comparePlanPreviewV01ToSelectedRouteArtifact(params: {
   activePlanPreview: PlanPreviewV01 | null
-  selectedRouteArtifact: SelectedRouteArtifact<unknown> | null
+  selectedRouteArtifact: LegacySelectedRouteArtifact<unknown> | null
   committedCandidateArtifactId?: string | null
 }): PlanPreviewComparisonResult {
   const { activePlanPreview, selectedRouteArtifact, committedCandidateArtifactId = null } = params

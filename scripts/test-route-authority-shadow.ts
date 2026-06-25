@@ -6,7 +6,7 @@ import {
 import { buildCurateRefinementEntryPayload } from '../src/app/wrapper/curateRefinementEntry.ts'
 import type { ContractEntryArtifact } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
-import type { SelectedRouteArtifact } from '../src/domain/artifacts/selectedRouteArtifact.ts'
+import type { LegacySelectedRouteArtifact } from '../src/domain/artifacts/selectedRouteArtifact.ts'
 import type { Itinerary, ItineraryStop, UserStopRole, UserStopTitle } from '../src/domain/types/itinerary.ts'
 
 const CANONICAL_ROUTE_IDS = [
@@ -346,7 +346,7 @@ function buildArtifact(runtimeRouteArtifact?: RuntimeRouteArtifact): ContractEnt
   }
 }
 
-function buildSelectedRouteArtifact(finalRoute: RuntimeRouteArtifact): SelectedRouteArtifact<{
+function buildSelectedRouteArtifact(finalRoute: RuntimeRouteArtifact): LegacySelectedRouteArtifact<{
   finalRoute: RuntimeRouteArtifact
 }> {
   return {
@@ -452,6 +452,11 @@ async function main(): Promise<void> {
       sourceByKind(greenSnapshot.observedSources, 'legacy_selected_route_artifact').classification ===
         'legacy_compatibility',
       'SelectedRouteArtifact must be classified as legacy compatibility.',
+    )
+    assert(
+      sourceByKind(greenSnapshot.observedSources, 'legacy_selected_route_artifact').mismatchReasons.length ===
+        0,
+      'Matching SelectedRouteArtifact must validate against ContractEntryArtifact.',
     )
     assert(
       sourceByKind(greenSnapshot.observedSources, 'page_local_final_route').classification ===
@@ -594,6 +599,34 @@ async function main(): Promise<void> {
     assert(
       staleLegacyLockInput.diagnostics.lockInputSource === 'contract_entry_artifact.runtime_route_artifact',
       'Stale legacy payload must not become the lock input source.',
+    )
+
+    const staleSelectedRouteArtifact = buildSelectedRouteArtifact(staleApprovedPayloadRoute)
+    const staleSelectedRouteSnapshot = buildRouteAuthoritySnapshot({
+      contractEntryArtifact: artifact,
+      approvedPayload,
+      legacySelectedRouteArtifact: staleSelectedRouteArtifact,
+      selectedClusterConfirmation:
+        'Willow Court Wine Bar -> Theatre District Jazz Cellar -> Hedley Club Lounge',
+      itinerary,
+    })
+    assert(
+      sourceByKind(
+        staleSelectedRouteSnapshot.observedSources,
+        'legacy_selected_route_artifact',
+      ).mismatchReasons.includes('legacy_selected_route_artifact_highlight_id_mismatch'),
+      'Stale SelectedRouteArtifact canonicalRouteArtifact must be flagged as a legacy mismatch.',
+    )
+    const staleSelectedRouteLockInput = buildLockInputFromRouteAuthoritySnapshot({
+      snapshot: staleSelectedRouteSnapshot,
+      activeRole: 'start',
+      fallbackCity: 'San Jose',
+    })
+    assert(staleSelectedRouteLockInput.ok, 'Stale SelectedRouteArtifact must not block canonical lock input.')
+    assert(
+      staleSelectedRouteLockInput.diagnostics.lockInputSource ===
+        'contract_entry_artifact.runtime_route_artifact',
+      'Stale SelectedRouteArtifact must not become the lock input source.',
     )
 
     const legacyOnlySnapshot = buildRouteAuthoritySnapshot({

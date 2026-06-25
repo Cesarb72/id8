@@ -2529,10 +2529,11 @@ function assertCoffeeBooksCommittedRuntimeSummaryGate(): void {
     'utf8',
   )
   assert(
-    sandboxSource.includes('evaluateCoffeeBooksCommittedRouteSummaryAdmission') &&
+      sandboxSource.includes('evaluateCoffeeBooksCommittedRouteSummaryAdmission') &&
       sandboxSource.includes('starterPackId: activeCurateStarterPackId') &&
       sandboxSource.includes('renderedCommittedRouteArtifactForSummary?.finalRoute') &&
-      sandboxSource.includes('selectedRouteArtifact.canonicalRouteArtifact') &&
+      sandboxSource.includes('renderedCommittedRouteArtifactForSummary =') &&
+      sandboxSource.includes("? 'canonicalRouteArtifact'") &&
       sandboxSource.includes('data-id8-route-summary-suppressed="true"') &&
       sandboxSource.includes('data-id8-route-summary-rejection-reason') &&
       sandboxSource.includes('data-id8-route-summary-semantic-evidence'),
