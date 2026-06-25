@@ -2,6 +2,12 @@ import {
   evaluateStaticRuntimeHoursProof,
   type BearingsRuntimeHoursPlanWindowProofStatus,
 } from './staticRuntimeHoursProof'
+import {
+  evaluateHoursAdmissibility,
+  type BearingsHoursAdmissibilityReason,
+  type BearingsHoursAdmissibilityStatus,
+  type BearingsHoursTimeSpecificity,
+} from './hoursAdmissibilityPolicy'
 import type { PromotedFieldProviderCorpusVenue } from '../field/corpus/types'
 import type { PlanningTimeWindowSignal } from '../types/hours'
 
@@ -11,6 +17,10 @@ export interface FieldCorpusRuntimeHoursAdmissionDiagnostic {
   providerRecordId: string
   required: boolean
   status: BearingsRuntimeHoursPlanWindowProofStatus
+  admissibilityStatus: BearingsHoursAdmissibilityStatus
+  admissibilityReason: BearingsHoursAdmissibilityReason
+  timeSpecificity: BearingsHoursTimeSpecificity
+  relaxationApplied: boolean
   admitted: boolean
   proofSource: PromotedFieldProviderCorpusVenue['runtimeHoursProof']['proofSource']
   structuredPeriodCount: number
@@ -44,10 +54,6 @@ export interface FieldCorpusRuntimeHoursAdmissionResult {
   diagnosticsByVenueId: Map<string, FieldCorpusRuntimeHoursAdmissionDiagnostic>
 }
 
-function shouldAdmit(status: BearingsRuntimeHoursPlanWindowProofStatus): boolean {
-  return status !== 'closed_for_plan_window'
-}
-
 export function applyFieldCorpusRuntimeHoursAdmission(
   candidates: PromotedFieldProviderCorpusVenue[],
   planningWindow: PlanningTimeWindowSignal,
@@ -59,14 +65,21 @@ export function applyFieldCorpusRuntimeHoursAdmission(
 
   for (const candidate of candidates) {
     const proof = evaluateStaticRuntimeHoursProof(candidate, planningWindow)
-    const admittedCandidate = shouldAdmit(proof.status)
+    const admissibility = evaluateHoursAdmissibility({
+      proof,
+      planningWindow,
+    })
     const diagnostic: FieldCorpusRuntimeHoursAdmissionDiagnostic = {
       venueId: candidate.id,
       venueName: candidate.venue.name,
       providerRecordId: candidate.providerProvenance.providerRecordId,
       required: proof.required,
       status: proof.status,
-      admitted: admittedCandidate,
+      admissibilityStatus: admissibility.status,
+      admissibilityReason: admissibility.reason,
+      timeSpecificity: admissibility.timeSpecificity,
+      relaxationApplied: admissibility.diagnostics.relaxationApplied,
+      admitted: admissibility.admitted,
       proofSource: proof.proofSource,
       structuredPeriodCount: proof.structuredPeriodCount,
       textHoursAvailable: proof.textHoursAvailable,
@@ -75,7 +88,7 @@ export function applyFieldCorpusRuntimeHoursAdmission(
     venueDiagnostics.push(diagnostic)
     diagnosticsByVenueId.set(candidate.id, diagnostic)
 
-    if (admittedCandidate) {
+    if (admissibility.admitted) {
       admitted.push(candidate)
     } else {
       blocked.push(candidate)
