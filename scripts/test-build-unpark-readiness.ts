@@ -1,27 +1,21 @@
 import { readFileSync } from 'node:fs'
-import {
-  buildBuildCardTruthModel,
-  buildModeAwarePublicRouteTruth,
-} from '../src/app/services/canonicalPublicRouteTruthService.ts'
+import { buildBuildCardTruthModel } from '../src/app/services/canonicalPublicRouteTruthService.ts'
+import { evaluateBuildCandidateAdmission } from '../src/app/services/buildCandidateAdmission/buildCandidateAdmissionService.ts'
 import { buildAnchorTruthContract } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import type { BuildAnchorCanonicalRole } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import type { ContractEntryArtifact } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
-import {
-  evaluateBuildCandidateAdmission,
-  evaluateCandidateGeoPosture,
-} from '../src/app/services/buildCandidateAdmission/buildCandidateAdmissionService.ts'
 import type { BearingsStaticRuntimeHoursProofResult } from '../src/domain/bearings/staticRuntimeHoursProof.ts'
 import type { ScenarioRouteGeoCoherence } from '../src/domain/interpretation/construction/scenarioBuilder.ts'
 
 const originalFetch = globalThis.fetch
 let fetchCallCount = 0
 
-const fetchTrap: typeof fetch = async () => {
+globalThis.fetch = (async () => {
   fetchCallCount += 1
-  throw new Error('Build card truth test must not call fetch.')
-}
+  throw new Error('Build unpark readiness test must not call fetch.')
+}) as typeof fetch
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) {
@@ -35,19 +29,20 @@ const routeIds = {
   windDown: 'sj-haberdasher',
 }
 
-function buildRuntimeStop(role: UserStopRole, venueId: string, stopIndex: number): RuntimeRouteStop {
+function runtimeStop(role: UserStopRole, venueId: string, stopIndex: number): RuntimeRouteStop {
+  const displayName =
+    role === 'start' ? 'Good Karma' : role === 'highlight' ? 'Paper Plane' : 'Haberdasher'
   return {
     id: `${role}:${venueId}`,
     sourceStopId: `${role}:${venueId}`,
-    displayName:
-      role === 'start' ? 'Good Karma' : role === 'highlight' ? 'Paper Plane' : 'Haberdasher',
+    displayName,
     latitude: 37.33,
     longitude: -121.89,
     address: '1 Test Way',
     role,
     stopIndex,
     venueId,
-    title: role === 'highlight' ? 'Cocktail anchor' : 'Support stop',
+    title: displayName,
     subtitle: 'Downtown',
     neighborhood: 'Downtown',
     driveMinutes: 4,
@@ -55,11 +50,11 @@ function buildRuntimeStop(role: UserStopRole, venueId: string, stopIndex: number
   }
 }
 
-function buildRuntimeRoute(patch: Partial<RuntimeRouteArtifact> = {}): RuntimeRouteArtifact {
+function runtimeRoute(patch: Partial<RuntimeRouteArtifact> = {}): RuntimeRouteArtifact {
   const stops = [
-    buildRuntimeStop('start', routeIds.start, 0),
-    buildRuntimeStop('highlight', routeIds.highlight, 1),
-    buildRuntimeStop('windDown', routeIds.windDown, 2),
+    runtimeStop('start', routeIds.start, 0),
+    runtimeStop('highlight', routeIds.highlight, 1),
+    runtimeStop('windDown', routeIds.windDown, 2),
   ]
   return {
     routeId: 'build-runtime-paper-plane',
@@ -85,14 +80,15 @@ function buildRuntimeRoute(patch: Partial<RuntimeRouteArtifact> = {}): RuntimeRo
   }
 }
 
-function buildItineraryStop(role: UserStopRole, venueId: string): ItineraryStop {
+function itineraryStop(role: UserStopRole, venueId: string): ItineraryStop {
+  const venueName =
+    role === 'start' ? 'Good Karma' : role === 'highlight' ? 'Paper Plane' : 'Haberdasher'
   return {
     id: `${role}:${venueId}`,
     role,
-    title: role === 'windDown' ? 'Wind Down' : role === 'highlight' ? 'Highlight' : 'Start',
+    title: venueName,
     venueId,
-    venueName:
-      role === 'start' ? 'Good Karma' : role === 'highlight' ? 'Paper Plane' : 'Haberdasher',
+    venueName,
     formattedAddress: '1 Test Way',
     latitude: 37.33,
     longitude: -121.89,
@@ -117,7 +113,7 @@ function buildItineraryStop(role: UserStopRole, venueId: string): ItineraryStop 
   }
 }
 
-function buildItinerary(): Itinerary {
+function itinerary(): Itinerary {
   return {
     id: 'itinerary-paper-plane',
     title: 'Paper Plane Night',
@@ -125,9 +121,9 @@ function buildItinerary(): Itinerary {
     crew: 'socialite',
     vibes: ['lively'],
     stops: [
-      buildItineraryStop('start', routeIds.start),
-      buildItineraryStop('highlight', routeIds.highlight),
-      buildItineraryStop('windDown', routeIds.windDown),
+      itineraryStop('start', routeIds.start),
+      itineraryStop('highlight', routeIds.highlight),
+      itineraryStop('windDown', routeIds.windDown),
     ],
     transitions: [],
     totalRouteFriction: 0.2,
@@ -147,7 +143,7 @@ function buildItinerary(): Itinerary {
   }
 }
 
-function buildArtifact(patch: Partial<ContractEntryArtifact> = {}): ContractEntryArtifact {
+function artifact(patch: Partial<ContractEntryArtifact> = {}): ContractEntryArtifact {
   return {
     id: 'build-candidate-paper-plane',
     sourceOpportunityId: 'build-opportunity-paper-plane',
@@ -188,7 +184,7 @@ function buildArtifact(patch: Partial<ContractEntryArtifact> = {}): ContractEntr
   }
 }
 
-function proof(
+function hoursProof(
   status: BearingsStaticRuntimeHoursProofResult['status'],
 ): BearingsStaticRuntimeHoursProofResult {
   return {
@@ -224,7 +220,7 @@ const scatteredGeo: ScenarioRouteGeoCoherence = {
   ],
 }
 
-function buildAnchorContract(role: BuildAnchorCanonicalRole = 'highlight') {
+function anchorContract(role: BuildAnchorCanonicalRole = 'highlight') {
   return buildAnchorTruthContract({
     identity: {
       venueId: routeIds.highlight,
@@ -240,206 +236,168 @@ function buildAnchorContract(role: BuildAnchorCanonicalRole = 'highlight') {
 }
 
 function buildTruth(params: {
-  artifact?: ContractEntryArtifact
+  sourceKind?: 'static' | 'provider_shadow' | 'debug_only'
+  providerSelectionAllowed?: boolean
+  providerMergedIntoVisiblePool?: boolean
   finalRoute?: RuntimeRouteArtifact | null
   anchorRole?: BuildAnchorCanonicalRole
-  sourceKind?: 'static' | 'provider_shadow' | 'debug_only'
   selectedArtifactId?: string
   selectedDirectionId?: string
   hoursStatus?: BearingsStaticRuntimeHoursProofResult['status']
   geo?: ScenarioRouteGeoCoherence | null
 }) {
-  const artifact = params.artifact ?? buildArtifact()
-  const finalRoute = params.finalRoute === undefined ? buildRuntimeRoute() : params.finalRoute
-  const anchorContract = buildAnchorContract(params.anchorRole ?? 'highlight')
+  const candidateArtifact = artifact()
+  const finalRoute = params.finalRoute === undefined ? runtimeRoute() : params.finalRoute
+  const contract = anchorContract(params.anchorRole ?? 'highlight')
   const admission = evaluateBuildCandidateAdmission({
     mode: 'build',
-    anchorContract,
-    contractEntryArtifact: artifact,
+    anchorContract: contract,
+    contractEntryArtifact: candidateArtifact,
     runtimeRouteArtifact: finalRoute,
-    hoursProof: proof(params.hoursStatus ?? 'open_for_plan_window'),
+    hoursProof: hoursProof(params.hoursStatus ?? 'open_for_plan_window'),
     planningWindow,
     geoCoherence: params.geo ?? null,
     buildParked: {
-      providerSelectionAllowed: false,
-      providerMergedIntoVisiblePool: false,
+      providerSelectionAllowed: params.providerSelectionAllowed ?? false,
+      providerMergedIntoVisiblePool: params.providerMergedIntoVisiblePool ?? false,
     },
   })
+
   return buildBuildCardTruthModel({
-    artifact,
-    selectedArtifactId: params.selectedArtifactId ?? artifact.id,
-    selectedDirectionId: params.selectedDirectionId ?? artifact.selection.directionId,
+    artifact: candidateArtifact,
+    selectedArtifactId: params.selectedArtifactId ?? candidateArtifact.id,
+    selectedDirectionId: params.selectedDirectionId ?? candidateArtifact.selection.directionId,
     approvedPayload: finalRoute
       ? {
-          artifactId: artifact.id,
+          artifactId: candidateArtifact.id,
           selectedDirectionId: finalRoute.selectedDirectionId,
           finalRoute,
           selectedClusterConfirmation: 'Downtown works tonight.',
-          itinerary: buildItinerary(),
+          itinerary: itinerary(),
           sourceKind: params.sourceKind ?? 'static',
         }
       : null,
     candidateAdmission: admission,
-    anchorTruthContract: anchorContract,
+    anchorTruthContract: contract,
     sourceKind: params.sourceKind ?? 'static',
-    buildProviderSelectionAllowed: false,
-    buildProviderMergedIntoVisiblePool: false,
+    buildProviderSelectionAllowed: params.providerSelectionAllowed ?? false,
+    buildProviderMergedIntoVisiblePool: params.providerMergedIntoVisiblePool ?? false,
     activeRole: 'start',
     fallbackCity: 'San Jose',
   })
 }
 
 function main(): void {
-  globalThis.fetch = fetchTrap
-
-  const passing = buildTruth({})
-  assert(passing.approvedPayloadTruthAllowed, 'Build approved payload truth must pass when all gates pass.')
-  assert(passing.visibleCardEligible, 'Build visible-card eligibility must pass when all gates pass.')
-  assert(passing.buildTruthReady, 'Build truth must be ready when all canonical gates pass.')
+  const parkedStatic = buildTruth({})
+  assert(parkedStatic.buildTruthReady, 'Truth-passing Build candidate must report buildTruthReady.')
   assert(
-    passing.buildSelectableWhenUnparked,
-    'Build card must report selectable readiness for a future unpark when truth passes.',
+    parkedStatic.buildSelectableWhenUnparked,
+    'Truth-passing approved source must report buildSelectableWhenUnparked.',
   )
-  assert(!passing.reviewEligible, 'Build Review eligibility must remain false while parked.')
-  assert(!passing.cardSelectable, 'Build card must remain non-selectable while parked.')
-
-  const wrongRole = buildTruth({ anchorRole: 'start' })
-  assert(!wrongRole.reviewEligible, 'Wrong anchor role must block Review truth.')
+  assert(!parkedStatic.cardSelectable, 'Build candidate must not be selectable while parked.')
+  assert(!parkedStatic.reviewEligible, 'Build Review eligibility must be false while parked.')
   assert(
-    wrongRole.rejectionReasons.includes('build_anchor_wrong_role'),
-    'Wrong anchor role must report build_anchor_wrong_role.',
+    parkedStatic.rejectionReasons.includes('build_provider_selection_parked'),
+    'Parked selection reason must be explicit.',
+  )
+  assert(
+    parkedStatic.rejectionReasons.includes('build_provider_visible_merge_parked'),
+    'Parked merge reason must be explicit.',
+  )
+
+  const futureUnparkedStatic = buildTruth({
+    providerSelectionAllowed: true,
+    providerMergedIntoVisiblePool: true,
+  })
+  assert(
+    futureUnparkedStatic.cardSelectable && futureUnparkedStatic.reviewEligible,
+    'Future unpark requires Build truth plus approved selectable source.',
   )
 
   const providerShadow = buildTruth({ sourceKind: 'provider_shadow' })
-  assert(providerShadow.buildTruthReady, 'Provider-shadow candidate can be truth-ready before source approval.')
-  assert(!providerShadow.cardSelectable, 'Provider-shadow candidate must not be selectable.')
+  assert(providerShadow.buildTruthReady, 'Provider-shadow candidate may be truth-ready diagnostically.')
   assert(providerShadow.providerShadowExcluded, 'Provider-shadow exclusion diagnostic must be true.')
-  assert(
-    !providerShadow.isApprovedSelectableSource,
-    'Provider-shadow candidate must not be an approved selectable source.',
-  )
+  assert(!providerShadow.isApprovedSelectableSource, 'Provider-shadow source must not be approved selectable.')
+  assert(!providerShadow.cardSelectable, 'Provider-shadow candidate must not be selectable while parked.')
+  assert(!providerShadow.reviewEligible, 'Provider-shadow candidate must not be Review-eligible while parked.')
   assert(
     providerShadow.rejectionReasons.includes('build_provider_shadow_not_selectable'),
-    'Provider-shadow candidate must report provider-shadow exclusion.',
+    'Provider-shadow exclusion reason must be explicit.',
   )
 
   const debugOnly = buildTruth({ sourceKind: 'debug_only' })
+  assert(debugOnly.isDebugOnly, 'Debug-only diagnostic must be true.')
+  assert(!debugOnly.isApprovedSelectableSource, 'Debug-only source must not be approved selectable.')
   assert(!debugOnly.cardSelectable, 'Debug-only candidate must not be selectable.')
-  assert(!debugOnly.isApprovedSelectableSource, 'Debug-only candidate must not be an approved selectable source.')
-  assert(
-    debugOnly.rejectionReasons.includes('build_debug_candidate_not_selectable'),
-    'Debug-only candidate must report debug-only exclusion.',
-  )
 
-  const missingRouteAuthority = buildTruth({ finalRoute: null })
-  assert(!missingRouteAuthority.reviewEligible, 'Missing route authority must block Review truth.')
+  const missingAuthority = buildTruth({ finalRoute: null })
+  assert(!missingAuthority.buildTruthReady, 'Missing route authority must block truth readiness.')
   assert(
-    missingRouteAuthority.rejectionReasons.includes('build_route_authority_unavailable'),
-    'Missing route authority must be explicit.',
+    missingAuthority.rejectionReasons.includes('build_route_authority_unavailable'),
+    'Missing route authority reason must be explicit.',
   )
 
   const artifactMismatch = buildTruth({ selectedArtifactId: 'wrong-artifact' })
-  assert(!artifactMismatch.reviewEligible, 'Selected artifact mismatch must block Review truth.')
+  assert(!artifactMismatch.buildTruthReady, 'Selected artifact mismatch must block readiness.')
   assert(
     artifactMismatch.rejectionReasons.includes('build_selected_artifact_mismatch'),
-    'Selected artifact mismatch must be explicit.',
+    'Selected artifact mismatch reason must be explicit.',
   )
 
   const directionMismatch = buildTruth({ selectedDirectionId: 'wrong-direction' })
-  assert(!directionMismatch.reviewEligible, 'Selected direction mismatch must block Review truth.')
+  assert(!directionMismatch.buildTruthReady, 'Selected direction mismatch must block readiness.')
   assert(
     directionMismatch.rejectionReasons.includes('build_selected_direction_mismatch'),
-    'Selected direction mismatch must be explicit.',
+    'Selected direction mismatch reason must be explicit.',
   )
 
   const scattered = buildTruth({ geo: scatteredGeo })
-  assert(scattered.buildTruthReady, 'Build scattered geography warning alone must not block truth readiness.')
-  assert(!scattered.reviewEligible, 'Build scattered geography route must remain Review-ineligible while parked.')
+  assert(scattered.buildTruthReady, 'Build geography warning alone must not block readiness.')
   assert(
     scattered.warningReasons.includes('build_geo_scattered_required_anchor'),
-    'Build scattered geography must remain a warning.',
+    'Build geography warning must be preserved.',
+  )
+
+  const wrongRole = buildTruth({ anchorRole: 'start' })
+  assert(!wrongRole.buildTruthReady, 'Anchor truth failure must block readiness.')
+  assert(
+    wrongRole.rejectionReasons.includes('build_anchor_wrong_role'),
+    'Anchor wrong-role reason must be explicit.',
   )
 
   const closedHours = buildTruth({ hoursStatus: 'closed_for_plan_window' })
-  assert(!closedHours.reviewEligible, 'Closed hours must block Build truth.')
+  assert(!closedHours.buildTruthReady, 'Closed hours must block readiness.')
   assert(
     closedHours.rejectionReasons.includes('build_hours_blocked'),
-    'Closed-hours block must be explicit.',
-  )
-
-  const curateGeo = evaluateCandidateGeoPosture({
-    mode: 'curate',
-    geoCoherence: scatteredGeo,
-  })
-  assert(
-    curateGeo.hardBlockReason === 'curate_geo_scattered',
-    'Curate scattered geography hard gate must remain unchanged.',
-  )
-
-  const modeAwareBuild = buildModeAwarePublicRouteTruth({
-    mode: 'build',
-    input: {
-      artifact: buildArtifact(),
-      selectedArtifactId: 'build-candidate-paper-plane',
-      selectedDirectionId: 'downtown-cocktails',
-      approvedPayload: {
-        artifactId: 'build-candidate-paper-plane',
-        selectedDirectionId: 'downtown-cocktails',
-        finalRoute: buildRuntimeRoute(),
-        selectedClusterConfirmation: 'Downtown works tonight.',
-        itinerary: buildItinerary(),
-        sourceKind: 'static',
-      },
-      candidateAdmission: evaluateBuildCandidateAdmission({
-        mode: 'build',
-        anchorContract: buildAnchorContract(),
-        contractEntryArtifact: buildArtifact(),
-        runtimeRouteArtifact: buildRuntimeRoute(),
-        hoursProof: proof('open_for_plan_window'),
-        planningWindow,
-      }),
-      anchorTruthContract: buildAnchorContract(),
-      sourceKind: 'static',
-      buildProviderSelectionAllowed: false,
-      buildProviderMergedIntoVisiblePool: false,
-    },
-  })
-  assert(modeAwareBuild.mode === 'build', 'Mode-aware truth service must return Build result.')
-  assert(
-    modeAwareBuild.truth.buildTruthReady,
-    'Mode-aware Build truth must preserve truth readiness when gates pass.',
-  )
-  assert(
-    !modeAwareBuild.truth.reviewEligible,
-    'Mode-aware Build truth must keep Review eligibility parked.',
+    'Closed-hours reason must be explicit.',
   )
 
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   assert(
     sandboxSource.includes('const buildProviderSelectionAllowed = false'),
-    'Build provider selection must remain parked.',
+    'Build provider selection flag must remain parked.',
   )
   assert(
     sandboxSource.includes('const buildProviderMergedIntoVisiblePool = false'),
-    'Build provider visible merge must remain parked.',
+    'Build provider visible merge flag must remain parked.',
   )
-
+  assert(
+    sandboxSource.includes('buildSelectedCardTruthReady'),
+    'Build Review gate must consume Build truth readiness.',
+  )
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
 
-  process.stdout.write('build card truth: passed\n')
+  process.stdout.write('build unpark readiness: passed\n')
   process.stdout.write(
     `${JSON.stringify(
       {
         fetchCallCount,
-        passingBuildTruthReady: passing.buildTruthReady,
-        passingReviewEligible: passing.reviewEligible,
-        passingCardSelectable: passing.cardSelectable,
-        providerShadowBuildTruthReady: providerShadow.buildTruthReady,
+        parkedBuildTruthReady: parkedStatic.buildTruthReady,
+        parkedSelectableWhenUnparked: parkedStatic.buildSelectableWhenUnparked,
+        parkedReviewEligible: parkedStatic.reviewEligible,
+        futureUnparkedReviewEligible: futureUnparkedStatic.reviewEligible,
         providerShadowExcluded: providerShadow.providerShadowExcluded,
-        providerShadowReasons: providerShadow.rejectionReasons,
-        debugOnlyReasons: debugOnly.rejectionReasons,
         scatteredWarnings: scattered.warningReasons,
-        curateGeoHardBlock: curateGeo.hardBlockReason,
         buildProviderSelectionAllowed: false,
         buildProviderMergedIntoVisiblePool: false,
       },

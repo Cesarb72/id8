@@ -59,6 +59,9 @@ export type BuildCardTruthRejectionReason =
   | 'build_selected_direction_mismatch'
   | 'build_final_route_missing'
   | 'build_non_canonical_route_ids'
+  | 'build_source_not_approved_selectable'
+  | 'build_provider_selection_parked'
+  | 'build_provider_visible_merge_parked'
   | 'build_review_truth_unavailable'
 
 export interface BuildApprovedPayloadReference {
@@ -92,6 +95,12 @@ export interface BuildCardTruthResult {
   reviewEligible: boolean
   routeAuthorityLockReady: boolean
   sourceKind: BuildApprovedRouteSourceKind
+  isProviderShadow: boolean
+  isDebugOnly: boolean
+  isApprovedSelectableSource: boolean
+  providerShadowExcluded: boolean
+  buildTruthReady: boolean
+  buildSelectableWhenUnparked: boolean
   rejectionReasons: BuildCardTruthRejectionReason[]
   warningReasons: string[]
   diagnostics: {
@@ -111,6 +120,12 @@ export interface BuildCardTruthResult {
     buildAnchorValidationStatus: string | null
     buildProviderSelectionAllowed: boolean
     buildProviderMergedIntoVisiblePool: boolean
+    isProviderShadow: boolean
+    isDebugOnly: boolean
+    isApprovedSelectableSource: boolean
+    providerShadowExcluded: boolean
+    buildTruthReady: boolean
+    buildSelectableWhenUnparked: boolean
   }
 }
 
@@ -322,68 +337,66 @@ export function buildBuildCardTruthModel(input: BuildCardTruthInput): BuildCardT
   const approvedPayload = input.approvedPayload ?? null
   const finalRoute = approvedPayload?.finalRoute ?? null
   const sourceKind = input.sourceKind ?? approvedPayload?.sourceKind ?? 'static'
+  const isProviderShadow = sourceKind === 'provider_shadow'
+  const isDebugOnly = sourceKind === 'debug_only'
+  const isApprovedSelectableSource = sourceKind === 'static'
+  const providerShadowExcluded = isProviderShadow
   const rejectionReasons: BuildCardTruthRejectionReason[] = []
+  const buildTruthRejectionReasons: BuildCardTruthRejectionReason[] = []
   const warningReasons = [...(input.candidateAdmission?.warningReasons ?? [])]
 
   if (!input.candidateAdmission) {
-    addBuildTruthReason(rejectionReasons, 'build_admission_missing')
+    addBuildTruthReason(buildTruthRejectionReasons, 'build_admission_missing')
   } else if (!input.candidateAdmission.admitted) {
-    addBuildTruthReason(rejectionReasons, 'build_admission_failed')
+    addBuildTruthReason(buildTruthRejectionReasons, 'build_admission_failed')
     if (
       input.candidateAdmission.rejectionReasons.includes('closed_for_plan_window') ||
       input.candidateAdmission.rejectionReasons.includes('explicit_time_requires_known_open_hours')
     ) {
-      addBuildTruthReason(rejectionReasons, 'build_hours_blocked')
+      addBuildTruthReason(buildTruthRejectionReasons, 'build_hours_blocked')
     }
     if (input.candidateAdmission.rejectionReasons.includes('stale_or_non_canonical_route_ids')) {
-      addBuildTruthReason(rejectionReasons, 'build_non_canonical_route_ids')
+      addBuildTruthReason(buildTruthRejectionReasons, 'build_non_canonical_route_ids')
     }
   } else if (!input.candidateAdmission.hoursAdmissibility?.admitted) {
-    addBuildTruthReason(rejectionReasons, 'build_hours_blocked')
+    addBuildTruthReason(buildTruthRejectionReasons, 'build_hours_blocked')
   }
 
   const anchorTruthContract = resolveBuildAnchorTruthContract(input)
   let anchorValidationStatus: string | null = null
   if (!anchorTruthContract) {
-    addBuildTruthReason(rejectionReasons, 'build_anchor_truth_missing')
+    addBuildTruthReason(buildTruthRejectionReasons, 'build_anchor_truth_missing')
   } else if (finalRoute) {
     const anchorValidation = validateRuntimeRouteBuildAnchor(anchorTruthContract, finalRoute)
     anchorValidationStatus = anchorValidation.status
     if (anchorValidation.status === 'invalid' || !anchorValidation.preserved) {
       if (anchorValidation.reasons.includes('anchor_not_in_required_role')) {
-        addBuildTruthReason(rejectionReasons, 'build_anchor_wrong_role')
+        addBuildTruthReason(buildTruthRejectionReasons, 'build_anchor_wrong_role')
       }
-      addBuildTruthReason(rejectionReasons, 'build_anchor_not_preserved')
+      addBuildTruthReason(buildTruthRejectionReasons, 'build_anchor_not_preserved')
     }
   }
 
   if (!finalRoute) {
-    addBuildTruthReason(rejectionReasons, 'build_final_route_missing')
+    addBuildTruthReason(buildTruthRejectionReasons, 'build_final_route_missing')
   } else if (!hasCanonicalThreeRoleFinalRoute(finalRoute)) {
-    addBuildTruthReason(rejectionReasons, 'build_non_canonical_route_ids')
+    addBuildTruthReason(buildTruthRejectionReasons, 'build_non_canonical_route_ids')
   }
 
   if (artifact?.id && input.selectedArtifactId && artifact.id !== input.selectedArtifactId) {
-    addBuildTruthReason(rejectionReasons, 'build_selected_artifact_mismatch')
+    addBuildTruthReason(buildTruthRejectionReasons, 'build_selected_artifact_mismatch')
   }
   if (
     approvedPayload?.artifactId &&
     (input.selectedArtifactId ?? artifact?.id) &&
     approvedPayload.artifactId !== (input.selectedArtifactId ?? artifact?.id)
   ) {
-    addBuildTruthReason(rejectionReasons, 'build_selected_artifact_mismatch')
+    addBuildTruthReason(buildTruthRejectionReasons, 'build_selected_artifact_mismatch')
   }
   const expectedDirectionId = input.selectedDirectionId ?? artifact?.selection.directionId ?? null
   const observedDirectionId = approvedPayload?.selectedDirectionId ?? finalRoute?.selectedDirectionId
   if (expectedDirectionId && observedDirectionId && observedDirectionId !== expectedDirectionId) {
-    addBuildTruthReason(rejectionReasons, 'build_selected_direction_mismatch')
-  }
-
-  if (sourceKind === 'provider_shadow') {
-    addBuildTruthReason(rejectionReasons, 'build_provider_shadow_not_selectable')
-  }
-  if (sourceKind === 'debug_only') {
-    addBuildTruthReason(rejectionReasons, 'build_debug_candidate_not_selectable')
+    addBuildTruthReason(buildTruthRejectionReasons, 'build_selected_direction_mismatch')
   }
 
   const routeAuthoritySnapshot = buildRouteAuthoritySnapshot({
@@ -399,7 +412,7 @@ export function buildBuildCardTruthModel(input: BuildCardTruthInput): BuildCardT
       routeAuthoritySnapshot.validationStatus === 'valid',
   )
   if (!routeAuthorityLockReady) {
-    addBuildTruthReason(rejectionReasons, 'build_route_authority_unavailable')
+    addBuildTruthReason(buildTruthRejectionReasons, 'build_route_authority_unavailable')
   }
 
   const lockInput =
@@ -412,17 +425,35 @@ export function buildBuildCardTruthModel(input: BuildCardTruthInput): BuildCardT
       : null
   const lockInputAvailable = lockInput?.ok ?? routeAuthorityLockReady
 
-  const approvedPayloadTruthAllowed =
-    rejectionReasons.length === 0 &&
+  buildTruthRejectionReasons.forEach((reason) => addBuildTruthReason(rejectionReasons, reason))
+
+  const buildTruthReady =
+    buildTruthRejectionReasons.length === 0 &&
     Boolean(artifact && finalRoute && input.candidateAdmission?.admitted)
+  if (isProviderShadow) {
+    addBuildTruthReason(rejectionReasons, 'build_provider_shadow_not_selectable')
+  }
+  if (isDebugOnly) {
+    addBuildTruthReason(rejectionReasons, 'build_debug_candidate_not_selectable')
+  }
+  if (!isApprovedSelectableSource) {
+    addBuildTruthReason(rejectionReasons, 'build_source_not_approved_selectable')
+  }
+  const approvedPayloadTruthAllowed = buildTruthReady && isApprovedSelectableSource
   const visibleCardEligible = approvedPayloadTruthAllowed
+  const buildSelectableWhenUnparked = approvedPayloadTruthAllowed
+  if (buildSelectableWhenUnparked && !input.buildProviderSelectionAllowed) {
+    addBuildTruthReason(rejectionReasons, 'build_provider_selection_parked')
+  }
+  if (buildSelectableWhenUnparked && !input.buildProviderMergedIntoVisiblePool) {
+    addBuildTruthReason(rejectionReasons, 'build_provider_visible_merge_parked')
+  }
   const cardSelectable = Boolean(
-    visibleCardEligible &&
-      sourceKind === 'static' &&
+    buildSelectableWhenUnparked &&
       input.buildProviderSelectionAllowed &&
       input.buildProviderMergedIntoVisiblePool,
   )
-  const reviewEligible = Boolean(visibleCardEligible && routeAuthorityLockReady)
+  const reviewEligible = Boolean(cardSelectable && routeAuthorityLockReady)
   if (!reviewEligible) {
     addBuildTruthReason(rejectionReasons, 'build_review_truth_unavailable')
   }
@@ -434,6 +465,12 @@ export function buildBuildCardTruthModel(input: BuildCardTruthInput): BuildCardT
     reviewEligible,
     routeAuthorityLockReady,
     sourceKind,
+    isProviderShadow,
+    isDebugOnly,
+    isApprovedSelectableSource,
+    providerShadowExcluded,
+    buildTruthReady,
+    buildSelectableWhenUnparked,
     rejectionReasons,
     warningReasons,
     diagnostics: {
@@ -453,6 +490,12 @@ export function buildBuildCardTruthModel(input: BuildCardTruthInput): BuildCardT
       buildAnchorValidationStatus: anchorValidationStatus,
       buildProviderSelectionAllowed: input.buildProviderSelectionAllowed,
       buildProviderMergedIntoVisiblePool: input.buildProviderMergedIntoVisiblePool,
+      isProviderShadow,
+      isDebugOnly,
+      isApprovedSelectableSource,
+      providerShadowExcluded,
+      buildTruthReady,
+      buildSelectableWhenUnparked,
     },
   }
 }

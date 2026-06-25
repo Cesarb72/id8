@@ -1192,6 +1192,10 @@ interface SurpriseTryAnotherDebug {
   buildApprovedPayloadTruthAllowed: boolean
   buildReviewTruthEligible: boolean
   buildCardSelectable: boolean
+  buildTruthReady: boolean
+  buildSelectableWhenUnparked: boolean
+  buildIsApprovedSelectableSource: boolean
+  buildProviderShadowExcluded: boolean
   buildCardTruthRejectionReasons: string[]
   step2TryAnotherAlternatesCount: number
   surpriseArtifactSafetyKnownSafeIds: string[]
@@ -17521,6 +17525,14 @@ export function SandboxConciergePage({
     buildSelectedCardTruthDiagnostic?.reviewEligible ?? false
   const buildCardSelectable =
     buildSelectedCardTruthDiagnostic?.cardSelectable ?? false
+  const buildTruthReady =
+    buildSelectedCardTruthDiagnostic?.buildTruthReady ?? false
+  const buildSelectableWhenUnparked =
+    buildSelectedCardTruthDiagnostic?.buildSelectableWhenUnparked ?? false
+  const buildIsApprovedSelectableSource =
+    buildSelectedCardTruthDiagnostic?.isApprovedSelectableSource ?? false
+  const buildProviderShadowExcluded =
+    buildSelectedCardTruthDiagnostic?.providerShadowExcluded ?? false
   const buildCardTruthRejectionReasons =
     buildSelectedCardTruthDiagnostic?.rejectionReasons ?? []
   const buildAnchorSuppressedAdmissions = useMemo(
@@ -20189,6 +20201,10 @@ export function SandboxConciergePage({
       buildApprovedPayloadTruthAllowed,
       buildReviewTruthEligible,
       buildCardSelectable,
+      buildTruthReady,
+      buildSelectableWhenUnparked,
+      buildIsApprovedSelectableSource,
+      buildProviderShadowExcluded,
       buildCardTruthRejectionReasons,
       step2TryAnotherAlternatesCount: step2TryAnotherAlternates.length,
       surpriseArtifactSafetyKnownSafeIds,
@@ -20314,6 +20330,7 @@ export function SandboxConciergePage({
     buildApprovedPayloadTruthAllowed,
     buildCardSelectable,
     buildCardTruthRejectionReasons,
+    buildIsApprovedSelectableSource,
     buildCandidateAdmissionAdmittedCount,
     buildCandidateAdmissionEvaluatedCount,
     buildCandidateAdmissionRejectedSummaries,
@@ -20331,6 +20348,7 @@ export function SandboxConciergePage({
     buildProviderShadowArtifactFailureReason,
     buildProviderShadowArtifactId,
     buildProviderShadowAdmissionSummary,
+    buildProviderShadowExcluded,
     buildProviderFallbackPreviewVisible,
     buildProviderSourceOpportunityId,
     buildProviderSourceOpportunityAvailable,
@@ -20340,8 +20358,10 @@ export function SandboxConciergePage({
     buildProviderVerifiedOpportunityCount,
     buildProviderVerifiedOpportunityId,
     buildReviewTruthEligible,
+    buildSelectableWhenUnparked,
     buildStaticCandidateArtifactCount,
     buildStaticSourceOpportunityCount,
+    buildTruthReady,
     candidateRouteArtifactByIdForDisplay,
     candidateRouteArtifactsForDisplay,
     curateDisplayFallbackRouteArtifacts.length,
@@ -20775,11 +20795,15 @@ export function SandboxConciergePage({
         selectedCuratePreviewCommitability.artifactId === selectedCurateVisibleCardModel.artifact.id &&
         selectedCandidateRouteArtifact.id === selectedCurateVisibleCardModel.artifact.id),
   )
+  const buildSelectedCardTruthReady = Boolean(
+    !isBuildWrapperActive || buildReviewTruthEligible,
+  )
   const showPrimaryContinueAction = Boolean(
     !coffeeBooksCommittedRouteSummarySuppressed &&
     !selectedCandidatePreviewValidationFailed &&
       !publicTruthGateSuppressPreview &&
       publicCurateSelectedCardTruthReady &&
+      buildSelectedCardTruthReady &&
       (!isPublicSurface || !isSurpriseWrapperActive || committedRevealReady),
   )
   const showTryAnotherAction = isSurpriseWrapperActive
@@ -20812,6 +20836,10 @@ export function SandboxConciergePage({
       setError(
         `No anchor-valid route is selected for "${selectedBuildAnchor.name}". Choose an anchor-valid direction first.`,
       )
+      return
+    }
+    if (isBuildWrapperActive && !buildReviewTruthEligible) {
+      setError('Build route review is still parked until its card truth and selection gates are enabled.')
       return
     }
     if (committedPlanMatchesGenerateDirection || (plan && previewSynced)) {
@@ -20853,6 +20881,7 @@ export function SandboxConciergePage({
     isCurateWrapperActive,
     loading,
     applyCurateRefinementEntryPayload,
+    buildReviewTruthEligible,
     committedPlanMatchesGenerateDirection,
     committedRevealReady,
     isPublicSurface,
@@ -22252,6 +22281,16 @@ export function SandboxConciergePage({
               </div>
               <div>buildReviewTruthEligible: {String(buildReviewTruthEligible)}</div>
               <div>buildCardSelectable: {String(buildCardSelectable)}</div>
+              <div>buildTruthReady: {String(buildTruthReady)}</div>
+              <div>
+                buildSelectableWhenUnparked: {String(buildSelectableWhenUnparked)}
+              </div>
+              <div>
+                buildIsApprovedSelectableSource: {String(buildIsApprovedSelectableSource)}
+              </div>
+              <div>
+                buildProviderShadowExcluded: {String(buildProviderShadowExcluded)}
+              </div>
               <div>
                 buildCardTruthRejectionReasons:{' '}
                 {buildCardTruthRejectionReasons.join(',') || 'none'}
