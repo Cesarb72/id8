@@ -75,6 +75,10 @@ import {
 } from '../domain/bearings/assessDirectionContractBuildability'
 import { saveLockedLiveArtifactSession } from '../app/services/live/liveSessionHandoff'
 import {
+  buildLockInputFromRouteAuthoritySnapshot,
+  buildRouteAuthoritySnapshot,
+} from '../app/services/routeAuthority/routeAuthorityService'
+import {
   buildPlanPreviewV01FromSelectedRouteArtifacts,
   comparePlanPreviewV01ToRenderedPreview,
   comparePlanPreviewV01ToSelectedRouteArtifact,
@@ -16552,6 +16556,42 @@ export function SandboxConciergePage({
       planSnapshot: activePlan,
     }
   }, [activeCurateRefinementEntryPayload, canonicalStopByRole, finalRoute, plan])
+  const routeAuthoritySnapshot = useMemo(() => {
+    const activePlan = activeCurateRefinementEntryPayload?.planSnapshot ?? plan
+    const approvedPayload =
+      selectedCuratePreviewCommitability?.approvedRefinementEntryPayload ??
+      activeCurateRefinementEntryPayload ??
+      null
+    const selectedArtifact =
+      explicitQualifiedCurateSelectedArtifact ?? selectedCandidateRouteArtifact ?? null
+
+    return buildRouteAuthoritySnapshot({
+      contractEntryArtifact: selectedArtifact,
+      selectedDirectionId:
+        activePlan?.selectedDirectionContract.id ??
+        selectedDirectionId ??
+        null,
+      selectedArtifactId:
+        activePlan?.selectedCandidateRouteArtifactId ??
+        selectedArtifact?.id ??
+        selectedStep2CandidateArtifactId ??
+        null,
+      approvedPayload,
+      legacyCurateRefinementEntryPayload: activeCurateRefinementEntryPayload,
+      pageLocalFinalRoute: finalRoute,
+      selectedClusterConfirmation: activePlan?.selectedClusterConfirmation,
+      itinerary: activePlan?.itinerary,
+    })
+  }, [
+    activeCurateRefinementEntryPayload,
+    explicitQualifiedCurateSelectedArtifact,
+    finalRoute,
+    plan,
+    selectedCandidateRouteArtifact,
+    selectedCuratePreviewCommitability?.approvedRefinementEntryPayload,
+    selectedDirectionId,
+    selectedStep2CandidateArtifactId,
+  ])
   const normalizedContractEntryArtifactDebug = useMemo(() => {
     const normalizedDirectionCardArtifacts = directionCards.map((directionCard) =>
       buildContractEntryArtifactFromDirectionCard(directionCard),
@@ -16609,21 +16649,30 @@ export function SandboxConciergePage({
   ])
 
   const handleLockNight = () => {
-    if (!canonicalRouteArtifact || isLocking) {
+    if (isLocking) {
       return
     }
     setError(undefined)
     setIsLocking(true)
-    const lockSaveResult = saveLockedLiveArtifactSession({
-      canonicalRouteArtifact,
-      lockSafeItineraryStops,
+    const lockInputResult = buildLockInputFromRouteAuthoritySnapshot({
+      snapshot: routeAuthoritySnapshot,
       activeRole,
       fallbackCity: city,
     })
+    if (!lockInputResult.ok) {
+      if (shouldLogLiveArtifactDebug) {
+        console.debug('[live-artifact] route authority lock input rejected', lockInputResult.diagnostics)
+      }
+      setError(`Could not lock live session. ${lockInputResult.diagnostics.rejectionReason}`)
+      setIsLocking(false)
+      return
+    }
+    const lockSaveResult = saveLockedLiveArtifactSession(lockInputResult.input)
     if (shouldLogLiveArtifactDebug) {
       console.debug('[live-artifact] lock save attempted', {
         sessionId: lockSaveResult.sessionId,
         lockedAt: null,
+        routeAuthority: lockInputResult.diagnostics,
       })
     }
     if (shouldLogLiveArtifactDebug) {
@@ -16688,73 +16737,6 @@ export function SandboxConciergePage({
           neighborhood: finalStop.neighborhood || sourceStop.neighborhood,
           driveMinutes: finalStop.driveMinutes,
           imageUrl: finalStop.imageUrl,
-        }
-      })
-      .filter((stop): stop is ItineraryStop => Boolean(stop))
-  }, [canonicalRouteArtifact])
-  const lockSafeItineraryStops = useMemo(() => {
-    if (!canonicalRouteArtifact) {
-      return [] as ItineraryStop[]
-    }
-    const getNonEmptyImageUrl = (value: string | null | undefined): string | null => {
-      const trimmed = value?.trim()
-      return trimmed ? trimmed : null
-    }
-    const stopBySourceId = new Map(
-      canonicalRouteArtifact.itinerary.stops.map((stop) => [stop.id, stop] as const),
-    )
-    const stopByIndex = new Map(
-      canonicalRouteArtifact.itinerary.stops.map((stop, index) => [index, stop] as const),
-    )
-    const finalRouteStopByRole = new Map(
-      canonicalRouteArtifact.finalRoute.stops.map((stop) => [stop.role, stop] as const),
-    )
-    const itineraryStopByRole = new Map(
-      canonicalRouteArtifact.itinerary.stops.map((stop) => [stop.role, stop] as const),
-    )
-    const sharedFallbackImageUrl =
-      getNonEmptyImageUrl(finalRouteStopByRole.get('highlight')?.imageUrl) ??
-      getNonEmptyImageUrl(itineraryStopByRole.get('highlight')?.imageUrl) ??
-      getNonEmptyImageUrl(finalRouteStopByRole.get('start')?.imageUrl) ??
-      getNonEmptyImageUrl(itineraryStopByRole.get('start')?.imageUrl) ??
-      getNonEmptyImageUrl(finalRouteStopByRole.get('windDown')?.imageUrl) ??
-      getNonEmptyImageUrl(itineraryStopByRole.get('windDown')?.imageUrl) ??
-      getNonEmptyImageUrl(
-        canonicalRouteArtifact.finalRoute.stops.find((stop) => getNonEmptyImageUrl(stop.imageUrl))?.imageUrl,
-      ) ??
-      getNonEmptyImageUrl(
-        canonicalRouteArtifact.itinerary.stops.find((stop) => getNonEmptyImageUrl(stop.imageUrl))?.imageUrl,
-      ) ??
-      ''
-    return [...canonicalRouteArtifact.finalRoute.stops]
-      .sort((left, right) => left.stopIndex - right.stopIndex)
-      .map((finalStop) => {
-        const sourceStop =
-          stopBySourceId.get(finalStop.sourceStopId) ??
-          stopByIndex.get(finalStop.stopIndex) ??
-          canonicalRouteArtifact.itinerary.stops.find(
-            (stop) => stop.role === finalStop.role && stop.venueId === finalStop.venueId,
-          ) ??
-          canonicalRouteArtifact.itinerary.stops.find((stop) => stop.role === finalStop.role)
-        if (!sourceStop) {
-          return null
-        }
-        const resolvedImageUrl =
-          getNonEmptyImageUrl(sourceStop.imageUrl) ??
-          getNonEmptyImageUrl(finalStop.imageUrl) ??
-          sharedFallbackImageUrl
-        return {
-          ...sourceStop,
-          id: finalStop.sourceStopId,
-          role: finalStop.role,
-          venueId: finalStop.venueId,
-          venueName: finalStop.displayName || sourceStop.venueName,
-          neighborhood: finalStop.neighborhood || sourceStop.neighborhood,
-          driveMinutes:
-            Number.isFinite(finalStop.driveMinutes) && finalStop.driveMinutes >= 0
-              ? finalStop.driveMinutes
-              : sourceStop.driveMinutes,
-          imageUrl: resolvedImageUrl,
         }
       })
       .filter((stop): stop is ItineraryStop => Boolean(stop))

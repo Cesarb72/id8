@@ -1,4 +1,5 @@
 import {
+  buildLockInputFromRouteAuthoritySnapshot,
   buildRouteAuthoritySnapshot,
   type RouteAuthorityObservedSource,
 } from '../src/app/services/routeAuthority/routeAuthorityService.ts'
@@ -6,7 +7,7 @@ import { buildCurateRefinementEntryPayload } from '../src/app/wrapper/curateRefi
 import type { ContractEntryArtifact } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
 import type { SelectedRouteArtifact } from '../src/domain/artifacts/selectedRouteArtifact.ts'
-import type { UserStopRole } from '../src/domain/types/itinerary.ts'
+import type { Itinerary, ItineraryStop, UserStopRole, UserStopTitle } from '../src/domain/types/itinerary.ts'
 
 const CANONICAL_ROUTE_IDS = [
   'sj-willow-court-wine-bar',
@@ -52,11 +53,17 @@ function sourceByKind(
   return source
 }
 
-function titleForRole(role: UserStopRole): string {
+function titleForRole(role: UserStopRole): UserStopTitle {
   if (role === 'windDown') {
     return 'Wind Down'
   }
-  return role[0].toUpperCase() + role.slice(1)
+  if (role === 'highlight') {
+    return 'Highlight'
+  }
+  if (role === 'surprise') {
+    return 'Surprise'
+  }
+  return 'Start'
 }
 
 function buildStop(params: {
@@ -132,6 +139,86 @@ function buildRuntimeRoute(
     })),
     liveNotices: [],
     updatedAt: 1_787_000_000_000,
+  }
+}
+
+function buildItineraryStop(params: {
+  venueId: string
+  venueName: string
+  role: UserStopRole
+  index: number
+}): ItineraryStop {
+  return {
+    id: `source-stop:${params.venueId}`,
+    role: params.role,
+    title: titleForRole(params.role),
+    venueId: params.venueId,
+    venueName: params.venueName,
+    formattedAddress: `${100 + params.index} Fixture Way, San Jose, CA`,
+    latitude: 37.33 + params.index * 0.001,
+    longitude: -121.89 - params.index * 0.001,
+    city: 'San Jose',
+    category: params.role === 'highlight' ? 'live_music' : 'bar',
+    subcategory: 'Fixture',
+    priceTier: '$$',
+    tags: ['local', 'fixture'],
+    vibeTags: ['cozy'],
+    neighborhood: 'San Jose',
+    driveMinutes: 6,
+    durationClass: 'M',
+    estimatedDurationMinutes: 45,
+    estimatedDurationLabel: '45 min',
+    subtitle: `${params.venueName} fixture stop`,
+    imageUrl: `https://example.invalid/${params.venueId}.jpg`,
+    stopInsider: {
+      roleReason: `${params.venueName} holds the ${params.role} role.`,
+      localSignal: 'Local fixture.',
+      selectionReason: 'Route authority shadow test fixture.',
+    },
+  }
+}
+
+function buildItinerary(): Itinerary {
+  const stops = [
+    buildItineraryStop({
+      venueId: CANONICAL_ROUTE_IDS[0],
+      venueName: CANONICAL_ROUTE_NAMES[0],
+      role: 'start',
+      index: 0,
+    }),
+    buildItineraryStop({
+      venueId: CANONICAL_ROUTE_IDS[1],
+      venueName: CANONICAL_ROUTE_NAMES[1],
+      role: 'highlight',
+      index: 1,
+    }),
+    buildItineraryStop({
+      venueId: CANONICAL_ROUTE_IDS[2],
+      venueName: CANONICAL_ROUTE_NAMES[2],
+      role: 'windDown',
+      index: 2,
+    }),
+  ]
+
+  return {
+    id: 'itinerary:curate-green-path:willow-court',
+    title: 'Willow Court to Jazz Cellar',
+    city: 'San Jose',
+    neighborhood: 'Willow Glen / Downtown',
+    crew: 'romantic',
+    vibes: ['cozy'],
+    stops,
+    transitions: [],
+    totalRouteFriction: 0.16,
+    estimatedTotalMinutes: 150,
+    estimatedTotalLabel: 'About 2.5 hours',
+    routeFeelLabel: 'Intimate, local, and music-led',
+    story: {
+      headline: 'Willow Court to Jazz Cellar',
+      subtitle: 'Wine-bar warmup, intimate jazz peak, polished lounge cooldown.',
+    },
+    shareSummary:
+      'Start at Willow Court Wine Bar, peak at Theatre District Jazz Cellar, then wind down at Hedley Club Lounge.',
   }
 }
 
@@ -300,6 +387,7 @@ async function main(): Promise<void> {
 
   try {
     const runtimeRoute = buildRuntimeRoute()
+    const itinerary = buildItinerary()
     const artifact = buildArtifact(runtimeRoute)
     const approvedPayload = buildCurateRefinementEntryPayload({
       artifactId: ARTIFACT_ID,
@@ -327,6 +415,9 @@ async function main(): Promise<void> {
       legacyCurateRefinementEntryPayload: approvedPayload,
       legacySelectedRouteArtifact: selectedRouteArtifact,
       pageLocalFinalRoute: runtimeRoute,
+      selectedClusterConfirmation:
+        'Willow Court Wine Bar -> Theatre District Jazz Cellar -> Hedley Club Lounge',
+      itinerary,
     })
 
     assert(greenSnapshot.validationStatus === 'valid', 'Willow Court snapshot must be valid.')
@@ -361,6 +452,55 @@ async function main(): Promise<void> {
       sourceByKind(greenSnapshot.observedSources, 'page_local_final_route').classification ===
         'page_local_authoring',
       'page-local finalRoute must be classified as page-local authoring.',
+    )
+
+    const runtimeLockInput = buildLockInputFromRouteAuthoritySnapshot({
+      snapshot: greenSnapshot,
+      activeRole: 'start',
+      fallbackCity: 'San Jose',
+    })
+    assert(runtimeLockInput.ok, 'Runtime-backed route authority snapshot must build lock input.')
+    assert(
+      runtimeLockInput.diagnostics.lockInputSource === 'contract_entry_artifact.runtime_route_artifact',
+      'Runtime-backed lock input must identify canonical runtime authority.',
+    )
+    assertSameSequence(
+      runtimeLockInput.input.lockSafeItineraryStops.map((stop) => stop.venueId),
+      CANONICAL_ROUTE_IDS,
+      'runtime-backed lock input IDs',
+    )
+
+    const preLockSnapshot = buildRouteAuthoritySnapshot({
+      contractEntryArtifact: buildArtifact(),
+      selectedDirectionId: SELECTED_DIRECTION_ID,
+      selectedArtifactId: ARTIFACT_ID,
+      approvedPayload,
+      legacyCurateRefinementEntryPayload: approvedPayload,
+      pageLocalFinalRoute: runtimeRoute,
+      selectedClusterConfirmation:
+        'Willow Court Wine Bar -> Theatre District Jazz Cellar -> Hedley Club Lounge',
+      itinerary,
+    })
+    const preLockInput = buildLockInputFromRouteAuthoritySnapshot({
+      snapshot: preLockSnapshot,
+      activeRole: 'start',
+      fallbackCity: 'San Jose',
+    })
+    assert(preLockInput.ok, 'Pre-lock ContractEntryArtifact plus approved payload must build lock input.')
+    assert(
+      preLockInput.diagnostics.lockInputSource === 'contract_entry_artifact.approved_payload',
+      'Pre-lock lock input must identify approved payload canonical authority.',
+    )
+    assert(preLockInput.diagnostics.builtFromCanonicalAuthority, 'Lock input must be canonical-authority-backed.')
+    assert(preLockInput.diagnostics.legacyInputsObserved, 'Legacy/page-local sources should be observed in diagnostics.')
+    assert(
+      preLockInput.diagnostics.legacyInputsMatchedCanonicalTruth === true,
+      'Matching legacy/page-local sources should be diagnosed as matching canonical truth.',
+    )
+    assertSameSequence(
+      preLockInput.input.lockSafeItineraryStops.map((stop) => stop.venueId),
+      CANONICAL_ROUTE_IDS,
+      'pre-lock lock input IDs',
     )
 
     const renamedRuntimeRoute = buildRuntimeRoute({
@@ -401,17 +541,33 @@ async function main(): Promise<void> {
         selectedDirectionId: SELECTED_DIRECTION_ID,
         finalRoute: staleApprovedPayloadRoute,
       },
+      selectedClusterConfirmation:
+        'Willow Court Wine Bar -> Theatre District Jazz Cellar -> Hedley Club Lounge',
+      itinerary,
     })
     assert(stalePayloadSnapshot.validationStatus === 'invalid', 'Stale approved payload route must be invalid.')
     assert(
       stalePayloadSnapshot.rejectionReasons.includes('approved_payload_route_mismatch'),
       'Stale approved payload must report approved_payload_route_mismatch.',
     )
+    const staleLockInput = buildLockInputFromRouteAuthoritySnapshot({
+      snapshot: stalePayloadSnapshot,
+      activeRole: 'start',
+      fallbackCity: 'San Jose',
+    })
+    assert(!staleLockInput.ok, 'Stale approved payload must not build lock input.')
+    assert(
+      staleLockInput.diagnostics.rejectionReason === 'approved_payload_route_mismatch',
+      'Stale lock input rejection must preserve approved_payload_route_mismatch.',
+    )
 
     const legacyOnlySnapshot = buildRouteAuthoritySnapshot({
       legacyCurateRefinementEntryPayload: approvedPayload,
       legacySelectedRouteArtifact: selectedRouteArtifact,
       pageLocalFinalRoute: runtimeRoute,
+      selectedClusterConfirmation:
+        'Willow Court Wine Bar -> Theatre District Jazz Cellar -> Hedley Club Lounge',
+      itinerary,
     })
     assert(
       legacyOnlySnapshot.lockReadyCanonicalRouteTruthCandidate === null,
@@ -421,6 +577,55 @@ async function main(): Promise<void> {
       legacyOnlySnapshot.rejectionReasons.includes('legacy_sources_cannot_author_lock_ready_truth'),
       'Legacy/page-local-only inputs must explain why lock-ready truth is unavailable.',
     )
+    const legacyOnlyLockInput = buildLockInputFromRouteAuthoritySnapshot({
+      snapshot: legacyOnlySnapshot,
+      activeRole: 'start',
+      fallbackCity: 'San Jose',
+    })
+    assert(!legacyOnlyLockInput.ok, 'Legacy/page-local-only snapshot must not build lock input.')
+    assert(
+      legacyOnlyLockInput.diagnostics.lockInputSource === null,
+      'Legacy/page-local-only lock input must not identify an authority source.',
+    )
+
+    const selectedRouteOnlySnapshot = buildRouteAuthoritySnapshot({
+      legacySelectedRouteArtifact: selectedRouteArtifact,
+      selectedClusterConfirmation:
+        'Willow Court Wine Bar -> Theatre District Jazz Cellar -> Hedley Club Lounge',
+      itinerary,
+    })
+    const selectedRouteOnlyLockInput = buildLockInputFromRouteAuthoritySnapshot({
+      snapshot: selectedRouteOnlySnapshot,
+      activeRole: 'start',
+      fallbackCity: 'San Jose',
+    })
+    assert(!selectedRouteOnlyLockInput.ok, 'SelectedRouteArtifact alone must not build lock input.')
+
+    const pageLocalOnlySnapshot = buildRouteAuthoritySnapshot({
+      pageLocalFinalRoute: runtimeRoute,
+      selectedClusterConfirmation:
+        'Willow Court Wine Bar -> Theatre District Jazz Cellar -> Hedley Club Lounge',
+      itinerary,
+    })
+    const pageLocalOnlyLockInput = buildLockInputFromRouteAuthoritySnapshot({
+      snapshot: pageLocalOnlySnapshot,
+      activeRole: 'start',
+      fallbackCity: 'San Jose',
+    })
+    assert(!pageLocalOnlyLockInput.ok, 'Page-local finalRoute alone must not build lock input.')
+
+    const legacyCurateOnlySnapshot = buildRouteAuthoritySnapshot({
+      legacyCurateRefinementEntryPayload: approvedPayload,
+      selectedClusterConfirmation:
+        'Willow Court Wine Bar -> Theatre District Jazz Cellar -> Hedley Club Lounge',
+      itinerary,
+    })
+    const legacyCurateOnlyLockInput = buildLockInputFromRouteAuthoritySnapshot({
+      snapshot: legacyCurateOnlySnapshot,
+      activeRole: 'start',
+      fallbackCity: 'San Jose',
+    })
+    assert(!legacyCurateOnlyLockInput.ok, 'CurateRefinementEntryPayload alone must not build lock input.')
 
     const idMismatchRuntimeRoute = buildRuntimeRoute({
       highlight: {
@@ -449,6 +654,7 @@ async function main(): Promise<void> {
           routeIds: greenSnapshot.canonicalRouteIds,
           sourceLabel: greenSnapshot.sourceLabel,
           validationStatus: greenSnapshot.validationStatus,
+          lockInputSource: preLockInput.diagnostics.lockInputSource,
           observedSources: greenSnapshot.observedSources.map((source) => ({
             kind: source.kind,
             classification: source.classification,

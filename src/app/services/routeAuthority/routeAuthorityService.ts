@@ -4,7 +4,8 @@ import {
   type ContractEntryArtifact,
 } from '../../../domain/artifacts/contractEntryArtifact'
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../../../domain/artifacts/runtimeRouteArtifact'
-import type { Itinerary } from '../../../domain/types/itinerary'
+import type { Itinerary, ItineraryStop, UserStopRole } from '../../../domain/types/itinerary'
+import type { BuildLockedLiveArtifactPayloadInput } from '../live/liveSessionHandoff'
 
 type CoreRouteRole = 'start' | 'highlight' | 'windDown'
 
@@ -48,6 +49,11 @@ export interface RouteAuthorityLegacySelectedRouteArtifactReference {
 
 export interface RouteAuthorityLockReadyCanonicalRouteTruthCandidate {
   selectedDirectionId: string
+  selectedArtifactId?: string
+  source:
+    | 'contract_entry_artifact.approved_payload'
+    | 'contract_entry_artifact.runtime_route_artifact'
+    | 'runtime_route_artifact'
   selectedClusterConfirmation?: string
   itinerary?: Itinerary
   finalRoute: RuntimeRouteArtifact
@@ -77,6 +83,27 @@ export interface RouteAuthoritySnapshot {
   rejectionReasons: string[]
   observedSources: RouteAuthorityObservedSource[]
 }
+
+export interface RouteAuthorityLockInputDiagnostics {
+  lockInputSource: RouteAuthorityLockReadyCanonicalRouteTruthCandidate['source'] | null
+  canonicalRouteIds: string[]
+  legacyInputsObserved: boolean
+  legacyInputsMatchedCanonicalTruth: boolean | null
+  builtFromCanonicalAuthority: boolean
+  rejectionReason: string | null
+}
+
+export type RouteAuthorityLockInputResult =
+  | {
+      ok: true
+      input: BuildLockedLiveArtifactPayloadInput
+      diagnostics: RouteAuthorityLockInputDiagnostics
+    }
+  | {
+      ok: false
+      input: null
+      diagnostics: RouteAuthorityLockInputDiagnostics
+    }
 
 export interface BuildRouteAuthoritySnapshotInput {
   contractEntryArtifact?: ContractEntryArtifact | null
@@ -130,6 +157,20 @@ function unique(values: Array<string | undefined>): string[] {
 
 function firstNonEmpty(values: string[][]): string[] {
   return values.find((value) => value.length > 0) ?? []
+}
+
+function coreRouteIdsMatch(left: string[], right: string[]): boolean {
+  return left.length === CORE_ROLES.length && left.join('|') === right.join('|')
+}
+
+function hasInvalidArtifactValidationReason(rejectionReasons: string[]): boolean {
+  return rejectionReasons.some(
+    (reason) =>
+      reason === 'artifact_validation_rejected' ||
+      reason === 'runtime_lock_ineligible' ||
+      reason.endsWith('_failed') ||
+      reason.endsWith('_rejected'),
+  )
 }
 
 function orderedCoreStops(route: RuntimeRouteArtifact | null | undefined): RuntimeRouteStop[] {
@@ -442,22 +483,38 @@ export function buildRouteAuthoritySnapshot(
     mismatchReasons.push(...pageLocalMismatchReasons)
   }
 
+  const approvedPayloadRouteCanonical =
+    Boolean(artifact && approvedPayloadRoute) &&
+    approvedPayloadMismatchReasons.length === 0 &&
+    !rejectionReasons.includes('approved_payload_route_mismatch')
+  const canonicalAuthorityRoute =
+    canonicalRuntimeRoute ?? (approvedPayloadRouteCanonical ? approvedPayloadRoute : null)
+  const lockInputSource: RouteAuthorityLockReadyCanonicalRouteTruthCandidate['source'] | null =
+    canonicalRuntimeRoute && artifact
+      ? 'contract_entry_artifact.runtime_route_artifact'
+      : canonicalRuntimeRoute
+        ? 'runtime_route_artifact'
+        : approvedPayloadRouteCanonical
+          ? 'contract_entry_artifact.approved_payload'
+          : null
   const hasCanonicalAuthority = Boolean(artifact || canonicalRuntimeRoute)
   const canonicalRouteValid =
-    Boolean(canonicalRuntimeRoute) &&
+    Boolean(canonicalAuthorityRoute) &&
     runtimeMismatchReasons.length === 0 &&
     !rejectionReasons.includes('runtime_route_artifact_mismatch') &&
     !rejectionReasons.includes('runtime_lock_ineligible') &&
-    !rejectionReasons.includes('artifact_validation_rejected')
+    !hasInvalidArtifactValidationReason(rejectionReasons)
   const lockReadyCanonicalRouteTruthCandidate =
-    canonicalRuntimeRoute && canonicalRouteValid
+    canonicalAuthorityRoute && canonicalRouteValid && lockInputSource
       ? {
-          selectedDirectionId: selectedDirectionId ?? canonicalRuntimeRoute.selectedDirectionId,
+          selectedDirectionId: selectedDirectionId ?? canonicalAuthorityRoute.selectedDirectionId,
+          ...(selectedArtifactId ? { selectedArtifactId } : {}),
+          source: lockInputSource,
           ...(input.selectedClusterConfirmation
             ? { selectedClusterConfirmation: input.selectedClusterConfirmation }
             : {}),
           ...(input.itinerary ? { itinerary: input.itinerary } : {}),
-          finalRoute: canonicalRuntimeRoute,
+          finalRoute: canonicalAuthorityRoute,
         }
       : null
 
@@ -465,7 +522,7 @@ export function buildRouteAuthoritySnapshot(
     const hasOnlyCompatibilityRoute = Boolean(
       approvedPayloadRoute || legacyCurateRoute || legacySelectedRoute || pageLocalFinalRoute,
     )
-    if (hasOnlyCompatibilityRoute && !canonicalRuntimeRoute) {
+    if (hasOnlyCompatibilityRoute && !canonicalAuthorityRoute) {
       rejectionReasons.push('lock_ready_requires_canonical_authority')
     }
     if ((legacyCurateRoute || legacySelectedRoute || pageLocalFinalRoute) && !hasCanonicalAuthority) {
@@ -535,9 +592,7 @@ export function buildRouteAuthoritySnapshot(
           ? 'valid'
           : 'warning'
   const sourceLabel = lockReadyCanonicalRouteTruthCandidate
-    ? artifact
-      ? 'contract_entry_artifact.runtime_route_artifact'
-      : 'runtime_route_artifact'
+    ? lockReadyCanonicalRouteTruthCandidate.source
     : presentSources.length > 0
       ? presentSources.map((source) => source.kind).join('.')
       : 'missing_authority'
@@ -554,5 +609,172 @@ export function buildRouteAuthoritySnapshot(
     mismatchReasons,
     rejectionReasons: unique(rejectionReasons),
     observedSources,
+  }
+}
+
+function getNonEmptyImageUrl(value: string | null | undefined): string | null {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : null
+}
+
+function buildLockSafeItineraryStops(params: {
+  itinerary: Itinerary
+  finalRoute: RuntimeRouteArtifact
+}): ItineraryStop[] {
+  const stopBySourceId = new Map(params.itinerary.stops.map((stop) => [stop.id, stop] as const))
+  const stopByIndex = new Map(params.itinerary.stops.map((stop, index) => [index, stop] as const))
+  const finalRouteStopByRole = new Map(
+    params.finalRoute.stops.map((stop) => [stop.role, stop] as const),
+  )
+  const itineraryStopByRole = new Map(
+    params.itinerary.stops.map((stop) => [stop.role, stop] as const),
+  )
+  const sharedFallbackImageUrl =
+    getNonEmptyImageUrl(finalRouteStopByRole.get('highlight')?.imageUrl) ??
+    getNonEmptyImageUrl(itineraryStopByRole.get('highlight')?.imageUrl) ??
+    getNonEmptyImageUrl(finalRouteStopByRole.get('start')?.imageUrl) ??
+    getNonEmptyImageUrl(itineraryStopByRole.get('start')?.imageUrl) ??
+    getNonEmptyImageUrl(finalRouteStopByRole.get('windDown')?.imageUrl) ??
+    getNonEmptyImageUrl(itineraryStopByRole.get('windDown')?.imageUrl) ??
+    getNonEmptyImageUrl(
+      params.finalRoute.stops.find((stop) => getNonEmptyImageUrl(stop.imageUrl))?.imageUrl,
+    ) ??
+    getNonEmptyImageUrl(
+      params.itinerary.stops.find((stop) => getNonEmptyImageUrl(stop.imageUrl))?.imageUrl,
+    ) ??
+    ''
+
+  return [...params.finalRoute.stops]
+    .filter((stop) => normalizeRole(stop.role) !== null)
+    .sort((left, right) => left.stopIndex - right.stopIndex)
+    .map((finalStop) => {
+      const sourceStop =
+        stopBySourceId.get(finalStop.sourceStopId) ??
+        stopByIndex.get(finalStop.stopIndex) ??
+        params.itinerary.stops.find(
+          (stop) => stop.role === finalStop.role && stop.venueId === finalStop.venueId,
+        ) ??
+        params.itinerary.stops.find((stop) => stop.role === finalStop.role)
+      if (!sourceStop) {
+        return null
+      }
+      const resolvedImageUrl =
+        getNonEmptyImageUrl(sourceStop.imageUrl) ??
+        getNonEmptyImageUrl(finalStop.imageUrl) ??
+        sharedFallbackImageUrl
+      return {
+        ...sourceStop,
+        id: finalStop.sourceStopId,
+        role: finalStop.role,
+        venueId: finalStop.venueId,
+        venueName: finalStop.displayName || sourceStop.venueName,
+        neighborhood: finalStop.neighborhood || sourceStop.neighborhood,
+        driveMinutes:
+          Number.isFinite(finalStop.driveMinutes) && finalStop.driveMinutes >= 0
+            ? finalStop.driveMinutes
+            : sourceStop.driveMinutes,
+        imageUrl: resolvedImageUrl,
+      }
+    })
+    .filter((stop): stop is ItineraryStop => Boolean(stop))
+}
+
+function buildLockInputDiagnostics(params: {
+  snapshot: RouteAuthoritySnapshot
+  rejectionReason: string | null
+}): RouteAuthorityLockInputDiagnostics {
+  const legacySources = params.snapshot.observedSources.filter(
+    (source) =>
+      source.kind === 'legacy_curate_refinement_entry_payload' ||
+      source.kind === 'legacy_selected_route_artifact' ||
+      source.kind === 'page_local_final_route',
+  )
+  const presentLegacySources = legacySources.filter((source) => source.present)
+  const legacyInputsObserved = presentLegacySources.length > 0
+  const legacyInputsMatchedCanonicalTruth = legacyInputsObserved
+    ? presentLegacySources.every((source) => source.mismatchReasons.length === 0)
+    : null
+
+  return {
+    lockInputSource: params.snapshot.lockReadyCanonicalRouteTruthCandidate?.source ?? null,
+    canonicalRouteIds: params.snapshot.canonicalRouteIds,
+    legacyInputsObserved,
+    legacyInputsMatchedCanonicalTruth,
+    builtFromCanonicalAuthority: Boolean(params.snapshot.lockReadyCanonicalRouteTruthCandidate),
+    rejectionReason: params.rejectionReason,
+  }
+}
+
+export function buildLockInputFromRouteAuthoritySnapshot(params: {
+  snapshot: RouteAuthoritySnapshot
+  activeRole: UserStopRole
+  fallbackCity: string
+}): RouteAuthorityLockInputResult {
+  const candidate = params.snapshot.lockReadyCanonicalRouteTruthCandidate
+  if (!candidate) {
+    const rejectionReason =
+      params.snapshot.rejectionReasons[0] ??
+      (params.snapshot.validationStatus === 'missing'
+        ? 'missing_route_authority'
+        : 'missing_lock_ready_canonical_route_truth')
+    return {
+      ok: false,
+      input: null,
+      diagnostics: buildLockInputDiagnostics({
+        snapshot: params.snapshot,
+        rejectionReason,
+      }),
+    }
+  }
+  if (!candidate.itinerary) {
+    return {
+      ok: false,
+      input: null,
+      diagnostics: buildLockInputDiagnostics({
+        snapshot: params.snapshot,
+        rejectionReason: 'missing_lock_ready_itinerary',
+      }),
+    }
+  }
+  if (!candidate.selectedClusterConfirmation?.trim()) {
+    return {
+      ok: false,
+      input: null,
+      diagnostics: buildLockInputDiagnostics({
+        snapshot: params.snapshot,
+        rejectionReason: 'missing_selected_cluster_confirmation',
+      }),
+    }
+  }
+  if (!coreRouteIdsMatch(routeIds(candidate.finalRoute), params.snapshot.canonicalRouteIds)) {
+    return {
+      ok: false,
+      input: null,
+      diagnostics: buildLockInputDiagnostics({
+        snapshot: params.snapshot,
+        rejectionReason: 'lock_input_canonical_route_ids_mismatch',
+      }),
+    }
+  }
+
+  return {
+    ok: true,
+    input: {
+      canonicalRouteArtifact: {
+        selectedClusterConfirmation: candidate.selectedClusterConfirmation,
+        itinerary: candidate.itinerary,
+        finalRoute: candidate.finalRoute,
+      },
+      lockSafeItineraryStops: buildLockSafeItineraryStops({
+        itinerary: candidate.itinerary,
+        finalRoute: candidate.finalRoute,
+      }),
+      activeRole: params.activeRole,
+      fallbackCity: params.fallbackCity,
+    },
+    diagnostics: buildLockInputDiagnostics({
+      snapshot: params.snapshot,
+      rejectionReason: null,
+    }),
   }
 }
