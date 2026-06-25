@@ -45,7 +45,7 @@ import {
 } from '../app/wrapper/arcWrapperBoundary'
 import {
   buildCurateRefinementEntryPayload,
-  type CurateRefinementEntryPayload,
+  type LegacyCurateRefinementEntryPayload,
 } from '../app/wrapper/curateRefinementEntry'
 import {
   resolveArcFlowPhase,
@@ -549,7 +549,7 @@ interface GenerationContractDebugBreadcrumb {
   postPlannerStagesSummary?: string
 }
 
-type CurateApprovedRefinementPayload = CurateRefinementEntryPayload<
+type LegacyCurateApprovedRefinementPayload = LegacyCurateRefinementEntryPayload<
   DemoPlanState,
   Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
 >
@@ -568,7 +568,7 @@ interface CuratePreviewCommitabilityState {
   hardCommitRequired?: boolean
   hardCommitFeasibility?: CuratePreviewCommitabilityStateLike<
     DirectionCoreRole,
-    CurateApprovedRefinementPayload
+    LegacyCurateApprovedRefinementPayload
   >['hardCommitFeasibility']
   failedRoles: Array<'start' | 'highlight' | 'windDown'>
   contractBuildabilityStatus?: DirectionContractBuildability['contractBuildabilityStatus']
@@ -583,7 +583,7 @@ interface CuratePreviewCommitabilityState {
   finalWinnerSummary?: string
   sampledCandidatesSummary?: string
   rolePoolVenueIdsByRole?: Record<DirectionCoreRole, string[]>
-  approvedRefinementEntryPayload?: CurateApprovedRefinementPayload
+  approvedRefinementEntryPayload?: LegacyCurateApprovedRefinementPayload
   windDownRepairAttempted?: boolean
   windDownRepairSucceeded?: boolean
   windDownRepairOriginal?: string | null
@@ -602,7 +602,7 @@ interface CuratePreviewCommitabilityState {
 }
 
 function normalizeCuratePreviewCommitabilityState(
-  state: CuratePreviewCommitabilityStateLike<DirectionCoreRole, CurateApprovedRefinementPayload>,
+  state: CuratePreviewCommitabilityStateLike<DirectionCoreRole, LegacyCurateApprovedRefinementPayload>,
 ): CuratePreviewCommitabilityState {
   return {
     ...state,
@@ -9928,7 +9928,7 @@ export function SandboxConciergePage({
   const [plan, setPlan] = useState<DemoPlanState>()
   const [finalRoute, setFinalRoute] = useState<RuntimeRouteArtifact | null>(null)
   const [curateRefinementEntryPayload, setCurateRefinementEntryPayload] = useState<
-    CurateRefinementEntryPayload<
+    LegacyCurateRefinementEntryPayload<
       DemoPlanState,
       Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
     > | null
@@ -10438,7 +10438,7 @@ export function SandboxConciergePage({
   }, [isCurateWrapperActive, selectedStarterPack?.id, updateFinalRoute])
   const applyCurateRefinementEntryPayload = useCallback(
     (
-      nextPayload: CurateRefinementEntryPayload<
+      nextPayload: LegacyCurateRefinementEntryPayload<
         DemoPlanState,
         Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
       > | null,
@@ -15492,7 +15492,7 @@ export function SandboxConciergePage({
             DirectionCoreRole,
             VerifiedCityOpportunity,
             StarterAwareOpportunityDebug,
-            CurateApprovedRefinementPayload,
+            LegacyCurateApprovedRefinementPayload,
             CurateWindDownRepairTarget,
             SelectedDirectionPreviewContext
           >(
@@ -16535,27 +16535,6 @@ export function SandboxConciergePage({
   }
   const activeCurateRefinementEntryPayload =
     isCurateWrapperActive ? curateRefinementEntryPayload : null
-  const canonicalRouteArtifact = useMemo<CanonicalRouteArtifact | null>(() => {
-    const activePlan = activeCurateRefinementEntryPayload?.planSnapshot ?? plan
-    const activeFinalRoute = activeCurateRefinementEntryPayload?.finalRoute ?? finalRoute
-    const activeCanonicalStopByRole =
-      activeCurateRefinementEntryPayload?.canonicalStopByRole ?? canonicalStopByRole
-    if (!activePlan || !activeFinalRoute) {
-      return null
-    }
-    const expectedDirectionId = activePlan.selectedDirectionContract.id
-    if (!expectedDirectionId || activeFinalRoute.selectedDirectionId !== expectedDirectionId) {
-      return null
-    }
-    return {
-      selectedDirectionId: expectedDirectionId,
-      selectedClusterConfirmation: activePlan.selectedClusterConfirmation,
-      itinerary: activePlan.itinerary,
-      finalRoute: activeFinalRoute,
-      canonicalStopByRole: activeCanonicalStopByRole,
-      planSnapshot: activePlan,
-    }
-  }, [activeCurateRefinementEntryPayload, canonicalStopByRole, finalRoute, plan])
   const routeAuthoritySnapshot = useMemo(() => {
     const activePlan = activeCurateRefinementEntryPayload?.planSnapshot ?? plan
     const approvedPayload =
@@ -16591,6 +16570,37 @@ export function SandboxConciergePage({
     selectedCuratePreviewCommitability?.approvedRefinementEntryPayload,
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
+  ])
+  const canonicalRouteArtifact = useMemo<CanonicalRouteArtifact | null>(() => {
+    const activePlan = activeCurateRefinementEntryPayload?.planSnapshot ?? plan
+    const routeAuthorityFinalRoute =
+      routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute ?? null
+    const activeFinalRoute = activeCurateRefinementEntryPayload
+      ? routeAuthorityFinalRoute
+      : finalRoute
+    const activeCanonicalStopByRole =
+      activeCurateRefinementEntryPayload?.canonicalStopByRole ?? canonicalStopByRole
+    if (!activePlan || !activeFinalRoute) {
+      return null
+    }
+    const expectedDirectionId = activePlan.selectedDirectionContract.id
+    if (!expectedDirectionId || activeFinalRoute.selectedDirectionId !== expectedDirectionId) {
+      return null
+    }
+    return {
+      selectedDirectionId: expectedDirectionId,
+      selectedClusterConfirmation: activePlan.selectedClusterConfirmation,
+      itinerary: activePlan.itinerary,
+      finalRoute: activeFinalRoute,
+      canonicalStopByRole: activeCanonicalStopByRole,
+      planSnapshot: activePlan,
+    }
+  }, [
+    activeCurateRefinementEntryPayload,
+    canonicalStopByRole,
+    finalRoute,
+    plan,
+    routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute,
   ])
   const normalizedContractEntryArtifactDebug = useMemo(() => {
     const normalizedDirectionCardArtifacts = directionCards.map((directionCard) =>

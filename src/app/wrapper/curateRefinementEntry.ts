@@ -2,16 +2,19 @@ import type { RuntimeRouteArtifact } from '../../domain/artifacts/runtimeRouteAr
 import type { UserStopRole } from '../../domain/types/itinerary'
 
 /**
- * ARC BOUNDARY: approved Curate preview -> route_refinement handoff contract.
+ * ARC BOUNDARY: legacy approved Curate preview -> route_refinement handoff contract.
  *
- * This payload carries the exact approved route forward from Shared Plan Preview
- * into route_refinement without requiring an immediate rebuild to populate reveal state.
+ * This compatibility payload carries the approved route forward from Shared Plan
+ * Preview into route_refinement without requiring an immediate rebuild to
+ * populate reveal state.
  *
  * P0-A: subsumed as a compatibility wrapper. Future Curate handoff data should
  * fold into `ContractEntryArtifact.qualification` and runtime lock eligibility
- * instead of remaining a mode-private route truth layer.
+ * instead of remaining a mode-private route truth layer. It may be observed by
+ * route authority as a legacy adapter input, but it must not independently
+ * author canonical route truth.
  */
-export interface CurateRefinementEntryPayload<
+export interface LegacyCurateRefinementEntryPayload<
   TPlanSnapshot = unknown,
   TCanonicalStopByRole = unknown,
 > {
@@ -26,6 +29,15 @@ export interface CurateRefinementEntryPayload<
   rejectedStopRoles: UserStopRole[]
 }
 
+/**
+ * @deprecated Use `LegacyCurateRefinementEntryPayload` to make the compatibility
+ * boundary explicit.
+ */
+export type CurateRefinementEntryPayload<
+  TPlanSnapshot = unknown,
+  TCanonicalStopByRole = unknown,
+> = LegacyCurateRefinementEntryPayload<TPlanSnapshot, TCanonicalStopByRole>
+
 export function buildCurateRefinementEntryPayload<
   TPlanSnapshot,
   TCanonicalStopByRole,
@@ -38,7 +50,7 @@ export function buildCurateRefinementEntryPayload<
   finalRoute: RuntimeRouteArtifact
   canonicalStopByRole: TCanonicalStopByRole
   rejectedStopRoles: UserStopRole[]
-}): CurateRefinementEntryPayload<TPlanSnapshot, TCanonicalStopByRole> {
+}): LegacyCurateRefinementEntryPayload<TPlanSnapshot, TCanonicalStopByRole> {
   return {
     source: 'approved_preview_route',
     artifactId: params.artifactId,

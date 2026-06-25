@@ -444,6 +444,11 @@ async function main(): Promise<void> {
       'CurateRefinementEntryPayload must be classified as legacy compatibility.',
     )
     assert(
+      sourceByKind(greenSnapshot.observedSources, 'legacy_curate_refinement_entry_payload').mismatchReasons.length ===
+        0,
+      'Matching CurateRefinementEntryPayload must validate against ContractEntryArtifact.',
+    )
+    assert(
       sourceByKind(greenSnapshot.observedSources, 'legacy_selected_route_artifact').classification ===
         'legacy_compatibility',
       'SelectedRouteArtifact must be classified as legacy compatibility.',
@@ -559,6 +564,36 @@ async function main(): Promise<void> {
     assert(
       staleLockInput.diagnostics.rejectionReason === 'approved_payload_route_mismatch',
       'Stale lock input rejection must preserve approved_payload_route_mismatch.',
+    )
+
+    const staleLegacyPayload = {
+      ...approvedPayload,
+      finalRoute: staleApprovedPayloadRoute,
+    }
+    const staleLegacySnapshot = buildRouteAuthoritySnapshot({
+      contractEntryArtifact: artifact,
+      approvedPayload,
+      legacyCurateRefinementEntryPayload: staleLegacyPayload,
+      selectedClusterConfirmation:
+        'Willow Court Wine Bar -> Theatre District Jazz Cellar -> Hedley Club Lounge',
+      itinerary,
+    })
+    assert(
+      sourceByKind(
+        staleLegacySnapshot.observedSources,
+        'legacy_curate_refinement_entry_payload',
+      ).mismatchReasons.includes('legacy_curate_refinement_entry_payload_highlight_id_mismatch'),
+      'Stale CurateRefinementEntryPayload finalRoute must be flagged as a legacy mismatch.',
+    )
+    const staleLegacyLockInput = buildLockInputFromRouteAuthoritySnapshot({
+      snapshot: staleLegacySnapshot,
+      activeRole: 'start',
+      fallbackCity: 'San Jose',
+    })
+    assert(staleLegacyLockInput.ok, 'Stale legacy payload must not block canonical lock input.')
+    assert(
+      staleLegacyLockInput.diagnostics.lockInputSource === 'contract_entry_artifact.runtime_route_artifact',
+      'Stale legacy payload must not become the lock input source.',
     )
 
     const legacyOnlySnapshot = buildRouteAuthoritySnapshot({
