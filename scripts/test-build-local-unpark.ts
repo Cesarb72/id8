@@ -676,6 +676,20 @@ async function main(): Promise<void> {
     'Build static card selection must generate from the post-selection effect after state commits.',
   )
   assert(
+    /const buildSelectedCardTruthReady = Boolean\(\s*!isBuildWrapperActive \|\| buildReviewTruthEligible \|\| buildGenerationInProgress,\s*\)/s.test(
+      sandboxSource,
+    ),
+    'Build primary CTA readiness must require generated Review truth, except for disabled generation-in-progress display.',
+  )
+  assert(
+    !sandboxSource.includes('!isBuildWrapperActive || buildReviewTruthEligible || buildPreGenerationSelectionReady'),
+    'Build pre-generation selection readiness must not enable the Review CTA.',
+  )
+  assert(
+    sandboxSource.includes('Build route review is still parked until generated authority is lock-ready.'),
+    'Build reveal handler must hard-block Review until generated authority is lock-ready.',
+  )
+  assert(
     sandboxSource.includes('buildValidationCompletedAttemptRef') &&
       sandboxSource.includes('buildValidationRejectedAttemptRef'),
     'Build static generation effect must track completed and rejected attempts separately.',

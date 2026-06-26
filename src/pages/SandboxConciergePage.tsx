@@ -21012,8 +21012,11 @@ export function SandboxConciergePage({
         selectedCuratePreviewCommitability.artifactId === selectedCurateVisibleCardModel.artifact.id &&
         selectedCandidateRouteArtifact.id === selectedCurateVisibleCardModel.artifact.id),
   )
+  const buildGenerationInProgress = Boolean(
+    isBuildWrapperActive && buildPreGenerationSelectionReady && loading,
+  )
   const buildSelectedCardTruthReady = Boolean(
-    !isBuildWrapperActive || buildReviewTruthEligible || buildPreGenerationSelectionReady,
+    !isBuildWrapperActive || buildReviewTruthEligible || buildGenerationInProgress,
   )
   const showPrimaryContinueAction = Boolean(
     !coffeeBooksCommittedRouteSummarySuppressed &&
@@ -21057,10 +21060,9 @@ export function SandboxConciergePage({
     }
     if (
       isBuildWrapperActive &&
-      !buildReviewTruthEligible &&
-      !buildPreGenerationSelectionReady
+      !buildReviewTruthEligible
     ) {
-      setError('Build route review is still parked until its card truth and selection gates are enabled.')
+      setError('Build route review is still parked until generated authority is lock-ready.')
       return
     }
     if (committedPlanMatchesGenerateDirection || (plan && previewSynced)) {
