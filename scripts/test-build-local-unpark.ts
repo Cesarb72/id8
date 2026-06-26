@@ -676,6 +676,18 @@ async function main(): Promise<void> {
     'Build static card selection must generate from the post-selection effect after state commits.',
   )
   assert(
+    !/useEffect\(\(\) => \{\s*if \(\s*!\s*isBuildWrapperActive \|\|\s*!\s*buildAnchorReady/s.test(
+      sandboxSource,
+    ),
+    'Build post-selection generation must not depend on the transient buildAnchorReady gate.',
+  )
+  assert(
+    /useEffect\(\(\) => \{\s*if \(\s*!\s*isBuildWrapperActive \|\|\s*!\s*selectedBuildAnchor\?\.venueId \|\|\s*loading/s.test(
+      sandboxSource,
+    ),
+    'Build post-selection generation must be gated by committed selected anchor state and loading.',
+  )
+  assert(
     /const buildSelectedCardTruthReady = Boolean\(\s*!isBuildWrapperActive \|\| buildReviewTruthEligible \|\| buildGenerationInProgress,\s*\)/s.test(
       sandboxSource,
     ),

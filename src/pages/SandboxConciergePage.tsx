@@ -17654,7 +17654,6 @@ export function SandboxConciergePage({
   useEffect(() => {
     if (
       !isBuildWrapperActive ||
-      !buildAnchorReady ||
       !selectedBuildAnchor?.venueId ||
       loading
     ) {
@@ -17713,7 +17712,6 @@ export function SandboxConciergePage({
         }
       })
   }, [
-    buildAnchorReady,
     buildPreGenerationSelectionReady,
     buildReviewTruthEligible,
     generatePlan,
