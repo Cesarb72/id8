@@ -379,6 +379,7 @@ interface DemoPlanState {
   itinerary: Itinerary
   selectedArc: ArcCandidate
   scoredVenues: ScoredVenue[]
+  generatedContractEntryArtifact?: ContractEntryArtifact | null
   generationTrace: GenerationTrace
   intentProfile: IntentProfile
   lens: ExperienceLens
@@ -14620,6 +14621,7 @@ export function SandboxConciergePage({
           itinerary: canonicalItinerary,
           selectedArc: anchoredPlan.selectedArc,
           scoredVenues: strongCurationPass.scoredVenues,
+          generatedContractEntryArtifact: result.contractEntryArtifact,
           generationTrace: result.trace,
           intentProfile: result.intentProfile,
           lens: result.lens,
@@ -16658,8 +16660,13 @@ export function SandboxConciergePage({
       selectedCuratePreviewCommitability?.approvedRefinementEntryPayload ??
       activeCurateRefinementEntryPayload ??
       null
+    const generatedBuildContractEntryArtifact =
+      isBuildWrapperActive ? activePlan?.generatedContractEntryArtifact ?? null : null
     const selectedArtifact =
-      explicitQualifiedCurateSelectedArtifact ?? selectedCandidateRouteArtifact ?? null
+      generatedBuildContractEntryArtifact ??
+      explicitQualifiedCurateSelectedArtifact ??
+      selectedCandidateRouteArtifact ??
+      null
 
     return buildRouteAuthoritySnapshot({
       contractEntryArtifact: selectedArtifact,
@@ -16672,6 +16679,10 @@ export function SandboxConciergePage({
         selectedArtifact?.id ??
         selectedStep2CandidateArtifactId ??
         null,
+      runtimeRouteArtifact:
+        generatedBuildContractEntryArtifact && renderOnlyFinalRoute
+          ? renderOnlyFinalRoute
+          : undefined,
       approvedPayload,
       legacyCurateRefinementEntryPayload: activeCurateRefinementEntryPayload,
       pageLocalFinalRoute: renderOnlyFinalRoute,
@@ -16681,6 +16692,7 @@ export function SandboxConciergePage({
   }, [
     activeCurateRefinementEntryPayload,
     explicitQualifiedCurateSelectedArtifact,
+    isBuildWrapperActive,
     renderOnlyFinalRoute,
     plan,
     selectedCandidateRouteArtifact,
@@ -17566,6 +17578,14 @@ export function SandboxConciergePage({
     if (!isBuildWrapperActive || !selectedBuildAnchor?.venueId || !selectedCandidateRouteArtifact) {
       return null
     }
+    const canonicalBuildContractEntryArtifact =
+      canonicalRouteArtifact && plan?.generatedContractEntryArtifact
+        ? plan.generatedContractEntryArtifact
+        : selectedCandidateRouteArtifact
+    const canonicalBuildArtifactId =
+      canonicalRouteArtifact && plan?.generatedContractEntryArtifact
+        ? plan.generatedContractEntryArtifact.id
+        : selectedCandidateRouteArtifact.id
     const anchorContract = buildAnchorTruthContract({
       identity: {
         venueId: selectedBuildAnchor.venueId,
@@ -17585,7 +17605,7 @@ export function SandboxConciergePage({
     const candidateAdmission = evaluateBuildCandidateAdmission({
       mode: 'build',
       anchorContract,
-      contractEntryArtifact: selectedCandidateRouteArtifact,
+      contractEntryArtifact: canonicalBuildContractEntryArtifact,
       runtimeRouteArtifact: canonicalRouteArtifact?.finalRoute ?? null,
       buildParked: {
         providerSelectionAllowed: buildProviderSelectionAllowed,
@@ -17593,14 +17613,14 @@ export function SandboxConciergePage({
       },
     })
     return buildBuildCardTruthModel({
-      artifact: selectedCandidateRouteArtifact,
-      selectedArtifactId: selectedCandidateRouteArtifact.id,
+      artifact: canonicalBuildContractEntryArtifact,
+      selectedArtifactId: canonicalBuildArtifactId,
       selectedDirectionId:
-        selectedDirectionId ?? selectedCandidateRouteArtifact.selection.directionId ?? null,
+        selectedDirectionId ?? canonicalBuildContractEntryArtifact.selection.directionId ?? null,
       approvedPayload:
         canonicalRouteArtifact && plan
           ? {
-              artifactId: selectedCandidateRouteArtifact.id,
+              artifactId: canonicalBuildArtifactId,
               selectedDirectionId: canonicalRouteArtifact.selectedDirectionId,
               finalRoute: canonicalRouteArtifact.finalRoute,
               selectedClusterConfirmation: canonicalRouteArtifact.selectedClusterConfirmation,

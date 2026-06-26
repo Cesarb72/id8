@@ -406,8 +406,6 @@ export function buildBuildCardTruthModel(input: BuildCardTruthInput): BuildCardT
     if (input.candidateAdmission.rejectionReasons.includes('stale_or_non_canonical_route_ids')) {
       addBuildTruthReason(buildTruthRejectionReasons, 'build_non_canonical_route_ids')
     }
-  } else if (!input.candidateAdmission.hoursAdmissibility?.admitted) {
-    addBuildTruthReason(buildTruthRejectionReasons, 'build_hours_blocked')
   }
 
   const anchorTruthContract = resolveBuildAnchorTruthContract(input)

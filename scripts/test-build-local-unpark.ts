@@ -7,6 +7,8 @@ import { evaluateBuildCandidateAdmission } from '../src/app/services/buildCandid
 import { buildAnchorTruthContract } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import type { BuildAnchorCanonicalRole } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import type { ContractEntryArtifact } from '../src/domain/artifacts/contractEntryArtifact.ts'
+import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
+import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
 
 const originalFetch = globalThis.fetch
 let fetchCallCount = 0
@@ -67,6 +69,157 @@ function artifact(patch: Partial<ContractEntryArtifact> = {}): ContractEntryArti
     },
     ...patch,
   }
+}
+
+const generatedRouteIds = {
+  start: 'sj-heritage-tea-house',
+  highlight: 'sj-paper-plane',
+  windDown: 'sj-jtown-matcha-kissaten',
+}
+
+function runtimeStop(role: UserStopRole, venueId: string, stopIndex: number): RuntimeRouteStop {
+  const displayName =
+    role === 'start'
+      ? 'Heritage Tea House'
+      : role === 'highlight'
+        ? 'Paper Plane'
+        : 'Jtown Matcha Kissaten'
+  return {
+    id: `${role}:${venueId}`,
+    sourceStopId: `${role}:${venueId}`,
+    displayName,
+    latitude: 37.33,
+    longitude: -121.89,
+    address: '1 Test Way',
+    role,
+    stopIndex,
+    venueId,
+    title: displayName,
+    subtitle: 'Downtown',
+    neighborhood: 'Downtown',
+    driveMinutes: 4,
+    imageUrl: '/test.jpg',
+  }
+}
+
+function generatedRuntimeRoute(): RuntimeRouteArtifact {
+  const stops = [
+    runtimeStop('start', generatedRouteIds.start, 0),
+    runtimeStop('highlight', generatedRouteIds.highlight, 1),
+    runtimeStop('windDown', generatedRouteIds.windDown, 2),
+  ]
+  return {
+    routeId: 'generated-runtime-paper-plane',
+    selectedDirectionId: 'downtown-paper-plane',
+    location: 'San Jose',
+    persona: 'romantic',
+    vibe: 'lively',
+    stops,
+    activeStopIndex: 0,
+    routeHeadline: 'A lively night that builds and keeps moving',
+    routeSummary: 'Heritage Tea House to Paper Plane to Jtown Matcha Kissaten.',
+    mapMarkers: stops.map((stop) => ({
+      id: stop.id,
+      displayName: stop.displayName,
+      role: stop.role,
+      stopIndex: stop.stopIndex,
+      latitude: stop.latitude,
+      longitude: stop.longitude,
+    })),
+    liveNotices: [],
+    updatedAt: 1,
+  }
+}
+
+function itineraryStop(role: UserStopRole, venueId: string): ItineraryStop {
+  const venueName =
+    role === 'start'
+      ? 'Heritage Tea House'
+      : role === 'highlight'
+        ? 'Paper Plane'
+        : 'Jtown Matcha Kissaten'
+  return {
+    id: `${role}:${venueId}`,
+    role,
+    title: venueName,
+    venueId,
+    venueName,
+    formattedAddress: '1 Test Way',
+    latitude: 37.33,
+    longitude: -121.89,
+    city: 'San Jose',
+    category: role === 'highlight' ? 'bar' : 'cafe',
+    subcategory: role === 'highlight' ? 'cocktails' : 'tea',
+    priceTier: '$$',
+    tags: ['downtown'],
+    vibeTags: ['lively'],
+    neighborhood: 'Downtown',
+    driveMinutes: 4,
+    durationClass: 'standard',
+    estimatedDurationMinutes: 45,
+    estimatedDurationLabel: '45 min',
+    subtitle: 'Downtown',
+    imageUrl: '/test.jpg',
+    stopInsider: {
+      roleReason: 'test role',
+      localSignal: 'test local',
+      selectionReason: 'test selection',
+    },
+  }
+}
+
+function generatedItinerary(): Itinerary {
+  return {
+    id: 'itinerary-generated-paper-plane',
+    title: 'Generated Paper Plane Night',
+    city: 'San Jose',
+    crew: 'date',
+    vibes: ['lively'],
+    stops: [
+      itineraryStop('start', generatedRouteIds.start),
+      itineraryStop('highlight', generatedRouteIds.highlight),
+      itineraryStop('windDown', generatedRouteIds.windDown),
+    ],
+    transitions: [],
+    totalRouteFriction: 0.2,
+    estimatedTotalMinutes: 150,
+    estimatedTotalLabel: '2.5 hours',
+    routeFeelLabel: 'Easy',
+    story: {
+      headline: 'Generated Paper Plane Night',
+      subtitle: 'Downtown cocktail route',
+    },
+    storySpine: {
+      title: 'Generated Paper Plane Night',
+      phases: [],
+      routeSummary: 'Heritage Tea House to Paper Plane to Jtown Matcha Kissaten.',
+    },
+    shareSummary: 'Paper Plane route.',
+  }
+}
+
+function generatedArtifact(): ContractEntryArtifact {
+  return artifact({
+    id: 'contract_entry_generated_paper_plane',
+    sourceOpportunityId: 'step2_static_build_paper_plane',
+    routeTitle: 'Generated Paper Plane Night',
+    routeSummary: 'Heritage Tea House to Paper Plane to Jtown Matcha Kissaten.',
+    storySpine: {
+      start: 'Heritage Tea House',
+      highlight: 'Paper Plane',
+      windDown: 'Jtown Matcha Kissaten',
+    },
+    enrichment: {
+      canonicalRouteRoleCoverage: {
+        start: 'Heritage Tea House',
+        highlight: 'Paper Plane',
+        windDown: 'Jtown Matcha Kissaten',
+        support: [
+          { role: 'highlight', name: 'Paper Plane', venueId: generatedRouteIds.highlight },
+        ],
+      },
+    },
+  })
 }
 
 function anchorContract(role: BuildAnchorCanonicalRole = 'highlight') {
@@ -140,6 +293,53 @@ function main(): void {
     preGenerationTruth.rejectionReasons.includes('build_route_authority_unavailable'),
     'Review must still require route-authority lock-ready truth.',
   )
+
+  const generatedCanonicalArtifact = generatedArtifact()
+  const generatedRoute = generatedRuntimeRoute()
+  const generatedAdmission = evaluateBuildCandidateAdmission({
+    mode: 'build',
+    anchorContract: anchorContract('highlight'),
+    contractEntryArtifact: generatedCanonicalArtifact,
+    runtimeRouteArtifact: generatedRoute,
+    buildParked: {
+      providerSelectionAllowed: true,
+      providerMergedIntoVisiblePool: true,
+    },
+  })
+  const generatedTruth = buildBuildCardTruthModel({
+    artifact: generatedCanonicalArtifact,
+    selectedArtifactId: generatedCanonicalArtifact.id,
+    selectedDirectionId: generatedCanonicalArtifact.selection.directionId,
+    approvedPayload: {
+      artifactId: generatedCanonicalArtifact.id,
+      selectedDirectionId: generatedRoute.selectedDirectionId,
+      finalRoute: generatedRoute,
+      selectedClusterConfirmation: 'Paper Plane generated route is canonical.',
+      itinerary: generatedItinerary(),
+      sourceKind: 'static',
+    },
+    candidateAdmission: generatedAdmission,
+    anchorTruthContract: anchorContract('highlight'),
+    selectedAnchorRequiredRole: 'highlight',
+    sourceKind: 'static',
+    buildProviderSelectionAllowed: true,
+    buildProviderMergedIntoVisiblePool: true,
+    activeRole: 'start',
+    fallbackCity: 'San Jose',
+  })
+  assert(generatedAdmission.admitted, 'Generated Paper Plane route must pass Build admission.')
+  assert(
+    generatedTruth.routeAuthorityLockReady,
+    'Generated Paper Plane route must become route-authority lock-ready.',
+  )
+  assert(
+    generatedTruth.reviewEligible,
+    `Generated Paper Plane route must become Review-eligible after canonical materialization: ${JSON.stringify({
+      rejectionReasons: generatedTruth.rejectionReasons,
+      diagnostics: generatedTruth.diagnostics,
+    })}`,
+  )
+  assert(generatedTruth.cardSelectable, 'Generated Paper Plane route must remain card-selectable.')
 
   const providerShadowSelection = evaluateBuildStaticPreGenerationCardSelection({
     artifact: paperPlane,
@@ -252,6 +452,9 @@ function main(): void {
         staticPaperPlaneSelectable: staticSelection.selectable,
         staticPaperPlaneHighlightId: admission.diagnostics.coreRouteIds.highlight,
         preGenerationReviewEligible: preGenerationTruth.reviewEligible,
+        generatedRouteAuthorityLockReady: generatedTruth.routeAuthorityLockReady,
+        generatedReviewEligible: generatedTruth.reviewEligible,
+        generatedRouteIds: generatedRoute.stops.map((stop) => stop.venueId),
         providerShadowSelectable: providerShadowSelection.selectable,
         debugOnlySelectable: debugOnlySelection.selectable,
         wrongRoleSelectable: wrongRoleSelection.selectable,
