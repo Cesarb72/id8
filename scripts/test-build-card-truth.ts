@@ -267,6 +267,7 @@ function buildTruth(params: {
   })
   return buildBuildCardTruthModel({
     artifact,
+    selectedCandidateArtifact: artifact,
     selectedArtifactId: params.selectedArtifactId ?? artifact.id,
     selectedDirectionId: params.selectedDirectionId ?? artifact.selection.directionId,
     approvedPayload: finalRoute
@@ -311,7 +312,8 @@ function main(): void {
   )
 
   const providerShadow = buildTruth({ sourceKind: 'provider_shadow' })
-  assert(providerShadow.buildTruthReady, 'Provider-shadow candidate can be truth-ready before source approval.')
+  assert(!providerShadow.buildTruthReady, 'Provider-shadow candidate must not become Build truth-ready.')
+  assert(!providerShadow.routeAuthorityLockReady, 'Provider-shadow candidate must not become routeAuthority lock-ready.')
   assert(!providerShadow.cardSelectable, 'Provider-shadow candidate must not be selectable.')
   assert(providerShadow.providerShadowExcluded, 'Provider-shadow exclusion diagnostic must be true.')
   assert(
@@ -352,6 +354,26 @@ function main(): void {
     'Selected direction mismatch must be explicit.',
   )
 
+  const driftedRoute = buildRuntimeRoute({
+    stops: [
+      buildRuntimeStop('start', 'sj-heritage-tea-house', 0),
+      buildRuntimeStop('highlight', routeIds.highlight, 1),
+      buildRuntimeStop('windDown', 'sj-jtown-matcha-kissaten', 2),
+    ],
+    routeSummary: 'Heritage Tea House to Paper Plane to Jtown Matcha Kissaten.',
+  })
+  const drifted = buildTruth({ finalRoute: driftedRoute })
+  assert(!drifted.routeAuthorityLockReady, 'Build route drift must block routeAuthority lock-ready truth.')
+  assert(!drifted.reviewEligible, 'Build route drift must block Review truth.')
+  assert(
+    drifted.diagnostics.routeAuthorityBuildReasons.includes('build_candidate_contract_drifted'),
+    'Build route drift must be diagnosed as build_candidate_contract_drifted.',
+  )
+  assert(
+    drifted.diagnostics.routeAuthorityBuildReasons.includes('generated_route_identity_mismatch'),
+    'Build route drift must report generated_route_identity_mismatch.',
+  )
+
   const scattered = buildTruth({ geo: scatteredGeo })
   assert(scattered.buildTruthReady, 'Build scattered geography warning alone must not block truth readiness.')
   assert(!scattered.reviewEligible, 'Build scattered geography route must remain Review-ineligible while parked.')
@@ -380,6 +402,7 @@ function main(): void {
     mode: 'build',
     input: {
       artifact: buildArtifact(),
+      selectedCandidateArtifact: buildArtifact(),
       selectedArtifactId: 'build-candidate-paper-plane',
       selectedDirectionId: 'downtown-cocktails',
       approvedPayload: {

@@ -7,7 +7,7 @@ import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../../../domain/art
 import type { Itinerary, ItineraryStop, UserStopRole } from '../../../domain/types/itinerary'
 import type { BuildLockedLiveArtifactPayloadInput } from '../live/liveSessionHandoff'
 
-type CoreRouteRole = 'start' | 'highlight' | 'windDown'
+export type CoreRouteRole = 'start' | 'highlight' | 'windDown'
 
 export type RouteAuthoritySourceKind =
   | 'contract_entry_artifact'
@@ -19,6 +19,7 @@ export type RouteAuthoritySourceKind =
 
 export type RouteAuthoritySourceClassification =
   | 'canonical_authority'
+  | 'candidate_not_authority'
   | 'validated_compatibility'
   | 'legacy_compatibility'
   | 'page_local_authoring'
@@ -59,6 +60,49 @@ export interface RouteAuthorityLockReadyCanonicalRouteTruthCandidate {
   finalRoute: RuntimeRouteArtifact
 }
 
+export type BuildRouteAuthoritySourceKind =
+  | 'static'
+  | 'build_static_pre_generation'
+  | 'candidate_draft'
+  | 'provider_shadow'
+  | 'debug_only'
+
+export type RouteAuthorityBuildDiagnosticReason =
+  | 'static_candidate_not_authority'
+  | 'generated_contract_entry_missing'
+  | 'generated_route_identity_mismatch'
+  | 'required_anchor_role_missing'
+  | 'required_anchor_role_survived'
+  | 'build_candidate_contract_preserved'
+  | 'build_candidate_contract_drifted'
+  | 'route_authority_lock_ready'
+  | 'route_authority_lock_blocked'
+  | 'provider_shadow_not_authority'
+  | 'candidate_draft_not_authority'
+
+export interface RouteAuthorityBuildContext {
+  mode: 'build'
+  selectedCandidateArtifact?: ContractEntryArtifact | null
+  selectedCandidateSourceKind?: BuildRouteAuthoritySourceKind | null
+  selectedAnchorVenueId?: string | null
+  selectedAnchorRequiredRole?: CoreRouteRole | null
+  routeReplacementAdmitted?: boolean
+}
+
+export interface RouteAuthorityBuildDiagnostics {
+  mode: 'build'
+  selectedCandidateArtifactId: string | null
+  selectedCandidateSourceKind: BuildRouteAuthoritySourceKind | null
+  generatedContractEntryArtifactId: string | null
+  generatedRuntimeRoutePresent: boolean
+  selectedAnchorVenueId: string | null
+  selectedAnchorRequiredRole: CoreRouteRole | null
+  anchorRoleSurvived: boolean
+  candidateContractPreserved: boolean
+  routeReplacementAdmitted: boolean
+  reasons: RouteAuthorityBuildDiagnosticReason[]
+}
+
 export interface RouteAuthorityObservedSource {
   kind: RouteAuthoritySourceKind
   classification: RouteAuthoritySourceClassification
@@ -82,6 +126,7 @@ export interface RouteAuthoritySnapshot {
   mismatchReasons: string[]
   rejectionReasons: string[]
   observedSources: RouteAuthorityObservedSource[]
+  buildDiagnostics?: RouteAuthorityBuildDiagnostics
 }
 
 export interface RouteAuthorityLockInputDiagnostics {
@@ -116,6 +161,7 @@ export interface BuildRouteAuthoritySnapshotInput {
   pageLocalFinalRoute?: RuntimeRouteArtifact | null
   selectedClusterConfirmation?: string
   itinerary?: Itinerary
+  buildContext?: RouteAuthorityBuildContext | null
 }
 
 interface RoleIdentity {
@@ -267,6 +313,22 @@ function artifactDisplayNames(artifact: ContractEntryArtifact | null | undefined
     .filter((name): name is string => Boolean(name))
 }
 
+function sourceClassificationForArtifact(params: {
+  artifact: ContractEntryArtifact | null | undefined
+  buildContext?: RouteAuthorityBuildContext | null
+  runtimeRoute?: RuntimeRouteArtifact | null
+}): RouteAuthoritySourceClassification {
+  if (
+    params.buildContext?.mode === 'build' &&
+    params.artifact &&
+    params.buildContext.selectedCandidateArtifact?.id === params.artifact.id &&
+    !params.runtimeRoute
+  ) {
+    return 'candidate_not_authority'
+  }
+  return 'canonical_authority'
+}
+
 function compareRouteToArtifact(params: {
   route: RuntimeRouteArtifact
   artifact: ContractEntryArtifact
@@ -368,11 +430,12 @@ function buildRouteSource(params: {
 
 function buildArtifactSource(params: {
   artifact: ContractEntryArtifact | null | undefined
+  classification?: RouteAuthoritySourceClassification
   mismatchReasons?: string[]
 }): RouteAuthorityObservedSource {
   return {
     kind: 'contract_entry_artifact',
-    classification: 'canonical_authority',
+    classification: params.classification ?? 'canonical_authority',
     present: Boolean(params.artifact),
     ...(params.artifact?.id ? { artifactId: params.artifact.id } : {}),
     ...(params.artifact?.selection.directionId ? { directionId: params.artifact.selection.directionId } : {}),
@@ -380,6 +443,105 @@ function buildArtifactSource(params: {
     displayNames: artifactDisplayNames(params.artifact),
     mismatchReasons: params.mismatchReasons ?? [],
   }
+}
+
+function buildAnchorSurvivedInRole(params: {
+  route: RuntimeRouteArtifact | null | undefined
+  anchorVenueId?: string | null
+  requiredRole?: CoreRouteRole | null
+}): boolean {
+  const anchorVenueId = nonEmpty(params.anchorVenueId)
+  const requiredRole = params.requiredRole ?? null
+  if (!params.route || !anchorVenueId || !requiredRole) {
+    return false
+  }
+  const stop = routeStopByRole(params.route)[requiredRole]
+  if (!stop) {
+    return false
+  }
+  return stopStableIdCandidates(stop).includes(anchorVenueId)
+}
+
+function buildRouteAuthorityBuildDiagnostics(params: {
+  artifact: ContractEntryArtifact | null
+  runtimeRoute: RuntimeRouteArtifact | null
+  buildContext: RouteAuthorityBuildContext
+}): RouteAuthorityBuildDiagnostics {
+  const selectedCandidateArtifact = params.buildContext.selectedCandidateArtifact ?? null
+  const selectedCandidateSourceKind = params.buildContext.selectedCandidateSourceKind ?? null
+  const routeReplacementAdmitted = params.buildContext.routeReplacementAdmitted === true
+  const reasons: RouteAuthorityBuildDiagnosticReason[] = []
+
+  if (
+    selectedCandidateArtifact &&
+    (!params.artifact || params.artifact.id === selectedCandidateArtifact.id) &&
+    !params.runtimeRoute
+  ) {
+    reasons.push('static_candidate_not_authority')
+  }
+  if (selectedCandidateSourceKind === 'provider_shadow' || selectedCandidateSourceKind === 'debug_only') {
+    reasons.push('provider_shadow_not_authority')
+  }
+  if (selectedCandidateSourceKind === 'candidate_draft') {
+    reasons.push('candidate_draft_not_authority')
+  }
+  if (!params.artifact || !params.runtimeRoute) {
+    reasons.push('generated_contract_entry_missing')
+  }
+
+  const anchorRoleSurvived = buildAnchorSurvivedInRole({
+    route: params.runtimeRoute,
+    anchorVenueId: params.buildContext.selectedAnchorVenueId,
+    requiredRole: params.buildContext.selectedAnchorRequiredRole,
+  })
+  if (anchorRoleSurvived) {
+    reasons.push('required_anchor_role_survived')
+  } else if (params.buildContext.selectedAnchorVenueId && params.buildContext.selectedAnchorRequiredRole) {
+    reasons.push('required_anchor_role_missing')
+  }
+
+  let candidateContractPreserved = false
+  if (selectedCandidateArtifact && params.runtimeRoute) {
+    const comparison = compareRouteToArtifact({
+      route: params.runtimeRoute,
+      artifact: selectedCandidateArtifact,
+      reasonPrefix: 'build_candidate_contract',
+    })
+    candidateContractPreserved = comparison.matches
+    if (comparison.matches) {
+      reasons.push('build_candidate_contract_preserved')
+    } else {
+      reasons.push('build_candidate_contract_drifted', 'generated_route_identity_mismatch')
+    }
+  }
+
+  const lockBlocked =
+    reasons.includes('static_candidate_not_authority') ||
+    reasons.includes('generated_contract_entry_missing') ||
+    reasons.includes('required_anchor_role_missing') ||
+    reasons.includes('provider_shadow_not_authority') ||
+    reasons.includes('candidate_draft_not_authority') ||
+    (reasons.includes('build_candidate_contract_drifted') && !routeReplacementAdmitted)
+
+  reasons.push(lockBlocked ? 'route_authority_lock_blocked' : 'route_authority_lock_ready')
+
+  return {
+    mode: 'build',
+    selectedCandidateArtifactId: selectedCandidateArtifact?.id ?? null,
+    selectedCandidateSourceKind,
+    generatedContractEntryArtifactId: params.artifact?.id ?? null,
+    generatedRuntimeRoutePresent: Boolean(params.runtimeRoute),
+    selectedAnchorVenueId: params.buildContext.selectedAnchorVenueId ?? null,
+    selectedAnchorRequiredRole: params.buildContext.selectedAnchorRequiredRole ?? null,
+    anchorRoleSurvived,
+    candidateContractPreserved,
+    routeReplacementAdmitted,
+    reasons: unique(reasons) as RouteAuthorityBuildDiagnosticReason[],
+  }
+}
+
+function buildDiagnosticsBlockLock(diagnostics: RouteAuthorityBuildDiagnostics | undefined): boolean {
+  return Boolean(diagnostics?.reasons.includes('route_authority_lock_blocked'))
 }
 
 function selectedRouteRuntimeRoute(
@@ -395,6 +557,8 @@ export function buildRouteAuthoritySnapshot(
   const runtimeRoute =
     input.runtimeRouteArtifact ?? artifact?.enrichment?.runtimeLockEligibility?.runtimeRouteArtifact ?? null
   const approvedPayloadRoute = input.approvedPayload?.finalRoute ?? null
+  const buildRuntimeRoute =
+    input.buildContext?.mode === 'build' ? runtimeRoute ?? approvedPayloadRoute : runtimeRoute
   const legacyCurateRoute = input.legacyCurateRefinementEntryPayload?.finalRoute ?? null
   const legacySelectedRoute = selectedRouteRuntimeRoute(input.legacySelectedRouteArtifact)
   const pageLocalFinalRoute = input.pageLocalFinalRoute ?? null
@@ -409,6 +573,14 @@ export function buildRouteAuthoritySnapshot(
     nonEmpty(artifact?.id) ??
     nonEmpty(input.approvedPayload?.artifactId) ??
     null
+  const buildDiagnostics =
+    input.buildContext?.mode === 'build'
+      ? buildRouteAuthorityBuildDiagnostics({
+          artifact,
+          runtimeRoute: buildRuntimeRoute,
+          buildContext: input.buildContext,
+        })
+      : undefined
 
   const mismatchReasons: string[] = []
   const rejectionReasons: string[] = []
@@ -421,6 +593,26 @@ export function buildRouteAuthoritySnapshot(
   if (artifact) {
     const artifactValidation = validateContractEntryArtifactPreCommitTruth(artifact)
     rejectionReasons.push(...artifactValidation.rejectionReasons)
+  }
+  if (buildDiagnostics) {
+    if (buildDiagnostics.reasons.includes('static_candidate_not_authority')) {
+      rejectionReasons.push('static_candidate_not_authority')
+    }
+    if (buildDiagnostics.reasons.includes('generated_contract_entry_missing')) {
+      rejectionReasons.push('generated_contract_entry_missing')
+    }
+    if (buildDiagnostics.reasons.includes('required_anchor_role_missing')) {
+      rejectionReasons.push('required_anchor_role_missing')
+    }
+    if (buildDiagnostics.reasons.includes('generated_route_identity_mismatch')) {
+      rejectionReasons.push('generated_route_identity_mismatch')
+    }
+    if (buildDiagnostics.reasons.includes('provider_shadow_not_authority')) {
+      rejectionReasons.push('provider_shadow_not_authority')
+    }
+    if (buildDiagnostics.reasons.includes('candidate_draft_not_authority')) {
+      rejectionReasons.push('candidate_draft_not_authority')
+    }
   }
 
   if (artifact && runtimeRoute) {
@@ -503,6 +695,7 @@ export function buildRouteAuthoritySnapshot(
     runtimeMismatchReasons.length === 0 &&
     !rejectionReasons.includes('runtime_route_artifact_mismatch') &&
     !rejectionReasons.includes('runtime_lock_ineligible') &&
+    !buildDiagnosticsBlockLock(buildDiagnostics) &&
     !hasInvalidArtifactValidationReason(rejectionReasons)
   const lockReadyCanonicalRouteTruthCandidate =
     canonicalAuthorityRoute && canonicalRouteValid && lockInputSource
@@ -531,7 +724,14 @@ export function buildRouteAuthoritySnapshot(
   }
 
   const observedSources: RouteAuthorityObservedSource[] = [
-    buildArtifactSource({ artifact }),
+    buildArtifactSource({
+      artifact,
+      classification: sourceClassificationForArtifact({
+        artifact,
+        buildContext: input.buildContext,
+        runtimeRoute: buildRuntimeRoute,
+      }),
+    }),
     buildRouteSource({
       kind: 'runtime_route_artifact',
       classification: 'canonical_authority',
@@ -586,7 +786,9 @@ export function buildRouteAuthoritySnapshot(
     presentSources.length === 0
       ? 'missing'
       : rejectionReasons.includes('approved_payload_route_mismatch') ||
-          rejectionReasons.includes('runtime_route_artifact_mismatch')
+          rejectionReasons.includes('runtime_route_artifact_mismatch') ||
+          rejectionReasons.includes('generated_route_identity_mismatch') ||
+          rejectionReasons.includes('required_anchor_role_missing')
         ? 'invalid'
         : lockReadyCanonicalRouteTruthCandidate
           ? 'valid'
@@ -609,6 +811,7 @@ export function buildRouteAuthoritySnapshot(
     mismatchReasons,
     rejectionReasons: unique(rejectionReasons),
     observedSources,
+    ...(buildDiagnostics ? { buildDiagnostics } : {}),
   }
 }
 

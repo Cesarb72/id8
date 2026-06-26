@@ -266,6 +266,7 @@ function buildTruth(params: {
 
   return buildBuildCardTruthModel({
     artifact: candidateArtifact,
+    selectedCandidateArtifact: candidateArtifact,
     selectedArtifactId: params.selectedArtifactId ?? candidateArtifact.id,
     selectedDirectionId: params.selectedDirectionId ?? candidateArtifact.selection.directionId,
     approvedPayload: finalRoute
@@ -320,7 +321,8 @@ function main(): void {
   )
 
   const providerShadow = buildTruth({ sourceKind: 'provider_shadow' })
-  assert(providerShadow.buildTruthReady, 'Provider-shadow candidate may be truth-ready diagnostically.')
+  assert(!providerShadow.buildTruthReady, 'Provider-shadow candidate must not become truth-ready.')
+  assert(!providerShadow.routeAuthorityLockReady, 'Provider-shadow candidate must not become routeAuthority lock-ready.')
   assert(providerShadow.providerShadowExcluded, 'Provider-shadow exclusion diagnostic must be true.')
   assert(!providerShadow.isApprovedSelectableSource, 'Provider-shadow source must not be approved selectable.')
   assert(!providerShadow.cardSelectable, 'Provider-shadow candidate must not be selectable while parked.')

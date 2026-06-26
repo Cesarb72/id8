@@ -29,6 +29,7 @@ import {
 import {
   buildLockInputFromRouteAuthoritySnapshot,
   buildRouteAuthoritySnapshot,
+  type BuildRouteAuthoritySourceKind,
 } from './routeAuthority/routeAuthorityService'
 import type { BuildCandidateAdmissionResult } from './buildCandidateAdmission/buildCandidateAdmissionService'
 import type { BuildAnchorSelection } from './buildAnchorOrchestrationService'
@@ -86,6 +87,7 @@ export interface BuildApprovedPayloadReference {
 
 export interface BuildCardTruthInput {
   artifact: ContractEntryArtifact | null | undefined
+  selectedCandidateArtifact?: ContractEntryArtifact | null
   selectedArtifactId?: string | null
   selectedDirectionId?: string | null
   approvedPayload?: BuildApprovedPayloadReference | null
@@ -126,6 +128,7 @@ export interface BuildCardTruthResult {
     routeAuthoritySourceLabel: string
     routeAuthorityRejectionReasons: string[]
     routeAuthorityMismatchReasons: string[]
+    routeAuthorityBuildReasons: string[]
     lockInputAvailable: boolean
     buildAdmissionAdmitted: boolean | null
     buildAdmissionTruthGateStatus: string | null
@@ -452,6 +455,16 @@ export function buildBuildCardTruthModel(input: BuildCardTruthInput): BuildCardT
     approvedPayload,
     selectedClusterConfirmation: approvedPayload?.selectedClusterConfirmation ?? undefined,
     itinerary: approvedPayload?.itinerary ?? undefined,
+    buildContext: {
+      mode: 'build',
+      selectedCandidateArtifact: input.selectedCandidateArtifact ?? null,
+      selectedCandidateSourceKind: sourceKind as BuildRouteAuthoritySourceKind,
+      selectedAnchorVenueId:
+        input.anchorTruthContract?.canonicalVenueId ?? input.selectedBuildAnchor?.venueId ?? null,
+      selectedAnchorRequiredRole:
+        input.selectedAnchorRequiredRole ?? input.anchorTruthContract?.requiredRole ?? null,
+      routeReplacementAdmitted: false,
+    },
   })
   const routeAuthorityLockReady = Boolean(
     routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate &&
@@ -530,6 +543,7 @@ export function buildBuildCardTruthModel(input: BuildCardTruthInput): BuildCardT
       routeAuthoritySourceLabel: routeAuthoritySnapshot.sourceLabel,
       routeAuthorityRejectionReasons: routeAuthoritySnapshot.rejectionReasons,
       routeAuthorityMismatchReasons: routeAuthoritySnapshot.mismatchReasons,
+      routeAuthorityBuildReasons: routeAuthoritySnapshot.buildDiagnostics?.reasons ?? [],
       lockInputAvailable,
       buildAdmissionAdmitted: input.candidateAdmission?.admitted ?? null,
       buildAdmissionTruthGateStatus: input.candidateAdmission?.truthGateStatus ?? null,

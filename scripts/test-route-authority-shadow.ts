@@ -713,6 +713,118 @@ async function main(): Promise<void> {
       'ID mismatch must be reported as runtime_route_artifact_highlight_id_mismatch.',
     )
 
+    const buildStaticCandidateArtifact = buildArtifact()
+    const buildStaticCandidateSnapshot = buildRouteAuthoritySnapshot({
+      contractEntryArtifact: buildStaticCandidateArtifact,
+      selectedDirectionId: SELECTED_DIRECTION_ID,
+      selectedArtifactId: ARTIFACT_ID,
+      buildContext: {
+        mode: 'build',
+        selectedCandidateArtifact: buildStaticCandidateArtifact,
+        selectedCandidateSourceKind: 'build_static_pre_generation',
+        selectedAnchorVenueId: CANONICAL_ROUTE_IDS[1],
+        selectedAnchorRequiredRole: 'highlight',
+        routeReplacementAdmitted: false,
+      },
+    })
+    assert(
+      sourceByKind(buildStaticCandidateSnapshot.observedSources, 'contract_entry_artifact').classification ===
+        'candidate_not_authority',
+      'Build static candidate must be classified as candidate, not canonical authority.',
+    )
+    assert(
+      buildStaticCandidateSnapshot.lockReadyCanonicalRouteTruthCandidate === null,
+      'Build static candidate must not become lock-ready before generation.',
+    )
+    assert(
+      buildStaticCandidateSnapshot.buildDiagnostics?.reasons.includes('static_candidate_not_authority') === true,
+      'Build static candidate must report static_candidate_not_authority.',
+    )
+    assert(
+      buildStaticCandidateSnapshot.buildDiagnostics?.reasons.includes('route_authority_lock_blocked') === true,
+      'Build static candidate must report route_authority_lock_blocked.',
+    )
+
+    const buildGeneratedSnapshot = buildRouteAuthoritySnapshot({
+      contractEntryArtifact: artifact,
+      runtimeRouteArtifact: runtimeRoute,
+      selectedDirectionId: SELECTED_DIRECTION_ID,
+      selectedArtifactId: ARTIFACT_ID,
+      selectedClusterConfirmation:
+        'Willow Court Wine Bar -> Theatre District Jazz Cellar -> Hedley Club Lounge',
+      itinerary,
+      buildContext: {
+        mode: 'build',
+        selectedCandidateArtifact: artifact,
+        selectedCandidateSourceKind: 'build_static_pre_generation',
+        selectedAnchorVenueId: CANONICAL_ROUTE_IDS[1],
+        selectedAnchorRequiredRole: 'highlight',
+        routeReplacementAdmitted: false,
+      },
+    })
+    assert(buildGeneratedSnapshot.validationStatus === 'valid', 'Generated Build authority must validate when preserved.')
+    assert(
+      buildGeneratedSnapshot.lockReadyCanonicalRouteTruthCandidate !== null,
+      'Generated Build authority must become lock-ready when candidate contract is preserved.',
+    )
+    assert(
+      buildGeneratedSnapshot.buildDiagnostics?.reasons.includes('required_anchor_role_survived') === true,
+      'Generated Build authority must report required_anchor_role_survived.',
+    )
+    assert(
+      buildGeneratedSnapshot.buildDiagnostics?.reasons.includes('build_candidate_contract_preserved') === true,
+      'Generated Build authority must report build_candidate_contract_preserved.',
+    )
+    assert(
+      buildGeneratedSnapshot.buildDiagnostics?.reasons.includes('route_authority_lock_ready') === true,
+      'Generated Build authority must report route_authority_lock_ready.',
+    )
+
+    const buildDriftSnapshot = buildRouteAuthoritySnapshot({
+      contractEntryArtifact: artifact,
+      runtimeRouteArtifact: buildRuntimeRoute({
+        start: {
+          venueId: 'sj-heritage-tea-house',
+          providerRecordId: 'provider:sj-heritage-tea-house',
+          sourceStopId: 'source-stop:sj-heritage-tea-house',
+          displayName: 'Heritage Tea House',
+        },
+        windDown: {
+          venueId: 'sj-jtown-matcha-kissaten',
+          providerRecordId: 'provider:sj-jtown-matcha-kissaten',
+          sourceStopId: 'source-stop:sj-jtown-matcha-kissaten',
+          displayName: 'Jtown Matcha Kissaten',
+        },
+      }),
+      selectedDirectionId: SELECTED_DIRECTION_ID,
+      selectedArtifactId: ARTIFACT_ID,
+      buildContext: {
+        mode: 'build',
+        selectedCandidateArtifact: artifact,
+        selectedCandidateSourceKind: 'build_static_pre_generation',
+        selectedAnchorVenueId: CANONICAL_ROUTE_IDS[1],
+        selectedAnchorRequiredRole: 'highlight',
+        routeReplacementAdmitted: false,
+      },
+    })
+    assert(buildDriftSnapshot.validationStatus === 'invalid', 'Build route drift must be invalid.')
+    assert(
+      buildDriftSnapshot.lockReadyCanonicalRouteTruthCandidate === null,
+      'Build route drift must not become lock-ready.',
+    )
+    assert(
+      buildDriftSnapshot.buildDiagnostics?.reasons.includes('required_anchor_role_survived') === true,
+      'Build drift proof should still report anchor survival when Paper Plane remains highlight.',
+    )
+    assert(
+      buildDriftSnapshot.buildDiagnostics?.reasons.includes('build_candidate_contract_drifted') === true,
+      'Build route drift must report build_candidate_contract_drifted.',
+    )
+    assert(
+      buildDriftSnapshot.buildDiagnostics?.reasons.includes('generated_route_identity_mismatch') === true,
+      'Build route drift must report generated_route_identity_mismatch.',
+    )
+
     assert(fetchCalls.length === 0, `Expected no provider/fetch calls, received ${fetchCalls.length}.`)
 
     process.stdout.write('route authority shadow seam: passed\n')

@@ -16688,13 +16688,25 @@ export function SandboxConciergePage({
       pageLocalFinalRoute: renderOnlyFinalRoute,
       selectedClusterConfirmation: activePlan?.selectedClusterConfirmation,
       itinerary: activePlan?.itinerary,
+      buildContext: isBuildWrapperActive
+        ? {
+            mode: 'build',
+            selectedCandidateArtifact: selectedCandidateRouteArtifact,
+            selectedCandidateSourceKind: 'build_static_pre_generation',
+            selectedAnchorVenueId: selectedBuildAnchor?.venueId ?? null,
+            selectedAnchorRequiredRole: buildSelectedAnchorRequiredRole,
+            routeReplacementAdmitted: false,
+          }
+        : null,
     })
   }, [
     activeCurateRefinementEntryPayload,
+    buildSelectedAnchorRequiredRole,
     explicitQualifiedCurateSelectedArtifact,
     isBuildWrapperActive,
     renderOnlyFinalRoute,
     plan,
+    selectedBuildAnchor?.venueId,
     selectedCandidateRouteArtifact,
     selectedCuratePreviewCommitability?.approvedRefinementEntryPayload,
     selectedDirectionId,
@@ -17614,6 +17626,7 @@ export function SandboxConciergePage({
     })
     return buildBuildCardTruthModel({
       artifact: canonicalBuildContractEntryArtifact,
+      selectedCandidateArtifact: selectedCandidateRouteArtifact,
       selectedArtifactId: canonicalBuildArtifactId,
       selectedDirectionId:
         selectedDirectionId ?? canonicalBuildContractEntryArtifact.selection.directionId ?? null,

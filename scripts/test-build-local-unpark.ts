@@ -77,24 +77,30 @@ const generatedRouteIds = {
   windDown: 'sj-jtown-matcha-kissaten',
 }
 
-function runtimeStop(role: UserStopRole, venueId: string, stopIndex: number): RuntimeRouteStop {
-  const displayName =
-    role === 'start'
+function runtimeStop(
+  role: UserStopRole,
+  venueId: string,
+  stopIndex: number,
+  displayName?: string,
+): RuntimeRouteStop {
+  const resolvedDisplayName =
+    displayName ??
+    (role === 'start'
       ? 'Heritage Tea House'
       : role === 'highlight'
         ? 'Paper Plane'
-        : 'Jtown Matcha Kissaten'
+        : 'Jtown Matcha Kissaten')
   return {
     id: `${role}:${venueId}`,
     sourceStopId: `${role}:${venueId}`,
-    displayName,
+    displayName: resolvedDisplayName,
     latitude: 37.33,
     longitude: -121.89,
     address: '1 Test Way',
     role,
     stopIndex,
     venueId,
-    title: displayName,
+    title: resolvedDisplayName,
     subtitle: 'Downtown',
     neighborhood: 'Downtown',
     driveMinutes: 4,
@@ -102,11 +108,14 @@ function runtimeStop(role: UserStopRole, venueId: string, stopIndex: number): Ru
   }
 }
 
-function generatedRuntimeRoute(): RuntimeRouteArtifact {
+function generatedRuntimeRoute(params: {
+  preserved?: boolean
+} = {}): RuntimeRouteArtifact {
+  const ids = params.preserved ? routeIds : generatedRouteIds
   const stops = [
-    runtimeStop('start', generatedRouteIds.start, 0),
-    runtimeStop('highlight', generatedRouteIds.highlight, 1),
-    runtimeStop('windDown', generatedRouteIds.windDown, 2),
+    runtimeStop('start', ids.start, 0, params.preserved ? 'Petiscos' : undefined),
+    runtimeStop('highlight', ids.highlight, 1, 'Paper Plane'),
+    runtimeStop('windDown', ids.windDown, 2, params.preserved ? 'Hedley Club Lounge' : undefined),
   ]
   return {
     routeId: 'generated-runtime-paper-plane',
@@ -198,24 +207,38 @@ function generatedItinerary(): Itinerary {
   }
 }
 
-function generatedArtifact(): ContractEntryArtifact {
+function generatedArtifact(params: {
+  preserved?: boolean
+} = {}): ContractEntryArtifact {
   return artifact({
     id: 'contract_entry_generated_paper_plane',
     sourceOpportunityId: 'step2_static_build_paper_plane',
     routeTitle: 'Generated Paper Plane Night',
-    routeSummary: 'Heritage Tea House to Paper Plane to Jtown Matcha Kissaten.',
+    routeSummary: params.preserved
+      ? 'Petiscos to Paper Plane to Hedley Club Lounge.'
+      : 'Heritage Tea House to Paper Plane to Jtown Matcha Kissaten.',
     storySpine: {
-      start: 'Heritage Tea House',
+      start: params.preserved ? 'Petiscos' : 'Heritage Tea House',
       highlight: 'Paper Plane',
-      windDown: 'Jtown Matcha Kissaten',
+      windDown: params.preserved ? 'Hedley Club Lounge' : 'Jtown Matcha Kissaten',
     },
     enrichment: {
       canonicalRouteRoleCoverage: {
-        start: 'Heritage Tea House',
+        start: params.preserved ? 'Petiscos' : 'Heritage Tea House',
         highlight: 'Paper Plane',
-        windDown: 'Jtown Matcha Kissaten',
+        windDown: params.preserved ? 'Hedley Club Lounge' : 'Jtown Matcha Kissaten',
         support: [
+          {
+            role: 'start',
+            name: params.preserved ? 'Petiscos' : 'Heritage Tea House',
+            venueId: params.preserved ? routeIds.start : generatedRouteIds.start,
+          },
           { role: 'highlight', name: 'Paper Plane', venueId: generatedRouteIds.highlight },
+          {
+            role: 'windDown',
+            name: params.preserved ? 'Hedley Club Lounge' : 'Jtown Matcha Kissaten',
+            venueId: params.preserved ? routeIds.windDown : generatedRouteIds.windDown,
+          },
         ],
       },
     },
@@ -294,8 +317,8 @@ function main(): void {
     'Review must still require route-authority lock-ready truth.',
   )
 
-  const generatedCanonicalArtifact = generatedArtifact()
-  const generatedRoute = generatedRuntimeRoute()
+  const generatedCanonicalArtifact = generatedArtifact({ preserved: true })
+  const generatedRoute = generatedRuntimeRoute({ preserved: true })
   const generatedAdmission = evaluateBuildCandidateAdmission({
     mode: 'build',
     anchorContract: anchorContract('highlight'),
@@ -308,6 +331,7 @@ function main(): void {
   })
   const generatedTruth = buildBuildCardTruthModel({
     artifact: generatedCanonicalArtifact,
+    selectedCandidateArtifact: paperPlane,
     selectedArtifactId: generatedCanonicalArtifact.id,
     selectedDirectionId: generatedCanonicalArtifact.selection.directionId,
     approvedPayload: {
@@ -340,6 +364,55 @@ function main(): void {
     })}`,
   )
   assert(generatedTruth.cardSelectable, 'Generated Paper Plane route must remain card-selectable.')
+
+  const driftedGeneratedArtifact = generatedArtifact()
+  const driftedGeneratedRoute = generatedRuntimeRoute()
+  const driftedAdmission = evaluateBuildCandidateAdmission({
+    mode: 'build',
+    anchorContract: anchorContract('highlight'),
+    contractEntryArtifact: driftedGeneratedArtifact,
+    runtimeRouteArtifact: driftedGeneratedRoute,
+    buildParked: {
+      providerSelectionAllowed: true,
+      providerMergedIntoVisiblePool: true,
+    },
+  })
+  const driftedTruth = buildBuildCardTruthModel({
+    artifact: driftedGeneratedArtifact,
+    selectedCandidateArtifact: paperPlane,
+    selectedArtifactId: driftedGeneratedArtifact.id,
+    selectedDirectionId: driftedGeneratedArtifact.selection.directionId,
+    approvedPayload: {
+      artifactId: driftedGeneratedArtifact.id,
+      selectedDirectionId: driftedGeneratedRoute.selectedDirectionId,
+      finalRoute: driftedGeneratedRoute,
+      selectedClusterConfirmation: 'Paper Plane generated route drifted from selected candidate.',
+      itinerary: generatedItinerary(),
+      sourceKind: 'static',
+    },
+    candidateAdmission: driftedAdmission,
+    anchorTruthContract: anchorContract('highlight'),
+    selectedAnchorRequiredRole: 'highlight',
+    sourceKind: 'static',
+    buildProviderSelectionAllowed: true,
+    buildProviderMergedIntoVisiblePool: true,
+    activeRole: 'start',
+    fallbackCity: 'San Jose',
+  })
+  assert(driftedAdmission.admitted, 'Drifted generated route still preserves Paper Plane anchor.')
+  assert(
+    !driftedTruth.routeAuthorityLockReady,
+    'Generated route that drifts from selected static Build candidate must not become lock-ready.',
+  )
+  assert(!driftedTruth.reviewEligible, 'Drifted generated route must not be Review-eligible.')
+  assert(
+    driftedTruth.diagnostics.routeAuthorityBuildReasons.includes('build_candidate_contract_drifted'),
+    'Drifted generated route must report build_candidate_contract_drifted.',
+  )
+  assert(
+    driftedTruth.diagnostics.routeAuthorityBuildReasons.includes('generated_route_identity_mismatch'),
+    'Drifted generated route must report generated_route_identity_mismatch.',
+  )
 
   const providerShadowSelection = evaluateBuildStaticPreGenerationCardSelection({
     artifact: paperPlane,
@@ -455,6 +528,8 @@ function main(): void {
         generatedRouteAuthorityLockReady: generatedTruth.routeAuthorityLockReady,
         generatedReviewEligible: generatedTruth.reviewEligible,
         generatedRouteIds: generatedRoute.stops.map((stop) => stop.venueId),
+        driftedRouteAuthorityLockReady: driftedTruth.routeAuthorityLockReady,
+        driftedRouteReasons: driftedTruth.diagnostics.routeAuthorityBuildReasons,
         providerShadowSelectable: providerShadowSelection.selectable,
         debugOnlySelectable: debugOnlySelection.selectable,
         wrongRoleSelectable: wrongRoleSelection.selectable,
