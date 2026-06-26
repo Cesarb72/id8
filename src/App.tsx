@@ -1,4 +1,5 @@
 import { AppShell } from './app/AppShell'
+import { BUILD_COMMIT, BUILD_FRESHNESS_MARKER } from './app/buildMetadata'
 import { DevHomePage } from './pages/DevHomePage'
 import { HomePage } from './pages/HomePage'
 import { LiveJourneyPage } from './pages/LiveJourneyPage'
@@ -106,6 +107,11 @@ function App() {
 
   return (
     <>
+      <span
+        hidden
+        data-id8-build-commit={BUILD_COMMIT}
+        data-id8-build-freshness-marker={BUILD_FRESHNESS_MARKER}
+      />
       {showEnvironmentAccessBar && <EnvironmentAccessBar currentPath={normalizedPathname} />}
       {page}
     </>
