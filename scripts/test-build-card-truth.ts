@@ -416,12 +416,12 @@ function main(): void {
 
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   assert(
-    sandboxSource.includes('const buildProviderSelectionAllowed = false'),
-    'Build provider selection must remain parked.',
+    sandboxSource.includes('const buildProviderSelectionAllowed = true'),
+    'Build provider selection must be locally unparked.',
   )
   assert(
-    sandboxSource.includes('const buildProviderMergedIntoVisiblePool = false'),
-    'Build provider visible merge must remain parked.',
+    sandboxSource.includes('const buildProviderMergedIntoVisiblePool = true'),
+    'Build provider visible merge must be locally unparked.',
   )
 
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
@@ -440,8 +440,8 @@ function main(): void {
         debugOnlyReasons: debugOnly.rejectionReasons,
         scatteredWarnings: scattered.warningReasons,
         curateGeoHardBlock: curateGeo.hardBlockReason,
-        buildProviderSelectionAllowed: false,
-        buildProviderMergedIntoVisiblePool: false,
+        buildProviderSelectionAllowed: true,
+        buildProviderMergedIntoVisiblePool: true,
       },
       null,
       2,

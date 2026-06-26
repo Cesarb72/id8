@@ -1192,6 +1192,7 @@ interface SurpriseTryAnotherDebug {
   buildApprovedPayloadTruthAllowed: boolean
   buildReviewTruthEligible: boolean
   buildCardSelectable: boolean
+  buildPreGenerationSelectionReady: boolean
   buildTruthReady: boolean
   buildSelectableWhenUnparked: boolean
   buildIsApprovedSelectableSource: boolean
@@ -11777,7 +11778,7 @@ export function SandboxConciergePage({
               ? 'provider_shadow_artifact_failed'
               : null
   const buildProviderArtifactWouldMergeCount = buildProviderShadowArtifactCount
-  const buildProviderMergedIntoVisiblePool = false
+  const buildProviderMergedIntoVisiblePool = true
 
   const step2CandidateRouteArtifacts = useMemo<ContractEntryArtifact[]>(() => {
     if (isCurateWrapperActive && curateScenarioBackedArtifactBridge) {
@@ -12275,7 +12276,7 @@ export function SandboxConciergePage({
       shadowBuildProviderArtifact &&
       candidateRouteArtifactsForDisplay.length === 0,
   )
-  const buildProviderSelectionAllowed = false
+  const buildProviderSelectionAllowed = true
   const curateDisplayDedupeDebug = curateDisplayDedupeResult.debug
   const curateVisibleCardModels = useMemo<CurateVisibleCardModel[]>(() => {
     return candidateRouteArtifactsForDisplay.map((artifact) =>
@@ -17451,6 +17452,16 @@ export function SandboxConciergePage({
     const warnings = entry.warningReasons.join(',') || 'none'
     return `${entry.artifactId}:admitted=${String(entry.admitted)};truth=${entry.truthGateStatus};geo=${entry.geoPosture};penalty=${entry.geoPenalty};hard=${hardReasons};warnings=${warnings}`
   }, [buildCandidateAdmissionDiagnostics])
+  const buildSelectedCandidateAdmissionDiagnostic = useMemo(() => {
+    if (!selectedCandidateRouteArtifact) {
+      return null
+    }
+    return (
+      buildCandidateAdmissionDiagnostics.find(
+        (entry) => entry.artifactId === selectedCandidateRouteArtifact.id,
+      ) ?? null
+    )
+  }, [buildCandidateAdmissionDiagnostics, selectedCandidateRouteArtifact])
   const buildSelectedCardTruthDiagnostic = useMemo(() => {
     if (!isBuildWrapperActive || !selectedBuildAnchor?.venueId || !selectedCandidateRouteArtifact) {
       return null
@@ -17525,6 +17536,16 @@ export function SandboxConciergePage({
     buildSelectedCardTruthDiagnostic?.reviewEligible ?? false
   const buildCardSelectable =
     buildSelectedCardTruthDiagnostic?.cardSelectable ?? false
+  const buildPreGenerationSelectionReady = Boolean(
+    isBuildWrapperActive &&
+      !canonicalRouteArtifact &&
+      selectedBuildAnchor?.venueId &&
+      selectedCandidateRouteArtifact &&
+      buildProviderSelectionAllowed &&
+      buildProviderMergedIntoVisiblePool &&
+      buildSelectedCandidateAdmissionDiagnostic?.source === 'static' &&
+      buildSelectedCandidateAdmissionDiagnostic.admitted,
+  )
   const buildTruthReady =
     buildSelectedCardTruthDiagnostic?.buildTruthReady ?? false
   const buildSelectableWhenUnparked =
@@ -20201,6 +20222,7 @@ export function SandboxConciergePage({
       buildApprovedPayloadTruthAllowed,
       buildReviewTruthEligible,
       buildCardSelectable,
+      buildPreGenerationSelectionReady,
       buildTruthReady,
       buildSelectableWhenUnparked,
       buildIsApprovedSelectableSource,
@@ -20330,6 +20352,7 @@ export function SandboxConciergePage({
     buildApprovedPayloadTruthAllowed,
     buildCardSelectable,
     buildCardTruthRejectionReasons,
+    buildPreGenerationSelectionReady,
     buildIsApprovedSelectableSource,
     buildCandidateAdmissionAdmittedCount,
     buildCandidateAdmissionEvaluatedCount,
@@ -20796,7 +20819,7 @@ export function SandboxConciergePage({
         selectedCandidateRouteArtifact.id === selectedCurateVisibleCardModel.artifact.id),
   )
   const buildSelectedCardTruthReady = Boolean(
-    !isBuildWrapperActive || buildReviewTruthEligible,
+    !isBuildWrapperActive || buildReviewTruthEligible || buildPreGenerationSelectionReady,
   )
   const showPrimaryContinueAction = Boolean(
     !coffeeBooksCommittedRouteSummarySuppressed &&
@@ -20838,7 +20861,11 @@ export function SandboxConciergePage({
       )
       return
     }
-    if (isBuildWrapperActive && !buildReviewTruthEligible) {
+    if (
+      isBuildWrapperActive &&
+      !buildReviewTruthEligible &&
+      !buildPreGenerationSelectionReady
+    ) {
       setError('Build route review is still parked until its card truth and selection gates are enabled.')
       return
     }
@@ -20881,6 +20908,7 @@ export function SandboxConciergePage({
     isCurateWrapperActive,
     loading,
     applyCurateRefinementEntryPayload,
+    buildPreGenerationSelectionReady,
     buildReviewTruthEligible,
     committedPlanMatchesGenerateDirection,
     committedRevealReady,
@@ -22281,6 +22309,9 @@ export function SandboxConciergePage({
               </div>
               <div>buildReviewTruthEligible: {String(buildReviewTruthEligible)}</div>
               <div>buildCardSelectable: {String(buildCardSelectable)}</div>
+              <div>
+                buildPreGenerationSelectionReady: {String(buildPreGenerationSelectionReady)}
+              </div>
               <div>buildTruthReady: {String(buildTruthReady)}</div>
               <div>
                 buildSelectableWhenUnparked: {String(buildSelectableWhenUnparked)}

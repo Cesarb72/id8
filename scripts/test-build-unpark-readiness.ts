@@ -245,10 +245,11 @@ function buildTruth(params: {
   selectedDirectionId?: string
   hoursStatus?: BearingsStaticRuntimeHoursProofResult['status']
   geo?: ScenarioRouteGeoCoherence | null
+  missingAnchor?: boolean
 }) {
   const candidateArtifact = artifact()
   const finalRoute = params.finalRoute === undefined ? runtimeRoute() : params.finalRoute
-  const contract = anchorContract(params.anchorRole ?? 'highlight')
+  const contract = params.missingAnchor ? null : anchorContract(params.anchorRole ?? 'highlight')
   const admission = evaluateBuildCandidateAdmission({
     mode: 'build',
     anchorContract: contract,
@@ -305,13 +306,17 @@ function main(): void {
     'Parked merge reason must be explicit.',
   )
 
-  const futureUnparkedStatic = buildTruth({
+  const localUnparkedStatic = buildTruth({
     providerSelectionAllowed: true,
     providerMergedIntoVisiblePool: true,
   })
   assert(
-    futureUnparkedStatic.cardSelectable && futureUnparkedStatic.reviewEligible,
-    'Future unpark requires Build truth plus approved selectable source.',
+    localUnparkedStatic.cardSelectable && localUnparkedStatic.reviewEligible,
+    'Local unpark requires Build truth plus approved selectable source.',
+  )
+  assert(
+    localUnparkedStatic.routeAuthorityLockReady,
+    'Local unpark must require route-authority lock-ready truth.',
   )
 
   const providerShadow = buildTruth({ sourceKind: 'provider_shadow' })
@@ -329,6 +334,26 @@ function main(): void {
   assert(debugOnly.isDebugOnly, 'Debug-only diagnostic must be true.')
   assert(!debugOnly.isApprovedSelectableSource, 'Debug-only source must not be approved selectable.')
   assert(!debugOnly.cardSelectable, 'Debug-only candidate must not be selectable.')
+
+  const providerShadowWithLocalFlags = buildTruth({
+    sourceKind: 'provider_shadow',
+    providerSelectionAllowed: true,
+    providerMergedIntoVisiblePool: true,
+  })
+  assert(
+    !providerShadowWithLocalFlags.cardSelectable && !providerShadowWithLocalFlags.reviewEligible,
+    'Provider-shadow source must not bypass truth gates after local unpark.',
+  )
+
+  const debugOnlyWithLocalFlags = buildTruth({
+    sourceKind: 'debug_only',
+    providerSelectionAllowed: true,
+    providerMergedIntoVisiblePool: true,
+  })
+  assert(
+    !debugOnlyWithLocalFlags.cardSelectable && !debugOnlyWithLocalFlags.reviewEligible,
+    'Debug-only source must not bypass truth gates after local unpark.',
+  )
 
   const missingAuthority = buildTruth({ finalRoute: null })
   assert(!missingAuthority.buildTruthReady, 'Missing route authority must block truth readiness.')
@@ -365,6 +390,13 @@ function main(): void {
     'Anchor wrong-role reason must be explicit.',
   )
 
+  const missingAnchor = buildTruth({ missingAnchor: true })
+  assert(!missingAnchor.buildTruthReady, 'Missing anchor must block readiness.')
+  assert(
+    missingAnchor.rejectionReasons.includes('build_anchor_truth_missing'),
+    'Missing anchor reason must be explicit.',
+  )
+
   const closedHours = buildTruth({ hoursStatus: 'closed_for_plan_window' })
   assert(!closedHours.buildTruthReady, 'Closed hours must block readiness.')
   assert(
@@ -374,20 +406,24 @@ function main(): void {
 
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   assert(
-    sandboxSource.includes('const buildProviderSelectionAllowed = false'),
-    'Build provider selection flag must remain parked.',
+    sandboxSource.includes('const buildProviderSelectionAllowed = true'),
+    'Build provider selection flag must be locally unparked.',
   )
   assert(
-    sandboxSource.includes('const buildProviderMergedIntoVisiblePool = false'),
-    'Build provider visible merge flag must remain parked.',
+    sandboxSource.includes('const buildProviderMergedIntoVisiblePool = true'),
+    'Build provider visible merge flag must be locally unparked.',
   )
   assert(
     sandboxSource.includes('buildSelectedCardTruthReady'),
     'Build Review gate must consume Build truth readiness.',
   )
+  assert(
+    sandboxSource.includes('buildPreGenerationSelectionReady'),
+    'Build local generation gate must consume static candidate admission readiness.',
+  )
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
 
-  process.stdout.write('build unpark readiness: passed\n')
+  process.stdout.write('build local unpark: passed\n')
   process.stdout.write(
     `${JSON.stringify(
       {
@@ -395,11 +431,13 @@ function main(): void {
         parkedBuildTruthReady: parkedStatic.buildTruthReady,
         parkedSelectableWhenUnparked: parkedStatic.buildSelectableWhenUnparked,
         parkedReviewEligible: parkedStatic.reviewEligible,
-        futureUnparkedReviewEligible: futureUnparkedStatic.reviewEligible,
+        localUnparkedReviewEligible: localUnparkedStatic.reviewEligible,
+        localUnparkedCardSelectable: localUnparkedStatic.cardSelectable,
         providerShadowExcluded: providerShadow.providerShadowExcluded,
+        missingAnchorReady: missingAnchor.buildTruthReady,
         scatteredWarnings: scattered.warningReasons,
-        buildProviderSelectionAllowed: false,
-        buildProviderMergedIntoVisiblePool: false,
+        buildProviderSelectionAllowed: true,
+        buildProviderMergedIntoVisiblePool: true,
       },
       null,
       2,

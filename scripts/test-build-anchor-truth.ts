@@ -348,8 +348,8 @@ function main(): void {
 
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   assert(
-    sandboxSource.includes('const buildProviderSelectionAllowed = false'),
-    'Build provider selection must remain parked.',
+    sandboxSource.includes('const buildProviderSelectionAllowed = true'),
+    'Build provider selection must be locally unparked.',
   )
 
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
@@ -363,7 +363,7 @@ function main(): void {
         missingRoleStatus: defaultedArtifactValidation.status,
         generatedStartAnchorRole: generatedStart.anchorRole,
         generatedWindDownAnchorRole: generatedWindDown.anchorRole,
-        buildProviderSelectionAllowed: false,
+        buildProviderSelectionAllowed: true,
       },
       null,
       2,
