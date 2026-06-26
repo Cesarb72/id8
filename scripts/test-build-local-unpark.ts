@@ -111,6 +111,7 @@ function main(): void {
   const staticSelection = evaluateBuildStaticPreGenerationCardSelection({
     artifact: paperPlane,
     candidateAdmission: admission,
+    selectedAnchorRequiredRole: 'highlight',
     sourceKind: 'static',
     buildProviderSelectionAllowed: true,
     buildProviderMergedIntoVisiblePool: true,
@@ -124,6 +125,7 @@ function main(): void {
     approvedPayload: null,
     candidateAdmission: admission,
     anchorTruthContract: anchorContract('highlight'),
+    selectedAnchorRequiredRole: 'highlight',
     sourceKind: 'static',
     buildProviderSelectionAllowed: true,
     buildProviderMergedIntoVisiblePool: true,
@@ -142,6 +144,7 @@ function main(): void {
   const providerShadowSelection = evaluateBuildStaticPreGenerationCardSelection({
     artifact: paperPlane,
     candidateAdmission: admission,
+    selectedAnchorRequiredRole: 'highlight',
     sourceKind: 'provider_shadow',
     buildProviderSelectionAllowed: true,
     buildProviderMergedIntoVisiblePool: true,
@@ -155,6 +158,7 @@ function main(): void {
   const debugOnlySelection = evaluateBuildStaticPreGenerationCardSelection({
     artifact: paperPlane,
     candidateAdmission: admission,
+    selectedAnchorRequiredRole: 'highlight',
     sourceKind: 'debug_only',
     buildProviderSelectionAllowed: true,
     buildProviderMergedIntoVisiblePool: true,
@@ -174,6 +178,7 @@ function main(): void {
   const wrongRoleSelection = evaluateBuildStaticPreGenerationCardSelection({
     artifact: wrongRole,
     candidateAdmission: wrongRoleAdmission,
+    selectedAnchorRequiredRole: 'highlight',
     sourceKind: 'static',
     buildProviderSelectionAllowed: true,
     buildProviderMergedIntoVisiblePool: true,
@@ -184,10 +189,36 @@ function main(): void {
     'Wrong-role admission rejection must be explicit.',
   )
   assert(!wrongRoleSelection.selectable, 'Wrong-role Paper Plane candidate must remain disabled.')
+  const selfDeclaredWrongRoleAdmission = evaluateBuildCandidateAdmission({
+    mode: 'build',
+    anchorContract: anchorContract('windDown'),
+    contractEntryArtifact: wrongRole,
+    buildParked: {
+      providerSelectionAllowed: true,
+      providerMergedIntoVisiblePool: true,
+    },
+  })
+  const selfDeclaredWrongRoleSelection = evaluateBuildStaticPreGenerationCardSelection({
+    artifact: wrongRole,
+    candidateAdmission: selfDeclaredWrongRoleAdmission,
+    selectedAnchorRequiredRole: 'highlight',
+    sourceKind: 'static',
+    buildProviderSelectionAllowed: true,
+    buildProviderMergedIntoVisiblePool: true,
+  })
+  assert(
+    !selfDeclaredWrongRoleSelection.selectable,
+    'Candidate self-declared role must not override the selected highlight anchor contract.',
+  )
+  assert(
+    selfDeclaredWrongRoleSelection.rejectionReasons.includes('build_static_anchor_role_mismatch'),
+    'Selected-anchor role mismatch must be explicit.',
+  )
 
   const parkedSelection = evaluateBuildStaticPreGenerationCardSelection({
     artifact: paperPlane,
     candidateAdmission: admission,
+    selectedAnchorRequiredRole: 'highlight',
     sourceKind: 'static',
     buildProviderSelectionAllowed: false,
     buildProviderMergedIntoVisiblePool: true,
@@ -206,6 +237,10 @@ function main(): void {
   assert(
     sandboxSource.includes('effectiveCardSelectable'),
     'Route card disabled state must consume effective Build static selectability.',
+  )
+  assert(
+    sandboxSource.includes('void generatePlan(optionDirection.id, option.id)'),
+    'Build static card selection must invoke the canonical generation path with the selected artifact.',
   )
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
 

@@ -6,6 +6,7 @@ import {
 import {
   buildAnchorTruthContract,
   validateRuntimeRouteBuildAnchor,
+  type BuildAnchorCanonicalRole,
   type BuildAnchorTruthContract,
 } from '../../domain/artifacts/buildAnchorTruthContract'
 import type { RuntimeRouteArtifact } from '../../domain/artifacts/runtimeRouteArtifact'
@@ -51,6 +52,7 @@ export type BuildStaticPreGenerationSelectionRejectionReason =
   | 'build_static_admission_missing'
   | 'build_static_admission_failed'
   | 'build_static_anchor_truth_not_passed'
+  | 'build_static_anchor_role_mismatch'
   | 'build_static_core_route_roles_missing'
   | 'build_static_candidate_not_unparked'
 
@@ -89,6 +91,7 @@ export interface BuildCardTruthInput {
   approvedPayload?: BuildApprovedPayloadReference | null
   candidateAdmission?: BuildCandidateAdmissionResult | null
   anchorTruthContract?: BuildAnchorTruthContract | null
+  selectedAnchorRequiredRole?: BuildAnchorCanonicalRole | null
   selectedBuildAnchor?: BuildAnchorSelection | null
   sourceKind?: BuildApprovedRouteSourceKind
   buildProviderSelectionAllowed: boolean
@@ -141,6 +144,7 @@ export interface BuildCardTruthResult {
 export interface BuildStaticPreGenerationCardSelectionInput {
   artifact: ContractEntryArtifact | null | undefined
   candidateAdmission?: BuildCandidateAdmissionResult | null
+  selectedAnchorRequiredRole?: BuildAnchorCanonicalRole | null
   sourceKind?: BuildApprovedRouteSourceKind
   buildProviderSelectionAllowed: boolean
   buildProviderMergedIntoVisiblePool: boolean
@@ -154,6 +158,8 @@ export interface BuildStaticPreGenerationCardSelectionResult {
     artifactId: string | null
     admitted: boolean | null
     truthGateStatus: string | null
+    selectedAnchorRequiredRole: BuildAnchorCanonicalRole | null
+    artifactAnchorRole: BuildAnchorCanonicalRole | null
     missingCoreRoles: string[]
     coreRouteIds: Partial<Record<string, string>>
     buildProviderSelectionAllowed: boolean
@@ -345,7 +351,8 @@ function resolveBuildAnchorTruthContract(
   if (input.anchorTruthContract) {
     return input.anchorTruthContract
   }
-  if (!input.selectedBuildAnchor?.venueId || !input.artifact?.anchorRole) {
+  const requiredRole = input.selectedAnchorRequiredRole ?? input.artifact?.anchorRole ?? null
+  if (!input.selectedBuildAnchor?.venueId || !requiredRole) {
     return null
   }
   return buildAnchorTruthContract({
@@ -356,8 +363,8 @@ function resolveBuildAnchorTruthContract(
       displayName: input.selectedBuildAnchor.name,
     },
     role: {
-      role: input.artifact.anchorRole,
-      roleResolutionSource: 'inferred',
+      role: requiredRole,
+      roleResolutionSource: input.selectedAnchorRequiredRole ? 'explicit' : 'inferred',
     },
   })
 }
@@ -548,9 +555,25 @@ export function evaluateBuildStaticPreGenerationCardSelection(
   const artifact = input.artifact ?? null
   const admission = input.candidateAdmission ?? null
   const sourceKind = input.sourceKind ?? 'static'
+  const selectedAnchorRequiredRole = input.selectedAnchorRequiredRole ?? null
+  const artifactAnchorRole = artifact?.anchorRole ?? null
 
   if (!artifact) {
     addBuildStaticSelectionReason(rejectionReasons, 'build_static_artifact_missing')
+  }
+  if (
+    selectedAnchorRequiredRole &&
+    artifactAnchorRole &&
+    artifactAnchorRole !== selectedAnchorRequiredRole
+  ) {
+    addBuildStaticSelectionReason(rejectionReasons, 'build_static_anchor_role_mismatch')
+  }
+  if (
+    selectedAnchorRequiredRole &&
+    admission?.requiredAnchorRole &&
+    admission.requiredAnchorRole !== selectedAnchorRequiredRole
+  ) {
+    addBuildStaticSelectionReason(rejectionReasons, 'build_static_anchor_role_mismatch')
   }
   if (sourceKind !== 'static') {
     addBuildStaticSelectionReason(rejectionReasons, 'build_static_source_not_approved')
@@ -580,6 +603,8 @@ export function evaluateBuildStaticPreGenerationCardSelection(
       artifactId: artifact?.id ?? null,
       admitted: admission?.admitted ?? null,
       truthGateStatus: admission?.truthGateStatus ?? null,
+      selectedAnchorRequiredRole,
+      artifactAnchorRole,
       missingCoreRoles: admission?.diagnostics.missingCoreRoles ?? [],
       coreRouteIds: admission?.diagnostics.coreRouteIds ?? {},
       buildProviderSelectionAllowed: input.buildProviderSelectionAllowed,

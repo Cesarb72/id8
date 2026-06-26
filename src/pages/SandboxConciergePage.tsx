@@ -134,6 +134,7 @@ import {
   buildAnchorTruthContract,
   validateContractEntryArtifactBuildAnchor,
   validateRuntimeRouteBuildAnchor,
+  type BuildAnchorCanonicalRole,
   type BuildAnchorRoleResolutionSource,
 } from '../domain/artifacts/buildAnchorTruthContract'
 import type {
@@ -10037,6 +10038,8 @@ export function SandboxConciergePage({
     isCurateEntryRoute || (!isPublicSurface && isChooseRoute && isCurateOrigin)
   const isBuildWrapperActive =
     isBuildEntryRoute || (!isPublicSurface && isChooseRoute && isBuildOrigin)
+  const buildSelectedAnchorRequiredRole: BuildAnchorCanonicalRole | null =
+    isBuildWrapperActive && selectedBuildAnchor?.venueId ? 'highlight' : null
   const isModeWrapperActive = isCurateWrapperActive || isSurpriseWrapperActive || isBuildWrapperActive
   const publicCardPreviewMode = useMemo<ConciergeCardMode>(
     () => selectCardEchoPreviewMode({ isBuildWrapperActive, isCurateWrapperActive }),
@@ -14347,10 +14350,15 @@ export function SandboxConciergePage({
         const buildPlannerAnchor = deriveBuildPlannerAnchor({
           isBuildWrapperActive,
           selectedBuildAnchor,
-          activeCandidateAnchorRole: activeCandidateRouteArtifact?.anchorRole,
+          activeCandidateAnchorRole:
+            buildSelectedAnchorRequiredRole ?? activeCandidateRouteArtifact?.anchorRole,
         })
         const buildAnchorRoleResolutionSource: BuildAnchorRoleResolutionSource =
-          activeCandidateRouteArtifact?.anchorRole ? 'inferred' : 'defaulted_highlight'
+          buildSelectedAnchorRequiredRole
+            ? 'explicit'
+            : activeCandidateRouteArtifact?.anchorRole
+              ? 'inferred'
+              : 'defaulted_highlight'
         const buildAnchorTruthContractForGeneration =
           isBuildWrapperActive && selectedBuildAnchor?.venueId && buildPlannerAnchor
             ? buildAnchorTruthContract({
@@ -14784,6 +14792,7 @@ export function SandboxConciergePage({
       plannerDistrictTasteBridgeArtifacts,
       persona,
       primaryVibe,
+      buildSelectedAnchorRequiredRole,
       selectedBuildAnchor,
       selectedBuildAnchorVenue,
       selectedStep2CandidateArtifactId,
@@ -15052,16 +15061,64 @@ export function SandboxConciergePage({
       }
       if (optionDirection) {
         const artifactChanged = selectedStep2CandidateArtifactId !== option.id
+        if (isBuildWrapperActive) {
+          setStep2RerollTrace({
+            clickId: `build-static-selection-${Date.now().toString(36)}`,
+            clickedAt: new Date().toISOString(),
+            currentSelectedDirectionId_before: selectedDirectionId ?? null,
+            currentSelectedArtifactId_before: selectedStep2CandidateArtifactId ?? null,
+            nextDirectionId_selected: optionDirection.id,
+            nextArtifactId_selected: option.id,
+            handleTryAnotherDirection_entered: false,
+            handleSelectDirection_called: true,
+            handleSelectDirection_args: {
+              directionId: optionDirection.id,
+              forceReset: artifactChanged,
+            },
+            selectedDirectionId_afterSelect: optionDirection.id,
+            selectedStep2CandidateArtifactId_afterSelect: option.id,
+            generatePlan_called: false,
+            generatePlan_directionId: null,
+            generatePlan_artifactIdOverride: null,
+            generatePlan_success: null,
+            generatePlan_errorRaw: null,
+            selectedCandidateRouteArtifact_id_after: option.id,
+            selectedRouteArtifact_source_after: null,
+            selectedRouteArtifact_directionId_after: optionDirection.id,
+            selectedRouteArtifact_candidateArtifactId_after: option.id,
+            selectedRouteSummaryArtifact_routeTitle_after: option.routeTitle,
+            selectedRouteSummaryArtifact_flavorLine_after: option.flavorLine,
+            previewRenderSource: null,
+            previewRenderedDirectionId: optionDirection.id,
+            previewRenderedArtifactId: option.id,
+            whyThisWorksSourceSummary: null,
+            reconciliationEffectRan: false,
+            committedArtifactPreferred: false,
+            directionFallbackUsed: false,
+            staleCommittedMatchUsed: false,
+            anyOverrideReason: 'build static card selected for canonical generation',
+          })
+        }
         handleSelectDirection(optionDirection.id, artifactChanged)
         setSelectedStep2CandidateArtifactId(option.id)
+        if (isBuildWrapperActive && buildAnchorReady && selectedBuildAnchor?.venueId) {
+          const buildValidationAttemptKey = `${optionDirection.id}::${option.id}`
+          buildValidationAttemptRef.current = buildValidationAttemptKey
+          void generatePlan(optionDirection.id, option.id)
+        }
         return
       }
       setError('Direction is unavailable for this route option. Choose another option.')
     },
     [
       activeDistrictPocketId,
+      buildAnchorReady,
+      generatePlan,
       handleSelectDirection,
+      isBuildWrapperActive,
       resolveDirectionForCandidateArtifact,
+      selectedBuildAnchor?.venueId,
+      selectedDirectionId,
       selectedStep2CandidateArtifactId,
     ],
   )
@@ -17398,8 +17455,8 @@ export function SandboxConciergePage({
           longitude: selectedBuildAnchorVenue?.source.longitude,
         },
         role: {
-          role: artifact.anchorRole,
-          roleResolutionSource: artifact.anchorRole ? 'inferred' : 'missing',
+          role: buildSelectedAnchorRequiredRole,
+          roleResolutionSource: buildSelectedAnchorRequiredRole ? 'explicit' : 'missing',
         },
       })
       const admission = evaluateBuildCandidateAdmission({
@@ -17428,6 +17485,7 @@ export function SandboxConciergePage({
     buildAnchorMatchedCandidateArtifacts,
     buildProviderMergedIntoVisiblePool,
     buildProviderSelectionAllowed,
+    buildSelectedAnchorRequiredRole,
     isBuildWrapperActive,
     selectedBuildAnchor,
     selectedBuildAnchorVenue,
@@ -17487,6 +17545,7 @@ export function SandboxConciergePage({
         evaluateBuildStaticPreGenerationCardSelection({
           artifact,
           candidateAdmission: admission?.admission,
+          selectedAnchorRequiredRole: buildSelectedAnchorRequiredRole,
           sourceKind: admission?.source ?? 'static',
           buildProviderSelectionAllowed,
           buildProviderMergedIntoVisiblePool,
@@ -17499,6 +17558,7 @@ export function SandboxConciergePage({
     buildCandidateAdmissionDiagnostics,
     buildProviderMergedIntoVisiblePool,
     buildProviderSelectionAllowed,
+    buildSelectedAnchorRequiredRole,
     isBuildWrapperActive,
     selectedBuildAnchor?.venueId,
   ])
@@ -17518,8 +17578,8 @@ export function SandboxConciergePage({
         longitude: selectedBuildAnchorVenue?.source.longitude,
       },
       role: {
-        role: selectedCandidateRouteArtifact.anchorRole,
-        roleResolutionSource: selectedCandidateRouteArtifact.anchorRole ? 'inferred' : 'missing',
+        role: buildSelectedAnchorRequiredRole,
+        roleResolutionSource: buildSelectedAnchorRequiredRole ? 'explicit' : 'missing',
       },
     })
     const candidateAdmission = evaluateBuildCandidateAdmission({
@@ -17550,6 +17610,7 @@ export function SandboxConciergePage({
           : null,
       candidateAdmission,
       anchorTruthContract: anchorContract,
+      selectedAnchorRequiredRole: buildSelectedAnchorRequiredRole,
       sourceKind: 'static',
       buildProviderSelectionAllowed,
       buildProviderMergedIntoVisiblePool,
@@ -17560,6 +17621,7 @@ export function SandboxConciergePage({
     activeRole,
     buildProviderMergedIntoVisiblePool,
     buildProviderSelectionAllowed,
+    buildSelectedAnchorRequiredRole,
     canonicalRouteArtifact,
     city,
     districtLocationQuery,
@@ -20259,6 +20321,18 @@ export function SandboxConciergePage({
       buildCandidateAdmissionAdmittedCount,
       buildCandidateAdmissionRejectedSummaries,
       buildProviderShadowAdmissionSummary,
+      buildSelectedAnchorRequiredRole,
+      buildSelectedArtifactId: selectedCandidateRouteArtifact?.id ?? null,
+      buildSelectedDirectionId: selectedDirectionId ?? null,
+      buildGeneratePlanCalled: Boolean(step2RerollTrace?.generatePlan_called),
+      buildGeneratePlanCompleted: step2RerollTrace?.generatePlan_success === true,
+      buildPlanPresent: Boolean(plan),
+      buildRenderOnlyFinalRoutePresent: Boolean(renderOnlyFinalRoute),
+      buildCanonicalRouteArtifactPresent: Boolean(canonicalRouteArtifact),
+      buildRouteAuthorityLockReady: Boolean(
+        routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate,
+      ),
+      buildRouteAuthorityValidationStatus: routeAuthoritySnapshot.validationStatus,
       buildApprovedPayloadTruthAllowed,
       buildReviewTruthEligible,
       buildCardSelectable,
@@ -20421,6 +20495,7 @@ export function SandboxConciergePage({
     buildProviderVerifiedOpportunityCount,
     buildProviderVerifiedOpportunityId,
     buildReviewTruthEligible,
+    buildSelectedAnchorRequiredRole,
     buildSelectableWhenUnparked,
     buildStaticCandidateArtifactCount,
     buildStaticSourceOpportunityCount,
@@ -20449,6 +20524,8 @@ export function SandboxConciergePage({
     renderOnlyFinalRoute,
     generationDriftReason,
     plan,
+    routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate,
+    routeAuthoritySnapshot.validationStatus,
     resolvedSelectedDirectionContext,
     selectedStarterPack,
     selectedCandidateArtifactResolution,
