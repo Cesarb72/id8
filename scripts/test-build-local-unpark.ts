@@ -6,8 +6,12 @@ import {
 import { evaluateBuildCandidateAdmission } from '../src/app/services/buildCandidateAdmission/buildCandidateAdmissionService.ts'
 import { buildAnchorTruthContract } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import type { BuildAnchorCanonicalRole } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
-import type { ContractEntryArtifact } from '../src/domain/artifacts/contractEntryArtifact.ts'
+import {
+  buildContractEntryArtifactLineage,
+  type ContractEntryArtifact,
+} from '../src/domain/artifacts/contractEntryArtifact.ts'
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
+import { runGeneratePlan, type GeneratePlanResult } from '../src/domain/runGeneratePlan.ts'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
 
 const originalFetch = globalThis.fetch
@@ -245,6 +249,47 @@ function generatedArtifact(params: {
   })
 }
 
+function runtimeRouteFromGeneratePlan(result: GeneratePlanResult): RuntimeRouteArtifact {
+  const stops = result.itinerary.stops.map((stop, index): RuntimeRouteStop => ({
+    id: `${stop.role}:${stop.venueId}`,
+    sourceStopId: `${stop.role}:${stop.venueId}`,
+    displayName: stop.venueName,
+    latitude: stop.latitude,
+    longitude: stop.longitude,
+    address: stop.formattedAddress,
+    role: stop.role,
+    stopIndex: index,
+    venueId: stop.venueId,
+    title: stop.title,
+    subtitle: stop.subtitle,
+    neighborhood: stop.neighborhood,
+    driveMinutes: stop.driveMinutes,
+    imageUrl: stop.imageUrl,
+  }))
+  return {
+    routeId: result.itinerary.id,
+    selectedDirectionId:
+      result.intentProfile.selectedDirectionContext?.directionId ?? 'downtown-paper-plane',
+    location: result.intentProfile.city,
+    persona: result.intentProfile.persona ?? 'romantic',
+    vibe: result.intentProfile.primaryAnchor,
+    stops,
+    activeStopIndex: 0,
+    routeHeadline: result.itinerary.story.headline,
+    routeSummary: result.itinerary.storySpine?.routeSummary ?? result.itinerary.shareSummary,
+    mapMarkers: stops.map((stop) => ({
+      id: stop.id,
+      displayName: stop.displayName,
+      role: stop.role,
+      stopIndex: stop.stopIndex,
+      latitude: stop.latitude,
+      longitude: stop.longitude,
+    })),
+    liveNotices: [],
+    updatedAt: 1,
+  }
+}
+
 function anchorContract(role: BuildAnchorCanonicalRole = 'highlight') {
   return buildAnchorTruthContract({
     identity: {
@@ -274,7 +319,7 @@ function admittedStaticCandidate(candidate: ContractEntryArtifact = artifact()) 
   })
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const paperPlane = artifact()
   const admission = admittedStaticCandidate(paperPlane)
   assert(admission.admitted, 'Static Paper Plane admission must pass.')
@@ -316,6 +361,117 @@ function main(): void {
     preGenerationTruth.rejectionReasons.includes('build_route_authority_unavailable'),
     'Review must still require route-authority lock-ready truth.',
   )
+
+  const actualGenerated = await runGeneratePlan(
+    {
+      mode: 'build',
+      planningMode: 'user-led',
+      persona: 'romantic',
+      primaryVibe: 'lively',
+      city: 'San Jose',
+      district: 'Downtown',
+      distanceMode: 'nearby',
+      selectedDirectionContext: {
+        directionId: 'downtown-paper-plane',
+        pocketId: 'downtown',
+        label: 'Downtown Paper Plane',
+        identity: 'social',
+      },
+      discoveryPreferences: [
+        { role: 'start', venueId: routeIds.start },
+        { role: 'highlight', venueId: routeIds.highlight },
+        { role: 'windDown', venueId: routeIds.windDown },
+      ],
+      anchor: {
+        venueId: routeIds.highlight,
+        role: 'highlight',
+      },
+    },
+    {
+      sourceMode: 'curated',
+      sourceModeOverrideApplied: true,
+      selectedArtifactLineage: buildContractEntryArtifactLineage(paperPlane),
+      debugMode: false,
+    },
+  )
+  const actualGeneratedStops = actualGenerated.itinerary.stops.filter(
+    (stop) => stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown',
+  )
+  assert(
+    actualGeneratedStops.map((stop) => stop.venueId).join(' -> ') ===
+      `${routeIds.start} -> ${routeIds.highlight} -> ${routeIds.windDown}`,
+    `Build generation must preserve selected static candidate role ids exactly: ${actualGeneratedStops
+      .map((stop) => `${stop.role}:${stop.venueId}`)
+      .join(', ')}`,
+  )
+  assert(
+    actualGenerated.contractEntryArtifact.storySpine.start === 'Petiscos' &&
+      actualGenerated.contractEntryArtifact.storySpine.highlight === 'Paper Plane' &&
+      actualGenerated.contractEntryArtifact.storySpine.windDown === 'Hedley Club Lounge',
+    `Generated ContractEntryArtifact must preserve selected Build story spine: ${JSON.stringify(
+      actualGenerated.contractEntryArtifact.storySpine,
+    )}`,
+  )
+  assert(
+    actualGenerated.trace.faultIsolationNotes.some((note) =>
+      note.includes('Build selected candidate contract preserved'),
+    ),
+    'Generation trace must report Build selected candidate contract preservation.',
+  )
+  const actualGeneratedRoute = runtimeRouteFromGeneratePlan(actualGenerated)
+  const actualGeneratedAdmission = evaluateBuildCandidateAdmission({
+    mode: 'build',
+    anchorContract: anchorContract('highlight'),
+    contractEntryArtifact: actualGenerated.contractEntryArtifact,
+    runtimeRouteArtifact: actualGeneratedRoute,
+    buildParked: {
+      providerSelectionAllowed: true,
+      providerMergedIntoVisiblePool: true,
+    },
+  })
+  const actualGeneratedTruth = buildBuildCardTruthModel({
+    artifact: actualGenerated.contractEntryArtifact,
+    selectedCandidateArtifact: paperPlane,
+    selectedArtifactId: actualGenerated.contractEntryArtifact.id,
+    selectedDirectionId: actualGenerated.contractEntryArtifact.selection.directionId,
+    approvedPayload: {
+      artifactId: actualGenerated.contractEntryArtifact.id,
+      selectedDirectionId: actualGeneratedRoute.selectedDirectionId,
+      finalRoute: actualGeneratedRoute,
+      selectedClusterConfirmation: 'Paper Plane generated route preserves selected static candidate.',
+      itinerary: actualGenerated.itinerary,
+      sourceKind: 'static',
+    },
+    candidateAdmission: actualGeneratedAdmission,
+    anchorTruthContract: anchorContract('highlight'),
+    selectedAnchorRequiredRole: 'highlight',
+    sourceKind: 'static',
+    buildProviderSelectionAllowed: true,
+    buildProviderMergedIntoVisiblePool: true,
+    activeRole: 'start',
+    fallbackCity: 'San Jose',
+  })
+  assert(actualGeneratedAdmission.admitted, 'Actual generated Build route must pass anchor admission.')
+  assert(
+    actualGeneratedTruth.diagnostics.routeAuthorityBuildReasons.includes(
+      'build_candidate_contract_preserved',
+    ),
+    'Actual generated Build route must report build_candidate_contract_preserved.',
+  )
+  assert(
+    actualGeneratedTruth.diagnostics.routeAuthorityBuildReasons.includes(
+      'required_anchor_role_survived',
+    ),
+    'Actual generated Build route must report required_anchor_role_survived.',
+  )
+  assert(
+    actualGeneratedTruth.diagnostics.routeAuthorityBuildReasons.includes(
+      'route_authority_lock_ready',
+    ),
+    'Actual generated Build route must report route_authority_lock_ready.',
+  )
+  assert(actualGeneratedTruth.routeAuthorityLockReady, 'Actual generated Build route must be lock-ready.')
+  assert(actualGeneratedTruth.reviewEligible, 'Actual generated Build route must become Review-eligible.')
 
   const generatedCanonicalArtifact = generatedArtifact({ preserved: true })
   const generatedRoute = generatedRuntimeRoute({ preserved: true })
@@ -525,6 +681,11 @@ function main(): void {
         staticPaperPlaneSelectable: staticSelection.selectable,
         staticPaperPlaneHighlightId: admission.diagnostics.coreRouteIds.highlight,
         preGenerationReviewEligible: preGenerationTruth.reviewEligible,
+        actualGeneratedRouteAuthorityLockReady: actualGeneratedTruth.routeAuthorityLockReady,
+        actualGeneratedReviewEligible: actualGeneratedTruth.reviewEligible,
+        actualGeneratedRouteIds: actualGeneratedRoute.stops.map((stop) => stop.venueId),
+        actualGeneratedRouteAuthorityReasons:
+          actualGeneratedTruth.diagnostics.routeAuthorityBuildReasons,
         generatedRouteAuthorityLockReady: generatedTruth.routeAuthorityLockReady,
         generatedReviewEligible: generatedTruth.reviewEligible,
         generatedRouteIds: generatedRoute.stops.map((stop) => stop.venueId),
@@ -542,7 +703,7 @@ function main(): void {
 }
 
 try {
-  main()
+  await main()
 } catch (error: unknown) {
   const message = error instanceof Error ? error.stack ?? error.message : String(error)
   process.stderr.write(`${message}\n`)

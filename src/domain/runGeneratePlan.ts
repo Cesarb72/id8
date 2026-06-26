@@ -559,6 +559,67 @@ function buildCanonicalCurateHardCommitCandidate(params: {
   }
 }
 
+function findSelectedContractScoredVenue(params: {
+  scoredVenues: ScoredVenue[]
+  venueId?: string
+}): ScoredVenue | undefined {
+  const normalizedVenueId = params.venueId?.trim()
+  if (!normalizedVenueId) {
+    return undefined
+  }
+  return params.scoredVenues.find((entry) => entry.venue.id === normalizedVenueId)
+}
+
+function buildCanonicalBuildSelectedContractCandidate(params: {
+  scoredVenues: ScoredVenue[]
+  rolePools: RolePools
+  intent: IntentProfile
+  crewPolicy: ReturnType<typeof getCrewPolicy>
+  lens: ExperienceLens
+  preferences: NonNullable<IntentProfile['discoveryPreferences']>
+}): ArcCandidate | null {
+  const startPreference = params.preferences.find((entry) => entry.role === 'start')
+  const highlightPreference = params.preferences.find((entry) => entry.role === 'highlight')
+  const windDownPreference = params.preferences.find((entry) => entry.role === 'windDown')
+  const warmup = findSelectedContractScoredVenue({
+    scoredVenues: params.scoredVenues,
+    venueId: startPreference?.venueId,
+  })
+  const peak = findSelectedContractScoredVenue({
+    scoredVenues: params.scoredVenues,
+    venueId: highlightPreference?.venueId,
+  })
+  const cooldown = findSelectedContractScoredVenue({
+    scoredVenues: params.scoredVenues,
+    venueId: windDownPreference?.venueId,
+  })
+  if (!warmup || !peak || !cooldown) {
+    return null
+  }
+
+  const stops: ArcStop[] = [
+    { role: 'warmup', scoredVenue: warmup },
+    { role: 'peak', scoredVenue: peak },
+    { role: 'cooldown', scoredVenue: cooldown },
+  ]
+  const score = scoreArcAssembly(
+    stops,
+    params.intent,
+    params.crewPolicy,
+    params.lens,
+    params.rolePools,
+  )
+  return {
+    id: createId('arc_build_selected_contract'),
+    stops,
+    totalScore: score.totalScore,
+    scoreBreakdown: score.scoreBreakdown,
+    pacing: score.pacing,
+    spatial: score.spatial,
+    hasWildcard: false,
+  }
+}
+
 function candidateMatchesCurateCommitPreferences(
   candidate: ArcCandidate,
   discoveryPreferences: NonNullable<IntentProfile['discoveryPreferences']>,
@@ -2110,6 +2171,15 @@ async function runGeneratePlanInternal(
             preference.role === 'windDown',
         )
       : []
+  const buildSelectedContractPreferences =
+    selectedArtifactLineage && planningIntent.mode === 'build' && planningIntent.discoveryPreferences
+      ? planningIntent.discoveryPreferences.filter(
+          (preference): preference is NonNullable<IntentProfile['discoveryPreferences']>[number] =>
+            preference.role === 'start' ||
+            preference.role === 'highlight' ||
+            preference.role === 'windDown',
+        )
+      : []
   const curateCommitSemantics =
     planningIntent.mode === 'curate'
       ? options.curateCommitSemantics ??
@@ -2151,8 +2221,56 @@ async function runGeneratePlanInternal(
     highlight: curateCommitPreferences.find((preference) => preference.role === 'highlight'),
     windDown: curateCommitPreferences.find((preference) => preference.role === 'windDown'),
   }
+  const selectedBuildContractTarget = {
+    start: buildSelectedContractPreferences.find((preference) => preference.role === 'start'),
+    highlight: buildSelectedContractPreferences.find((preference) => preference.role === 'highlight'),
+    windDown: buildSelectedContractPreferences.find((preference) => preference.role === 'windDown'),
+  }
+  const buildSelectedCandidatePreservationRequired = Boolean(
+    selectedArtifactLineage &&
+      planningIntent.mode === 'build' &&
+      selectedBuildContractTarget.start?.venueId &&
+      selectedBuildContractTarget.highlight?.venueId &&
+      selectedBuildContractTarget.windDown?.venueId,
+  )
+  const canonicalBuildSelectedContractCandidate =
+    buildSelectedCandidatePreservationRequired
+      ? buildCanonicalBuildSelectedContractCandidate({
+          scoredVenues,
+          rolePools,
+          intent: planningIntent,
+          crewPolicy,
+          lens,
+          preferences: buildSelectedContractPreferences,
+        })
+      : null
+  const rankedCandidatesWithCanonicalBuildPreservation =
+    canonicalBuildSelectedContractCandidate &&
+    !rankedCandidates.some((candidate) =>
+      candidateMatchesCurateCommitPreferences(candidate, buildSelectedContractPreferences),
+    )
+      ? [canonicalBuildSelectedContractCandidate, ...rankedCandidates]
+      : rankedCandidates
+  const buildSelectedCandidatePreservationCandidates =
+    buildSelectedCandidatePreservationRequired
+      ? rankedCandidatesWithCanonicalBuildPreservation.filter((candidate) =>
+          candidateMatchesCurateCommitPreferences(candidate, buildSelectedContractPreferences),
+        )
+      : []
+  if (
+    buildSelectedCandidatePreservationRequired &&
+    buildSelectedCandidatePreservationCandidates.length === 0
+  ) {
+    throw new Error(
+      'Selected Build candidate contract could not be preserved exactly during generation.',
+    )
+  }
   let selectedArc =
-    (curateHardCommitRequired ? curateHardCommitCandidates[0] : rankedCandidates[0]) ??
+    (buildSelectedCandidatePreservationRequired
+      ? buildSelectedCandidatePreservationCandidates[0]
+      : curateHardCommitRequired
+        ? curateHardCommitCandidates[0]
+        : rankedCandidates[0]) ??
     selectFallbackArc({
       triggerStage: 'initial_selection',
       primaryPathFailureReason:
@@ -2475,6 +2593,11 @@ async function runGeneratePlanInternal(
   ) {
     faultIsolationNotes.push(
       'Curate seed-guided generation used scenario-derived role preferences as soft hints only; exact artifact preservation was not required at card generation time.',
+    )
+  }
+  if (buildSelectedCandidatePreservationRequired) {
+    faultIsolationNotes.push(
+      `Build selected candidate contract preserved selected artifact route with ${buildSelectedContractPreferences.length} exact role matches.`,
     )
   }
   if (fallbackTrace) {
