@@ -668,8 +668,21 @@ async function main(): Promise<void> {
     'Route card disabled state must consume effective Build static selectability.',
   )
   assert(
-    sandboxSource.includes('void generatePlan(optionDirection.id, option.id)'),
-    'Build static card selection must invoke the canonical generation path with the selected artifact.',
+    !sandboxSource.includes('void generatePlan(optionDirection.id, option.id)'),
+    'Build static card click must remain selection-only and must not directly generate before state commits.',
+  )
+  assert(
+    sandboxSource.includes('void generatePlan(selectedDirectionId, selectedCandidateRouteArtifact.id)'),
+    'Build static card selection must generate from the post-selection effect after state commits.',
+  )
+  assert(
+    sandboxSource.includes('buildValidationCompletedAttemptRef') &&
+      sandboxSource.includes('buildValidationRejectedAttemptRef'),
+    'Build static generation effect must track completed and rejected attempts separately.',
+  )
+  assert(
+    sandboxSource.includes('const buildAuthorityFinalRoute = isBuildWrapperActive ? routeAuthorityFinalRoute : null'),
+    'Build committed display authority must come from routeAuthority lock-ready finalRoute.',
   )
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
 

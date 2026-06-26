@@ -10417,6 +10417,8 @@ export function SandboxConciergePage({
   const routeVersionRef = useRef(routeVersion)
   const surpriseAutoGenerateAttemptRef = useRef<string | null>(null)
   const buildValidationAttemptRef = useRef<string | null>(null)
+  const buildValidationCompletedAttemptRef = useRef<string | null>(null)
+  const buildValidationRejectedAttemptRef = useRef<string | null>(null)
   const curatePreviewCommitabilityAttemptRef = useRef<Record<string, string>>({})
   const curateQualificationInFlightRef = useRef<Record<string, true>>({})
   const curateCommittedRouteFallbackAttemptRef = useRef<string | null>(null)
@@ -14878,6 +14880,8 @@ export function SandboxConciergePage({
     writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
     writeSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY, '0')
     buildValidationAttemptRef.current = null
+    buildValidationCompletedAttemptRef.current = null
+    buildValidationRejectedAttemptRef.current = null
     autoDirectionSyncAttemptRef.current = null
     surpriseAutoGenerateAttemptRef.current = null
     setSelectedDirectionId(null)
@@ -15035,6 +15039,8 @@ export function SandboxConciergePage({
         autoDirectionSyncAttemptRef.current = null
         surpriseAutoGenerateAttemptRef.current = null
         buildValidationAttemptRef.current = null
+        buildValidationCompletedAttemptRef.current = null
+        buildValidationRejectedAttemptRef.current = null
         setSurpriseContractValidationFailedDirectionId(null)
         setSurpriseContractValidationFailedArtifactId(null)
         setLoading(false)
@@ -15103,10 +15109,10 @@ export function SandboxConciergePage({
         }
         handleSelectDirection(optionDirection.id, artifactChanged)
         setSelectedStep2CandidateArtifactId(option.id)
-        if (isBuildWrapperActive && buildAnchorReady && selectedBuildAnchor?.venueId) {
-          const buildValidationAttemptKey = `${optionDirection.id}::${option.id}`
-          buildValidationAttemptRef.current = buildValidationAttemptKey
-          void generatePlan(optionDirection.id, option.id)
+        if (isBuildWrapperActive) {
+          buildValidationAttemptRef.current = null
+          buildValidationCompletedAttemptRef.current = null
+          buildValidationRejectedAttemptRef.current = null
         }
         return
       }
@@ -15114,12 +15120,9 @@ export function SandboxConciergePage({
     },
     [
       activeDistrictPocketId,
-      buildAnchorReady,
-      generatePlan,
       handleSelectDirection,
       isBuildWrapperActive,
       resolveDirectionForCandidateArtifact,
-      selectedBuildAnchor?.venueId,
       selectedDirectionId,
       selectedStep2CandidateArtifactId,
     ],
@@ -15279,49 +15282,6 @@ export function SandboxConciergePage({
     loading,
     selectedCandidateRouteArtifact,
     surpriseAutoGenerationSettled,
-    selectedDirectionId,
-  ])
-
-  useEffect(() => {
-    if (
-      !isBuildWrapperActive ||
-      !buildAnchorReady ||
-      !selectedBuildAnchor?.venueId ||
-      hasRevealed ||
-      loading
-    ) {
-      return
-    }
-    if (!selectedDirectionId || !selectedCandidateRouteArtifact) {
-      return
-    }
-    const buildPlanSynced = Boolean(
-      plan &&
-        renderOnlyFinalRoute &&
-        plan.selectedDirectionContract.id === selectedDirectionId &&
-        renderOnlyFinalRoute.selectedDirectionId === selectedDirectionId &&
-        plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id,
-    )
-    if (buildPlanSynced) {
-      buildValidationAttemptRef.current = null
-      return
-    }
-    const buildValidationAttemptKey = `${selectedDirectionId}::${selectedCandidateRouteArtifact.id}`
-    if (buildValidationAttemptRef.current === buildValidationAttemptKey) {
-      return
-    }
-    buildValidationAttemptRef.current = buildValidationAttemptKey
-    void generatePlan(selectedDirectionId, selectedCandidateRouteArtifact.id)
-  }, [
-    renderOnlyFinalRoute,
-    generatePlan,
-    hasRevealed,
-    buildAnchorReady,
-    isBuildWrapperActive,
-    loading,
-    plan,
-    selectedBuildAnchor?.venueId,
-    selectedCandidateRouteArtifact,
     selectedDirectionId,
   ])
 
@@ -15933,6 +15893,8 @@ export function SandboxConciergePage({
   useEffect(() => {
     surpriseAutoGenerateAttemptRef.current = null
     buildValidationAttemptRef.current = null
+    buildValidationCompletedAttemptRef.current = null
+    buildValidationRejectedAttemptRef.current = null
     curatePreviewCommitabilityAttemptRef.current = {}
     curateQualificationInFlightRef.current = {}
     setHasRevealed(false)
@@ -15974,6 +15936,8 @@ export function SandboxConciergePage({
     ) {
       surpriseAutoGenerateAttemptRef.current = null
       buildValidationAttemptRef.current = null
+      buildValidationCompletedAttemptRef.current = null
+      buildValidationRejectedAttemptRef.current = null
       curatePreviewCommitabilityAttemptRef.current = {}
       curateQualificationInFlightRef.current = {}
       setSelectedDirectionId(null)
@@ -16043,6 +16007,8 @@ export function SandboxConciergePage({
       autoDirectionSyncAttemptRef.current = null
       surpriseAutoGenerateAttemptRef.current = null
       buildValidationAttemptRef.current = null
+      buildValidationCompletedAttemptRef.current = null
+      buildValidationRejectedAttemptRef.current = null
       setGenerationContractDebug(null)
       setSelectedDirectionId(nextSelectedDirectionId)
       setUserSelectedDirection(null)
@@ -16716,8 +16682,11 @@ export function SandboxConciergePage({
     const activePlan = activeCurateRefinementEntryPayload?.planSnapshot ?? plan
     const routeAuthorityFinalRoute =
       routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute ?? null
+    const buildAuthorityFinalRoute = isBuildWrapperActive ? routeAuthorityFinalRoute : null
     const activeFinalRoute = activeCurateRefinementEntryPayload
       ? routeAuthorityFinalRoute
+      : isBuildWrapperActive
+        ? buildAuthorityFinalRoute
       : renderOnlyFinalRoute
     const activeCanonicalStopByRole =
       activeCurateRefinementEntryPayload?.canonicalStopByRole ?? canonicalStopByRole
@@ -16739,6 +16708,7 @@ export function SandboxConciergePage({
   }, [
     activeCurateRefinementEntryPayload,
     canonicalStopByRole,
+    isBuildWrapperActive,
     renderOnlyFinalRoute,
     plan,
     routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute,
@@ -17681,6 +17651,80 @@ export function SandboxConciergePage({
       buildSelectedCandidateAdmissionDiagnostic?.source === 'static' &&
       buildSelectedCandidateAdmissionDiagnostic.admitted,
   )
+  useEffect(() => {
+    if (
+      !isBuildWrapperActive ||
+      !buildAnchorReady ||
+      !selectedBuildAnchor?.venueId ||
+      loading
+    ) {
+      return
+    }
+    if (!selectedDirectionId || !selectedCandidateRouteArtifact) {
+      return
+    }
+    const buildValidationAttemptKey = `${selectedDirectionId}::${selectedCandidateRouteArtifact.id}`
+    const currentGeneratedPlanForSelection = Boolean(
+      plan &&
+        renderOnlyFinalRoute &&
+        plan.selectedDirectionContract.id === selectedDirectionId &&
+        renderOnlyFinalRoute.selectedDirectionId === selectedDirectionId &&
+        plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id,
+    )
+    if (buildReviewTruthEligible && currentGeneratedPlanForSelection) {
+      buildValidationAttemptRef.current = null
+      buildValidationCompletedAttemptRef.current = null
+      buildValidationRejectedAttemptRef.current = null
+      return
+    }
+    if (
+      currentGeneratedPlanForSelection &&
+      buildValidationCompletedAttemptRef.current === buildValidationAttemptKey
+    ) {
+      buildValidationAttemptRef.current = null
+      buildValidationCompletedAttemptRef.current = null
+      buildValidationRejectedAttemptRef.current = buildValidationAttemptKey
+      return
+    }
+    if (!buildPreGenerationSelectionReady) {
+      return
+    }
+    if (
+      buildValidationAttemptRef.current === buildValidationAttemptKey ||
+      buildValidationRejectedAttemptRef.current === buildValidationAttemptKey
+    ) {
+      return
+    }
+    buildValidationAttemptRef.current = buildValidationAttemptKey
+    void generatePlan(selectedDirectionId, selectedCandidateRouteArtifact.id)
+      .then((generated) => {
+        if (generated) {
+          buildValidationCompletedAttemptRef.current = buildValidationAttemptKey
+          return
+        }
+        buildValidationRejectedAttemptRef.current = buildValidationAttemptKey
+      })
+      .catch(() => {
+        buildValidationRejectedAttemptRef.current = buildValidationAttemptKey
+      })
+      .finally(() => {
+        if (buildValidationAttemptRef.current === buildValidationAttemptKey) {
+          buildValidationAttemptRef.current = null
+        }
+      })
+  }, [
+    buildAnchorReady,
+    buildPreGenerationSelectionReady,
+    buildReviewTruthEligible,
+    generatePlan,
+    isBuildWrapperActive,
+    loading,
+    plan,
+    renderOnlyFinalRoute,
+    selectedBuildAnchor?.venueId,
+    selectedCandidateRouteArtifact,
+    selectedDirectionId,
+  ])
   const buildTruthReady =
     buildSelectedCardTruthDiagnostic?.buildTruthReady ?? false
   const buildSelectableWhenUnparked =
