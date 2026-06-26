@@ -45,6 +45,15 @@ export interface PublicContractEntryArtifactTruthResult {
 
 export type BuildApprovedRouteSourceKind = 'static' | 'provider_shadow' | 'debug_only'
 
+export type BuildStaticPreGenerationSelectionRejectionReason =
+  | 'build_static_artifact_missing'
+  | 'build_static_source_not_approved'
+  | 'build_static_admission_missing'
+  | 'build_static_admission_failed'
+  | 'build_static_anchor_truth_not_passed'
+  | 'build_static_core_route_roles_missing'
+  | 'build_static_candidate_not_unparked'
+
 export type BuildCardTruthRejectionReason =
   | 'build_admission_missing'
   | 'build_admission_failed'
@@ -126,6 +135,29 @@ export interface BuildCardTruthResult {
     providerShadowExcluded: boolean
     buildTruthReady: boolean
     buildSelectableWhenUnparked: boolean
+  }
+}
+
+export interface BuildStaticPreGenerationCardSelectionInput {
+  artifact: ContractEntryArtifact | null | undefined
+  candidateAdmission?: BuildCandidateAdmissionResult | null
+  sourceKind?: BuildApprovedRouteSourceKind
+  buildProviderSelectionAllowed: boolean
+  buildProviderMergedIntoVisiblePool: boolean
+}
+
+export interface BuildStaticPreGenerationCardSelectionResult {
+  selectable: boolean
+  sourceKind: BuildApprovedRouteSourceKind
+  rejectionReasons: BuildStaticPreGenerationSelectionRejectionReason[]
+  diagnostics: {
+    artifactId: string | null
+    admitted: boolean | null
+    truthGateStatus: string | null
+    missingCoreRoles: string[]
+    coreRouteIds: Partial<Record<string, string>>
+    buildProviderSelectionAllowed: boolean
+    buildProviderMergedIntoVisiblePool: boolean
   }
 }
 
@@ -292,6 +324,15 @@ export function buildCanonicalPublicRouteFlowTruth(
 function addBuildTruthReason(
   reasons: BuildCardTruthRejectionReason[],
   reason: BuildCardTruthRejectionReason,
+): void {
+  if (!reasons.includes(reason)) {
+    reasons.push(reason)
+  }
+}
+
+function addBuildStaticSelectionReason(
+  reasons: BuildStaticPreGenerationSelectionRejectionReason[],
+  reason: BuildStaticPreGenerationSelectionRejectionReason,
 ): void {
   if (!reasons.includes(reason)) {
     reasons.push(reason)
@@ -496,6 +537,53 @@ export function buildBuildCardTruthModel(input: BuildCardTruthInput): BuildCardT
       providerShadowExcluded,
       buildTruthReady,
       buildSelectableWhenUnparked,
+    },
+  }
+}
+
+export function evaluateBuildStaticPreGenerationCardSelection(
+  input: BuildStaticPreGenerationCardSelectionInput,
+): BuildStaticPreGenerationCardSelectionResult {
+  const rejectionReasons: BuildStaticPreGenerationSelectionRejectionReason[] = []
+  const artifact = input.artifact ?? null
+  const admission = input.candidateAdmission ?? null
+  const sourceKind = input.sourceKind ?? 'static'
+
+  if (!artifact) {
+    addBuildStaticSelectionReason(rejectionReasons, 'build_static_artifact_missing')
+  }
+  if (sourceKind !== 'static') {
+    addBuildStaticSelectionReason(rejectionReasons, 'build_static_source_not_approved')
+  }
+  if (!admission) {
+    addBuildStaticSelectionReason(rejectionReasons, 'build_static_admission_missing')
+  } else {
+    if (!admission.admitted) {
+      addBuildStaticSelectionReason(rejectionReasons, 'build_static_admission_failed')
+    }
+    if (admission.truthGateStatus !== 'passed') {
+      addBuildStaticSelectionReason(rejectionReasons, 'build_static_anchor_truth_not_passed')
+    }
+    if (admission.diagnostics.missingCoreRoles.length > 0) {
+      addBuildStaticSelectionReason(rejectionReasons, 'build_static_core_route_roles_missing')
+    }
+  }
+  if (!input.buildProviderSelectionAllowed || !input.buildProviderMergedIntoVisiblePool) {
+    addBuildStaticSelectionReason(rejectionReasons, 'build_static_candidate_not_unparked')
+  }
+
+  return {
+    selectable: rejectionReasons.length === 0,
+    sourceKind,
+    rejectionReasons,
+    diagnostics: {
+      artifactId: artifact?.id ?? null,
+      admitted: admission?.admitted ?? null,
+      truthGateStatus: admission?.truthGateStatus ?? null,
+      missingCoreRoles: admission?.diagnostics.missingCoreRoles ?? [],
+      coreRouteIds: admission?.diagnostics.coreRouteIds ?? {},
+      buildProviderSelectionAllowed: input.buildProviderSelectionAllowed,
+      buildProviderMergedIntoVisiblePool: input.buildProviderMergedIntoVisiblePool,
     },
   }
 }

@@ -79,7 +79,10 @@ import {
   buildRouteAuthoritySnapshot,
 } from '../app/services/routeAuthority/routeAuthorityService'
 import { evaluateBuildCandidateAdmission } from '../app/services/buildCandidateAdmission/buildCandidateAdmissionService'
-import { buildBuildCardTruthModel } from '../app/services/canonicalPublicRouteTruthService'
+import {
+  buildBuildCardTruthModel,
+  evaluateBuildStaticPreGenerationCardSelection,
+} from '../app/services/canonicalPublicRouteTruthService'
 import {
   buildPlanPreviewV01FromSelectedRouteArtifacts,
   comparePlanPreviewV01ToRenderedPreview,
@@ -889,7 +892,11 @@ interface CurateVisibleCardModel {
   happeningsLine?: string
   whyChooseLine: string
   whyTonightProofLine?: string
-  cardDisplaySource: 'approved_payload' | 'candidate_draft' | 'diagnostic_rejected'
+  cardDisplaySource:
+    | 'approved_payload'
+    | 'candidate_draft'
+    | 'diagnostic_rejected'
+    | 'build_static_pre_generation'
   qualificationDisplayStatus: 'unchecked' | 'checking' | 'qualified' | 'rejected' | 'runtime_error'
   qualificationStatus: 'unchecked' | 'checking' | 'qualified' | 'rejected' | 'runtime_error'
   hasApprovedPayload: boolean
@@ -17408,6 +17415,7 @@ export function SandboxConciergePage({
       return {
         artifactId: artifact.id,
         source,
+        admission,
         admitted: admission.admitted,
         truthGateStatus: admission.truthGateStatus,
         geoPosture: admission.geoPosture,
@@ -17462,6 +17470,38 @@ export function SandboxConciergePage({
       ) ?? null
     )
   }, [buildCandidateAdmissionDiagnostics, selectedCandidateRouteArtifact])
+  const buildPreGenerationStaticCardSelectionByArtifactId = useMemo(() => {
+    const byArtifactId = new Map<
+      string,
+      ReturnType<typeof evaluateBuildStaticPreGenerationCardSelection>
+    >()
+    if (!isBuildWrapperActive || !selectedBuildAnchor?.venueId) {
+      return byArtifactId
+    }
+    buildAnchorMatchedCandidateArtifacts.forEach((artifact) => {
+      const admission = buildCandidateAdmissionDiagnostics.find(
+        (entry) => entry.artifactId === artifact.id && entry.source === 'static',
+      )
+      byArtifactId.set(
+        artifact.id,
+        evaluateBuildStaticPreGenerationCardSelection({
+          artifact,
+          candidateAdmission: admission?.admission,
+          sourceKind: admission?.source ?? 'static',
+          buildProviderSelectionAllowed,
+          buildProviderMergedIntoVisiblePool,
+        }),
+      )
+    })
+    return byArtifactId
+  }, [
+    buildAnchorMatchedCandidateArtifacts,
+    buildCandidateAdmissionDiagnostics,
+    buildProviderMergedIntoVisiblePool,
+    buildProviderSelectionAllowed,
+    isBuildWrapperActive,
+    selectedBuildAnchor?.venueId,
+  ])
   const buildSelectedCardTruthDiagnostic = useMemo(() => {
     if (!isBuildWrapperActive || !selectedBuildAnchor?.venueId || !selectedCandidateRouteArtifact) {
       return null
@@ -25108,6 +25148,21 @@ export function SandboxConciergePage({
               : curatePrimaryCardDisplay.models
             ).map((cardModel) => {
               const option = cardModel.artifact
+              const buildStaticPreGenerationSelection =
+                isBuildWrapperActive
+                  ? buildPreGenerationStaticCardSelectionByArtifactId.get(option.id) ?? null
+                  : null
+              const buildStaticPreGenerationSelectable = Boolean(
+                buildStaticPreGenerationSelection?.selectable,
+              )
+              const effectiveCardDisplaySource = buildStaticPreGenerationSelectable
+                ? 'build_static_pre_generation'
+                : cardModel.cardDisplaySource
+              const effectiveCardSelectable = buildStaticPreGenerationSelectable || cardModel.isSelectable
+              const effectiveQualificationDisplayStatus =
+                buildStaticPreGenerationSelectable
+                  ? 'qualified'
+                  : cardModel.qualificationDisplayStatus
               const committedRouteFallbackCard =
                 isCurateCommittedRouteFallbackArtifact(option)
               if (
@@ -25134,10 +25189,10 @@ export function SandboxConciergePage({
                   className={`district-card step2-night-option${isSelected ? ' selected' : ''}`}
                   data-id8-route-card-artifact-id={option.id}
                   data-id8-route-card-source-opportunity-id={option.sourceOpportunityId}
-                  data-id8-route-card-display-source={cardModel.cardDisplaySource}
+                  data-id8-route-card-display-source={effectiveCardDisplaySource}
                   onClick={() => handleSelectStep2NightOption(option)}
                   aria-pressed={Boolean(isSelected)}
-                  disabled={publicSurpriseRouteChoiceVisible ? false : !cardModel.isSelectable}
+                  disabled={publicSurpriseRouteChoiceVisible ? false : !effectiveCardSelectable}
                 >
                   <h5 className="step2-night-option-anchor-title">{cardModel.title}</h5>
                   <p className="step2-night-option-flavor-line">
@@ -25167,8 +25222,8 @@ export function SandboxConciergePage({
                   <p className="step2-night-option-context">{cardModel.districtLine}</p>
                   <p className="step2-night-option-match">
                     {isPublicSurface
-                      ? getPublicRouteStatusLabel(cardModel.qualificationDisplayStatus)
-                      : `Qualification: ${cardModel.qualificationDisplayStatus} via ${cardModel.cardDisplaySource}`}
+                      ? getPublicRouteStatusLabel(effectiveQualificationDisplayStatus)
+                      : `Qualification: ${cardModel.qualificationDisplayStatus} via ${effectiveCardDisplaySource}`}
                   </p>
                   {cardModel.qualificationStatus === 'qualified' &&
                   cardModel.finalRouteStarterFitTier !== 'strong_starter_fit' &&

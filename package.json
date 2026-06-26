@@ -15,7 +15,7 @@
     "test:build-candidate-admission": "tsx scripts/test-build-candidate-admission.ts",
     "test:build-card-truth": "tsx scripts/test-build-card-truth.ts",
     "test:build-unpark-readiness": "tsx scripts/test-build-unpark-readiness.ts",
-    "test:build-local-unpark": "tsx scripts/test-build-unpark-readiness.ts",
+    "test:build-local-unpark": "tsx scripts/test-build-local-unpark.ts",
     "provider:dry-run": "tsx scripts/run-provider-dry-run.ts",
     "provider:build-supply-dry-run": "tsx scripts/run-build-provider-supply-dry-run.ts"
   },
