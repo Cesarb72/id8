@@ -114,6 +114,34 @@ export type ConciergeStructureRigidity = 'tight' | 'balanced' | 'flexible'
 export type ConciergeSwapTolerance = 'low' | 'medium' | 'high'
 export type ConciergeRealityPriority = 'low' | 'medium' | 'high'
 
+export interface ConciergeIntentStarterLineage {
+  source: 'none' | 'system_seeded' | 'starter_pack'
+  starterPackId?: string
+  title?: string
+  personaBias?: PersonaMode
+  primaryAnchor?: VibeAnchor
+  secondaryAnchors?: VibeAnchor[]
+}
+
+export interface ConciergeIntentAnchorLineage {
+  source: 'none' | 'system_seeded' | 'starter_seeded' | 'build_anchor'
+  anchorId?: string
+  displayName?: string
+  roleHint?: AnchorRole
+  required: boolean
+}
+
+export interface ConciergeIntentCandidateLineage {
+  source: 'none' | 'selected_candidate_route_artifact'
+  candidateArtifactId?: string
+  directionId?: string
+  pocketId?: string
+  sourceOpportunityId?: string
+  anchorVenueId?: string
+  anchorRole?: AnchorRole
+  lineageSummary?: string
+}
+
 export interface ConciergeIntent {
   id: string
   intentMode: ConciergeIntentMode
@@ -149,6 +177,9 @@ export interface ConciergeIntent {
     noveltyPriority: ConciergeRealityPriority
     certaintyPriority: ConciergeRealityPriority
   }
+  starterLineage: ConciergeIntentStarterLineage
+  anchorLineage: ConciergeIntentAnchorLineage
+  candidateLineage: ConciergeIntentCandidateLineage
 }
 
 export type ExperienceContractCoordinationMode =

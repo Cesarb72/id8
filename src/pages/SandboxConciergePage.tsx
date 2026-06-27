@@ -27,7 +27,10 @@ import {
   selectCardEchoPreviewMode,
   selectCardEchoPreviewState,
 } from '../app/concierge/cardEchoPreviewSelectors'
-import { projectConciergeIntentToIntentInput } from '../app/concierge/conciergeIntentAdapter'
+import {
+  buildApplicationConciergeIntent,
+  projectConciergeIntentToIntentInput,
+} from '../app/concierge/conciergeIntentAdapter'
 import type {
   ConciergeCardId,
   ConciergeCardMode,
@@ -163,6 +166,7 @@ import {
   truncateText,
 } from '../domain/utils/debugListHelpers'
 import {
+  buildCanonicalInterpretationBundle,
   normalizeExperienceContractVibe,
 } from '../domain/interpretation/buildCanonicalInterpretationBundle'
 import { buildContractEntryArtifactFromVerifiedOpportunity } from '../domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity'
@@ -14282,7 +14286,6 @@ export function SandboxConciergePage({
         setError(message)
         return false
       }
-      const activeContractConstraints = canonicalContractConstraints
       const activeCluster = activeDirection.cluster
       const selectedArtifactDiscoveryPreferences = buildSelectedArtifactDiscoveryPreferences({
         artifact: activeCandidateRouteArtifact,
@@ -14408,8 +14411,45 @@ export function SandboxConciergePage({
           mode: generationMode,
           starterPack: generationStarterPack,
         })
+        const generationCandidateLineage = activeCandidateRouteArtifact
+          ? {
+              source: 'selected_candidate_route_artifact',
+              candidateArtifactId: activeCandidateRouteArtifact.id,
+              directionId:
+                activeSelectedArtifactLineage?.directionId ??
+                activeCandidateRouteArtifact.selection.directionId,
+              pocketId:
+                activeSelectedArtifactLineage?.pocketId ??
+                activeCandidateRouteArtifact.selection.pocketId,
+              sourceOpportunityId: activeCandidateRouteArtifact.sourceOpportunityId,
+              anchorVenueId:
+                activeSelectedArtifactLineage?.anchorVenueId ??
+                activeCandidateRouteArtifact.anchorVenueId,
+              anchorRole:
+                activeSelectedArtifactLineage?.anchorRole ??
+                activeCandidateRouteArtifact.anchorRole,
+              lineageSummary: selectedArtifactLineageSummary,
+            } satisfies ConciergeIntent['candidateLineage']
+          : ({
+              source: 'none',
+            } satisfies ConciergeIntent['candidateLineage'])
+        const generationConciergeIntent = buildApplicationConciergeIntent({
+          mode: generationMode,
+          persona,
+          primaryVibe,
+          city: districtLocationQuery,
+          objectiveOccasion: canonicalConciergeIntent.objective.occasion,
+          starterPack: generationStarterPack,
+          anchor: buildPlannerAnchor,
+          anchorDisplayName: selectedBuildAnchor?.name,
+          candidateLineage: generationCandidateLineage,
+        })
+        const generationCanonicalInterpretationBundle = buildCanonicalInterpretationBundle({
+          conciergeIntent: generationConciergeIntent,
+          interpretationSource: 'app.sandbox.generate.conciergeIntentAdapter',
+        })
         const planBuildInput = projectConciergeIntentToIntentInput({
-          conciergeIntent: canonicalConciergeIntent,
+          conciergeIntent: generationConciergeIntent,
           mode: generationMode,
           city: districtLocationQuery,
           district: activeDirectionContract.pocketLabel,
@@ -14433,9 +14473,9 @@ export function SandboxConciergePage({
             ? 'approved_route_hard_commit'
             : undefined,
           starterPack: generationStarterPack,
-          experienceContract: canonicalExperienceContract,
-          contractConstraints: canonicalContractConstraints,
-          canonicalInterpretationBundle,
+          experienceContract: generationCanonicalInterpretationBundle.experienceContract,
+          contractConstraints: generationCanonicalInterpretationBundle.contractConstraints,
+          canonicalInterpretationBundle: generationCanonicalInterpretationBundle,
           rankedDistrictPockets: districtPreviewResult?.ranked,
           districtTasteBridgeArtifacts: plannerDistrictTasteBridgeArtifacts,
           contractGateWorld,
@@ -14512,7 +14552,7 @@ export function SandboxConciergePage({
         } = await runPostPlannerCommitParityStages(
           {
             result,
-            contractConstraints: activeContractConstraints,
+            contractConstraints: generationCanonicalInterpretationBundle.contractConstraints,
             expectedDirectionIdentity,
             selectedDirectionContextForValidation: activeDirectionContextForValidation,
             selectedDirectionContractForValidation: activeDirectionContractForValidation,
@@ -14640,9 +14680,9 @@ export function SandboxConciergePage({
           generationTrace: result.trace,
           intentProfile: result.intentProfile,
           lens: result.lens,
-          conciergeIntent: canonicalConciergeIntent,
-          experienceContract: canonicalExperienceContract,
-          contractConstraints: activeContractConstraints,
+          conciergeIntent: generationConciergeIntent,
+          experienceContract: generationCanonicalInterpretationBundle.experienceContract,
+          contractConstraints: generationCanonicalInterpretationBundle.contractConstraints,
           selectedDirectionContext: activeDirectionContextForValidation,
           selectedCluster: activeCluster,
           selectedClusterConfirmation,

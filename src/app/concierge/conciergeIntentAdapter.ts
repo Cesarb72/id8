@@ -2,6 +2,7 @@ import type { StarterPack } from '../../domain/types/starterPack'
 import type {
   AnchorRole,
   ConciergeIntent,
+  ConciergeIntentCandidateLineage,
   ConciergeObjectiveOccasion,
   DistanceMode,
   ExperienceMode,
@@ -24,6 +25,8 @@ export interface BuildApplicationConciergeIntentParams {
   objectiveOccasion?: ConciergeObjectiveOccasion
   starterPack?: StarterPack | null
   anchor?: PlanAnchor | null
+  anchorDisplayName?: string | null
+  candidateLineage?: ConciergeIntentCandidateLineage | null
 }
 
 export interface ProjectConciergeIntentToIntentInputParams {
@@ -151,6 +154,69 @@ function getAnchorPosture(params: {
   }
 }
 
+function getStarterLineage(
+  params: BuildApplicationConciergeIntentParams,
+): ConciergeIntent['starterLineage'] {
+  if (params.mode === 'surprise') {
+    return {
+      source: 'system_seeded',
+    }
+  }
+  if (params.mode === 'curate' && params.starterPack) {
+    return {
+      source: 'starter_pack',
+      starterPackId: params.starterPack.id,
+      title: params.starterPack.title,
+      personaBias: params.starterPack.personaBias,
+      primaryAnchor: params.starterPack.primaryAnchor,
+      secondaryAnchors: params.starterPack.secondaryAnchors,
+    }
+  }
+  return {
+    source: 'none',
+  }
+}
+
+function getAnchorLineage(
+  params: BuildApplicationConciergeIntentParams,
+): ConciergeIntent['anchorLineage'] {
+  if (params.mode === 'build' && params.anchor?.venueId) {
+    return {
+      source: 'build_anchor',
+      anchorId: params.anchor.venueId,
+      displayName: params.anchorDisplayName ?? undefined,
+      roleHint: params.anchor.role ?? 'highlight',
+      required: true,
+    }
+  }
+  if (params.mode === 'curate' && params.starterPack) {
+    return {
+      source: 'starter_seeded',
+      anchorId: params.starterPack.id,
+      displayName: params.starterPack.title,
+      required: false,
+    }
+  }
+  if (params.mode === 'surprise') {
+    return {
+      source: 'system_seeded',
+      required: false,
+    }
+  }
+  return {
+    source: 'none',
+    required: false,
+  }
+}
+
+function getCandidateLineage(
+  params: BuildApplicationConciergeIntentParams,
+): ConciergeIntent['candidateLineage'] {
+  return params.candidateLineage ?? {
+    source: 'none',
+  }
+}
+
 export function buildApplicationConciergeIntent(
   params: BuildApplicationConciergeIntentParams,
 ): ConciergeIntent {
@@ -185,7 +251,9 @@ export function buildApplicationConciergeIntent(
   const certaintyPriority: ConciergeIntent['realityPosture']['certaintyPriority'] =
     persona === 'family' ? 'high' : 'medium'
   const seedToken =
-    params.mode === 'curate' && params.starterPack
+    params.candidateLineage?.candidateArtifactId
+      ? `candidate_${normalizeConciergeIntentToken(params.candidateLineage.candidateArtifactId)}`
+      : params.mode === 'curate' && params.starterPack
       ? `starter_${normalizeConciergeIntentToken(params.starterPack.id)}`
       : params.mode === 'build'
         ? `anchor_${normalizeConciergeIntentToken(params.anchor?.venueId)}`
@@ -229,6 +297,9 @@ export function buildApplicationConciergeIntent(
       noveltyPriority,
       certaintyPriority,
     },
+    starterLineage: getStarterLineage(params),
+    anchorLineage: getAnchorLineage(params),
+    candidateLineage: getCandidateLineage(params),
   }
 }
 
