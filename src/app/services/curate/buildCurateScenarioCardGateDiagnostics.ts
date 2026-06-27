@@ -644,9 +644,11 @@ export async function buildCurateScenarioCardGateDiagnostics(params: {
     : []
   const directionWorld = assembleSandboxDirectionWorld(
     {
+      mode: 'curate',
       persona,
       primaryVibe,
       districtLocationQuery: city,
+      starterPack: params.starterPack,
       districtPreviewResult,
       resolvedScenarioFamily: scenarioFamily,
       scenarioBuiltNights,

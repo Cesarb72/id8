@@ -5,6 +5,10 @@ import type {
 import { applyPersonaShaping } from '../../../domain/direction/applyPersonaShaping'
 import { applyVibeShaping } from '../../../domain/direction/applyVibeShaping'
 import {
+  buildApplicationConciergeIntent,
+  type BuildApplicationConciergeIntentParams,
+} from '../../concierge/conciergeIntentAdapter'
+import {
   buildDirectionCandidates,
   type DirectionCandidate,
 } from '../../../domain/direction/buildDirectionCandidates'
@@ -39,10 +43,13 @@ import type {
   ConciergeIntent,
   ContractConstraints,
   ExperienceContract,
+  ExperienceMode,
+  PlanAnchor,
   RouteShapeContract,
   VibeAnchor,
 } from '../../../domain/types/intent'
 import type { PersonaMode } from '../../../domain/types/intent'
+import type { StarterPack } from '../../../domain/types/starterPack'
 import type { BuildDistrictOpportunityProfilesResult } from '../../../engines/district'
 
 function getProcessEnvValue(key: string): string | undefined {
@@ -99,9 +106,12 @@ function logDirectionEnvFlags(): void {
 }
 
 export interface AssembleSandboxDirectionWorldParams {
+  mode?: ExperienceMode
   persona: PersonaMode
   primaryVibe: VibeAnchor
   districtLocationQuery: string
+  starterPack?: StarterPack | null
+  anchor?: PlanAnchor | null
   districtPreviewResult: BuildDistrictOpportunityProfilesResult | null
   resolvedScenarioFamily: unknown
   scenarioBuiltNights: BuiltScenarioNight[]
@@ -142,15 +152,21 @@ export function assembleSandboxDirectionWorld(
 ): SandboxDirectionWorld {
   logDirectionEnvFlags()
 
-  const canonicalInterpretationBundle = buildCanonicalInterpretationBundle({
+  const mode = params.mode ?? 'curate'
+  const conciergeIntentParams = {
+    mode,
     persona: params.persona,
-    vibe: params.primaryVibe,
+    primaryVibe: params.primaryVibe,
     city: params.districtLocationQuery,
-    planningMode: 'engine-led',
-    entryPoint: 'direction_selection',
-    hasAnchor: false,
+    objectiveOccasion: 'connect',
+    starterPack: params.starterPack,
+    anchor: params.anchor,
+  } satisfies BuildApplicationConciergeIntentParams
+  const canonicalConciergeIntent = buildApplicationConciergeIntent(conciergeIntentParams)
+  const canonicalInterpretationBundle = buildCanonicalInterpretationBundle({
+    conciergeIntent: canonicalConciergeIntent,
+    interpretationSource: 'app.sandbox.direction.conciergeIntentAdapter',
   })
-  const canonicalConciergeIntent = canonicalInterpretationBundle.normalizedIntent
   const canonicalExperienceContract = canonicalInterpretationBundle.experienceContract
   const canonicalContractConstraints = canonicalInterpretationBundle.contractConstraints
   const bearingsGreatStopSignal =

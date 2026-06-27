@@ -33,187 +33,6 @@ export type DirectionStrategyFamily =
   | 'family_cultured'
   | 'adaptive'
 
-function normalizeConciergeIntentToken(value: string | undefined): string {
-  const normalized = value?.trim().toLowerCase()
-  if (!normalized) {
-    return 'na'
-  }
-  const token = normalized.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-  return token.length > 0 ? token : 'na'
-}
-
-function getConciergeSocialEnergy(vibe: VibeAnchor): ConciergeIntent['experienceProfile']['socialEnergy'] {
-  if (vibe === 'lively' || vibe === 'playful') {
-    return 'high'
-  }
-  if (vibe === 'cozy' || vibe === 'chill') {
-    return 'low'
-  }
-  return 'medium'
-}
-
-function getConciergeExplorationTolerance(params: {
-  persona: PersonaMode
-  vibe: VibeAnchor
-}): ConciergeIntent['experienceProfile']['explorationTolerance'] {
-  const { persona, vibe } = params
-  if (
-    vibe === 'adventurous-outdoor' ||
-    vibe === 'adventurous-urban' ||
-    vibe === 'cultured'
-  ) {
-    return 'high'
-  }
-  if (vibe === 'chill' || vibe === 'cozy' || persona === 'family') {
-    return 'low'
-  }
-  return 'medium'
-}
-
-function getConciergePacing(params: {
-  persona: PersonaMode
-  vibe: VibeAnchor
-}): ConciergeIntent['experienceProfile']['pacing'] {
-  const { persona, vibe } = params
-  if (vibe === 'lively' || vibe === 'playful') {
-    return 'quick'
-  }
-  if (vibe === 'chill' && persona !== 'family') {
-    return 'linger'
-  }
-  if (persona === 'romantic' && (vibe === 'cozy' || vibe === 'chill')) {
-    return 'linger'
-  }
-  return 'balanced'
-}
-
-function buildConciergeIntent(params: {
-  persona: PersonaMode
-  vibe: VibeAnchor
-  city: string
-  planningMode?: 'engine-led' | 'user-led'
-  entryPoint?: 'direction_selection' | 'swap' | 'search'
-  hasAnchor?: boolean
-  occasion?: ConciergeObjectiveOccasion
-}): ConciergeIntent {
-  const {
-    persona,
-    vibe,
-    city,
-    planningMode = 'engine-led',
-    entryPoint = 'direction_selection',
-    hasAnchor = false,
-  } = params
-  const controlMode: ConciergeIntent['controlPosture']['mode'] =
-    planningMode === 'user-led'
-      ? 'user_directed'
-      : entryPoint === 'search'
-        ? 'assistant_led'
-        : entryPoint === 'direction_selection'
-        ? 'guided_assist'
-        : 'guided_assist'
-  const intentMode: ConciergeIntent['intentMode'] =
-    entryPoint === 'search'
-      ? 'search_led'
-      : hasAnchor
-        ? 'anchored'
-        : planningMode === 'user-led'
-          ? 'direct'
-          : entryPoint === 'direction_selection'
-            ? 'curated'
-            : 'surprise'
-  const objectivePrimary: ConciergeIntent['objective']['primary'] =
-    intentMode === 'search_led'
-      ? 'search_and_route'
-      : intentMode === 'anchored'
-        ? 'lock_anchor_and_sequence'
-        : entryPoint === 'swap'
-          ? 'preserve_route_integrity'
-          : intentMode === 'surprise'
-            ? 'discover_route_shape'
-            : 'stabilize_selected_direction'
-  const objectiveOccasion = params.occasion ?? 'connect'
-  const socialEnergy = getConciergeSocialEnergy(vibe)
-  const explorationTolerance = getConciergeExplorationTolerance({
-    persona,
-    vibe,
-  })
-  const pacing = getConciergePacing({
-    persona,
-    vibe,
-  })
-  const travelTolerance: ConciergeIntent['constraintPosture']['travelTolerance'] =
-    vibe === 'lively'
-      ? 'tight'
-      : vibe === 'chill' || vibe === 'cozy'
-        ? 'flexible'
-        : 'balanced'
-  const structureRigidity: ConciergeIntent['constraintPosture']['structureRigidity'] =
-    persona === 'family' ? 'tight' : persona === 'friends' ? 'flexible' : 'balanced'
-  const swapTolerance: ConciergeIntent['constraintPosture']['swapTolerance'] =
-    persona === 'friends' || vibe === 'lively' || vibe === 'playful'
-      ? 'high'
-      : persona === 'family'
-        ? 'low'
-        : 'medium'
-  const anchorMode: ConciergeIntent['anchorPosture']['mode'] = hasAnchor
-    ? 'hard'
-    : 'none'
-  const anchorType: ConciergeIntent['anchorPosture']['anchorType'] = hasAnchor
-    ? 'venue'
-    : 'none'
-  const anchorRoleHint: ConciergeIntent['anchorPosture']['roleHint'] | undefined = undefined
-  const coherencePriority: ConciergeIntent['realityPosture']['coherencePriority'] =
-    structureRigidity === 'tight' ? 'high' : structureRigidity === 'balanced' ? 'medium' : 'low'
-  const noveltyPriority: ConciergeIntent['realityPosture']['noveltyPriority'] =
-    explorationTolerance === 'high'
-      ? 'high'
-      : explorationTolerance === 'low'
-        ? 'low'
-        : 'medium'
-  const certaintyPriority: ConciergeIntent['realityPosture']['certaintyPriority'] =
-    persona === 'family' ? 'high' : 'medium'
-  const cityToken = normalizeConciergeIntentToken(city)
-  const id = `cintent_v0_1_${intentMode}_${controlMode}_${persona}_${vibe}_${cityToken}`
-
-  return {
-    id,
-    intentMode,
-    objective: {
-      primary: objectivePrimary,
-      occasion: objectiveOccasion,
-    },
-    controlPosture: {
-      mode: controlMode,
-    },
-    experienceProfile: {
-      persona,
-      vibe,
-      pacing,
-      socialEnergy,
-      explorationTolerance,
-    },
-    anchorPosture: {
-      mode: anchorMode,
-      anchorType,
-      anchorValue: city.trim() || undefined,
-      roleHint: anchorRoleHint,
-      timeBound: 'tonight',
-    },
-    constraintPosture: {
-      travelTolerance,
-      structureRigidity,
-      swapTolerance,
-    },
-    realityPosture: {
-      liveSignalPriority: 'high',
-      coherencePriority,
-      noveltyPriority,
-      certaintyPriority,
-    },
-  }
-}
-
 type OccasionInterpretationTemplate = Omit<OccasionInterpretationProfile, 'occasion'>
 
 const OCCASION_INTERPRETATION_PROFILE_BY_OCCASION: Record<
@@ -906,13 +725,7 @@ export interface CanonicalInterpretationBundle {
 }
 
 interface BuildCanonicalInterpretationBundleInput {
-  persona: PersonaMode
-  vibe: VibeAnchor
-  city: string
-  planningMode?: 'engine-led' | 'user-led'
-  entryPoint?: 'direction_selection' | 'swap' | 'search'
-  hasAnchor?: boolean
-  occasion?: ConciergeObjectiveOccasion
+  conciergeIntent: ConciergeIntent
   selectedDirectionContext?: ResolvedDirectionContext
   interpretationSource?: string
 }
@@ -995,34 +808,28 @@ function resolveInterpretationStrategyFamilyWithTrace(params: {
 export function buildCanonicalInterpretationBundle(
   input: BuildCanonicalInterpretationBundleInput,
 ): CanonicalInterpretationBundle {
-  // Canonical interpretation seam: wrappers should consume this bundle, not re-derive its semantics.
+  // Canonical interpretation seam: wrappers produce ConciergeIntent; Interpretation consumes it.
   console.assert(
-    input.city.trim().length > 0,
-    '[ARC-BOUNDARY] canonical interpretation expects a non-empty city context.',
+    input.conciergeIntent.id.trim().length > 0,
+    '[ARC-BOUNDARY] canonical interpretation expects a ConciergeIntent with a stable id.',
   )
-  const normalizedIntent = buildConciergeIntent({
-    persona: input.persona,
-    vibe: input.vibe,
-    city: input.city,
-    planningMode: input.planningMode,
-    entryPoint: input.entryPoint,
-    hasAnchor: input.hasAnchor,
-    occasion: input.occasion,
-  })
+  const normalizedIntent = input.conciergeIntent
+  const persona = normalizedIntent.experienceProfile.persona
+  const vibe = normalizedIntent.experienceProfile.vibe
   const occasionSemantics = buildOccasionInterpretationProfile(
     normalizedIntent.objective.occasion,
   )
   const experienceContract = buildExperienceContract({
-    persona: input.persona,
-    vibe: input.vibe,
+    persona,
+    vibe,
     occasionSemantics,
     conciergeIntent: normalizedIntent,
     selectedDirectionContext: input.selectedDirectionContext,
   })
   const contractConstraints = buildContractConstraints(experienceContract)
   const strategyFamilyResolution = resolveInterpretationStrategyFamilyWithTrace({
-    persona: input.persona,
-    vibe: input.vibe,
+    persona,
+    vibe,
   })
   const strategyFamily = strategyFamilyResolution.resolvedFamily
   const strategySummary = STRATEGY_FAMILY_SUMMARY_BY_ID[strategyFamily]
@@ -1044,13 +851,12 @@ export function buildCanonicalInterpretationBundle(
     debug: {
       bundleSource: input.interpretationSource ?? 'domain.interpretation.buildCanonicalInterpretationBundle',
       derivedFrom: [
-        'persona',
-        'vibe',
-        'city',
-        'planning_mode',
-        'entry_point',
-        'anchor_posture',
-        'objective_occasion',
+        'concierge_intent',
+        'concierge_intent.experience_profile',
+        'concierge_intent.anchor_posture',
+        'concierge_intent.objective',
+        'concierge_intent.constraint_posture',
+        'concierge_intent.reality_posture',
         'occasion_interpretation_profile_v0_1',
         'experience_contract_matrix_v0_1',
         'contract_constraints_matrix_v0_1',

@@ -27,6 +27,7 @@ import {
   selectCardEchoPreviewMode,
   selectCardEchoPreviewState,
 } from '../app/concierge/cardEchoPreviewSelectors'
+import { projectConciergeIntentToIntentInput } from '../app/concierge/conciergeIntentAdapter'
 import type {
   ConciergeCardId,
   ConciergeCardMode,
@@ -10755,9 +10756,18 @@ export function SandboxConciergePage({
     () =>
       assembleSandboxDirectionWorld(
         {
+          mode: isSurpriseWrapperActive ? 'surprise' : isBuildWrapperActive ? 'build' : 'curate',
           persona,
           primaryVibe,
           districtLocationQuery,
+          starterPack: isCurateWrapperActive ? selectedStarterPack : null,
+          anchor:
+            isBuildWrapperActive && selectedBuildAnchor?.venueId
+              ? {
+                  venueId: selectedBuildAnchor.venueId,
+                  role: buildSelectedAnchorRequiredRole ?? 'highlight',
+                }
+              : null,
           districtPreviewResult: districtPreviewResult ?? null,
           resolvedScenarioFamily,
           scenarioBuiltNights,
@@ -10776,10 +10786,16 @@ export function SandboxConciergePage({
     [
       districtLocationQuery,
       districtPreviewResult,
+      buildSelectedAnchorRequiredRole,
+      isBuildWrapperActive,
+      isCurateWrapperActive,
+      isSurpriseWrapperActive,
       persona,
       primaryVibe,
       resolvedScenarioFamily,
       scenarioBuiltNights,
+      selectedBuildAnchor?.venueId,
+      selectedStarterPack,
     ],
   )
   const {
@@ -14349,7 +14365,6 @@ export function SandboxConciergePage({
           wrapperSeam: 'sandbox_concierge.generate',
           input: { selectedDirectionContext: activeIntentSelectedDirectionContext },
         })
-        const plannerMode = isBuildWrapperActive ? 'user-led' : 'engine-led'
         const buildPlannerAnchor = deriveBuildPlannerAnchor({
           isBuildWrapperActive,
           selectedBuildAnchor,
@@ -14393,11 +14408,9 @@ export function SandboxConciergePage({
           mode: generationMode,
           starterPack: generationStarterPack,
         })
-        const planBuildInput = {
+        const planBuildInput = projectConciergeIntentToIntentInput({
+          conciergeIntent: canonicalConciergeIntent,
           mode: generationMode,
-          planningMode: plannerMode,
-          persona,
-          primaryVibe,
           city: districtLocationQuery,
           district: activeDirectionContract.pocketLabel,
           distanceMode: 'nearby',
@@ -14405,7 +14418,7 @@ export function SandboxConciergePage({
           selectedDirectionContext: activeIntentSelectedDirectionContext,
           discoveryPreferences: selectedArtifactDiscoveryPreferences,
           anchor: buildPlannerAnchor,
-        } satisfies IntentInput
+        }) satisfies IntentInput
         const planBuildOptions: Parameters<typeof runPlanBuild>[1] = {
           sourceMode: generationSourceMode,
           sourceModeOverrideApplied: true,
