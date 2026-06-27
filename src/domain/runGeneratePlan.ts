@@ -63,9 +63,17 @@ import {
   scoreArcAssembly,
   type ScoreArcAssemblyOptions,
 } from './arc/scoreArcAssembly'
-import { rankArcCandidatesWithDiagnostics } from '../integrations/waypoint/rankArcCandidates'
+import {
+  rankArcCandidatesFromContract,
+  rankArcCandidatesWithDiagnostics,
+  type WaypointContractInput,
+} from '../integrations/waypoint/rankArcCandidates'
 import type { RankedPocket } from '../engines/district/types/districtTypes'
 import type { ContractGateWorld } from './bearings/buildContractGateWorld'
+import {
+  buildStrategyAdmissibleWorlds,
+  type StrategyAdmissibleWorld,
+} from './bearings/buildStrategyAdmissibleWorlds'
 import { createId } from '../lib/ids'
 import { starterPacks } from '../data/starterPacks'
 import { buildContractEntryArtifactFromGeneration } from './artifacts/buildContractEntryArtifactFromGeneration'
@@ -144,6 +152,7 @@ export interface RunGeneratePlanOptions {
   rankedDistrictPockets?: RankedPocket[]
   districtTasteBridgeArtifacts?: DistrictTasteBridgeArtifact[]
   contractGateWorld?: ContractGateWorld
+  strategyAdmissibleWorlds?: StrategyAdmissibleWorld[]
   debugMode?: boolean
   strictShape?: boolean
   sourceMode?: SourceMode
@@ -453,6 +462,42 @@ function matchesPreferredDiscoveryRole(
   return candidate.stops.some(
     (stop) => stop.role === expectedRole && stop.scoredVenue.venue.id === venueId,
   )
+}
+
+function buildWaypointContractInput(params: {
+  canonicalInterpretationBundle?: CanonicalInterpretationBundle
+  contractGateWorld?: ContractGateWorld
+  strategyAdmissibleWorlds?: StrategyAdmissibleWorld[]
+  compatibilityIntent: IntentProfile
+}): WaypointContractInput | undefined {
+  const { canonicalInterpretationBundle, contractGateWorld, compatibilityIntent } = params
+  if (!contractGateWorld && !canonicalInterpretationBundle) {
+    return undefined
+  }
+  const normalizedIntent = canonicalInterpretationBundle?.normalizedIntent
+  const strategyAdmissibleWorlds =
+    params.strategyAdmissibleWorlds ??
+    (contractGateWorld ? buildStrategyAdmissibleWorlds({ contractGateWorld }) : [])
+
+  return {
+    canonicalInterpretationBundle,
+    strategyAdmissibleWorlds,
+    requiredStopGuarantee: contractGateWorld?.requiredStopGuarantee ?? {
+      source: 'none',
+      required: false,
+      reasonCodes: ['contract_gate_world_missing'],
+    },
+    normalizedContext: {
+      pacing: normalizedIntent?.experienceProfile.pacing,
+      anchorPosture: normalizedIntent?.anchorPosture,
+      objective: normalizedIntent?.objective,
+      starterLineage: normalizedIntent?.starterLineage,
+      anchorLineage: normalizedIntent?.anchorLineage,
+      candidateLineage: normalizedIntent?.candidateLineage,
+    },
+    compatibilityIntent,
+    source: canonicalInterpretationBundle ? 'canonical_contract' : 'compatibility_projection',
+  }
 }
 
 type CurateHardCommitRole = 'start' | 'highlight' | 'windDown'
@@ -2038,7 +2083,15 @@ async function runGeneratePlanInternal(
     : arcCandidates
   // Waypoint seam: ranking consumes already-assembled candidate arcs.
   // It must not be used to author interpretation or admissibility truth.
-  const ranking = rankArcCandidatesWithDiagnostics(boundaryCandidates, planningIntent)
+  const waypointContractInput = buildWaypointContractInput({
+    canonicalInterpretationBundle: options.canonicalInterpretationBundle,
+    contractGateWorld: options.contractGateWorld,
+    strategyAdmissibleWorlds: options.strategyAdmissibleWorlds,
+    compatibilityIntent: planningIntent,
+  })
+  const ranking = waypointContractInput
+    ? rankArcCandidatesFromContract(boundaryCandidates, waypointContractInput)
+    : rankArcCandidatesWithDiagnostics(boundaryCandidates, planningIntent)
   const rankedCandidates = ranking.ranked.map((entry) => entry.candidate)
   const finalAnchorCandidates =
     anchorApplied && planningIntent.anchor?.venueId && anchorInternalRole
@@ -2559,6 +2612,7 @@ async function runGeneratePlanInternal(
           }
         : undefined,
     },
+    waypointContractTrace: ranking.contractTrace,
     boundaryContributionLevel: getBoundaryContributionLevel(
       changedWinner,
       changedOrderCount,

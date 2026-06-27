@@ -14511,6 +14511,7 @@ export function SandboxConciergePage({
           rankedDistrictPockets: districtPreviewResult?.ranked,
           districtTasteBridgeArtifacts: plannerDistrictTasteBridgeArtifacts,
           contractGateWorld,
+          strategyAdmissibleWorlds,
           selectedArtifactLineage: activeSelectedArtifactLineage,
         }
         const result = await runPlanBuild(planBuildInput, planBuildOptions)
@@ -15679,6 +15680,7 @@ export function SandboxConciergePage({
               rankedDistrictPockets: districtPreviewResult?.ranked,
               districtTasteBridgeArtifacts: plannerDistrictTasteBridgeArtifacts,
               contractGateWorld,
+              strategyAdmissibleWorlds,
               refinementModes: clusterRefinementMap[activeDirection.cluster],
               activeDirectionContract,
               activeDirectionContextForValidation,

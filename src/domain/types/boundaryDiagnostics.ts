@@ -64,6 +64,25 @@ export interface BoundaryDiagnostics {
   preBoundarySnapshot: ArcCandidateSnapshot[]
   postBoundarySnapshot: RankedArcCandidateSnapshot[]
   refinementNudgeTrace?: BoundaryRefinementNudgeTrace
+  waypointContractTrace?: {
+    supplied: boolean
+    primaryInput: 'contract_context' | 'intent_profile_compatibility'
+    canonicalInterpretationSupplied: boolean
+    strategyWorldCount: number
+    strategyIds: string[]
+    requiredStopConsumed: boolean
+    requiredStopRequired: boolean
+    requiredStopRole?: UserStopRole
+    requiredStopVenueId?: string
+    requiredStopSource?: string
+    requiredStopReasonCodes: string[]
+    requiredStopSurvivingCandidateCount: number
+    topCandidatePreservesRequiredStop?: boolean
+    normalizedObjectivePrimary?: string
+    normalizedPacing?: string
+    anchorPostureMode?: string
+    candidateLineageSource?: string
+  }
   warnings: string[]
 }
 

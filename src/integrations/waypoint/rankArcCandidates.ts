@@ -1,7 +1,7 @@
-import { rankWithWaypointBoundary } from './core'
+import { rankWithWaypointBoundary, rankWithWaypointBoundaryFromContract } from './core'
 import type { ArcCandidate } from '../../domain/types/arc'
 import type { IntentProfile } from '../../domain/types/intent'
-import type { WaypointRankResponse } from './core'
+import type { WaypointContractInput, WaypointRankResponse } from './core'
 
 export interface RankedArcResult {
   rankedCandidates: ArcCandidate[]
@@ -25,3 +25,12 @@ export function rankArcCandidatesWithDiagnostics(
 ): WaypointRankResponse {
   return rankWithWaypointBoundary({ candidates, intent })
 }
+
+export function rankArcCandidatesFromContract(
+  candidates: ArcCandidate[],
+  contract: WaypointContractInput,
+): WaypointRankResponse {
+  return rankWithWaypointBoundaryFromContract({ candidates, contract })
+}
+
+export type { WaypointContractInput }
