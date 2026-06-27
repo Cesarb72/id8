@@ -9,8 +9,10 @@ import {
   type RunGeneratePlanOptions,
 } from '../../domain/runGeneratePlan'
 import {
+  buildStopTypeCandidateBoardFromContract,
   buildStopTypeCandidateBoardFromIntent,
   type BuildStopTypeCandidateBoardFromIntentInput,
+  type FieldDiscoveryContractInput,
   type StopTypeCandidateBoard,
 } from '../../domain/interpretation/discovery/stopTypeCandidateBoard'
 import type { LiveProviderEnvelope } from '../../domain/retrieval/liveEnvelope'
@@ -106,18 +108,36 @@ export async function runStepBCurateLiveSmokeCandidateSupply(params: {
   gate: StepBCurateLiveSmokeCandidateSupplyGate
   input: StepBCurateLiveSmokeCandidateSupplyInput
   starterPack: StarterPack | null
+  fieldDiscoveryContract?: FieldDiscoveryContractInput
 }): Promise<StopTypeCandidateBoard | null> {
   const {
     liveEnvelope: _ignoredCallerLiveEnvelope,
     sourceMode: callerSourceMode,
     ...safeInput
   } = params.input as BuildStopTypeCandidateBoardFromIntentInput
-  const shouldApply = shouldApplyStepBCurateLiveSmokeCandidateSupply(params.gate)
-  if (!shouldApply) {
+  const buildBoard = (input: {
+    sourceMode: NonNullable<BuildStopTypeCandidateBoardFromIntentInput['sourceMode']>
+    liveEnvelope?: LiveProviderEnvelope
+  }): Promise<StopTypeCandidateBoard | null> => {
+    if (params.fieldDiscoveryContract) {
+      return buildStopTypeCandidateBoardFromContract({
+        ...params.fieldDiscoveryContract,
+        sourceMode: input.sourceMode,
+        liveEnvelope: input.liveEnvelope,
+        starterPack: params.starterPack ?? params.fieldDiscoveryContract.starterPack,
+      })
+    }
     return buildStopTypeCandidateBoardFromIntent({
       ...safeInput,
-      sourceMode: callerSourceMode ?? 'curated',
+      sourceMode: input.sourceMode,
+      liveEnvelope: input.liveEnvelope,
       starterPack: params.starterPack ?? safeInput.starterPack,
+    })
+  }
+  const shouldApply = shouldApplyStepBCurateLiveSmokeCandidateSupply(params.gate)
+  if (!shouldApply) {
+    return buildBoard({
+      sourceMode: callerSourceMode ?? 'curated',
     })
   }
 
@@ -139,11 +159,9 @@ export async function runStepBCurateLiveSmokeCandidateSupply(params: {
     maxCenters: STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE.maxCenters,
   })
 
-  const board = await buildStopTypeCandidateBoardFromIntent({
-    ...safeInput,
+  const board = await buildBoard({
     sourceMode: 'hybrid',
     liveEnvelope: STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE,
-    starterPack: params.starterPack ?? safeInput.starterPack,
   })
 
   // P0-G diagnostic-only: remove after hosted Step B candidate-supply audit is complete.

@@ -204,6 +204,7 @@ import {
 } from '../domain/interpretation/construction/scenarioBuilder'
 import type { ExperienceContract as InterpretationExperienceContract } from '../domain/interpretation/contracts/experienceContract'
 import { buildGreatStopAdmissibilitySignal } from '../domain/bearings/buildGreatStopAdmissibilitySignal'
+import { buildContractGateWorldFromCanonical } from '../domain/bearings/buildContractGateWorld'
 import {
   devGreatStopFixtureVenueIds,
   normalizeDevGreatStopFixtures,
@@ -10521,6 +10522,35 @@ export function SandboxConciergePage({
         return
       }
       try {
+        const candidateSupplyFieldDiscoveryContract = isCurateWrapperActive
+          ? (() => {
+              const conciergeIntent = buildApplicationConciergeIntent({
+                mode: 'curate',
+                persona,
+                primaryVibe,
+                city: districtLocationQuery,
+                objectiveOccasion: 'connect',
+                starterPack: selectedStarterPack,
+              })
+              const canonicalInterpretationBundle = buildCanonicalInterpretationBundle({
+                conciergeIntent,
+                interpretationSource: 'app.sandbox.candidateSupply.conciergeIntentAdapter',
+              })
+              return {
+                conciergeIntent,
+                canonicalInterpretationBundle,
+                contractConstraints: canonicalInterpretationBundle.contractConstraints,
+                contractGateWorld: buildContractGateWorldFromCanonical({
+                  ranked: districtPreviewResult?.ranked ?? [],
+                  canonicalInterpretationBundle,
+                  source: 'page.sandbox.candidateSupply.contractGateWorld',
+                }),
+                locationQuery: districtLocationQuery,
+                sourceMode: 'curated' as const,
+                starterPack: selectedStarterPack ?? undefined,
+              }
+            })()
+          : undefined
         const board = await runStepBCurateLiveSmokeCandidateSupply({
           gate: {
             environment: 'default',
@@ -10541,6 +10571,7 @@ export function SandboxConciergePage({
             sourceMode: 'curated',
           },
           starterPack: selectedStarterPack,
+          fieldDiscoveryContract: candidateSupplyFieldDiscoveryContract,
         })
         if (cancelled) {
           return
@@ -10635,6 +10666,7 @@ export function SandboxConciergePage({
   }, [
     districtLocationQuery,
     currentPath,
+    districtPreviewResult,
     isBuildWrapperActive,
     isCurateWrapperActive,
     isPublicSurface,

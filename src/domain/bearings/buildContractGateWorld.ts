@@ -1350,7 +1350,6 @@ function getContractGateSignals(
   const mix = profile.tasteSignals.hospitalityMix
   const tags = new Set(profile.tasteSignals.experientialTags.map((tag) => tag.toLowerCase()))
   const categoryDiversity = clamp(profile.coreSignals.categoryDiversity, 0, 1)
-  const density = clamp(profile.coreSignals.density, 0, 1)
   const momentPotential = clamp(profile.tasteSignals.momentPotential, 0, 1)
   const laneDiversity = getLaneDiversityScore(mix)
   const energy = toAmbianceNumeric(profile.tasteSignals.ambianceProfile.energy)

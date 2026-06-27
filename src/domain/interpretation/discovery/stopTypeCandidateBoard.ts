@@ -3,6 +3,11 @@ import { getCrewPolicy } from '../../intent/getCrewPolicy'
 import { buildExperienceLens } from '../../intent/buildExperienceLens'
 import { normalizeIntent } from '../../intent/normalizeIntent'
 import { retrieveVenues } from '../../retrieval/retrieveVenues'
+import type { ContractGateWorld } from '../../bearings/buildContractGateWorld'
+import type {
+  CanonicalInterpretationBundle,
+  DirectionStrategyFamily,
+} from '../buildCanonicalInterpretationBundle'
 import {
   buildDistrictCandidateGeoIndex,
   type DistrictCandidateAssignmentMethod,
@@ -22,7 +27,10 @@ import type { ScoredVenue } from '../../types/arc'
 import type { LiveQueryCandidateDiagnostics } from '../../types/diagnostics'
 import type {
   BudgetPreference,
+  ConciergeIntent,
+  ContractConstraints,
   DistanceMode,
+  ExperienceMode,
   IntentInput,
   PersonaMode,
   VibeAnchor,
@@ -220,6 +228,7 @@ export type StopTypeCandidateBoard = {
       queryCentersUsed?: Array<{ id: string; lat: number; lng: number }>
       liveCandidatesByQuery?: LiveQueryCandidateDiagnostics[]
     }
+    fieldDiscoveryContract?: FieldDiscoveryContractProjectionDiagnostic
   }
 }
 
@@ -230,6 +239,7 @@ type BuildStopTypeCandidateBoardInput = {
   starterPack?: StarterPack
   scenarioFamilyOverride?: ScenarioFamily
   liveRetrievalDiagnostics?: NonNullable<StopTypeCandidateBoard['debug']>['liveRetrieval']
+  fieldDiscoveryContractDiagnostic?: FieldDiscoveryContractProjectionDiagnostic
   scoredVenues: ScoredVenue[]
 }
 
@@ -245,6 +255,44 @@ export type BuildStopTypeCandidateBoardFromIntentInput = {
   liveEnvelope?: LiveProviderEnvelope
   livePocketHint?: LiveRetrievalPocketHint
   starterPack?: StarterPack
+}
+
+export interface FieldDiscoveryContractInput {
+  conciergeIntent: ConciergeIntent
+  canonicalInterpretationBundle: CanonicalInterpretationBundle
+  contractConstraints: ContractConstraints
+  contractGateWorld: ContractGateWorld
+  locationQuery: string
+  sourceMode?: SourceMode
+  liveEnvelope?: LiveProviderEnvelope
+  livePocketHint?: LiveRetrievalPocketHint
+  starterPack?: StarterPack
+  scenarioFamilyOverride?: ScenarioFamily
+  distanceMode?: DistanceMode
+  budget?: BudgetPreference
+}
+
+export type FieldDiscoveryContractProjectionDiagnostic = {
+  inputSource: 'canonical_contract' | 'raw_intent_compatibility'
+  compatibilityIntentProjected: boolean
+  scenarioFamilySource:
+    | 'canonical_interpretation_bundle'
+    | 'starter_lineage_compatibility'
+    | 'raw_persona_vibe_city_compatibility'
+    | 'override'
+    | 'unresolved'
+  canonicalIntentId?: string
+  contractConstraintsId?: string
+  contractGateWorldPresent: boolean
+  contractGateWorldSource?: string
+  admittedBoundCount: number
+  requiredStopGuaranteeRequired?: boolean
+  districtIntelligenceOwnership: 'field_geo_pocket_projection'
+  interpretationOwnership: 'canonical_interpretation_bundle' | 'raw_intent_compatibility'
+  compatibilityStarterLineage?: {
+    source: ConciergeIntent['starterLineage']['source']
+    starterPackId?: string
+  }
 }
 
 type StopTypeFitResult = {
@@ -1865,6 +1913,9 @@ export function buildStopTypeCandidateBoard(
     candidatesByStopType,
     debug: {
       ...buildFixtureCandidateBoardDebug(rankedBoard, candidatesByStopType),
+      ...(input.fieldDiscoveryContractDiagnostic
+        ? { fieldDiscoveryContract: input.fieldDiscoveryContractDiagnostic }
+        : {}),
       districtIntelligence: {
         profileCount: districtGeoIndex.profileCount,
         assignedVenueCount: districtGeoIndex.assignedVenueCount,
@@ -2011,29 +2062,37 @@ function buildFixtureCandidateBoardDebug(
   }
 }
 
-export async function buildStopTypeCandidateBoardFromIntent(
-  input: BuildStopTypeCandidateBoardFromIntentInput,
-): Promise<StopTypeCandidateBoard | null> {
-  const persona = parsePersona(input.persona)
-  const vibe = parseVibe(input.vibe)
-  if (!persona || !vibe) {
-    return null
-  }
-  const scenarioFamily =
-    input.scenarioFamilyOverride ??
-    resolveCurateStarterScenarioFamily(input.starterPack) ??
-    resolveScenarioFamily({
-      city: input.city,
-      persona,
-      vibe,
-    })
-  if (!scenarioFamily) {
-    return null
-  }
+function isScenarioFamily(value: DirectionStrategyFamily | string | undefined): value is ScenarioFamily {
+  return Boolean(value && value !== 'adaptive' && value in STOP_TYPES_BY_SCENARIO_FAMILY)
+}
 
+function toExperienceMode(intentMode: ConciergeIntent['intentMode']): ExperienceMode {
+  if (intentMode === 'surprise') {
+    return 'surprise'
+  }
+  if (intentMode === 'curated') {
+    return 'curate'
+  }
+  return 'build'
+}
+
+async function buildStopTypeCandidateBoardFromProjectedIntent(input: {
+  city: string
+  mode?: IntentInput['mode']
+  persona: PersonaMode
+  vibe: VibeAnchor
+  scenarioFamily: ScenarioFamily
+  distanceMode?: DistanceMode
+  budget?: BudgetPreference
+  sourceMode?: SourceMode
+  liveEnvelope?: LiveProviderEnvelope
+  livePocketHint?: LiveRetrievalPocketHint
+  starterPack?: StarterPack
+  fieldDiscoveryContractDiagnostic?: FieldDiscoveryContractProjectionDiagnostic
+}): Promise<StopTypeCandidateBoard | null> {
   const intent = normalizeIntent({
-    persona,
-    primaryVibe: vibe,
+    persona: input.persona,
+    primaryVibe: input.vibe,
     city: input.city,
     distanceMode: input.distanceMode ?? 'nearby',
     budget: input.budget ?? 'balanced',
@@ -2056,10 +2115,10 @@ export async function buildStopTypeCandidateBoardFromIntent(
   )
   return buildStopTypeCandidateBoard({
     city: input.city,
-    persona,
-    vibe,
+    persona: input.persona,
+    vibe: input.vibe,
     starterPack: input.starterPack,
-    scenarioFamilyOverride: scenarioFamily,
+    scenarioFamilyOverride: input.scenarioFamily,
     liveRetrievalDiagnostics: {
       ...(retrieval.sourceMode.livePocketHint
         ? { livePocketHint: retrieval.sourceMode.livePocketHint }
@@ -2077,6 +2136,124 @@ export async function buildStopTypeCandidateBoardFromIntent(
       queryCentersUsed: retrieval.sourceMode.queryCentersUsed,
       liveCandidatesByQuery: retrieval.sourceMode.liveCandidatesByQuery,
     },
+    fieldDiscoveryContractDiagnostic: input.fieldDiscoveryContractDiagnostic,
     scoredVenues,
+  })
+}
+
+export async function buildStopTypeCandidateBoardFromIntent(
+  input: BuildStopTypeCandidateBoardFromIntentInput,
+): Promise<StopTypeCandidateBoard | null> {
+  const persona = parsePersona(input.persona)
+  const vibe = parseVibe(input.vibe)
+  if (!persona || !vibe) {
+    return null
+  }
+  const scenarioFamily =
+    input.scenarioFamilyOverride ??
+    resolveCurateStarterScenarioFamily(input.starterPack) ??
+    resolveScenarioFamily({
+      city: input.city,
+      persona,
+      vibe,
+    })
+  if (!scenarioFamily) {
+    return null
+  }
+
+  return buildStopTypeCandidateBoardFromProjectedIntent({
+    city: input.city,
+    persona,
+    vibe,
+    mode: input.mode,
+    scenarioFamily,
+    distanceMode: input.distanceMode,
+    budget: input.budget,
+    sourceMode: input.sourceMode,
+    liveEnvelope: input.liveEnvelope,
+    livePocketHint: input.livePocketHint,
+    starterPack: input.starterPack,
+    fieldDiscoveryContractDiagnostic: {
+      inputSource: 'raw_intent_compatibility',
+      compatibilityIntentProjected: true,
+      scenarioFamilySource: input.scenarioFamilyOverride
+        ? 'override'
+        : resolveCurateStarterScenarioFamily(input.starterPack)
+          ? 'starter_lineage_compatibility'
+          : 'raw_persona_vibe_city_compatibility',
+      contractGateWorldPresent: false,
+      admittedBoundCount: 0,
+      districtIntelligenceOwnership: 'field_geo_pocket_projection',
+      interpretationOwnership: 'raw_intent_compatibility',
+      compatibilityStarterLineage: {
+        source: input.starterPack ? 'starter_pack' : 'none',
+        starterPackId: input.starterPack?.id,
+      },
+    },
+  })
+}
+
+export async function buildStopTypeCandidateBoardFromContract(
+  input: FieldDiscoveryContractInput,
+): Promise<StopTypeCandidateBoard | null> {
+  const normalizedIntent = input.canonicalInterpretationBundle.normalizedIntent
+  const persona = normalizedIntent.experienceProfile.persona
+  const vibe = normalizedIntent.experienceProfile.vibe
+  const city = input.locationQuery.trim() || 'San Jose'
+  const canonicalScenarioFamily = isScenarioFamily(input.canonicalInterpretationBundle.strategyFamily)
+    ? input.canonicalInterpretationBundle.strategyFamily
+    : null
+  const starterScenarioFamily = resolveCurateStarterScenarioFamily(input.starterPack)
+  const fallbackScenarioFamily = resolveScenarioFamily({
+    city,
+    persona,
+    vibe,
+  })
+  const scenarioFamily =
+    input.scenarioFamilyOverride ??
+    canonicalScenarioFamily ??
+    starterScenarioFamily ??
+    fallbackScenarioFamily
+  if (!scenarioFamily) {
+    return null
+  }
+
+  return buildStopTypeCandidateBoardFromProjectedIntent({
+    city,
+    persona,
+    vibe,
+    mode: toExperienceMode(normalizedIntent.intentMode),
+    scenarioFamily,
+    distanceMode: input.distanceMode,
+    budget: input.budget,
+    sourceMode: input.sourceMode,
+    liveEnvelope: input.liveEnvelope,
+    livePocketHint: input.livePocketHint,
+    starterPack: input.starterPack,
+    fieldDiscoveryContractDiagnostic: {
+      inputSource: 'canonical_contract',
+      compatibilityIntentProjected: true,
+      scenarioFamilySource: input.scenarioFamilyOverride
+        ? 'override'
+        : canonicalScenarioFamily
+          ? 'canonical_interpretation_bundle'
+          : starterScenarioFamily
+            ? 'starter_lineage_compatibility'
+            : fallbackScenarioFamily
+              ? 'raw_persona_vibe_city_compatibility'
+              : 'unresolved',
+      canonicalIntentId: normalizedIntent.id,
+      contractConstraintsId: input.contractConstraints.id,
+      contractGateWorldPresent: input.contractGateWorld.debug.contractGateWorldPresent,
+      contractGateWorldSource: input.contractGateWorld.debug.contractGateWorldSource,
+      admittedBoundCount: input.contractGateWorld.admittedPockets.length,
+      requiredStopGuaranteeRequired: input.contractGateWorld.requiredStopGuarantee.required,
+      districtIntelligenceOwnership: 'field_geo_pocket_projection',
+      interpretationOwnership: 'canonical_interpretation_bundle',
+      compatibilityStarterLineage: {
+        source: normalizedIntent.starterLineage.source,
+        starterPackId: normalizedIntent.starterLineage.starterPackId,
+      },
+    },
   })
 }
