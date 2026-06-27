@@ -11,6 +11,8 @@
  */
 import type { RankedPocket } from '../../engines/district/types/districtTypes'
 import type {
+  AnchorRole,
+  ConciergeIntent,
   ContractConstraints,
   ExperienceContract,
   GreatStopDownstreamSignal,
@@ -18,6 +20,7 @@ import type {
 } from '../types/intent'
 import {
   normalizeExperienceContractVibe,
+  type CanonicalInterpretationBundle,
   type ExperienceContractVibeAxis,
 } from '../interpretation/buildCanonicalInterpretationBundle'
 import type {
@@ -66,8 +69,24 @@ export interface ContractGateHardRequirementResult {
   hardFailureReasons: string[]
 }
 
+export type RequiredStopGuaranteeSource =
+  | 'none'
+  | 'system_seeded'
+  | 'starter_seeded'
+  | 'build_anchor'
+  | 'candidate_lineage'
+
+export interface RequiredStopGuarantee {
+  role?: AnchorRole
+  venueId?: string
+  source: RequiredStopGuaranteeSource
+  required: boolean
+  reasonCodes: string[]
+}
+
 export interface ContractGateWorld {
   contractConstraints: ContractConstraints | null
+  requiredStopGuarantee: RequiredStopGuarantee
   gateSummary: string
   gateStrengthSummary: string
   admittedPockets: RankedPocket[]
@@ -94,6 +113,13 @@ export interface ContractGateWorld {
     suppressedPreview: string[]
     rejectedPreview: string[]
     greatStopQuality?: GreatStopDownstreamSignal
+    strategyFamily: DirectionStrategyFamily
+    strategySummary?: string
+    requiredStopGuarantee: RequiredStopGuarantee
+    buildGeographyPolicy?: {
+      status: 'not_applicable' | 'soft_warning'
+      reasonCodes: string[]
+    }
     strategyFamilyResolution: {
       resolvedFamily: DirectionStrategyFamily
       canonicalStrategyFamilyProvided: boolean
@@ -107,16 +133,26 @@ export interface ContractGateWorld {
 }
 
 export interface BuildContractGateWorldContext {
+  canonicalInterpretationBundle?: CanonicalInterpretationBundle
   canonicalStrategyFamily?: DirectionStrategyFamily
   canonicalStrategyFamilyResolution?: InterpretationStrategyFamilyResolution
   experienceContract?: ExperienceContract
   contractConstraints?: ContractConstraints
+  conciergeIntent?: ConciergeIntent
   greatStopAdmissibilitySignal?: GreatStopDownstreamSignal
 }
 
 interface BuildContractGateWorldInput {
   ranked: RankedPocket[]
   context?: BuildContractGateWorldContext
+  source?: string
+}
+
+export interface BuildContractGateWorldFromCanonicalInput {
+  canonicalInterpretationBundle: CanonicalInterpretationBundle
+  ranked: RankedPocket[]
+  contractConstraints?: ContractConstraints
+  greatStopAdmissibilitySignal?: GreatStopDownstreamSignal
   source?: string
 }
 
@@ -486,8 +522,9 @@ function rankDistrictProfilesWithContract(params: {
   ranked: RankedPocket[]
   experienceContract?: ExperienceContract
   contractConstraints?: ContractConstraints
+  conciergeIntent?: ConciergeIntent
 }): ContractAwareDistrictRankingResult {
-  const { ranked, experienceContract, contractConstraints } = params
+  const { ranked, experienceContract, contractConstraints, conciergeIntent } = params
   if (!experienceContract || !contractConstraints || ranked.length === 0) {
     return {
       applied: false,
@@ -495,9 +532,11 @@ function rankDistrictProfilesWithContract(params: {
       pocketDebugById: {},
     }
   }
-  const normalizedVibe = normalizeExperienceContractVibe(experienceContract.vibe)
+  const persona = conciergeIntent?.experienceProfile.persona ?? experienceContract.persona
+  const vibe = conciergeIntent?.experienceProfile.vibe ?? experienceContract.vibe
+  const normalizedVibe = normalizeExperienceContractVibe(vibe)
   const pressureTemplate =
-    CONTRACT_DISTRICT_PRESSURE_V0_1_MATRIX[experienceContract.persona][normalizedVibe]
+    CONTRACT_DISTRICT_PRESSURE_V0_1_MATRIX[persona][normalizedVibe]
 
   const evaluated = ranked.map((entry) => {
     const features = computeContractAwareDistrictFeatures(entry.profile)
@@ -1857,9 +1896,126 @@ function hasLateSeed(seeds: string[]): boolean {
   return seeds.some((seed) => /(late|night|cocktail|wine bar|music|after)/i.test(seed))
 }
 
+function resolveContractGateContext(
+  input: BuildContractGateWorldInput,
+): Required<Pick<BuildContractGateWorldContext, 'contractConstraints'>> &
+  BuildContractGateWorldContext {
+  const context = input.context ?? {}
+  const canonicalInterpretationBundle = context.canonicalInterpretationBundle
+  const experienceContract =
+    context.experienceContract ?? canonicalInterpretationBundle?.experienceContract
+  const contractConstraints =
+    context.contractConstraints ?? canonicalInterpretationBundle?.contractConstraints
+  const conciergeIntent =
+    context.conciergeIntent ?? canonicalInterpretationBundle?.normalizedIntent
+  const canonicalStrategyFamily =
+    context.canonicalStrategyFamily ?? canonicalInterpretationBundle?.strategyFamily
+  const canonicalStrategyFamilyResolution =
+    context.canonicalStrategyFamilyResolution ??
+    canonicalInterpretationBundle?.strategyFamilyResolution
+
+  return {
+    ...context,
+    canonicalInterpretationBundle,
+    experienceContract,
+    contractConstraints: contractConstraints as ContractConstraints,
+    conciergeIntent,
+    canonicalStrategyFamily,
+    canonicalStrategyFamilyResolution,
+  }
+}
+
+function buildRequiredStopGuarantee(
+  intent: ConciergeIntent | undefined,
+): RequiredStopGuarantee {
+  if (!intent) {
+    return {
+      source: 'none',
+      required: false,
+      reasonCodes: ['concierge_intent_missing'],
+    }
+  }
+
+  const reasonCodes: string[] = []
+  const anchorPosture = intent.anchorPosture
+  const anchorLineage = intent.anchorLineage
+  const candidateLineage = intent.candidateLineage
+  const role =
+    anchorLineage.roleHint ??
+    candidateLineage.anchorRole ??
+    anchorPosture.roleHint
+  const venueId =
+    anchorLineage.source === 'build_anchor'
+      ? anchorLineage.anchorId ?? anchorPosture.anchorValue
+      : candidateLineage.anchorVenueId ?? anchorPosture.anchorValue ?? anchorLineage.anchorId
+  const required =
+    anchorLineage.required === true ||
+    (anchorPosture.mode === 'hard' && anchorPosture.anchorType === 'venue')
+  const source: RequiredStopGuaranteeSource =
+    candidateLineage.source === 'selected_candidate_route_artifact'
+      ? 'candidate_lineage'
+      : anchorLineage.source === 'build_anchor'
+        ? 'build_anchor'
+        : anchorLineage.source === 'starter_seeded'
+          ? 'starter_seeded'
+          : anchorLineage.source === 'system_seeded'
+            ? 'system_seeded'
+            : 'none'
+
+  if (required) {
+    reasonCodes.push('required_stop_non_negotiable')
+  }
+  if (anchorPosture.mode === 'hard') {
+    reasonCodes.push('anchor_posture_hard')
+  }
+  if (source === 'build_anchor') {
+    reasonCodes.push('build_anchor_survival_required')
+  }
+  if (source === 'candidate_lineage') {
+    reasonCodes.push('selected_candidate_lineage_declared')
+  }
+  if (role) {
+    reasonCodes.push(`required_role:${role}`)
+  }
+  if (!venueId && required) {
+    reasonCodes.push('required_stop_venue_missing')
+  }
+  if (!required && source === 'none') {
+    reasonCodes.push('no_required_stop')
+  }
+
+  return {
+    role,
+    venueId,
+    source,
+    required,
+    reasonCodes,
+  }
+}
+
+function getBuildGeographyPolicy(
+  intent: ConciergeIntent | undefined,
+  guarantee: RequiredStopGuarantee,
+): ContractGateWorld['debug']['buildGeographyPolicy'] {
+  if (intent?.intentMode !== 'anchored' || !guarantee.required) {
+    return {
+      status: 'not_applicable',
+      reasonCodes: ['not_build_hard_anchor'],
+    }
+  }
+  return {
+    status: 'soft_warning',
+    reasonCodes: [
+      'build_anchor_geography_soft_penalty',
+      'not_curate_hard_district_blocker',
+      ...guarantee.reasonCodes,
+    ],
+  }
+}
+
 
 export function buildContractGateWorld(input: BuildContractGateWorldInput): ContractGateWorld {
-  const context = input.context ?? {}
+  const context = resolveContractGateContext(input)
   const hasExperienceContract = Boolean(context.experienceContract)
   const hasContractConstraints = Boolean(context.contractConstraints)
   console.assert(
@@ -1870,11 +2026,17 @@ export function buildContractGateWorld(input: BuildContractGateWorldInput): Cont
     .slice()
     .sort((left, right) => left.rank - right.rank)
   const strategyFamilyResolution = resolveStrategyFamilyFromInterpretation(context)
+  const requiredStopGuarantee = buildRequiredStopGuarantee(context.conciergeIntent)
+  const buildGeographyPolicy = getBuildGeographyPolicy(
+    context.conciergeIntent,
+    requiredStopGuarantee,
+  )
 
   const contractAwareRanking = rankDistrictProfilesWithContract({
     ranked: sortedRanked,
     experienceContract: context.experienceContract,
     contractConstraints: context.contractConstraints,
+    conciergeIntent: context.conciergeIntent,
   })
 
   const gateEvaluation = applyContractGate({
@@ -1958,6 +2120,7 @@ export function buildContractGateWorld(input: BuildContractGateWorldInput): Cont
 
   return {
     contractConstraints: context.contractConstraints ?? null,
+    requiredStopGuarantee,
     gateSummary: gateEvaluation.summary,
     gateStrengthSummary: gateEvaluation.strengthSummary,
     admittedPockets: gateEvaluation.ranked,
@@ -1988,7 +2151,25 @@ export function buildContractGateWorld(input: BuildContractGateWorldInput): Cont
       suppressedPreview: gateEvaluation.suppressedPreview,
       rejectedPreview: rejectedPockets.slice(0, 3).map((entry) => entry.profile.pocketId),
       greatStopQuality: context.greatStopAdmissibilitySignal,
+      strategyFamily: strategyFamilyResolution.family,
+      strategySummary: context.canonicalInterpretationBundle?.strategySemantics.summary,
+      requiredStopGuarantee,
+      buildGeographyPolicy,
       strategyFamilyResolution: strategyFamilyResolution.trace,
     },
   }
+}
+
+export function buildContractGateWorldFromCanonical(
+  input: BuildContractGateWorldFromCanonicalInput,
+): ContractGateWorld {
+  return buildContractGateWorld({
+    ranked: input.ranked,
+    context: {
+      canonicalInterpretationBundle: input.canonicalInterpretationBundle,
+      contractConstraints: input.contractConstraints ?? input.canonicalInterpretationBundle.contractConstraints,
+      greatStopAdmissibilitySignal: input.greatStopAdmissibilitySignal,
+    },
+    source: input.source ?? 'domain.bearings.buildContractGateWorldFromCanonical',
+  })
 }

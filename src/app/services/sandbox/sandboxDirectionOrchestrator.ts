@@ -19,7 +19,7 @@ import {
   buildRouteShapeContract as buildRouteShapeContractEngine,
 } from '../../../domain/arc/directionPlanning'
 import {
-  buildContractGateWorld,
+  buildContractGateWorldFromCanonical,
   type ContractAwareDistrictRankingResult,
   type ContractGateWorld,
 } from '../../../domain/bearings/buildContractGateWorld'
@@ -191,24 +191,16 @@ export function assembleSandboxDirectionWorld(
           ).evaluation,
         )
 
-  const contractGateWorld = buildContractGateWorld({
+  const contractGateWorld = buildContractGateWorldFromCanonical({
     ranked: params.districtPreviewResult?.ranked ?? [],
-    context: {
-      canonicalStrategyFamily: canonicalInterpretationBundle.strategyFamily,
-      canonicalStrategyFamilyResolution:
-        canonicalInterpretationBundle.strategyFamilyResolution,
-      experienceContract: canonicalExperienceContract,
-      contractConstraints: canonicalContractConstraints,
-      greatStopAdmissibilitySignal: bearingsGreatStopSignal,
-    },
+    canonicalInterpretationBundle,
+    greatStopAdmissibilitySignal: bearingsGreatStopSignal,
     source: 'page.sandbox.direction.contractGateWorld',
   })
 
   const contractAwareDistrictRanking = contractGateWorld.contractAwareRanking
   const strategyAdmissibleWorlds = buildStrategyAdmissibleWorlds({
     contractGateWorld,
-    strategyFamily: canonicalInterpretationBundle.strategyFamily,
-    strategySummary: canonicalInterpretationBundle.strategySemantics.summary,
   })
 
   const allDirectionCards =

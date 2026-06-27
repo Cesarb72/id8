@@ -11,7 +11,10 @@
  */
 import type { RankedPocket } from '../../engines/district/types/districtTypes'
 import type { GreatStopDownstreamSignal } from '../types/intent'
-import type { ContractGateWorld } from './buildContractGateWorld'
+import type {
+  ContractGateWorld,
+  RequiredStopGuarantee,
+} from './buildContractGateWorld'
 
 type StrategyContractSignalKey =
   | 'highAnchorStrength'
@@ -146,6 +149,7 @@ export interface StrategyAdmissibleWorld {
     reasonSummary: string
   }>
   decisionByPocketId: Record<string, StrategyWorldPocketDecision>
+  requiredStopGuarantee: RequiredStopGuarantee
   summary: string
   debug: {
     admittedCount: number
@@ -167,12 +171,13 @@ export interface StrategyAdmissibleWorld {
     suppressedPreview: string
     rejectedPreview: string
     greatStopQuality?: GreatStopDownstreamSignal
+    requiredStopGuarantee: RequiredStopGuarantee
   }
 }
 
 interface BuildStrategyAdmissibleWorldsInput {
   contractGateWorld: ContractGateWorld
-  strategyFamily: DirectionStrategyFamily
+  strategyFamily?: DirectionStrategyFamily
   strategySummary?: string
 }
 
@@ -943,7 +948,13 @@ function buildStrategyWorld(
   strategy: DirectionStrategyDefinition,
   ranked: RankedPocket[],
   greatStopQuality?: GreatStopDownstreamSignal,
+  requiredStopGuarantee?: RequiredStopGuarantee,
 ): StrategyAdmissibleWorld {
+  const worldRequiredStopGuarantee = requiredStopGuarantee ?? {
+    source: 'none',
+    required: false,
+    reasonCodes: ['required_stop_guarantee_not_supplied'],
+  } satisfies RequiredStopGuarantee
   const seedPool = ranked.slice(0, Math.max(STRATEGY_WORLD_WINDOW, ranked.length))
   const contractShape = STRATEGY_CONTRACT_SHAPES[strategy.id]
   const suppressedBySignal: Record<string, number> = {}
@@ -1190,6 +1201,7 @@ function buildStrategyWorld(
     hardRequirementResults,
     decisionLog,
     decisionByPocketId,
+    requiredStopGuarantee: worldRequiredStopGuarantee,
     summary: `${strategy.label}: admitted ${admittedPockets.length}, suppressed ${suppressedPockets.length}, rejected ${rejectedPockets.length}`,
     debug: {
       admittedCount: admittedPockets.length,
@@ -1207,6 +1219,7 @@ function buildStrategyWorld(
       suppressedPreview: formatPreview(suppressedPockets),
       rejectedPreview: formatPreview(rejectedPockets),
       greatStopQuality,
+      requiredStopGuarantee: worldRequiredStopGuarantee,
     },
   }
 }
@@ -1219,7 +1232,13 @@ export function buildStrategyAdmissibleWorlds(
     input.contractGateWorld.debug.contractGateWorldPresent === true,
     '[ARC-BOUNDARY] strategy admissible worlds require a canonical ContractGateWorld.',
   )
-  const strategies = resolveDirectionStrategiesForFamily(input.strategyFamily)
+  const strategyFamily =
+    input.contractGateWorld.debug.strategyFamily ??
+    input.contractGateWorld.debug.strategyFamilyResolution.resolvedFamily ??
+    input.strategyFamily ??
+    'adaptive'
+  const strategySummary = input.contractGateWorld.debug.strategySummary ?? input.strategySummary
+  const strategies = resolveDirectionStrategiesForFamily(strategyFamily)
   if (strategies.length === 0) {
     return []
   }
@@ -1229,9 +1248,10 @@ export function buildStrategyAdmissibleWorlds(
       strategy,
       ranked,
       input.contractGateWorld.debug.greatStopQuality,
+      input.contractGateWorld.requiredStopGuarantee,
     )
-    if (input.strategySummary) {
-      world.summary = `${input.strategySummary} | ${world.summary}`
+    if (strategySummary) {
+      world.summary = `${strategySummary} | ${world.summary}`
     }
     return world
   })
