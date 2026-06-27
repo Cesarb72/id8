@@ -12,7 +12,7 @@
 
 ## PHASE 1 — CONCIERGEINTENT CONVERGENCE (the root fix — do first)
 
-- [ ] **1.1 Ratify the v2 contracts** — confirm all six engine contracts (v2 Authoritative) + ConciergeIntent definition against code; confirm the canonical artifact chain (ConciergeIntent → CanonicalInterpretationBundle → ContractConstraints → ContractGateWorld + StrategyWorldSnapshot[] → canonical route → RuntimeRouteArtifact) maps in code; flag any disagreement before threading. (Ratification task spec below.)
+- [ ] **1.1 Ratify the v2 contracts** — confirm all six engine contracts (v2 Authoritative) + ConciergeIntent definition against code; confirm the canonical artifact chain (ConciergeIntent → CanonicalInterpretationBundle → ContractConstraints → ContractGateWorld + StrategyAdmissibleWorld[] → canonical route → RuntimeRouteArtifact) maps in code; flag any disagreement before threading. (Ratification task spec below.)
 - [ ] **1.2 Make ConciergeIntent the only mode-entry output** — one exported builder; every mode (Surprise/Curate/Build) produces a complete ConciergeIntent, all 7 fields populated
 - [ ] **1.3 Add anchor/candidate/starter lineage as TYPED FIELDS** on ConciergeIntent (not side channels)
 - [ ] **1.4 Collapse IntentInput/IntentProfile** — into ConciergeIntent, or make IntentProfile a derived view, never separately page-built
@@ -51,7 +51,7 @@
 - [ ] **5.1 Resolve all FLAGGED code** from inline cleanup — delete confirmed-dead (regression-gated), keep confirmed-needed
 - [ ] **5.2 Clear the quarantine** — Legacy* wrappers (SelectedRouteArtifact, CurateRefinementEntryPayload) — delete once nothing reads them
 - [ ] **5.3 Confirm clean codebase** — no orphaned code, no dead side channels, every file serves a contract
-- [ ] **5.4 Doc reconciliation** — PRD + Bible updated to the v2 canonical artifact model (post-#88: SelectedRouteArtifact legacy/quarantined; ConciergeIntent threaded; CanonicalInterpretationBundle/ContractGateWorld/StrategyWorldSnapshot[] as canonical)
+- [ ] **5.4 Doc reconciliation** — PRD + Bible updated to the v2 canonical artifact model (post-#88: SelectedRouteArtifact legacy/quarantined; ConciergeIntent threaded; CanonicalInterpretationBundle/ContractGateWorld/StrategyAdmissibleWorld[] as canonical)
 
 ## PHASE 6 — DEMO READINESS PACKAGE (the close)
 
@@ -73,7 +73,7 @@
 
 **Your role:** code-truth execution + audit. You implement against the contracts and report code-reality.
 
-1. **Read first (in this order):** the **Engine Contracts v2 Authoritative** doc (THIS supersedes the v1 handoff — use the v2 artifact model: CanonicalInterpretationBundle, ExperienceContract, ContractConstraints, ContractGateWorld, StrategyWorldSnapshot[], RuntimeRouteArtifact), the ConciergeIntent Definition, the one-pager (all in repo docs).
+1. **Read first (in this order):** the **Engine Contracts v2 Authoritative** doc (THIS supersedes the v1 handoff — use the v2 artifact model: CanonicalInterpretationBundle, ExperienceContract, ContractConstraints, ContractGateWorld, StrategyAdmissibleWorld[], RuntimeRouteArtifact), the ConciergeIntent Definition, the one-pager (all in repo docs).
 2. **Phase 1 is your main work.** Thread ConciergeIntent through the pipeline per the v2 contracts' per-engine GAP notes. Each engine reads its defined input contract, not raw input. Follow the canonical Codex Rules (1–10) and the House-Cleaning Order in the v2 doc.
 3. **Regression-gate every change** — `test:curate-green-path` + `test:route-authority-shadow` green before/after. Report any red immediately; do not land it.
 4. **Inline cleanup rules:** recycle misplaced into the right seam; delete only provably-orphaned with green path passing; FLAG uncertain (mark `Legacy*`, don't delete). Never improve what works.
@@ -104,7 +104,7 @@
 3. **ExperienceContract** — exists as a distinct artifact? Where built?
 4. **ContractConstraints** — exists as the Interpretation→Bearings boundary artifact?
 5. **ContractGateWorld** — exists (`buildContractGateWorld.ts`)? Is it the single admitted-world artifact, or still scattered?
-6. **StrategyWorldSnapshot[]** — does Bearings emit multiple strategy-worlds, or one? (If one, that's a gap from canonical.)
+6. **StrategyAdmissibleWorld[]** — does Bearings emit multiple strategy-worlds, or one? (If one, that's a gap from canonical.)
 7. **RuntimeRouteArtifact** — confirmed canonical post-lock (we know this is solid from entry #92).
 
 **For each engine, confirm the ownership boundary holds (or flag the violation):**

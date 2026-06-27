@@ -2,7 +2,7 @@
 ## Version A · June 2026 · For build team + Codex
 ### Built on the canonical Arc Architecture & Codex Rules doc, reconciled to current state (post-#88 spine collapse, ConciergeIntent-threaded, basics-first)
 
-> **Supersedes the rushed v1.** This version adopts the canonical artifact model (CanonicalInterpretationBundle, ExperienceContract, ContractConstraints, ContractGateWorld, StrategyWorldSnapshot[]), the correct engine sub-structure (Interpretation's lenses), the confirmed LCE definition, and the canonical Codex Rules. Five-section template per engine. Version A = kernel as ID.8 exercises it, portably shaped, NOT full capacity.
+> **Supersedes the rushed v1.** This version adopts the canonical artifact model (CanonicalInterpretationBundle, ExperienceContract, ContractConstraints, ContractGateWorld, StrategyAdmissibleWorld[]), the correct engine sub-structure (Interpretation's lenses), the confirmed LCE definition, and the canonical Codex Rules. Five-section template per engine. Version A = kernel as ID.8 exercises it, portably shaped, NOT full capacity.
 
 ---
 
@@ -31,7 +31,7 @@ CanonicalInterpretationBundle   (Interpretation's output — contains intent + m
 ContractConstraints        (Interpretation→Bearings boundary artifact)
    ↓
 ContractGateWorld          (the Allowed World — Bearings)
-StrategyWorldSnapshot[]    (one admissible world per strategy — Bearings)
+StrategyAdmissibleWorld[]    (one admissible world per strategy — Bearings; this is the confirmed CODE name, ratified June 2026 — replaces the earlier "StrategyWorldSnapshot[]" draft name)
    ↓
 [canonical route]          (the Shape — Waypoint; SelectedRouteArtifact now legacy/quarantined per #88)
    ↓
@@ -87,9 +87,9 @@ Apply real-world constraints and admissibility. Sole owner of: what reality is a
 - **Producer:** Interpretation (the boundary artifact)
 - **⚠ GAP (audit):** Bearings reads contract-adjacent data, not one shared contract (`buildContractGateWorld.ts:1861`). FIX: read from ContractConstraints + normalized intent.
 
-**3. OUTPUT CONTRACT — ContractGateWorld + StrategyWorldSnapshot[]**
+**3. OUTPUT CONTRACT — ContractGateWorld + StrategyAdmissibleWorld[]**
 - **ContractGateWorld** — the admitted/suppressed/rejected world with reason codes. The first canonical *allowed reality* artifact.
-- **StrategyWorldSnapshot[]** — one admissible world per strategy (anchored pulse, contained pulse, exploratory pulse). **How one contract yields multiple valid interpretations** — Waypoint picks among these.
+- **StrategyAdmissibleWorld[]** — one admissible world per strategy (anchored pulse, contained pulse, exploratory pulse). **How one contract yields multiple valid interpretations** — Waypoint picks among these.
 - **BearingsDecisionLog** — decisions + reason codes
 - **Consumers:** Waypoint (sequences within the admitted worlds)
 - **Invariant:** required stops carry role + survival guarantee through dedupe/pruning/scoring
@@ -140,7 +140,7 @@ Detect current reality. Sole owner of: the raw venue universe, place/entity retr
 Coordinate the sequence. Sole owner of: role sequencing, start/highlight/wind-down coordination, route assembly, act execution, route ranking. *What is the best sequence from the already-admissible ingredients?*
 
 **2. INPUT CONTRACT**
-- **Name:** StrategyWorldSnapshot[] (admitted worlds from Bearings) + CanonicalInterpretationBundle (meaning) + ConciergeIntent fields: pacing, anchor posture, objective
+- **Name:** StrategyAdmissibleWorld[] (admitted worlds from Bearings) + CanonicalInterpretationBundle (meaning) + ConciergeIntent fields: pacing, anchor posture, objective
 - **Producer:** Bearings (admitted worlds) + Interpretation (meaning) + Field (grounded venues)
 - **⚠ GAP (audit):** reads IntentProfile, not the normalized contract (`rankArcCandidates.ts:11`). FIX: read pacing/anchor posture from the contract.
 
@@ -239,7 +239,7 @@ Expose engine truth clearly. Sole owner of: intake UI, direction cards, preview/
 ## HOUSE-CLEANING ORDER (canonical — matches our convergence sequence)
 
 1. **Interpretation extraction** — create/consume CanonicalInterpretationBundle; remove app-side contract building. *(= ConciergeIntent convergence, Interpretation first)*
-2. **Bearings extraction** — create ContractGateWorld + StrategyWorldSnapshot[]; all admissibility consumers use them.
+2. **Bearings extraction** — create ContractGateWorld + StrategyAdmissibleWorld[]; all admissibility consumers use them.
 3. **Waypoint cleanup** — consume strategy worlds, emit canonical route.
 4. **LCE cleanup** — consume canonical route, emit RuntimeRouteArtifact.
 5. **Application simplification** — remove duplicated derivations, render engine truth only.
