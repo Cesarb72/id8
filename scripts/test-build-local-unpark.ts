@@ -655,6 +655,10 @@ async function main(): Promise<void> {
   assert(!parkedSelection.selectable, 'Static Build card selection must still honor local unpark flags.')
 
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
+  const canonicalRouteArtifactServiceSource = readFileSync(
+    'src/app/services/sandbox/canonicalRouteArtifactService.ts',
+    'utf8',
+  )
   assert(
     sandboxSource.includes('build_static_pre_generation'),
     'Build static pre-generation display source must be wired into card rendering.',
@@ -707,8 +711,10 @@ async function main(): Promise<void> {
     'Build static generation effect must track completed and rejected attempts separately.',
   )
   assert(
-    sandboxSource.includes('const buildAuthorityFinalRoute = isBuildWrapperActive ? routeAuthorityFinalRoute : null'),
-    'Build committed display authority must come from routeAuthority lock-ready finalRoute.',
+    canonicalRouteArtifactServiceSource.includes(
+      'const buildAuthorityFinalRoute = input.isBuildWrapperActive ? routeAuthorityFinalRoute : null',
+    ),
+    'Build committed display authority must come from routeAuthority lock-ready finalRoute through the service boundary.',
   )
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
 

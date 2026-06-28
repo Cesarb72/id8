@@ -94,6 +94,11 @@ import {
 } from '../app/preview/planPreview'
 import { assembleSandboxDirectionWorld } from '../app/services/sandbox/sandboxDirectionOrchestrator'
 import {
+  buildSandboxCanonicalRouteArtifact,
+  projectFinalRouteToPlanningDisplayStops,
+  type SandboxCanonicalRouteArtifact,
+} from '../app/services/sandbox/canonicalRouteArtifactService'
+import {
   attachFinalRouteParityToContractEntryArtifact,
   attachQualificationToContractEntryArtifact,
   buildContractEntryArtifactFromDirectionCard,
@@ -402,14 +407,10 @@ interface DemoPlanState {
   selectedCandidateRouteArtifactId?: string | null
 }
 
-interface CanonicalRouteArtifact {
-  selectedDirectionId: string
-  selectedClusterConfirmation: string
-  itinerary: Itinerary
-  finalRoute: RuntimeRouteArtifact
-  canonicalStopByRole: Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
-  planSnapshot: DemoPlanState
-}
+type CanonicalRouteArtifact = SandboxCanonicalRouteArtifact<
+  DemoPlanState,
+  Partial<Record<UserStopRole, CanonicalPlanningStopIdentity>>
+>
 
 type ExplorationControlState = {
   exploration: 'focused' | 'exploratory'
@@ -16765,41 +16766,26 @@ export function SandboxConciergePage({
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
   ])
-  const canonicalRouteArtifact = useMemo<CanonicalRouteArtifact | null>(() => {
-    const activePlan = activeCurateRefinementEntryPayload?.planSnapshot ?? plan
-    const routeAuthorityFinalRoute =
-      routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute ?? null
-    const buildAuthorityFinalRoute = isBuildWrapperActive ? routeAuthorityFinalRoute : null
-    const activeFinalRoute = activeCurateRefinementEntryPayload
-      ? routeAuthorityFinalRoute
-      : isBuildWrapperActive
-        ? buildAuthorityFinalRoute
-      : renderOnlyFinalRoute
-    const activeCanonicalStopByRole =
-      activeCurateRefinementEntryPayload?.canonicalStopByRole ?? canonicalStopByRole
-    if (!activePlan || !activeFinalRoute) {
-      return null
-    }
-    const expectedDirectionId = activePlan.selectedDirectionContract.id
-    if (!expectedDirectionId || activeFinalRoute.selectedDirectionId !== expectedDirectionId) {
-      return null
-    }
-    return {
-      selectedDirectionId: expectedDirectionId,
-      selectedClusterConfirmation: activePlan.selectedClusterConfirmation,
-      itinerary: activePlan.itinerary,
-      finalRoute: activeFinalRoute,
-      canonicalStopByRole: activeCanonicalStopByRole,
-      planSnapshot: activePlan,
-    }
-  }, [
-    activeCurateRefinementEntryPayload,
-    canonicalStopByRole,
-    isBuildWrapperActive,
-    renderOnlyFinalRoute,
-    plan,
-    routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute,
-  ])
+  const canonicalRouteArtifact = useMemo<CanonicalRouteArtifact | null>(
+    () =>
+      buildSandboxCanonicalRouteArtifact({
+        approvedPayload: activeCurateRefinementEntryPayload,
+        plan,
+        routeAuthorityFinalRoute:
+          routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute ?? null,
+        renderOnlyFinalRoute,
+        canonicalStopByRole,
+        isBuildWrapperActive,
+      }),
+    [
+      activeCurateRefinementEntryPayload,
+      canonicalStopByRole,
+      isBuildWrapperActive,
+      renderOnlyFinalRoute,
+      plan,
+      routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute,
+    ],
+  )
   const normalizedContractEntryArtifactDebug = useMemo(() => {
     const normalizedDirectionCardArtifacts = directionCards.map((directionCard) =>
       buildContractEntryArtifactFromDirectionCard(directionCard),
@@ -16908,47 +16894,10 @@ export function SandboxConciergePage({
     }, 220)
   }
 
-  const planningDisplayStops = useMemo(() => {
-    if (!canonicalRouteArtifact) {
-      return []
-    }
-    const stopBySourceId = new Map(
-      canonicalRouteArtifact.itinerary.stops.map((stop) => [stop.id, stop] as const),
-    )
-    const stopByIndex = new Map(
-      canonicalRouteArtifact.itinerary.stops.map((stop, index) => [index, stop] as const),
-    )
-    const orderedRouteStops = [...canonicalRouteArtifact.finalRoute.stops]
-      .filter((stop) => stop.role !== 'surprise')
-      .sort((left, right) => left.stopIndex - right.stopIndex)
-    return orderedRouteStops
-      .map((finalStop) => {
-        const sourceStop =
-          stopBySourceId.get(finalStop.sourceStopId) ??
-          stopByIndex.get(finalStop.stopIndex) ??
-          canonicalRouteArtifact.itinerary.stops.find(
-            (stop) => stop.role === finalStop.role && stop.venueId === finalStop.venueId,
-          ) ??
-          canonicalRouteArtifact.itinerary.stops.find((stop) => stop.role === finalStop.role)
-        if (!sourceStop) {
-          return null
-        }
-        return {
-          ...sourceStop,
-          id: finalStop.sourceStopId,
-          role: finalStop.role,
-          title: finalStop.title,
-          subtitle: finalStop.subtitle,
-          venueId: finalStop.venueId,
-          venueName: finalStop.displayName,
-          city: canonicalRouteArtifact.finalRoute.location || sourceStop.city,
-          neighborhood: finalStop.neighborhood || sourceStop.neighborhood,
-          driveMinutes: finalStop.driveMinutes,
-          imageUrl: finalStop.imageUrl,
-        }
-      })
-      .filter((stop): stop is ItineraryStop => Boolean(stop))
-  }, [canonicalRouteArtifact])
+  const planningDisplayStops = useMemo(
+    () => projectFinalRouteToPlanningDisplayStops(canonicalRouteArtifact),
+    [canonicalRouteArtifact],
+  )
   const postSwapCanonicalStopIdBySlot = useMemo(
     () =>
       renderOnlyFinalRoute
