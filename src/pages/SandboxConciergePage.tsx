@@ -188,6 +188,10 @@ import {
   type BuildProviderSourceOpportunityDiagnostics,
 } from '../domain/providers/buildProviderSourceOpportunity'
 import {
+  evaluateBuildProviderPublicLiveEligibility,
+  readBuildProviderPublicLiveSourceMode,
+} from '../domain/providers/buildProviderPublicLiveWiring'
+import {
   mapBuiltScenarioNightToVerifiedOpportunity,
   type BuiltScenarioNightPreviewModel,
   type BuiltScenarioPreviewStop,
@@ -11523,11 +11527,43 @@ export function SandboxConciergePage({
       new Map(step2PrimarySourceOpportunities.map((opportunity) => [opportunity.id, opportunity] as const)),
     [step2PrimarySourceOpportunities],
   )
+  const buildProviderStep2IntegrationFlagEnabled = isBuildProviderStep2IntegrationEnabled()
+  const buildProviderVisibleMergeFlagEnabled = isBuildProviderVisibleMergeEnabled()
+  const buildProviderSupplyFlagEnabled = isBuildProviderSupplyEnabled()
+  const buildProviderPublicLiveSourceMode = readBuildProviderPublicLiveSourceMode()
+  const isDevOrSandboxProviderCloseoutFlow = isDevOrSandboxCloseoutFlow()
+  const buildProviderPublicLiveEligibility = useMemo(
+    () =>
+      evaluateBuildProviderPublicLiveEligibility({
+        isPublicSurface,
+        isBuildWrapperActive,
+        isDevOrSandboxCloseoutFlow: isDevOrSandboxProviderCloseoutFlow,
+        step2IntegrationFlagEnabled: buildProviderStep2IntegrationFlagEnabled,
+        supplyFlagEnabled: buildProviderSupplyFlagEnabled,
+        sourceMode: buildProviderPublicLiveSourceMode,
+      }),
+    [
+      buildProviderPublicLiveSourceMode,
+      buildProviderStep2IntegrationFlagEnabled,
+      buildProviderSupplyFlagEnabled,
+      isBuildWrapperActive,
+      isDevOrSandboxProviderCloseoutFlow,
+      isPublicSurface,
+    ],
+  )
+  const buildProviderLiveEnvelope =
+    buildProviderPublicLiveEligibility.eligible
+      ? buildProviderPublicLiveEligibility.envelope ?? undefined
+      : undefined
   const buildProviderIntegrationEnabled =
-    !isPublicSurface && isBuildProviderStep2IntegrationEnabled()
+    buildProviderStep2IntegrationFlagEnabled &&
+    (!isPublicSurface || buildProviderPublicLiveEligibility.eligible)
   const buildProviderVisibleMergeEnabled =
-    !isPublicSurface && isBuildProviderVisibleMergeEnabled()
-  const buildProviderSupplyEnabled = !isPublicSurface && isBuildProviderSupplyEnabled()
+    buildProviderVisibleMergeFlagEnabled &&
+    (!isPublicSurface || buildProviderPublicLiveEligibility.eligible)
+  const buildProviderSupplyEnabled =
+    buildProviderSupplyFlagEnabled &&
+    (!isPublicSurface || buildProviderPublicLiveEligibility.eligible)
   const selectedBuildAnchorVenue = useMemo(
     () =>
       selectBuildAnchorVenue({
@@ -11589,7 +11625,7 @@ export function SandboxConciergePage({
       return
     }
 
-    if (isDevOrSandboxCloseoutFlow()) {
+    if (isDevOrSandboxProviderCloseoutFlow) {
       const blockedAttempt: BuildProviderShadowInvocationSnapshot = {
         sourceOpportunity: null,
         diagnostics: buildDevSandboxBlockedProviderShadowDiagnostics(selectedBuildAnchorVenue),
@@ -11628,6 +11664,7 @@ export function SandboxConciergePage({
       try {
         const result = await buildProviderSourceOpportunity({
           anchorVenue: selectedBuildAnchorVenue,
+          liveEnvelope: buildProviderLiveEnvelope,
         })
         if (
           cancelled ||
@@ -11686,7 +11723,12 @@ export function SandboxConciergePage({
     return () => {
       cancelled = true
     }
-  }, [buildProviderRequestAnchorKey, selectedBuildAnchorVenue])
+  }, [
+    buildProviderLiveEnvelope,
+    buildProviderRequestAnchorKey,
+    isDevOrSandboxProviderCloseoutFlow,
+    selectedBuildAnchorVenue,
+  ])
   const shadowBuildProviderVerifiedOpportunity =
     isBuildWrapperActive &&
     buildProviderIntegrationEnabled &&
@@ -11829,6 +11871,8 @@ export function SandboxConciergePage({
   const buildProviderFallbackReason =
     !isBuildWrapperActive
       ? null
+      : isPublicSurface && !buildProviderPublicLiveEligibility.eligible
+        ? `build_public_live_ineligible:${buildProviderPublicLiveEligibility.reasons.join(',')}`
       : !buildProviderIntegrationEnabled
         ? 'build_provider_step2_integration_disabled'
         : !buildProviderSupplyEnabled
@@ -22330,6 +22374,26 @@ export function SandboxConciergePage({
         <div>buildProviderIntegrationEnabled: {String(buildProviderIntegrationEnabled)}</div>
         <div>buildProviderVisibleMergeEnabled: {String(buildProviderVisibleMergeEnabled)}</div>
         <div>buildProviderSupplyEnabled: {String(buildProviderSupplyEnabled)}</div>
+        <div>
+          buildProviderPublicLiveEligible:{' '}
+          {String(buildProviderPublicLiveEligibility.eligible)}
+        </div>
+        <div>
+          buildProviderPublicLiveSourceMode:{' '}
+          {buildProviderPublicLiveSourceMode ?? 'none'}
+        </div>
+        <div>
+          buildProviderPublicLiveReasons:{' '}
+          {buildProviderPublicLiveEligibility.reasons.length > 0
+            ? buildProviderPublicLiveEligibility.reasons.join(', ')
+            : 'none'}
+        </div>
+        <div>
+          buildProviderPublicLiveEnvelope:{' '}
+          {buildProviderPublicLiveEligibility.envelope
+            ? `${buildProviderPublicLiveEligibility.envelope.maxProviderCalls}/${buildProviderPublicLiveEligibility.envelope.maxQueryLabels}/${buildProviderPublicLiveEligibility.envelope.maxCenters}`
+            : 'none'}
+        </div>
         <div>buildProviderAttempted: {String(buildProviderAttempted)}</div>
         <div>buildProviderInFlight: {String(buildProviderInFlight)}</div>
         <div>

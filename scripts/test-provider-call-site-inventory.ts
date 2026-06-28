@@ -73,14 +73,15 @@ const callSites: ProviderCallSiteClassification[] = [
     filePath: 'src/domain/providers/buildProviderSourceOpportunity.ts',
     functionName: 'buildProviderSourceOpportunity',
     callPurpose: 'build_anchor_nearby',
-    trigger: 'Build-anchor provider supply shadow/user action; explicit live envelope required',
-    envelope: 'default-closed-runtime-envelope',
+    trigger: 'Build-anchor provider supply shadow/user action; explicit live envelope required for public Build proof path',
+    envelope: 'yes',
     pageRenderSurface: false,
-    classification: 'blocked',
+    classification: 'enveloped',
     evidence: [
       'buildProviderSourceOpportunity defaults to CLOSED_RUNTIME_LIVE_ENVELOPE',
       'liveEnvelope.liveProviderAllowed !== true returns provider_request_blocked before searchPlaces',
       'explicit build-provider dry-run harness passes a deliberate live envelope',
+      'public Build proof path must pass buildProviderLiveEnvelope from buildProviderPublicLiveWiring',
     ],
   },
 ]
@@ -140,8 +141,10 @@ function assertNoUnclassifiedWrapperCallers(): void {
     'src/domain/search/searchAnchorVenues.ts',
     'src/components/journey/JourneyMapReal.tsx',
     'src/domain/providers/buildProviderSupplyDryRunHarness.ts',
+    'src/domain/providers/buildProviderPublicLiveWiring.ts',
     'src/domain/retrieval/retrieveVenues.ts',
     'src/domain/retrieval/hybridPortableAdapter.ts',
+    'src/pages/SandboxConciergePage.tsx',
   ]
   const combined = sourceFiles.map((filePath) => readFileSync(filePath, 'utf8')).join('\n')
   assert(
@@ -155,6 +158,14 @@ function assertNoUnclassifiedWrapperCallers(): void {
   assert(
     combined.includes('liveProviderAllowed: true') && combined.includes('buildProviderSourceOpportunity'),
     'Explicit build-provider harness must construct a live envelope deliberately.',
+  )
+  assert(
+    combined.includes('BUILD_PROVIDER_PUBLIC_LIVE_ENVELOPE') &&
+      combined.includes('maxProviderCalls: 3') &&
+      combined.includes('maxQueryLabels: 3') &&
+      combined.includes('maxCenters: 1') &&
+      combined.includes('liveEnvelope: buildProviderLiveEnvelope'),
+    'Public Build provider path must use the fixed 3/3/1 envelope deliberately.',
   )
   assert(
     combined.includes('fetchHybridPortableVenues(intent.city, { liveEnvelope: options.liveEnvelope })'),
