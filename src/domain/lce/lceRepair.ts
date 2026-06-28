@@ -16,6 +16,12 @@ import type { CrewPolicy } from '../types/crewPolicies'
 import type { ExperienceLens } from '../types/experienceLens'
 import type { IntentProfile } from '../types/intent'
 import type { UserStopRole } from '../types/itinerary'
+import {
+  buildLceRuntimeContract,
+  type LceRuntimeContract,
+  type LceRuntimeContractDiagnostics,
+  type LceRuntimeContractInput,
+} from './lceRuntimeContract'
 
 export type LceRepairTrigger = 'removed' | 'unavailable'
 
@@ -28,9 +34,10 @@ export interface LceRepairProposal {
   source: 'role-pool' | 'ranked-candidates'
   rationale: string
   proposedArc: ArcCandidate
+  lceDiagnostics: LceRuntimeContractDiagnostics
 }
 
-interface ProposeLceRepairInput {
+export interface ProposeLceRepairInput {
   currentArc: ArcCandidate
   role: UserStopRole
   trigger: LceRepairTrigger
@@ -39,6 +46,12 @@ interface ProposeLceRepairInput {
   crewPolicy: CrewPolicy
   lens: ExperienceLens
   rolePoolAlternatives?: StopAlternative[]
+  lceRuntimeContract?: LceRuntimeContractInput
+}
+
+export interface ProposeLceRepairFromRuntimeContractInput
+  extends Omit<ProposeLceRepairInput, 'lceRuntimeContract'> {
+  lceRuntimeContract: LceRuntimeContractInput
 }
 
 interface CandidateSource {
@@ -113,8 +126,55 @@ export function proposeLceRepair({
   crewPolicy,
   lens,
   rolePoolAlternatives,
+  lceRuntimeContract,
 }: ProposeLceRepairInput): LceRepairProposal | undefined {
-  // Canonical LCE seam: this function proposes repairs only; wrappers decide accept/decline.
+  const runtimeContract = buildLceRuntimeContract({
+    ...(lceRuntimeContract ?? {
+      source: 'domain.lce.proposeLceRepair.compatibility',
+      mutationKind: 'repair',
+      phase: 'preview',
+    }),
+    source: lceRuntimeContract?.source ?? 'domain.lce.proposeLceRepair.compatibility',
+    mutationKind: lceRuntimeContract?.mutationKind ?? 'repair',
+    phase: lceRuntimeContract?.phase ?? 'preview',
+    targetRole: lceRuntimeContract?.targetRole ?? role,
+    compatibilityIntentProfile:
+      lceRuntimeContract?.compatibilityIntentProfile ?? intent,
+    userConfirmed: lceRuntimeContract?.userConfirmed ?? false,
+  })
+  return proposeLceRepairWithRuntimeContract({
+    currentArc,
+    role,
+    trigger,
+    scoredVenues,
+    intent,
+    crewPolicy,
+    lens,
+    rolePoolAlternatives,
+    runtimeContract,
+  })
+}
+
+export function proposeLceRepairFromRuntimeContract(
+  input: ProposeLceRepairFromRuntimeContractInput,
+): LceRepairProposal | undefined {
+  return proposeLceRepair(input)
+}
+
+function proposeLceRepairWithRuntimeContract({
+  currentArc,
+  role,
+  trigger,
+  scoredVenues,
+  intent,
+  crewPolicy,
+  lens,
+  rolePoolAlternatives,
+  runtimeContract,
+}: Omit<ProposeLceRepairInput, 'lceRuntimeContract'> & {
+  runtimeContract: LceRuntimeContract
+}): LceRepairProposal | undefined {
+  // LCE proposes repairs only; user confirmation wrappers decide accept/decline.
   const internalRole = inverseRoleProjection[role]
   const brokenStop = currentArc.stops.find((stop) => stop.role === internalRole)
   if (!brokenStop) {
@@ -225,5 +285,6 @@ export function proposeLceRepair({
     source: best.source,
     rationale,
     proposedArc: best.proposedArc,
+    lceDiagnostics: runtimeContract.diagnostics,
   }
 }

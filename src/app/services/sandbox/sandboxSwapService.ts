@@ -1,5 +1,12 @@
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../../../domain/artifacts/runtimeRouteArtifact'
+import {
+  assertLceRuntimeMutationMayCommit,
+  buildLceRuntimeContract,
+  type LceRuntimeContractDiagnostics,
+  type LceRuntimeFieldReality,
+} from '../../../domain/lce/lceRuntimeContract'
 import type { RouteShapeContract } from '../../../domain/types/intent'
+import type { ConciergeIntent } from '../../../domain/types/intent'
 import type { ArcCandidate } from '../../../domain/types/arc'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../../../domain/types/itinerary'
 
@@ -53,6 +60,7 @@ export interface SwapDebugBreadcrumbLike {
   swapRenderSource: 'renderOnlyFinalRoute'
   routeVersion: number
   mismatch: boolean
+  lceDiagnostics?: LceRuntimeContractDiagnostics
 }
 
 export interface SwapCommitPlanSnapshotLike {
@@ -63,6 +71,8 @@ export interface SwapCommitPlanSnapshotLike {
   }
   selectedDirectionPreviewContext?: unknown
   routeShapeContract: RouteShapeContract
+  conciergeIntent?: ConciergeIntent
+  runtimeFieldReality?: LceRuntimeFieldReality
 }
 
 export class SwapCommitCoreError extends Error {
@@ -151,6 +161,24 @@ export function applyPreviewSwapCommit<
   dependencies: ApplyPreviewSwapCommitDependencies<TPlanSnapshot, TCanonical, TCompatibility>,
 ): ApplyPreviewSwapCommitResult<TCanonical, TCompatibility> {
   const { role, swapSnapshot, planSnapshot, finalRouteSnapshot, routeVersionAtClick } = params
+  const lceContract = buildLceRuntimeContract({
+    source: 'app.services.sandbox.applyPreviewSwapCommit',
+    mutationKind: 'swap',
+    phase: 'confirm',
+    targetRole: role,
+    canonicalRoute: finalRouteSnapshot,
+    runtimeRouteArtifact: finalRouteSnapshot,
+    runtimeFieldReality: planSnapshot.runtimeFieldReality,
+    conciergeIntent: planSnapshot.conciergeIntent,
+    routeShapeContract: planSnapshot.routeShapeContract,
+    userConfirmed: true,
+  })
+  const lceCommitGate = assertLceRuntimeMutationMayCommit(lceContract)
+  if (!lceCommitGate.ok) {
+    throw new SwapCommitCoreError(
+      `Swap rejected by LCE: ${lceCommitGate.reason ?? 'runtime continuity gate failed'}.`,
+    )
+  }
   const nextCanonicalStopByRole: Partial<Record<UserStopRole, TCanonical>> = {
     ...params.canonicalStopByRole,
     [role]: swapSnapshot.replacementCanonical,
@@ -330,6 +358,10 @@ export function applyPreviewSwapCommit<
     swapRenderSource: 'renderOnlyFinalRoute',
     routeVersion: swapMismatch ? routeVersionAtClick : routeVersionAtClick + 1,
     mismatch: swapMismatch,
+    lceDiagnostics: {
+      ...lceContract.diagnostics,
+      reasonCodes: lceCommitGate.reasonCodes,
+    },
   }
   if (swapMismatch) {
     throw new SwapCommitCoreError(
