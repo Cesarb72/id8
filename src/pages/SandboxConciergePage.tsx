@@ -21139,6 +21139,47 @@ export function SandboxConciergePage({
       buildSelectedCardTruthReady &&
       (!isPublicSurface || !isSurpriseWrapperActive || committedRevealReady),
   )
+  const publicBuildReviewGatingDiagnosticsVisible = Boolean(
+    isPublicSurface && isBuildWrapperActive && showDebug,
+  )
+  const selectedArtifactDisplaySource =
+    selectedCandidateRouteArtifact?.sourceOpportunityId === 'step2_static_build_paper_plane'
+      ? 'build_static_pre_generation'
+      : 'unknown'
+  const publicBuildReviewGatingDiagnostics = {
+    buildSelectedCardTruthReady,
+    buildReviewTruthEligible,
+    buildPreGenerationSelectionReady,
+    buildGenerationInProgress,
+    showPrimaryContinueAction,
+    primaryActionText: showPrimaryContinueAction ? 'Review this route' : 'none',
+    reviewShouldRender: showPrimaryContinueAction,
+    reviewHiddenReasons: [
+      ...(buildSelectedCardTruthReady ? [] : ['build_selected_card_truth_not_ready']),
+      ...(buildReviewTruthEligible ? [] : ['build_review_truth_not_eligible']),
+      ...buildCardTruthRejectionReasons,
+    ],
+    selectedArtifactId: selectedCandidateRouteArtifact?.id ?? null,
+    selectedArtifactSourceOpportunityId:
+      selectedCandidateRouteArtifact?.sourceOpportunityId ?? null,
+    selectedArtifactDisplaySource,
+    selectedRouteStaticPreGeneration:
+      selectedCandidateRouteArtifact?.sourceOpportunityId === 'step2_static_build_paper_plane',
+    routeAuthorityStatus: routeAuthoritySnapshot.validationStatus,
+    routeAuthoritySourceLabel: routeAuthoritySnapshot.sourceLabel,
+    routeAuthorityReasons: routeAuthoritySnapshot.rejectionReasons,
+    routeAuthorityMismatchReasons: routeAuthoritySnapshot.mismatchReasons,
+    routeAuthorityBuildReasons: routeAuthoritySnapshot.buildDiagnostics?.reasons ?? [],
+    lockInputAvailable: buildSelectedCardTruthDiagnostic?.diagnostics.lockInputAvailable ?? false,
+    finalRoutePresent: Boolean(routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute),
+    generatedPlanPresent: Boolean(plan),
+    generatedContractEntryArtifactPresent: Boolean(plan?.generatedContractEntryArtifact),
+    generatedCanonicalRouteHandoffComplete: Boolean(
+      plan?.generatedContractEntryArtifact &&
+        routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute,
+    ),
+    generatedSelectedArtifactId: plan?.selectedCandidateRouteArtifactId ?? null,
+  }
   const showTryAnotherAction = isSurpriseWrapperActive
   const showReturnToCurateDiscoveryAction = curatePreviewPhaseActive
   const selectedRouteArtifactIdForGeneration =
@@ -25465,6 +25506,89 @@ export function SandboxConciergePage({
                 {publicBuildProviderDiagnostics.fieldProxyFetchAttemptedCount}
               </div>
               <div>providerCallCount: {publicBuildProviderDiagnostics.providerCallCount}</div>
+            </details>
+          )}
+          {publicBuildReviewGatingDiagnosticsVisible && (
+            <details
+              className="preview-notice draft-feedback"
+              data-id8-public-build-review-gating-diagnostics={safeJsonForDataAttribute(
+                publicBuildReviewGatingDiagnostics,
+              )}
+            >
+              <summary>Build review gating diagnostics</summary>
+              <div>
+                buildSelectedCardTruthReady:{' '}
+                {String(publicBuildReviewGatingDiagnostics.buildSelectedCardTruthReady)}
+              </div>
+              <div>
+                buildReviewTruthEligible:{' '}
+                {String(publicBuildReviewGatingDiagnostics.buildReviewTruthEligible)}
+              </div>
+              <div>
+                buildPreGenerationSelectionReady:{' '}
+                {String(publicBuildReviewGatingDiagnostics.buildPreGenerationSelectionReady)}
+              </div>
+              <div>
+                buildGenerationInProgress:{' '}
+                {String(publicBuildReviewGatingDiagnostics.buildGenerationInProgress)}
+              </div>
+              <div>
+                showPrimaryContinueAction:{' '}
+                {String(publicBuildReviewGatingDiagnostics.showPrimaryContinueAction)}
+              </div>
+              <div>primaryActionText: {publicBuildReviewGatingDiagnostics.primaryActionText}</div>
+              <div>
+                reviewHiddenReasons:{' '}
+                {publicBuildReviewGatingDiagnostics.reviewHiddenReasons.length > 0
+                  ? publicBuildReviewGatingDiagnostics.reviewHiddenReasons.join(', ')
+                  : 'none'}
+              </div>
+              <div>
+                selectedArtifactId:{' '}
+                {publicBuildReviewGatingDiagnostics.selectedArtifactId ?? 'none'}
+              </div>
+              <div>
+                selectedArtifactSourceOpportunityId:{' '}
+                {publicBuildReviewGatingDiagnostics.selectedArtifactSourceOpportunityId ?? 'none'}
+              </div>
+              <div>
+                selectedArtifactDisplaySource:{' '}
+                {publicBuildReviewGatingDiagnostics.selectedArtifactDisplaySource}
+              </div>
+              <div>
+                selectedRouteStaticPreGeneration:{' '}
+                {String(publicBuildReviewGatingDiagnostics.selectedRouteStaticPreGeneration)}
+              </div>
+              <div>routeAuthorityStatus: {publicBuildReviewGatingDiagnostics.routeAuthorityStatus}</div>
+              <div>
+                routeAuthorityReasons:{' '}
+                {publicBuildReviewGatingDiagnostics.routeAuthorityReasons.length > 0
+                  ? publicBuildReviewGatingDiagnostics.routeAuthorityReasons.join(', ')
+                  : 'none'}
+              </div>
+              <div>
+                routeAuthorityBuildReasons:{' '}
+                {publicBuildReviewGatingDiagnostics.routeAuthorityBuildReasons.length > 0
+                  ? publicBuildReviewGatingDiagnostics.routeAuthorityBuildReasons.join(', ')
+                  : 'none'}
+              </div>
+              <div>
+                lockInputAvailable:{' '}
+                {String(publicBuildReviewGatingDiagnostics.lockInputAvailable)}
+              </div>
+              <div>finalRoutePresent: {String(publicBuildReviewGatingDiagnostics.finalRoutePresent)}</div>
+              <div>
+                generatedPlanPresent:{' '}
+                {String(publicBuildReviewGatingDiagnostics.generatedPlanPresent)}
+              </div>
+              <div>
+                generatedContractEntryArtifactPresent:{' '}
+                {String(publicBuildReviewGatingDiagnostics.generatedContractEntryArtifactPresent)}
+              </div>
+              <div>
+                generatedCanonicalRouteHandoffComplete:{' '}
+                {String(publicBuildReviewGatingDiagnostics.generatedCanonicalRouteHandoffComplete)}
+              </div>
             </details>
           )}
           <div className="step2-night-options-grid">
