@@ -52,6 +52,12 @@ try {
     routeIds: replacementRouteIds,
     routeSummary: 'Good Karma to Paper Plane to Haberdasher.',
   })
+  const preParityGeneratedArtifact = buildArtifact({
+    id: 'generated_public_build_paper_plane_pre_parity',
+    sourceOpportunityId: 'generated_public_build_paper_plane_pre_parity',
+    routeIds: staticRouteIds,
+    routeSummary: 'Petiscos to Paper Plane to Hedley Club Lounge.',
+  })
   const generatedFinalRoute = buildRuntimeRoute({
     routeIds: replacementRouteIds,
     routeSummary: 'Good Karma to Paper Plane to Haberdasher.',
@@ -188,6 +194,31 @@ try {
     'Provider-shadow exclusion must remain explicit.',
   )
 
+  const preParityGeneratedSnapshot = buildRouteAuthoritySnapshot({
+    contractEntryArtifact: preParityGeneratedArtifact,
+    runtimeRouteArtifact: generatedFinalRoute,
+    selectedDirectionId: preParityGeneratedArtifact.selection.directionId,
+    selectedArtifactId: preParityGeneratedArtifact.id,
+    selectedClusterConfirmation: 'Generated Paper Plane route is ready for Review.',
+    itinerary: generatedItinerary,
+    buildContext: {
+      mode: 'build',
+      selectedCandidateArtifact: staticArtifact,
+      selectedCandidateSourceKind: 'build_static_pre_generation',
+      selectedAnchorVenueId: 'sj-paper-plane',
+      selectedAnchorRequiredRole: 'highlight',
+      routeReplacementAdmitted: true,
+    },
+  })
+  assert(
+    preParityGeneratedSnapshot.validationStatus === 'invalid',
+    'Pre-parity generated artifact identity must not validate against the post-parity finalRoute.',
+  )
+  assert(
+    preParityGeneratedSnapshot.rejectionReasons.includes('runtime_route_artifact_mismatch'),
+    'Pre-parity generated artifact identity must expose RuntimeRouteArtifact mismatch.',
+  )
+
   const generatedSnapshot = buildRouteAuthoritySnapshot({
     contractEntryArtifact: generatedArtifact,
     runtimeRouteArtifact: generatedFinalRoute,
@@ -239,6 +270,10 @@ try {
   assert(!staticLockInput.ok, 'Lock must not succeed without RuntimeRouteArtifact/finalRoute truth.')
 
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
+  const generatedArtifactBuilderSource = readFileSync(
+    'src/domain/artifacts/buildContractEntryArtifactFromGeneration.ts',
+    'utf8',
+  )
   const routeAuthoritySource = readFileSync(
     'src/app/services/routeAuthority/routeAuthorityService.ts',
     'utf8',
@@ -254,6 +289,20 @@ try {
     'Build Review CTA gate must not be loosened by static selection readiness.',
   )
   assert(
+    sandboxSource.includes("import { buildContractEntryArtifactFromGeneration }") &&
+      sandboxSource.includes('const postParityContractEntryArtifact = buildContractEntryArtifactFromGeneration') &&
+      sandboxSource.includes('itinerary: canonicalItinerary') &&
+      sandboxSource.includes('selectedArc: anchoredPlan.selectedArc') &&
+      sandboxSource.includes('scoredVenues: strongCurationPass.scoredVenues') &&
+      sandboxSource.includes('generatedContractEntryArtifact: postParityContractEntryArtifact'),
+    'Build handoff must rebuild generated ContractEntryArtifact from the shared post-parity route basis.',
+  )
+  assert(
+    generatedArtifactBuilderSource.includes('const support = itinerary.stops.map') &&
+      !generatedArtifactBuilderSource.includes("stop.role !== 'start' && stop.role !== 'highlight' && stop.role !== 'windDown'"),
+    'Generated ContractEntryArtifact role coverage must retain stable IDs for canonical roles.',
+  )
+  assert(
     routeAuthoritySource.includes('!buildDiagnostics.routeReplacementAdmitted'),
     'RouteAuthority must keep generated-route identity mismatch blocked unless replacement is admitted.',
   )
@@ -264,6 +313,7 @@ try {
     `${JSON.stringify(
       {
         staticReviewEligible: staticOnlyTruth.reviewEligible,
+        preParityGeneratedStatus: preParityGeneratedSnapshot.validationStatus,
         generatedReviewEligible: generatedTruthWithHandoff.reviewEligible,
         generatedRouteAuthorityStatus: generatedSnapshot.validationStatus,
         lockInputAvailable: lockInput.ok,

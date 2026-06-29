@@ -87,13 +87,11 @@ function buildRoleCoverage(itinerary: Itinerary): ContractEntryArtifactCanonical
   const start = getRoleStop(itinerary, 'start')
   const highlight = getRoleStop(itinerary, 'highlight')
   const windDown = getRoleStop(itinerary, 'windDown')
-  const support = itinerary.stops
-    .filter((stop) => stop.role !== 'start' && stop.role !== 'highlight' && stop.role !== 'windDown')
-    .map((stop) => ({
-      role: stop.role,
-      name: stop.venueName,
-      venueId: stop.venueId,
-    }))
+  const support = itinerary.stops.map((stop) => ({
+    role: stop.role,
+    name: stop.venueName,
+    venueId: stop.venueId,
+  }))
 
   return {
     ...(start ? { start: start.venueName } : {}),

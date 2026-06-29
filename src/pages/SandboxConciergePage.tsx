@@ -146,6 +146,7 @@ import {
   type BuildAnchorCanonicalRole,
   type BuildAnchorRoleResolutionSource,
 } from '../domain/artifacts/buildAnchorTruthContract'
+import { buildContractEntryArtifactFromGeneration } from '../domain/artifacts/buildContractEntryArtifactFromGeneration'
 import type {
   RuntimeRouteArtifact,
   RuntimeRouteStop,
@@ -14711,6 +14712,28 @@ export function SandboxConciergePage({
             )
           }
         }
+        const postParityContractEntryArtifact = buildContractEntryArtifactFromGeneration({
+          itinerary: canonicalItinerary,
+          selectedArc: anchoredPlan.selectedArc,
+          scoredVenues: strongCurationPass.scoredVenues,
+          intentProfile: result.intentProfile,
+          lens: result.lens,
+          diagnostics: result.trace,
+          rankingEngine: result.trace.rankingEngine,
+          starterPack: generationStarterPack,
+          selectedArtifactLineage: activeSelectedArtifactLineage,
+        })
+        if (buildAnchorTruthContractForGeneration) {
+          const postParityArtifactAnchorValidation = validateContractEntryArtifactBuildAnchor(
+            buildAnchorTruthContractForGeneration,
+            postParityContractEntryArtifact,
+          )
+          if (postParityArtifactAnchorValidation.status === 'invalid') {
+            throw new Error(
+              `Required anchor could not be preserved in post-parity generated route artifact: ${postParityArtifactAnchorValidation.reasons.join(',')}`,
+            )
+          }
+        }
         const canonicalStopByRoleForState = normalizeCanonicalPlanningStopIdentityByRole(
           anchoredPlan.canonicalStopByRole,
           anchoredPlan.itinerary,
@@ -14789,7 +14812,7 @@ export function SandboxConciergePage({
           itinerary: canonicalItinerary,
           selectedArc: anchoredPlan.selectedArc,
           scoredVenues: strongCurationPass.scoredVenues,
-          generatedContractEntryArtifact: result.contractEntryArtifact,
+          generatedContractEntryArtifact: postParityContractEntryArtifact,
           generationTrace: result.trace,
           intentProfile: result.intentProfile,
           lens: result.lens,
