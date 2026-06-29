@@ -96,6 +96,7 @@ export interface BuildCardTruthInput {
   selectedAnchorRequiredRole?: BuildAnchorCanonicalRole | null
   selectedBuildAnchor?: BuildAnchorSelection | null
   sourceKind?: BuildApprovedRouteSourceKind
+  routeReplacementAdmitted?: boolean
   buildProviderSelectionAllowed: boolean
   buildProviderMergedIntoVisiblePool: boolean
   activeRole?: UserStopRole
@@ -463,7 +464,7 @@ export function buildBuildCardTruthModel(input: BuildCardTruthInput): BuildCardT
         input.anchorTruthContract?.canonicalVenueId ?? input.selectedBuildAnchor?.venueId ?? null,
       selectedAnchorRequiredRole:
         input.selectedAnchorRequiredRole ?? input.anchorTruthContract?.requiredRole ?? null,
-      routeReplacementAdmitted: false,
+      routeReplacementAdmitted: input.routeReplacementAdmitted === true,
     },
   })
   const routeAuthorityLockReady = Boolean(

@@ -16,6 +16,7 @@
     "test:build-card-truth": "tsx scripts/test-build-card-truth.ts",
     "test:build-unpark-readiness": "tsx scripts/test-build-unpark-readiness.ts",
     "test:build-local-unpark": "tsx scripts/test-build-local-unpark.ts",
+    "test:build-review-lock-handoff": "tsx scripts/test-build-review-lock-handoff.ts",
     "test:build-public-provider-wiring": "tsx scripts/test-build-public-provider-wiring.ts",
     "test:build-public-provider-diagnostics": "tsx scripts/test-build-public-provider-diagnostics.ts",
     "test:build-public-review-gating-diagnostics": "tsx scripts/test-build-public-review-gating-diagnostics.ts",

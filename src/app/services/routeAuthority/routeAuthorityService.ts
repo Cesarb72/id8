@@ -604,7 +604,10 @@ export function buildRouteAuthoritySnapshot(
     if (buildDiagnostics.reasons.includes('required_anchor_role_missing')) {
       rejectionReasons.push('required_anchor_role_missing')
     }
-    if (buildDiagnostics.reasons.includes('generated_route_identity_mismatch')) {
+    if (
+      buildDiagnostics.reasons.includes('generated_route_identity_mismatch') &&
+      !buildDiagnostics.routeReplacementAdmitted
+    ) {
       rejectionReasons.push('generated_route_identity_mismatch')
     }
     if (buildDiagnostics.reasons.includes('provider_shadow_not_authority')) {

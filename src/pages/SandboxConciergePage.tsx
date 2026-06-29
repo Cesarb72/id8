@@ -16787,6 +16787,43 @@ export function SandboxConciergePage({
   }
   const activeCurateRefinementEntryPayload =
     isCurateWrapperActive ? curateRefinementEntryPayload : null
+  const buildGeneratedCanonicalHandoff = useMemo(() => {
+    if (
+      !isBuildWrapperActive ||
+      !plan?.generatedContractEntryArtifact ||
+      !renderOnlyFinalRoute ||
+      !selectedBuildAnchor?.venueId ||
+      !selectedCandidateRouteArtifact
+    ) {
+      return null
+    }
+    const selectedDirectionMatches =
+      !selectedDirectionId || selectedDirectionId === plan.selectedDirectionContract.id
+    const generatedSelectionMatches =
+      plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id &&
+      plan.selectedDirectionContract.id === renderOnlyFinalRoute.selectedDirectionId &&
+      selectedDirectionMatches
+    if (!generatedSelectionMatches) {
+      return null
+    }
+    return {
+      artifact: plan.generatedContractEntryArtifact,
+      selectedCandidateArtifact: selectedCandidateRouteArtifact,
+      selectedArtifactId: plan.generatedContractEntryArtifact.id,
+      selectedDirectionId: plan.selectedDirectionContract.id,
+      finalRoute: renderOnlyFinalRoute,
+      selectedClusterConfirmation: plan.selectedClusterConfirmation,
+      itinerary: plan.itinerary,
+      routeReplacementAdmitted: true,
+    }
+  }, [
+    isBuildWrapperActive,
+    plan,
+    renderOnlyFinalRoute,
+    selectedBuildAnchor?.venueId,
+    selectedCandidateRouteArtifact,
+    selectedDirectionId,
+  ])
   const routeAuthoritySnapshot = useMemo(() => {
     const activePlan = activeCurateRefinementEntryPayload?.planSnapshot ?? plan
     const approvedPayload =
@@ -16795,8 +16832,10 @@ export function SandboxConciergePage({
       null
     const generatedBuildContractEntryArtifact =
       isBuildWrapperActive ? activePlan?.generatedContractEntryArtifact ?? null : null
+    const buildGeneratedHandoffArtifact =
+      buildGeneratedCanonicalHandoff?.artifact ?? generatedBuildContractEntryArtifact
     const selectedArtifact =
-      generatedBuildContractEntryArtifact ??
+      buildGeneratedHandoffArtifact ??
       explicitQualifiedCurateSelectedArtifact ??
       selectedCandidateRouteArtifact ??
       null
@@ -16804,18 +16843,21 @@ export function SandboxConciergePage({
     return buildRouteAuthoritySnapshot({
       contractEntryArtifact: selectedArtifact,
       selectedDirectionId:
+        buildGeneratedCanonicalHandoff?.selectedDirectionId ??
         activePlan?.selectedDirectionContract.id ??
         selectedDirectionId ??
         null,
       selectedArtifactId:
+        buildGeneratedCanonicalHandoff?.selectedArtifactId ??
         activePlan?.selectedCandidateRouteArtifactId ??
         selectedArtifact?.id ??
         selectedStep2CandidateArtifactId ??
         null,
       runtimeRouteArtifact:
-        generatedBuildContractEntryArtifact && renderOnlyFinalRoute
+        buildGeneratedCanonicalHandoff?.finalRoute ??
+        (generatedBuildContractEntryArtifact && renderOnlyFinalRoute
           ? renderOnlyFinalRoute
-          : undefined,
+          : undefined),
       approvedPayload,
       legacyCurateRefinementEntryPayload: activeCurateRefinementEntryPayload,
       pageLocalFinalRoute: renderOnlyFinalRoute,
@@ -16828,12 +16870,14 @@ export function SandboxConciergePage({
             selectedCandidateSourceKind: 'build_static_pre_generation',
             selectedAnchorVenueId: selectedBuildAnchor?.venueId ?? null,
             selectedAnchorRequiredRole: buildSelectedAnchorRequiredRole,
-            routeReplacementAdmitted: false,
+            routeReplacementAdmitted:
+              buildGeneratedCanonicalHandoff?.routeReplacementAdmitted === true,
           }
         : null,
     })
   }, [
     activeCurateRefinementEntryPayload,
+    buildGeneratedCanonicalHandoff,
     buildSelectedAnchorRequiredRole,
     explicitQualifiedCurateSelectedArtifact,
     isBuildWrapperActive,
@@ -17676,13 +17720,17 @@ export function SandboxConciergePage({
       return null
     }
     const canonicalBuildContractEntryArtifact =
-      canonicalRouteArtifact && plan?.generatedContractEntryArtifact
+      buildGeneratedCanonicalHandoff?.artifact ??
+      (canonicalRouteArtifact && plan?.generatedContractEntryArtifact
         ? plan.generatedContractEntryArtifact
-        : selectedCandidateRouteArtifact
+        : selectedCandidateRouteArtifact)
     const canonicalBuildArtifactId =
-      canonicalRouteArtifact && plan?.generatedContractEntryArtifact
+      buildGeneratedCanonicalHandoff?.selectedArtifactId ??
+      (canonicalRouteArtifact && plan?.generatedContractEntryArtifact
         ? plan.generatedContractEntryArtifact.id
-        : selectedCandidateRouteArtifact.id
+        : selectedCandidateRouteArtifact.id)
+    const canonicalBuildFinalRoute =
+      buildGeneratedCanonicalHandoff?.finalRoute ?? canonicalRouteArtifact?.finalRoute ?? null
     const anchorContract = buildAnchorTruthContract({
       identity: {
         venueId: selectedBuildAnchor.venueId,
@@ -17703,7 +17751,7 @@ export function SandboxConciergePage({
       mode: 'build',
       anchorContract,
       contractEntryArtifact: canonicalBuildContractEntryArtifact,
-      runtimeRouteArtifact: canonicalRouteArtifact?.finalRoute ?? null,
+      runtimeRouteArtifact: canonicalBuildFinalRoute,
       buildParked: {
         providerSelectionAllowed: buildProviderSelectionAllowed,
         providerMergedIntoVisiblePool: buildProviderMergedIntoVisiblePool,
@@ -17714,8 +17762,22 @@ export function SandboxConciergePage({
       selectedCandidateArtifact: selectedCandidateRouteArtifact,
       selectedArtifactId: canonicalBuildArtifactId,
       selectedDirectionId:
-        selectedDirectionId ?? canonicalBuildContractEntryArtifact.selection.directionId ?? null,
+        buildGeneratedCanonicalHandoff?.selectedDirectionId ??
+        selectedDirectionId ??
+        canonicalBuildContractEntryArtifact.selection.directionId ??
+        null,
       approvedPayload:
+        buildGeneratedCanonicalHandoff
+          ? {
+              artifactId: buildGeneratedCanonicalHandoff.selectedArtifactId,
+              selectedDirectionId: buildGeneratedCanonicalHandoff.selectedDirectionId,
+              finalRoute: buildGeneratedCanonicalHandoff.finalRoute,
+              selectedClusterConfirmation:
+                buildGeneratedCanonicalHandoff.selectedClusterConfirmation,
+              itinerary: buildGeneratedCanonicalHandoff.itinerary,
+              sourceKind: 'static',
+            }
+          :
         canonicalRouteArtifact && plan
           ? {
               artifactId: canonicalBuildArtifactId,
@@ -17730,6 +17792,8 @@ export function SandboxConciergePage({
       anchorTruthContract: anchorContract,
       selectedAnchorRequiredRole: buildSelectedAnchorRequiredRole,
       sourceKind: 'static',
+      routeReplacementAdmitted:
+        buildGeneratedCanonicalHandoff?.routeReplacementAdmitted === true,
       buildProviderSelectionAllowed,
       buildProviderMergedIntoVisiblePool,
       activeRole,
@@ -17737,6 +17801,7 @@ export function SandboxConciergePage({
     })
   }, [
     activeRole,
+    buildGeneratedCanonicalHandoff,
     buildProviderMergedIntoVisiblePool,
     buildProviderSelectionAllowed,
     buildSelectedAnchorRequiredRole,
