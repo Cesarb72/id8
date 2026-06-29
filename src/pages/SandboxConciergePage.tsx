@@ -12387,6 +12387,41 @@ export function SandboxConciergePage({
       candidateRouteArtifactsForDisplay.length === 0,
   )
   const buildProviderSelectionAllowed = true
+  const buildProviderFieldProxyFetchAttemptedCount =
+    shadowBuildProviderDiagnostics?.trace?.attemptedHttpRequestCount ?? 0
+  const buildProviderPublicDiagnosticsBlockedReason =
+    shadowBuildProviderDiagnostics?.buildProviderSupplyBlockedReason ?? null
+  const publicBuildProviderDiagnosticsVisible = Boolean(
+    isPublicSurface && isBuildWrapperActive && showDebug,
+  )
+  const publicBuildProviderDiagnostics = {
+    providerEligible: buildProviderPublicLiveEligibility.eligible,
+    sourceMode: buildProviderPublicLiveSourceMode ?? 'none',
+    ineligibleReasons: buildProviderPublicLiveEligibility.reasons,
+    envelopeAttached: Boolean(buildProviderPublicLiveEligibility.envelope),
+    envelope: buildProviderPublicLiveEligibility.envelope
+      ? `${buildProviderPublicLiveEligibility.envelope.maxProviderCalls}/${buildProviderPublicLiveEligibility.envelope.maxQueryLabels}/${buildProviderPublicLiveEligibility.envelope.maxCenters}`
+      : 'none',
+    attempted: buildProviderAttempted,
+    inFlight: buildProviderInFlight,
+    blockedBeforeFetch: Boolean(
+      buildProviderPublicDiagnosticsBlockedReason &&
+        buildProviderFieldProxyFetchAttemptedCount === 0,
+    ),
+    blockedReason: buildProviderPublicDiagnosticsBlockedReason ?? 'none',
+    coordinatesMissing:
+      buildProviderPublicDiagnosticsBlockedReason === 'anchor_coordinates_missing',
+    providerRecordFound: Boolean(
+      shadowBuildProviderDiagnostics?.buildProviderAnchorProviderRecordId,
+    ),
+    staticFallbackUsed: candidateRouteArtifactsForDisplay.some(
+      (artifact) => artifact.sourceOpportunityId === 'step2_static_build_paper_plane',
+    ),
+    visibleMergeEligible: buildProviderVisibleMergeEnabled,
+    fieldProxyFetchAttempted: buildProviderFieldProxyFetchAttemptedCount > 0,
+    fieldProxyFetchAttemptedCount: buildProviderFieldProxyFetchAttemptedCount,
+    providerCallCount: shadowBuildProviderDiagnostics?.buildProviderTraceBillableCallCount ?? 0,
+  }
   const curateDisplayDedupeDebug = curateDisplayDedupeResult.debug
   const curateVisibleCardModels = useMemo<CurateVisibleCardModel[]>(() => {
     return candidateRouteArtifactsForDisplay.map((artifact) =>
@@ -25395,6 +25430,42 @@ export function SandboxConciergePage({
                 stepBCoffeeBooksCandidateDiagnostics,
               )}
             />
+          )}
+          {publicBuildProviderDiagnosticsVisible && (
+            <details
+              className="preview-notice draft-feedback"
+              data-id8-public-build-provider-diagnostics={safeJsonForDataAttribute(
+                publicBuildProviderDiagnostics,
+              )}
+            >
+              <summary>Build provider diagnostics</summary>
+              <div>providerEligible: {String(publicBuildProviderDiagnostics.providerEligible)}</div>
+              <div>sourceMode: {publicBuildProviderDiagnostics.sourceMode}</div>
+              <div>
+                ineligibleReasons:{' '}
+                {publicBuildProviderDiagnostics.ineligibleReasons.length > 0
+                  ? publicBuildProviderDiagnostics.ineligibleReasons.join(', ')
+                  : 'none'}
+              </div>
+              <div>envelopeAttached: {String(publicBuildProviderDiagnostics.envelopeAttached)}</div>
+              <div>envelope: {publicBuildProviderDiagnostics.envelope}</div>
+              <div>attempted: {String(publicBuildProviderDiagnostics.attempted)}</div>
+              <div>blockedBeforeFetch: {String(publicBuildProviderDiagnostics.blockedBeforeFetch)}</div>
+              <div>blockedReason: {publicBuildProviderDiagnostics.blockedReason}</div>
+              <div>coordinatesMissing: {String(publicBuildProviderDiagnostics.coordinatesMissing)}</div>
+              <div>providerRecordFound: {String(publicBuildProviderDiagnostics.providerRecordFound)}</div>
+              <div>staticFallbackUsed: {String(publicBuildProviderDiagnostics.staticFallbackUsed)}</div>
+              <div>visibleMergeEligible: {String(publicBuildProviderDiagnostics.visibleMergeEligible)}</div>
+              <div>
+                fieldProxyFetchAttempted:{' '}
+                {String(publicBuildProviderDiagnostics.fieldProxyFetchAttempted)}
+              </div>
+              <div>
+                fieldProxyFetchAttemptedCount:{' '}
+                {publicBuildProviderDiagnostics.fieldProxyFetchAttemptedCount}
+              </div>
+              <div>providerCallCount: {publicBuildProviderDiagnostics.providerCallCount}</div>
+            </details>
           )}
           <div className="step2-night-options-grid">
             {(publicSurpriseRouteChoiceVisible

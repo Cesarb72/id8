@@ -17,6 +17,7 @@
     "test:build-unpark-readiness": "tsx scripts/test-build-unpark-readiness.ts",
     "test:build-local-unpark": "tsx scripts/test-build-local-unpark.ts",
     "test:build-public-provider-wiring": "tsx scripts/test-build-public-provider-wiring.ts",
+    "test:build-public-provider-diagnostics": "tsx scripts/test-build-public-provider-diagnostics.ts",
     "provider:dry-run": "tsx scripts/run-provider-dry-run.ts",
     "provider:build-supply-dry-run": "tsx scripts/run-build-provider-supply-dry-run.ts"
   },
