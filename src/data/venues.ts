@@ -193,6 +193,8 @@ export const sanJoseVenues: Venue[] = [
     driveMinutes: 5,
     category: 'bar',
     priceTier: '$$$',
+    latitude: 37.33536,
+    longitude: -121.89016,
     tags: ['cocktails', 'social', 'stylish'],
     useCases: ['romantic', 'socialite'],
     vibeTags: ['lively', 'creative', 'playful'],

@@ -75,32 +75,53 @@ try {
   const paperPlane = venuesModule.curatedVenues.find((venue) => venue.id === 'sj-paper-plane')
   assert(paperPlane, 'Paper Plane static venue must exist for the diagnostic harness.')
   assert(
-    typeof paperPlane.source.latitude !== 'number' &&
-      typeof paperPlane.source.longitude !== 'number',
-    'Diagnostic harness expects static Paper Plane to remain coordinate-free.',
+    typeof paperPlane.source.latitude === 'number' &&
+      typeof paperPlane.source.longitude === 'number',
+    'Static Paper Plane must expose provider-source coordinates.',
+  )
+
+  const eligible = wiring.evaluateBuildProviderPublicLiveEligibility({
+    isPublicSurface: true,
+    isBuildWrapperActive: true,
+    isDevOrSandboxCloseoutFlow: false,
+    step2IntegrationFlagEnabled: true,
+    supplyFlagEnabled: true,
+    sourceMode: 'hybrid',
+  })
+  assert(eligible.eligible === true, 'Public Build provider path must remain eligible.')
+  assert(
+    eligible.envelope?.liveProviderAllowed === true &&
+      eligible.envelope.maxProviderCalls === 3 &&
+      eligible.envelope.maxQueryLabels === 3 &&
+      eligible.envelope.maxCenters === 1,
+    'Public Build provider diagnostics must preserve the fixed 3/3/1 envelope.',
   )
 
   const diagnosticsResult = await buildProviderModule.buildProviderSourceOpportunity({
     anchorVenue: paperPlane,
-    liveEnvelope: wiring.buildProviderPublicLiveEnvelope(),
   })
   assert(
     diagnosticsResult.opportunity === null,
-    'Coordinate-free Paper Plane must not emit a provider source opportunity locally.',
+    'Closed local diagnostic run must not emit a provider source opportunity.',
   )
   assert(
     diagnosticsResult.diagnostics.buildProviderSupplyBlockedReason ===
+      'provider_request_blocked',
+    'Paper Plane should now pass coordinate gating and stop at the closed local provider valve.',
+  )
+  assert(
+    diagnosticsResult.diagnostics.buildProviderSupplyBlockedReason !==
       'anchor_coordinates_missing',
-    'Coordinate-free Paper Plane must surface anchor_coordinates_missing before fetch.',
+    'Paper Plane must no longer fail the provider path on anchor_coordinates_missing.',
   )
   assert(
     diagnosticsResult.diagnostics.buildProviderAnchorProviderRecordId !== null,
-    'Paper Plane provider record should be found before the coordinate blocker.',
+    'Paper Plane provider record should remain found.',
   )
   assert(
     diagnosticsResult.diagnostics.trace === null &&
       diagnosticsResult.diagnostics.ledger === null,
-    'Pre-fetch coordinate blocker must not create provider trace or ledger diagnostics.',
+    'Closed local pre-fetch block must not create provider trace or ledger diagnostics.',
   )
   assert(fetchCallCount === 0, `Expected no Field proxy/provider fetches, received ${fetchCallCount}.`)
 
@@ -111,9 +132,12 @@ try {
         diagnosticSurface: 'data-id8-public-build-provider-diagnostics',
         publicBuildDebugGate: true,
         blockedReason: diagnosticsResult.diagnostics.buildProviderSupplyBlockedReason,
+        coordinatesPresent: true,
+        coordinatesMissing: false,
         providerRecordFound: Boolean(
           diagnosticsResult.diagnostics.buildProviderAnchorProviderRecordId,
         ),
+        envelope: eligible.envelope,
         staticFallbackDistinguishable: true,
         fetchCallCount,
         nonBuildModesOpened: false,
