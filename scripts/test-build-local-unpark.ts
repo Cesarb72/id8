@@ -4,6 +4,7 @@ import {
   evaluateBuildStaticPreGenerationCardSelection,
 } from '../src/app/services/canonicalPublicRouteTruthService.ts'
 import { evaluateBuildCandidateAdmission } from '../src/app/services/buildCandidateAdmission/buildCandidateAdmissionService.ts'
+import { evaluateBuildSupportReplacementPolicy } from '../src/app/services/routeAuthority/buildSupportReplacementPolicy.ts'
 import { buildAnchorTruthContract } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import type { BuildAnchorCanonicalRole } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import {
@@ -12,6 +13,8 @@ import {
 } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
 import { runGeneratePlan, type GeneratePlanResult } from '../src/domain/runGeneratePlan.ts'
+import type { ArcCandidate } from '../src/domain/types/arc.ts'
+import type { RouteShapeContract } from '../src/domain/types/intent.ts'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
 
 const originalFetch = globalThis.fetch
@@ -247,6 +250,50 @@ function generatedArtifact(params: {
       },
     },
   })
+}
+
+function selectedArcFixture(params: { preserved?: boolean } = {}): ArcCandidate {
+  const ids = params.preserved ? routeIds : generatedRouteIds
+  return {
+    id: 'deterministic-build-paper-plane-arc',
+    stops: [
+      { role: 'warmup', scoredVenue: { venue: { id: ids.start } } },
+      { role: 'peak', scoredVenue: { venue: { id: ids.highlight } } },
+      { role: 'cooldown', scoredVenue: { venue: { id: ids.windDown } } },
+    ],
+  } as unknown as ArcCandidate
+}
+
+function routeShapeContractFixture(): RouteShapeContract {
+  return {
+    id: 'rshape_test_build_paper_plane',
+    arcShape: 'steady_open_curated_center_soft_landing',
+    roleProfile: {
+      start: {},
+      highlight: {},
+      windDown: {},
+    },
+    roleInvariants: {
+      start: {},
+      highlight: {},
+      windDown: {},
+    },
+    movementProfile: {
+      radius: 'tight',
+      maxTransitionMinutes: 18,
+      neighborhoodContinuity: 'strict',
+    },
+    mutationProfile: {
+      swapFlexibility: 'medium',
+      allowedRoles: ['start', 'highlight', 'windDown'],
+      preservePriority: ['role', 'feasibility', 'movement'],
+    },
+    expansionProfile: {
+      supportsNearbyExtensions: true,
+      preferredExpansionRole: 'windDown',
+      lateNightTolerance: 'medium',
+    },
+  } as RouteShapeContract
 }
 
 function runtimeRouteFromGeneratePlan(result: GeneratePlanResult): RuntimeRouteArtifact {
@@ -533,6 +580,28 @@ async function main(): Promise<void> {
       providerMergedIntoVisiblePool: true,
     },
   })
+  const driftedReplacementPolicy = evaluateBuildSupportReplacementPolicy({
+    selectedCandidateArtifact: paperPlane,
+    generatedArtifact: driftedGeneratedArtifact,
+    finalRoute: driftedGeneratedRoute,
+    selectedArc: selectedArcFixture(),
+    routeShapeContract: routeShapeContractFixture(),
+    selectedAnchorVenueId: routeIds.highlight,
+    selectedAnchorRequiredRole: 'highlight',
+    requiredStopVenueIdsByRole: {
+      highlight: routeIds.highlight,
+    },
+  })
+  assert(
+    driftedReplacementPolicy.admitted,
+    `Support replacement must be admitted when generated stops are deterministic arc winners: ${JSON.stringify(
+      driftedReplacementPolicy,
+    )}`,
+  )
+  assert(
+    driftedReplacementPolicy.reasonCodes.includes('replacement_selected_by_deterministic_arc'),
+    'Support replacement must expose deterministic selected-arc reason code.',
+  )
   const driftedTruth = buildBuildCardTruthModel({
     artifact: driftedGeneratedArtifact,
     selectedCandidateArtifact: paperPlane,
@@ -550,6 +619,7 @@ async function main(): Promise<void> {
     anchorTruthContract: anchorContract('highlight'),
     selectedAnchorRequiredRole: 'highlight',
     sourceKind: 'static',
+    routeReplacementAdmitted: driftedReplacementPolicy.admitted,
     buildProviderSelectionAllowed: true,
     buildProviderMergedIntoVisiblePool: true,
     activeRole: 'start',
@@ -557,17 +627,62 @@ async function main(): Promise<void> {
   })
   assert(driftedAdmission.admitted, 'Drifted generated route still preserves Paper Plane anchor.')
   assert(
-    !driftedTruth.routeAuthorityLockReady,
-    'Generated route that drifts from selected static Build candidate must not become lock-ready.',
+    driftedTruth.routeAuthorityLockReady,
+    'Generated support replacement that passes deterministic policy must become lock-ready.',
   )
-  assert(!driftedTruth.reviewEligible, 'Drifted generated route must not be Review-eligible.')
+  assert(driftedTruth.reviewEligible, 'Deterministic support replacement must be Review-eligible.')
   assert(
     driftedTruth.diagnostics.routeAuthorityBuildReasons.includes('build_candidate_contract_drifted'),
-    'Drifted generated route must report build_candidate_contract_drifted.',
+    'Support replacement must still report build_candidate_contract_drifted for traceability.',
   )
   assert(
     driftedTruth.diagnostics.routeAuthorityBuildReasons.includes('generated_route_identity_mismatch'),
-    'Drifted generated route must report generated_route_identity_mismatch.',
+    'Support replacement must still report generated_route_identity_mismatch for traceability.',
+  )
+
+  const requiredSupportReplacementPolicy = evaluateBuildSupportReplacementPolicy({
+    selectedCandidateArtifact: paperPlane,
+    generatedArtifact: driftedGeneratedArtifact,
+    finalRoute: driftedGeneratedRoute,
+    selectedArc: selectedArcFixture(),
+    routeShapeContract: routeShapeContractFixture(),
+    selectedAnchorVenueId: routeIds.highlight,
+    selectedAnchorRequiredRole: 'highlight',
+    requiredStopVenueIdsByRole: {
+      start: routeIds.start,
+      highlight: routeIds.highlight,
+    },
+  })
+  assert(
+    !requiredSupportReplacementPolicy.admitted,
+    'Required support stop replacement must be rejected by deterministic policy.',
+  )
+  const requiredSupportTruth = buildBuildCardTruthModel({
+    artifact: driftedGeneratedArtifact,
+    selectedCandidateArtifact: paperPlane,
+    selectedArtifactId: driftedGeneratedArtifact.id,
+    selectedDirectionId: driftedGeneratedArtifact.selection.directionId,
+    approvedPayload: {
+      artifactId: driftedGeneratedArtifact.id,
+      selectedDirectionId: driftedGeneratedRoute.selectedDirectionId,
+      finalRoute: driftedGeneratedRoute,
+      selectedClusterConfirmation: 'Paper Plane generated route drifted from a required support stop.',
+      itinerary: generatedItinerary(),
+      sourceKind: 'static',
+    },
+    candidateAdmission: driftedAdmission,
+    anchorTruthContract: anchorContract('highlight'),
+    selectedAnchorRequiredRole: 'highlight',
+    sourceKind: 'static',
+    routeReplacementAdmitted: requiredSupportReplacementPolicy.admitted,
+    buildProviderSelectionAllowed: true,
+    buildProviderMergedIntoVisiblePool: true,
+    activeRole: 'start',
+    fallbackCity: 'San Jose',
+  })
+  assert(
+    !requiredSupportTruth.reviewEligible,
+    'Review must stay hidden when a user-required support stop is replaced.',
   )
 
   const providerShadowSelection = evaluateBuildStaticPreGenerationCardSelection({
@@ -734,7 +849,10 @@ async function main(): Promise<void> {
         generatedRouteAuthorityLockReady: generatedTruth.routeAuthorityLockReady,
         generatedReviewEligible: generatedTruth.reviewEligible,
         generatedRouteIds: generatedRoute.stops.map((stop) => stop.venueId),
-        driftedRouteAuthorityLockReady: driftedTruth.routeAuthorityLockReady,
+        deterministicReplacementPolicyAdmitted: driftedReplacementPolicy.admitted,
+        deterministicReplacementReasons: driftedReplacementPolicy.reasonCodes,
+        requiredSupportReplacementPolicyAdmitted: requiredSupportReplacementPolicy.admitted,
+        deterministicReplacementRouteAuthorityLockReady: driftedTruth.routeAuthorityLockReady,
         driftedRouteReasons: driftedTruth.diagnostics.routeAuthorityBuildReasons,
         providerShadowSelectable: providerShadowSelection.selectable,
         debugOnlySelectable: debugOnlySelection.selectable,

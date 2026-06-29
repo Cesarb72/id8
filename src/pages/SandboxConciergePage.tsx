@@ -82,6 +82,7 @@ import {
   buildLockInputFromRouteAuthoritySnapshot,
   buildRouteAuthoritySnapshot,
 } from '../app/services/routeAuthority/routeAuthorityService'
+import { evaluateBuildSupportReplacementPolicy } from '../app/services/routeAuthority/buildSupportReplacementPolicy'
 import { evaluateBuildCandidateAdmission } from '../app/services/buildCandidateAdmission/buildCandidateAdmissionService'
 import {
   buildBuildCardTruthModel,
@@ -16829,6 +16830,20 @@ export function SandboxConciergePage({
     if (!generatedSelectionMatches) {
       return null
     }
+    const buildSupportReplacementPolicy = evaluateBuildSupportReplacementPolicy({
+      selectedCandidateArtifact: selectedCandidateRouteArtifact,
+      generatedArtifact: plan.generatedContractEntryArtifact,
+      finalRoute: renderOnlyFinalRoute,
+      selectedArc: plan.selectedArc,
+      routeShapeContract: plan.routeShapeContract,
+      selectedAnchorVenueId: selectedBuildAnchor.venueId,
+      selectedAnchorRequiredRole: buildSelectedAnchorRequiredRole,
+      requiredStopVenueIdsByRole: buildSelectedAnchorRequiredRole
+        ? {
+            [buildSelectedAnchorRequiredRole]: selectedBuildAnchor.venueId,
+          }
+        : undefined,
+    })
     return {
       artifact: plan.generatedContractEntryArtifact,
       selectedCandidateArtifact: selectedCandidateRouteArtifact,
@@ -16837,9 +16852,11 @@ export function SandboxConciergePage({
       finalRoute: renderOnlyFinalRoute,
       selectedClusterConfirmation: plan.selectedClusterConfirmation,
       itinerary: plan.itinerary,
-      routeReplacementAdmitted: true,
+      routeReplacementAdmitted: buildSupportReplacementPolicy.admitted,
+      buildSupportReplacementPolicy,
     }
   }, [
+    buildSelectedAnchorRequiredRole,
     isBuildWrapperActive,
     plan,
     renderOnlyFinalRoute,
@@ -21201,9 +21218,13 @@ export function SandboxConciergePage({
     sharedFlowPhase === 'route_refinement' || sharedFlowPhase === 'live_plan',
   )
   const revealedStepHeader =
-    selectedRouteSummaryArtifact?.routeTitle ?? "Tonight's route is ready"
+    isPublicSurface && isBuildWrapperActive && canonicalRouteArtifact
+      ? 'Generated route to review'
+      : selectedRouteSummaryArtifact?.routeTitle ?? "Tonight's route is ready"
   const revealedStepSubline =
-    selectedRouteSummaryArtifact?.routeSummary ?? previewSpatialCoherenceLine
+    isPublicSurface && isBuildWrapperActive && canonicalRouteArtifact
+      ? `Built from your ${selectedBuildAnchor?.name ?? 'selected'} anchor. This is the route to lock.`
+      : selectedRouteSummaryArtifact?.routeSummary ?? previewSpatialCoherenceLine
   const publicCurateSelectedCardTruthReady = Boolean(
     !isPublicSurface ||
       !isCurateWrapperActive ||
@@ -21258,6 +21279,16 @@ export function SandboxConciergePage({
     routeAuthorityReasons: routeAuthoritySnapshot.rejectionReasons,
     routeAuthorityMismatchReasons: routeAuthoritySnapshot.mismatchReasons,
     routeAuthorityBuildReasons: routeAuthoritySnapshot.buildDiagnostics?.reasons ?? [],
+    buildSupportReplacementPolicyAdmitted:
+      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy.admitted ?? false,
+    buildSupportReplacementPolicyDeterministic:
+      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy.deterministic ?? false,
+    buildSupportReplacementPolicyReasons:
+      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy.reasonCodes ?? [],
+    buildSupportReplacementPolicyRejections:
+      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy.rejectionReasons ?? [],
+    buildSupportReplacementPolicyReplacedRoles:
+      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy.replacedRoles ?? [],
     lockInputAvailable: buildSelectedCardTruthDiagnostic?.diagnostics.lockInputAvailable ?? false,
     finalRoutePresent: Boolean(routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute),
     generatedPlanPresent: Boolean(plan),
@@ -25658,6 +25689,32 @@ export function SandboxConciergePage({
                 routeAuthorityBuildReasons:{' '}
                 {publicBuildReviewGatingDiagnostics.routeAuthorityBuildReasons.length > 0
                   ? publicBuildReviewGatingDiagnostics.routeAuthorityBuildReasons.join(', ')
+                  : 'none'}
+              </div>
+              <div>
+                buildSupportReplacementPolicyAdmitted:{' '}
+                {String(publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyAdmitted)}
+              </div>
+              <div>
+                buildSupportReplacementPolicyDeterministic:{' '}
+                {String(publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyDeterministic)}
+              </div>
+              <div>
+                buildSupportReplacementPolicyReasons:{' '}
+                {publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyReasons.length > 0
+                  ? publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyReasons.join(', ')
+                  : 'none'}
+              </div>
+              <div>
+                buildSupportReplacementPolicyRejections:{' '}
+                {publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyRejections.length > 0
+                  ? publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyRejections.join(', ')
+                  : 'none'}
+              </div>
+              <div>
+                buildSupportReplacementPolicyReplacedRoles:{' '}
+                {publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyReplacedRoles.length > 0
+                  ? publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyReplacedRoles.join(', ')
                   : 'none'}
               </div>
               <div>

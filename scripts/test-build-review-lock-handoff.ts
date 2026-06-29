@@ -7,10 +7,13 @@ import {
   buildLockInputFromRouteAuthoritySnapshot,
   buildRouteAuthoritySnapshot,
 } from '../src/app/services/routeAuthority/routeAuthorityService.ts'
+import { evaluateBuildSupportReplacementPolicy } from '../src/app/services/routeAuthority/buildSupportReplacementPolicy.ts'
 import { evaluateBuildCandidateAdmission } from '../src/app/services/buildCandidateAdmission/buildCandidateAdmissionService.ts'
 import { buildAnchorTruthContract } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import type { ContractEntryArtifact } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
+import type { ArcCandidate } from '../src/domain/types/arc.ts'
+import type { RouteShapeContract } from '../src/domain/types/intent.ts'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -108,6 +111,58 @@ try {
     },
   })
   assert(generatedAdmission.admitted, 'Generated Build route must pass anchor admission.')
+  const deterministicReplacementPolicy = evaluateBuildSupportReplacementPolicy({
+    selectedCandidateArtifact: staticArtifact,
+    generatedArtifact,
+    finalRoute: generatedFinalRoute,
+    selectedArc: buildSelectedArc(replacementRouteIds),
+    routeShapeContract: buildRouteShapeContractFixture(),
+    selectedAnchorVenueId: 'sj-paper-plane',
+    selectedAnchorRequiredRole: 'highlight',
+    requiredStopVenueIdsByRole: {
+      highlight: 'sj-paper-plane',
+    },
+  })
+  assert(
+    deterministicReplacementPolicy.admitted,
+    `Deterministic support replacement policy must admit traced support replacements: ${JSON.stringify(
+      deterministicReplacementPolicy,
+    )}`,
+  )
+  assert(
+    deterministicReplacementPolicy.deterministic,
+    'Deterministic support replacement policy must mark admitted replacements deterministic.',
+  )
+  assert(
+    deterministicReplacementPolicy.replacedRoles.join(',') === 'start,windDown',
+    'Deterministic support replacement policy must expose replaced support roles.',
+  )
+  assert(
+    deterministicReplacementPolicy.reasonCodes.includes('replacement_selected_by_deterministic_arc'),
+    'Support replacement must be traced to the deterministic selected arc.',
+  )
+
+  const requiredSupportReplacementPolicy = evaluateBuildSupportReplacementPolicy({
+    selectedCandidateArtifact: staticArtifact,
+    generatedArtifact,
+    finalRoute: generatedFinalRoute,
+    selectedArc: buildSelectedArc(replacementRouteIds),
+    routeShapeContract: buildRouteShapeContractFixture(),
+    selectedAnchorVenueId: 'sj-paper-plane',
+    selectedAnchorRequiredRole: 'highlight',
+    requiredStopVenueIdsByRole: {
+      start: 'sj-petiscos',
+      highlight: 'sj-paper-plane',
+    },
+  })
+  assert(
+    !requiredSupportReplacementPolicy.admitted,
+    'User-marked required support stops must not be replaceable.',
+  )
+  assert(
+    requiredSupportReplacementPolicy.rejectionReasons.includes('required_support_stop_replaced'),
+    'Required support replacement must expose required_support_stop_replaced.',
+  )
 
   const approvedPayload: BuildApprovedPayloadReference = {
     artifactId: generatedArtifact.id,
@@ -153,7 +208,7 @@ try {
     anchorTruthContract: anchorContract,
     selectedAnchorRequiredRole: 'highlight',
     sourceKind: 'static',
-    routeReplacementAdmitted: true,
+    routeReplacementAdmitted: deterministicReplacementPolicy.admitted,
     buildProviderSelectionAllowed: true,
     buildProviderMergedIntoVisiblePool: true,
     activeRole: 'start',
@@ -170,6 +225,27 @@ try {
       'required_anchor_role_survived',
     ),
     'Generated handoff must prove the Paper Plane anchor survived.',
+  )
+
+  const requiredSupportTruth = buildBuildCardTruthModel({
+    artifact: generatedArtifact,
+    selectedCandidateArtifact: staticArtifact,
+    selectedArtifactId: generatedArtifact.id,
+    selectedDirectionId: generatedArtifact.selection.directionId,
+    approvedPayload,
+    candidateAdmission: generatedAdmission,
+    anchorTruthContract: anchorContract,
+    selectedAnchorRequiredRole: 'highlight',
+    sourceKind: 'static',
+    routeReplacementAdmitted: requiredSupportReplacementPolicy.admitted,
+    buildProviderSelectionAllowed: true,
+    buildProviderMergedIntoVisiblePool: true,
+    activeRole: 'start',
+    fallbackCity: 'San Jose',
+  })
+  assert(
+    !requiredSupportTruth.reviewEligible,
+    'Review must stay hidden when deterministic replacement policy rejects required support drift.',
   )
 
   const providerShadowTruth = buildBuildCardTruthModel({
@@ -280,8 +356,9 @@ try {
   )
   assert(
     sandboxSource.includes('buildGeneratedCanonicalHandoff') &&
-      sandboxSource.includes('routeReplacementAdmitted'),
-    'Sandbox page must expose a narrow generated Build canonical handoff.',
+      sandboxSource.includes('routeReplacementAdmitted') &&
+      sandboxSource.includes('evaluateBuildSupportReplacementPolicy'),
+    'Sandbox page must expose a narrow generated Build canonical handoff gated by deterministic replacement policy.',
   )
   assert(
     sandboxSource.includes('buildSelectedCardTruthReady') &&
@@ -314,6 +391,8 @@ try {
       {
         staticReviewEligible: staticOnlyTruth.reviewEligible,
         preParityGeneratedStatus: preParityGeneratedSnapshot.validationStatus,
+        deterministicReplacementPolicyAdmitted: deterministicReplacementPolicy.admitted,
+        deterministicReplacementPolicyReasons: deterministicReplacementPolicy.reasonCodes,
         generatedReviewEligible: generatedTruthWithHandoff.reviewEligible,
         generatedRouteAuthorityStatus: generatedSnapshot.validationStatus,
         lockInputAvailable: lockInput.ok,
@@ -326,6 +405,49 @@ try {
   )
 } finally {
   globalThis.fetch = originalFetch
+}
+
+function buildSelectedArc(routeIds: Record<'start' | 'highlight' | 'windDown', string>): ArcCandidate {
+  return {
+    id: 'deterministic-paper-plane-arc',
+    stops: [
+      { role: 'warmup', scoredVenue: { venue: { id: routeIds.start } } },
+      { role: 'peak', scoredVenue: { venue: { id: routeIds.highlight } } },
+      { role: 'cooldown', scoredVenue: { venue: { id: routeIds.windDown } } },
+    ],
+  } as unknown as ArcCandidate
+}
+
+function buildRouteShapeContractFixture(): RouteShapeContract {
+  return {
+    id: 'rshape_test_build_paper_plane',
+    arcShape: 'steady_open_curated_center_soft_landing',
+    roleProfile: {
+      start: {},
+      highlight: {},
+      windDown: {},
+    },
+    roleInvariants: {
+      start: {},
+      highlight: {},
+      windDown: {},
+    },
+    movementProfile: {
+      radius: 'tight',
+      maxTransitionMinutes: 18,
+      neighborhoodContinuity: 'strict',
+    },
+    mutationProfile: {
+      swapFlexibility: 'medium',
+      allowedRoles: ['start', 'highlight', 'windDown'],
+      preservePriority: ['role', 'feasibility', 'movement'],
+    },
+    expansionProfile: {
+      supportsNearbyExtensions: true,
+      preferredExpansionRole: 'windDown',
+      lateNightTolerance: 'medium',
+    },
+  } as RouteShapeContract
 }
 
 function buildRuntimeStop(role: UserStopRole, venueId: string, stopIndex: number): RuntimeRouteStop {
