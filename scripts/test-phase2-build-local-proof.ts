@@ -162,6 +162,12 @@ try {
     ].includes(String(providerResult.diagnostics.buildProviderSupplyBlockedReason)),
     `Mocked governed supply must pass eligibility, coordinate, and Field proxy gates; blockedReason=${providerResult.diagnostics.buildProviderSupplyBlockedReason}.`,
   )
+  assert(
+    providerResult.diagnostics.buildProviderSupplyBlockedReason ===
+      'provider_insufficient_role_diversity',
+    'Local proof must model hosted provider_insufficient_role_diversity fallback after proxy success.',
+  )
+  assert(providerResult.opportunity === null, 'Insufficient provider role diversity must use static fallback.')
   if (providerResult.opportunity) {
     assert(
       providerResult.opportunity.sourceMode === 'live',
@@ -215,6 +221,100 @@ try {
   })
   assert(!staticOnlyTruth.reviewEligible, 'Static pre-generation card must not be Review-eligible.')
   assert(!staticOnlyTruth.routeAuthorityLockReady, 'Static pre-generation card must not be lock-ready.')
+
+  const staticArtifactWithoutSupportVenueIds = buildArtifact({
+    id: 'step2_static_build_paper_plane_without_support_ids',
+    sourceOpportunityId: 'step2_static_build_paper_plane',
+    routeIds: staticRouteIds,
+    routeSummary: 'Petiscos to Paper Plane to Hedley Club Lounge.',
+    includeSupportVenueIds: false,
+  })
+  const generatedSameRouteArtifact = buildArtifact({
+    id: 'generated_public_build_paper_plane_same_route',
+    sourceOpportunityId: 'generated_public_build_paper_plane_same_route',
+    routeIds: staticRouteIds,
+    routeSummary: 'Petiscos to Paper Plane to Hedley Club Lounge.',
+  })
+  const generatedSameRouteFinalRoute = buildRuntimeRoute({
+    routeIds: staticRouteIds,
+    routeSummary: 'Petiscos to Paper Plane to Hedley Club Lounge.',
+  })
+  const generatedSameRouteItinerary = buildItinerary(staticRouteIds)
+  const sameRouteReplacementPolicy = evaluateBuildSupportReplacementPolicy({
+    selectedCandidateArtifact: staticArtifactWithoutSupportVenueIds,
+    generatedArtifact: generatedSameRouteArtifact,
+    finalRoute: generatedSameRouteFinalRoute,
+    selectedArc: buildSelectedArc(staticRouteIds),
+    routeShapeContract: buildRouteShapeContractFixture(),
+    selectedAnchorVenueId: 'sj-paper-plane',
+    selectedAnchorRequiredRole: 'highlight',
+    requiredStopVenueIdsByRole: {
+      highlight: 'sj-paper-plane',
+    },
+  })
+  assert(
+    sameRouteReplacementPolicy.admitted,
+    `Same-route static support preservation must not fail on missing seed support IDs: ${JSON.stringify(
+      sameRouteReplacementPolicy,
+    )}`,
+  )
+  assert(
+    sameRouteReplacementPolicy.replacedRoles.length === 0,
+    'Same-route hosted fallback must require no support replacement.',
+  )
+  assert(
+    sameRouteReplacementPolicy.reasonCodes.includes('seed_support_stop_preserved') &&
+      sameRouteReplacementPolicy.reasonCodes.includes('no_support_replacement_required'),
+    'Same-route hosted fallback must record preserved support stops and no replacement required.',
+  )
+  assert(
+    !sameRouteReplacementPolicy.rejectionReasons.includes('replacement_role_missing_seed_identity'),
+    'Preserved support stops must not be rejected only because the static seed lacks support venue IDs.',
+  )
+
+  const sameRouteAdmission = evaluateBuildCandidateAdmission({
+    mode: 'build',
+    anchorContract,
+    contractEntryArtifact: generatedSameRouteArtifact,
+    runtimeRouteArtifact: generatedSameRouteFinalRoute,
+    buildParked: {
+      providerSelectionAllowed: true,
+      providerMergedIntoVisiblePool: true,
+    },
+  })
+  assert(sameRouteAdmission.admitted, 'Same-route generated Build route must pass anchor admission.')
+  const sameRouteApprovedPayload: BuildApprovedPayloadReference = {
+    artifactId: generatedSameRouteArtifact.id,
+    selectedDirectionId: generatedSameRouteFinalRoute.selectedDirectionId,
+    finalRoute: generatedSameRouteFinalRoute,
+    selectedClusterConfirmation: 'Generated Paper Plane route is ready for Review.',
+    itinerary: generatedSameRouteItinerary,
+    sourceKind: 'static',
+  }
+  const sameRouteGeneratedTruth = buildBuildCardTruthModel({
+    artifact: generatedSameRouteArtifact,
+    selectedCandidateArtifact: staticArtifactWithoutSupportVenueIds,
+    selectedArtifactId: generatedSameRouteArtifact.id,
+    selectedDirectionId: generatedSameRouteArtifact.selection.directionId,
+    approvedPayload: sameRouteApprovedPayload,
+    candidateAdmission: sameRouteAdmission,
+    anchorTruthContract: anchorContract,
+    selectedAnchorRequiredRole: 'highlight',
+    sourceKind: 'static',
+    routeReplacementAdmitted: sameRouteReplacementPolicy.admitted,
+    buildProviderSelectionAllowed: true,
+    buildProviderMergedIntoVisiblePool: true,
+    activeRole: 'start',
+    fallbackCity: 'San Jose',
+  })
+  assert(
+    sameRouteGeneratedTruth.reviewEligible,
+    'Generated same-route truth must become Review-eligible after canonical handoff completes.',
+  )
+  assert(
+    sameRouteGeneratedTruth.routeAuthorityLockReady,
+    'Generated same-route truth must become routeAuthority lock-ready after canonical handoff completes.',
+  )
 
   const generatedAdmission = evaluateBuildCandidateAdmission({
     mode: 'build',
@@ -342,6 +442,8 @@ try {
         providerSourceOpportunityEmitted:
           providerResult.diagnostics.buildProviderSourceOpportunityEmitted,
         providerSourceAuthority: false,
+        providerBlockedReason: providerResult.diagnostics.buildProviderSupplyBlockedReason,
+        staticFallbackUsed: providerResult.opportunity === null,
         fieldProxyRequest: {
           purpose: fieldProxyRequestBody?.purpose,
           mode: fieldProxyRequestBody?.mode,
@@ -349,6 +451,10 @@ try {
           hasCenter: Boolean(fieldProxyRequestBody?.center),
         },
         staticReviewEligible: staticOnlyTruth.reviewEligible,
+        sameRoutePolicyAdmitted: sameRouteReplacementPolicy.admitted,
+        sameRoutePolicyReasons: sameRouteReplacementPolicy.reasonCodes,
+        sameRoutePolicyRejections: sameRouteReplacementPolicy.rejectionReasons,
+        sameRouteGeneratedReviewEligible: sameRouteGeneratedTruth.reviewEligible,
         deterministicReplacementPolicyAdmitted: replacementPolicy.admitted,
         deterministicReplacementPolicyReasons: replacementPolicy.reasonCodes,
         generatedReviewEligible: generatedTruth.reviewEligible,
@@ -671,6 +777,7 @@ function buildItinerary(routeIds: Record<'start' | 'highlight' | 'windDown', str
 
 function buildArtifact(params: {
   id: string
+  includeSupportVenueIds?: boolean
   sourceOpportunityId: string
   routeIds: Record<'start' | 'highlight' | 'windDown', string>
   routeSummary: string
@@ -704,23 +811,27 @@ function buildArtifact(params: {
         start: buildRuntimeStop('start', params.routeIds.start, 0).displayName,
         highlight: 'Paper Plane',
         windDown: buildRuntimeStop('windDown', params.routeIds.windDown, 2).displayName,
-        support: [
-          {
-            role: 'start',
-            name: buildRuntimeStop('start', params.routeIds.start, 0).displayName,
-            venueId: params.routeIds.start,
-          },
-          {
-            role: 'highlight',
-            name: 'Paper Plane',
-            venueId: params.routeIds.highlight,
-          },
-          {
-            role: 'windDown',
-            name: buildRuntimeStop('windDown', params.routeIds.windDown, 2).displayName,
-            venueId: params.routeIds.windDown,
-          },
-        ],
+        ...(params.includeSupportVenueIds === false
+          ? {}
+          : {
+              support: [
+                {
+                  role: 'start',
+                  name: buildRuntimeStop('start', params.routeIds.start, 0).displayName,
+                  venueId: params.routeIds.start,
+                },
+                {
+                  role: 'highlight',
+                  name: 'Paper Plane',
+                  venueId: params.routeIds.highlight,
+                },
+                {
+                  role: 'windDown',
+                  name: buildRuntimeStop('windDown', params.routeIds.windDown, 2).displayName,
+                  venueId: params.routeIds.windDown,
+                },
+              ],
+            }),
       },
     },
   }

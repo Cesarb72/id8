@@ -118,6 +118,34 @@ function artifactRoleVenueIds(
   return ids
 }
 
+function artifactRoleDisplayNames(
+  artifact: ContractEntryArtifact | null | undefined,
+): Partial<Record<CoreRouteRole, string>> {
+  const names: Partial<Record<CoreRouteRole, string>> = {}
+  const coverage = artifact?.enrichment?.canonicalRouteRoleCoverage
+  const storySpine = artifact?.storySpine
+  const start = nonEmpty(coverage?.start) ?? nonEmpty(storySpine?.start)
+  const highlight = nonEmpty(coverage?.highlight) ?? nonEmpty(storySpine?.highlight)
+  const windDown = nonEmpty(coverage?.windDown) ?? nonEmpty(storySpine?.windDown)
+  if (start) {
+    names.start = start
+  }
+  if (highlight) {
+    names.highlight = highlight
+  }
+  if (windDown) {
+    names.windDown = windDown
+  }
+  coverage?.support?.forEach((entry) => {
+    const role = normalizeRole(String(entry.role))
+    const name = nonEmpty(entry.name)
+    if (role && name) {
+      names[role] = name
+    }
+  })
+  return names
+}
+
 function routeRoleVenueIds(
   route: RuntimeRouteArtifact | null | undefined,
 ): Partial<Record<CoreRouteRole, string>> {
@@ -130,6 +158,24 @@ function routeRoleVenueIds(
     }
   })
   return ids
+}
+
+function routeRoleDisplayNames(
+  route: RuntimeRouteArtifact | null | undefined,
+): Partial<Record<CoreRouteRole, string>> {
+  const names: Partial<Record<CoreRouteRole, string>> = {}
+  route?.stops.forEach((stop) => {
+    const role = normalizeRole(stop.role)
+    const displayName = nonEmpty(stop.displayName)
+    if (role && displayName && !names[role]) {
+      names[role] = displayName
+    }
+  })
+  return names
+}
+
+function normalizeDisplayName(value: string | null | undefined): string | null {
+  return nonEmpty(value)?.toLowerCase().replace(/\s+/g, ' ') ?? null
 }
 
 function routeRoleCounts(route: RuntimeRouteArtifact | null | undefined): Record<CoreRouteRole, number> {
@@ -233,6 +279,8 @@ export function evaluateBuildSupportReplacementPolicy(
   const generatedArtifactIds = artifactRoleVenueIds(generatedArtifact)
   const finalRouteIds = routeRoleVenueIds(finalRoute)
   const selectedCandidateIds = artifactRoleVenueIds(selectedCandidateArtifact)
+  const selectedCandidateNames = artifactRoleDisplayNames(selectedCandidateArtifact)
+  const finalRouteNames = routeRoleDisplayNames(finalRoute)
   const selectedArcIds = selectedArcRoleVenueIds(selectedArc)
 
   const generatedMatchesFinalRoute = CORE_ROLES.every((role) => {
@@ -262,13 +310,17 @@ export function evaluateBuildSupportReplacementPolicy(
   const roleDecisions = supportRoles.map((role): BuildSupportReplacementPolicyRoleDecision => {
     const roleReasonCodes: BuildSupportReplacementPolicyReason[] = []
     const roleRejections: BuildSupportReplacementPolicyRejectionReason[] = []
-    const seedVenueId = selectedCandidateIds[role] ?? null
+    const explicitSeedVenueId = selectedCandidateIds[role] ?? null
     const generatedVenueId = finalRouteIds[role] ?? null
+    const selectedName = normalizeDisplayName(selectedCandidateNames[role])
+    const generatedName = normalizeDisplayName(finalRouteNames[role])
+    const namePreserved = Boolean(selectedName && generatedName && selectedName === generatedName)
+    const seedVenueId = explicitSeedVenueId ?? (namePreserved ? generatedVenueId : null)
     const requiredVenueId = nonEmpty(requiredByRole[role])
     const required = Boolean(requiredVenueId)
     const replaced = Boolean(seedVenueId && generatedVenueId && seedVenueId !== generatedVenueId)
 
-    if (!seedVenueId) {
+    if (!seedVenueId && !namePreserved) {
       addUnique(roleRejections, 'replacement_role_missing_seed_identity')
     }
     if (required && generatedVenueId !== requiredVenueId) {
