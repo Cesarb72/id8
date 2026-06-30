@@ -21,6 +21,7 @@
     "test:build-public-provider-diagnostics": "tsx scripts/test-build-public-provider-diagnostics.ts",
     "test:build-public-review-gating-diagnostics": "tsx scripts/test-build-public-review-gating-diagnostics.ts",
     "test:phase2-build-local-proof": "tsx scripts/test-phase2-build-local-proof.ts",
+    "test:phase2-surprise-local-proof": "tsx scripts/test-phase2-surprise-local-proof.ts",
     "provider:dry-run": "tsx scripts/run-provider-dry-run.ts",
     "provider:build-supply-dry-run": "tsx scripts/run-build-provider-supply-dry-run.ts"
   },
