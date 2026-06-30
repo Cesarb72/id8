@@ -59,6 +59,28 @@ export interface StrongCurationTastePassResult {
   postGenerationRepairCount: number
   rolePoolVenueIdsByRole: Record<DirectionCoreRole, string[]>
   rolePoolVenueIdsCombined: string[]
+  windDownCandidateQualityDiagnostics?: Array<{
+    venueId: string
+    name: string
+    inCandidateUniverse: boolean
+    inWindDownPool: boolean
+    windDownPoolRank: number | null
+    selectedAsWindDown: boolean
+    roleAffinityCooldownScore: number | null
+    roleCandidateWeight: number | null
+    roleEligibilityScore: number | null
+    roleEligibilityFloor: number | null
+    roleEligibilityPassed: boolean | null
+    roleEligibilityReason: string | null
+    anchoredCooldownFit: number | null
+    category: string | null
+    tags: string[]
+    neighborhood: string | null
+    driveMinutes: number | null
+    sourceKind: string | null
+    providerRecordId: string | null
+    hasCoordinates: boolean
+  }>
   thinPoolRelaxationTrace: {
     triggered: boolean
     baseQualifiedHighlightCount: number

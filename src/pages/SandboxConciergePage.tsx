@@ -2125,6 +2125,7 @@ interface TasteCurationDebug {
   postGenerationRepairCount: number
   rolePoolVenueIdsByRole: Record<CoreTasteRole, string[]>
   rolePoolVenueIdsCombined: string[]
+  windDownCandidateQualityDiagnostics?: StrongCurationTastePassResult['windDownCandidateQualityDiagnostics']
   thinPoolRelaxationTrace: StrongCurationTastePassResult['thinPoolRelaxationTrace']
 }
 
@@ -6975,6 +6976,7 @@ function buildTasteCurationDebugForArc(params: {
   postGenerationRepairCount: number
   rolePoolVenueIdsByRole: Record<CoreTasteRole, string[]>
   rolePoolVenueIdsCombined: string[]
+  windDownCandidateQualityDiagnostics?: StrongCurationTastePassResult['windDownCandidateQualityDiagnostics']
   thinPoolRelaxationTrace: StrongCurationTastePassResult['thinPoolRelaxationTrace']
 }): TasteCurationDebug {
   const {
@@ -6996,6 +6998,7 @@ function buildTasteCurationDebugForArc(params: {
     postGenerationRepairCount,
     rolePoolVenueIdsByRole,
     rolePoolVenueIdsCombined,
+    windDownCandidateQualityDiagnostics,
     thinPoolRelaxationTrace,
   } = params
 
@@ -7045,6 +7048,7 @@ function buildTasteCurationDebugForArc(params: {
     postGenerationRepairCount,
     rolePoolVenueIdsByRole,
     rolePoolVenueIdsCombined,
+    windDownCandidateQualityDiagnostics,
     thinPoolRelaxationTrace,
   }
 }
@@ -7486,6 +7490,51 @@ function applyStrongCurationTastePass(params: {
     highlight: [...rolePoolMembershipByRole.highlight],
     windDown: [...rolePoolMembershipByRole.windDown],
   }
+  const currentWindDownVenueId =
+    nextArc.stops.find((stop) => stop.role === 'cooldown')?.scoredVenue?.venue.id ?? null
+  const windDownPoolRankByVenueId = new Map(
+    windDownPool.map((candidate, index) => [candidate.venue.id, index + 1] as const),
+  )
+  const scoredVenueByVenueId = new Map<string, ScoredVenue>()
+  for (const candidate of [...scoredVenues, ...adjustedScoredVenues]) {
+    if (!scoredVenueByVenueId.has(candidate.venue.id)) {
+      scoredVenueByVenueId.set(candidate.venue.id, candidate)
+    }
+  }
+  const windDownCandidateQualityDiagnostics: NonNullable<
+    StrongCurationTastePassResult['windDownCandidateQualityDiagnostics']
+  > = ['sj-lincoln-avenue-deli', 'sj-hedley-club-lounge'].map((venueId) => {
+    const candidate = scoredVenueByVenueId.get(venueId)
+    const venue = candidate?.venue ?? curatedVenues.find((entry) => entry.id === venueId) ?? null
+    const qualification = candidate ? getCandidateQualificationForVenue(finalQualification, candidate) : undefined
+    const roleEligibility = qualification?.roleEligibility.windDown
+    return {
+      venueId,
+      name: venue?.name ?? venueId,
+      inCandidateUniverse: Boolean(candidate),
+      inWindDownPool: rolePoolMembershipByRole.windDown.has(venueId),
+      windDownPoolRank: windDownPoolRankByVenueId.get(venueId) ?? null,
+      selectedAsWindDown: currentWindDownVenueId === venueId,
+      roleAffinityCooldownScore: venue?.roleAffinity.cooldown ?? null,
+      roleCandidateWeight: candidate ? Number(roleCandidateWeight('windDown', candidate).toFixed(3)) : null,
+      roleEligibilityScore:
+        typeof roleEligibility?.score === 'number' ? Number(roleEligibility.score.toFixed(3)) : null,
+      roleEligibilityFloor:
+        typeof roleEligibility?.floor === 'number' ? Number(roleEligibility.floor.toFixed(3)) : null,
+      roleEligibilityPassed: roleEligibility?.passed ?? null,
+      roleEligibilityReason: roleEligibility?.reason ?? null,
+      anchoredCooldownFit: candidate ? Number(scoreAnchoredRoleFit(candidate, 'cooldown').toFixed(3)) : null,
+      category: venue?.category ?? null,
+      tags: venue?.tags ?? [],
+      neighborhood: venue?.neighborhood ?? null,
+      driveMinutes: venue?.driveMinutes ?? null,
+      sourceKind: venue?.source.normalizedFromRawType ?? null,
+      providerRecordId: venue?.source.providerRecordId ?? null,
+      hasCoordinates: Boolean(
+        typeof venue?.source.latitude === 'number' && typeof venue?.source.longitude === 'number',
+      ),
+    }
+  })
   const rolePoolVenueIdsCombined = dedupeStringIds([
     ...rolePoolVenueIdsByRole.start,
     ...rolePoolVenueIdsByRole.highlight,
@@ -7513,6 +7562,7 @@ function applyStrongCurationTastePass(params: {
     postGenerationRepairCount,
     rolePoolVenueIdsByRole,
     rolePoolVenueIdsCombined,
+    windDownCandidateQualityDiagnostics,
     thinPoolRelaxationTrace,
   }
 }
@@ -14779,6 +14829,7 @@ export function SandboxConciergePage({
           postGenerationRepairCount: strongCurationPass.postGenerationRepairCount,
           rolePoolVenueIdsByRole: strongCurationPass.rolePoolVenueIdsByRole,
           rolePoolVenueIdsCombined: strongCurationPass.rolePoolVenueIdsCombined,
+          windDownCandidateQualityDiagnostics: strongCurationPass.windDownCandidateQualityDiagnostics,
           thinPoolRelaxationTrace: strongCurationPass.thinPoolRelaxationTrace,
         })
         setGenerationContractDebug({
@@ -15923,6 +15974,8 @@ export function SandboxConciergePage({
                     parity.strongCurationPass.rolePoolVenueIdsByRole,
                   rolePoolVenueIdsCombined:
                     parity.strongCurationPass.rolePoolVenueIdsCombined,
+                  windDownCandidateQualityDiagnostics:
+                    parity.strongCurationPass.windDownCandidateQualityDiagnostics,
                   thinPoolRelaxationTrace:
                     parity.strongCurationPass.thinPoolRelaxationTrace,
                 })
@@ -21292,6 +21345,129 @@ export function SandboxConciergePage({
     ),
     generatedSelectedArtifactId: plan?.selectedCandidateRouteArtifactId ?? null,
   }
+  const publicBuildQualityDiagnosticsVisible = Boolean(
+    isPublicSurface && isBuildWrapperActive && showDebug,
+  )
+  const buildQualityWindDownDiagnostics = tasteCurationDebug?.windDownCandidateQualityDiagnostics ?? []
+  const buildQualityLincolnWindDownDiagnostic =
+    buildQualityWindDownDiagnostics.find((entry) => entry.venueId === 'sj-lincoln-avenue-deli') ?? null
+  const buildQualityHedleyWindDownDiagnostic =
+    buildQualityWindDownDiagnostics.find((entry) => entry.venueId === 'sj-hedley-club-lounge') ?? null
+  const buildQualityFormatTransition = (fromVenueId: string, toVenueId: string) => {
+    const fromVenue = curatedVenueById.get(fromVenueId) ?? null
+    const toVenue = curatedVenueById.get(toVenueId) ?? null
+    const observedTransition =
+      plan?.selectedArc.spatial.transitions.find(
+        (transition) => transition.fromVenueId === fromVenueId && transition.toVenueId === toVenueId,
+      ) ?? null
+    return {
+      fromVenueId,
+      fromName: fromVenue?.name ?? fromVenueId,
+      fromNeighborhood: fromVenue?.neighborhood ?? null,
+      fromDriveMinutes: fromVenue?.driveMinutes ?? null,
+      toVenueId,
+      toName: toVenue?.name ?? toVenueId,
+      toNeighborhood: toVenue?.neighborhood ?? null,
+      toDriveMinutes: toVenue?.driveMinutes ?? null,
+      driveGap:
+        typeof fromVenue?.driveMinutes === 'number' && typeof toVenue?.driveMinutes === 'number'
+          ? Math.abs(fromVenue.driveMinutes - toVenue.driveMinutes)
+          : null,
+      sameNeighborhood:
+        fromVenue?.neighborhood && toVenue?.neighborhood
+          ? fromVenue.neighborhood === toVenue.neighborhood
+          : null,
+      observedInGeneratedRoute: Boolean(observedTransition),
+      sameCluster: observedTransition?.sameCluster ?? null,
+      clusterEscape: observedTransition?.clusterEscape ?? null,
+      longTransition: observedTransition?.longTransition ?? null,
+      scoreDelta: observedTransition?.scoreDelta ?? null,
+      notes: observedTransition?.notes ?? [],
+    }
+  }
+  const buildQualityGeneratedRouteScore = plan
+    ? {
+        totalScore: Number(plan.selectedArc.totalScore.toFixed(3)),
+        scoreBreakdown: plan.selectedArc.scoreBreakdown,
+        spatial: {
+          mode: plan.selectedArc.spatial.mode,
+          clustersVisited: plan.selectedArc.spatial.clustersVisited,
+          sameClusterTransitionCount: plan.selectedArc.spatial.sameClusterTransitionCount,
+          clusterEscapeCount: plan.selectedArc.spatial.clusterEscapeCount,
+          longTransitionCount: plan.selectedArc.spatial.longTransitionCount,
+          spatialBonus: plan.selectedArc.spatial.spatialBonus,
+          spatialPenalty: plan.selectedArc.spatial.spatialPenalty,
+          score: plan.selectedArc.spatial.score,
+          notes: plan.selectedArc.spatial.notes,
+        },
+      }
+    : null
+  const buildQualityCloseCopySupported =
+    !buildQualityGeneratedRouteScore
+      ? 'unknown'
+      : buildQualityGeneratedRouteScore.spatial.longTransitionCount > 0 ||
+          buildQualityGeneratedRouteScore.spatial.clusterEscapeCount > 0
+        ? 'no'
+        : routeShapeMovementRadius === 'tight'
+          ? 'yes'
+          : 'unknown'
+  const buildQualityLincolnOverHedleyStatus =
+    !buildQualityLincolnWindDownDiagnostic || !buildQualityHedleyWindDownDiagnostic
+      ? 'unknown'
+      : !buildQualityHedleyWindDownDiagnostic.inCandidateUniverse ||
+          !buildQualityHedleyWindDownDiagnostic.inWindDownPool
+        ? 'explained'
+        : buildQualityLincolnWindDownDiagnostic.selectedAsWindDown &&
+            typeof buildQualityLincolnWindDownDiagnostic.windDownPoolRank === 'number' &&
+            typeof buildQualityHedleyWindDownDiagnostic.windDownPoolRank === 'number' &&
+            buildQualityLincolnWindDownDiagnostic.windDownPoolRank <
+              buildQualityHedleyWindDownDiagnostic.windDownPoolRank
+          ? 'explained'
+          : buildQualityLincolnWindDownDiagnostic.selectedAsWindDown &&
+              typeof buildQualityLincolnWindDownDiagnostic.roleCandidateWeight === 'number' &&
+              typeof buildQualityHedleyWindDownDiagnostic.roleCandidateWeight === 'number' &&
+              buildQualityLincolnWindDownDiagnostic.roleCandidateWeight >
+                buildQualityHedleyWindDownDiagnostic.roleCandidateWeight
+            ? 'explained'
+            : 'unexplained'
+  const publicBuildQualityDiagnostics = {
+    finalGeneratedRouteStopIds: finalStopVenueIds,
+    directionStrategyId: selectedDirectionStrategyId,
+    directionStrategyLabel: selectedDirectionStrategyLabel,
+    directionStrategySummary: selectedDirectionStrategySummary,
+    routeShapeContract: {
+      id: routeShapeContractId,
+      arcShape: routeShapeArcShape,
+      movementRadius: routeShapeMovementRadius,
+      maxTransitionMinutes: activeRouteShapeContract?.movementProfile.maxTransitionMinutes ?? null,
+      neighborhoodContinuity: activeRouteShapeContract?.movementProfile.neighborhoodContinuity ?? null,
+      roleInvariants: {
+        start: routeShapeStartInvariantSummary,
+        highlight: routeShapeHighlightInvariantSummary,
+        windDown: routeShapeWindDownInvariantSummary,
+      },
+    },
+    retrievedVenueIds,
+    rolePoolVenueIdsByRole: rolePoolVenueIdsByRole ?? null,
+    highlightShortlistIds,
+    windDownCandidates: buildQualityWindDownDiagnostics,
+    generatedRouteScore: buildQualityGeneratedRouteScore,
+    movementEvidence: {
+      nirvanaSoulToPaperPlane: buildQualityFormatTransition('sj-nirvana-soul', 'sj-paper-plane'),
+      paperPlaneToLincolnAvenueDeli: buildQualityFormatTransition(
+        'sj-paper-plane',
+        'sj-lincoln-avenue-deli',
+      ),
+      paperPlaneToHedleyClubLounge: buildQualityFormatTransition(
+        'sj-paper-plane',
+        'sj-hedley-club-lounge',
+      ),
+    },
+    evidenceVerdicts: {
+      walkableCloseCopy: buildQualityCloseCopySupported,
+      lincolnOverHedley: buildQualityLincolnOverHedleyStatus,
+    },
+  }
   const showTryAnotherAction = isSurpriseWrapperActive
   const showReturnToCurateDiscoveryAction = curatePreviewPhaseActive
   const selectedRouteArtifactIdForGeneration =
@@ -25618,6 +25794,81 @@ export function SandboxConciergePage({
                 {publicBuildProviderDiagnostics.fieldProxyFetchAttemptedCount}
               </div>
               <div>providerCallCount: {publicBuildProviderDiagnostics.providerCallCount}</div>
+            </details>
+          )}
+          {publicBuildQualityDiagnosticsVisible && (
+            <details
+              className="preview-notice draft-feedback"
+              data-id8-public-build-quality-diagnostics={safeJsonForDataAttribute(
+                publicBuildQualityDiagnostics,
+              )}
+            >
+              <summary>Build quality diagnostics</summary>
+              <div>finalGeneratedRouteStopIds: {formatIdList(publicBuildQualityDiagnostics.finalGeneratedRouteStopIds)}</div>
+              <div>directionStrategyId: {publicBuildQualityDiagnostics.directionStrategyId}</div>
+              <div>directionStrategyLabel: {publicBuildQualityDiagnostics.directionStrategyLabel}</div>
+              <div>directionStrategySummary: {publicBuildQualityDiagnostics.directionStrategySummary}</div>
+              <div>routeShapeContract.arcShape: {publicBuildQualityDiagnostics.routeShapeContract.arcShape ?? 'n/a'}</div>
+              <div>
+                movementProfile:{' '}
+                radius {publicBuildQualityDiagnostics.routeShapeContract.movementRadius ?? 'n/a'} | maxTransitionMinutes{' '}
+                {publicBuildQualityDiagnostics.routeShapeContract.maxTransitionMinutes ?? 'n/a'} | continuity{' '}
+                {publicBuildQualityDiagnostics.routeShapeContract.neighborhoodContinuity ?? 'n/a'}
+              </div>
+              <div>
+                roleInvariants.start:{' '}
+                {publicBuildQualityDiagnostics.routeShapeContract.roleInvariants.start}
+              </div>
+              <div>
+                roleInvariants.highlight:{' '}
+                {publicBuildQualityDiagnostics.routeShapeContract.roleInvariants.highlight}
+              </div>
+              <div>
+                roleInvariants.windDown:{' '}
+                {publicBuildQualityDiagnostics.routeShapeContract.roleInvariants.windDown}
+              </div>
+              <div>retrievedVenueIds: {formatIdList(publicBuildQualityDiagnostics.retrievedVenueIds)}</div>
+              <div>
+                rolePoolVenueIdsByRole:{' '}
+                {publicBuildQualityDiagnostics.rolePoolVenueIdsByRole
+                  ? `start:${formatIdList(publicBuildQualityDiagnostics.rolePoolVenueIdsByRole.start)} | highlight:${formatIdList(
+                      publicBuildQualityDiagnostics.rolePoolVenueIdsByRole.highlight,
+                    )} | windDown:${formatIdList(publicBuildQualityDiagnostics.rolePoolVenueIdsByRole.windDown)}`
+                  : 'n/a'}
+              </div>
+              <div>highlightShortlistIds: {formatIdList(publicBuildQualityDiagnostics.highlightShortlistIds)}</div>
+              <div>
+                currentRouteScore:{' '}
+                {publicBuildQualityDiagnostics.generatedRouteScore
+                  ? `${publicBuildQualityDiagnostics.generatedRouteScore.totalScore} | geography:${publicBuildQualityDiagnostics.generatedRouteScore.scoreBreakdown.geographyScore} | windDown:${publicBuildQualityDiagnostics.generatedRouteScore.scoreBreakdown.windDownScore} | diversityPenalty:${publicBuildQualityDiagnostics.generatedRouteScore.scoreBreakdown.categoryDiversityPenalty ?? 0}`
+                  : 'n/a'}
+              </div>
+              <div>
+                movementEvidence.NirvanaSoulToPaperPlane:{' '}
+                {`${publicBuildQualityDiagnostics.movementEvidence.nirvanaSoulToPaperPlane.fromNeighborhood ?? 'n/a'} -> ${publicBuildQualityDiagnostics.movementEvidence.nirvanaSoulToPaperPlane.toNeighborhood ?? 'n/a'} | driveGap:${publicBuildQualityDiagnostics.movementEvidence.nirvanaSoulToPaperPlane.driveGap ?? 'n/a'} | observed:${String(publicBuildQualityDiagnostics.movementEvidence.nirvanaSoulToPaperPlane.observedInGeneratedRoute)} | long:${String(publicBuildQualityDiagnostics.movementEvidence.nirvanaSoulToPaperPlane.longTransition)}`}
+              </div>
+              <div>
+                movementEvidence.PaperPlaneToLincoln:{' '}
+                {`${publicBuildQualityDiagnostics.movementEvidence.paperPlaneToLincolnAvenueDeli.fromNeighborhood ?? 'n/a'} -> ${publicBuildQualityDiagnostics.movementEvidence.paperPlaneToLincolnAvenueDeli.toNeighborhood ?? 'n/a'} | driveGap:${publicBuildQualityDiagnostics.movementEvidence.paperPlaneToLincolnAvenueDeli.driveGap ?? 'n/a'} | observed:${String(publicBuildQualityDiagnostics.movementEvidence.paperPlaneToLincolnAvenueDeli.observedInGeneratedRoute)} | long:${String(publicBuildQualityDiagnostics.movementEvidence.paperPlaneToLincolnAvenueDeli.longTransition)}`}
+              </div>
+              <div>
+                movementEvidence.PaperPlaneToHedley:{' '}
+                {`${publicBuildQualityDiagnostics.movementEvidence.paperPlaneToHedleyClubLounge.fromNeighborhood ?? 'n/a'} -> ${publicBuildQualityDiagnostics.movementEvidence.paperPlaneToHedleyClubLounge.toNeighborhood ?? 'n/a'} | driveGap:${publicBuildQualityDiagnostics.movementEvidence.paperPlaneToHedleyClubLounge.driveGap ?? 'n/a'} | observed:${String(publicBuildQualityDiagnostics.movementEvidence.paperPlaneToHedleyClubLounge.observedInGeneratedRoute)} | long:${String(publicBuildQualityDiagnostics.movementEvidence.paperPlaneToHedleyClubLounge.longTransition)}`}
+              </div>
+              {publicBuildQualityDiagnostics.windDownCandidates.map((candidate) => (
+                <div key={candidate.venueId}>
+                  windDownCandidate.{candidate.venueId}:{' '}
+                  {`selected:${String(candidate.selectedAsWindDown)} | inPool:${String(candidate.inWindDownPool)} | rank:${candidate.windDownPoolRank ?? 'n/a'} | roleAffinityCooldown:${candidate.roleAffinityCooldownScore ?? 'n/a'} | roleCandidateWeight:${candidate.roleCandidateWeight ?? 'n/a'} | eligibility:${candidate.roleEligibilityScore ?? 'n/a'}/${candidate.roleEligibilityFloor ?? 'n/a'} ${String(candidate.roleEligibilityPassed)} ${candidate.roleEligibilityReason ?? 'n/a'} | category:${candidate.category ?? 'n/a'} | tags:${candidate.tags.join(',') || 'none'} | neighborhood:${candidate.neighborhood ?? 'n/a'} | driveMinutes:${candidate.driveMinutes ?? 'n/a'}`}
+                </div>
+              ))}
+              <div>
+                evidence.walkableCloseCopy:{' '}
+                {publicBuildQualityDiagnostics.evidenceVerdicts.walkableCloseCopy}
+              </div>
+              <div>
+                evidence.lincolnOverHedley:{' '}
+                {publicBuildQualityDiagnostics.evidenceVerdicts.lincolnOverHedley}
+              </div>
             </details>
           )}
           {publicBuildReviewGatingDiagnosticsVisible && (
