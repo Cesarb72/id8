@@ -25,6 +25,7 @@ import type {
   PlanAnchor,
   PreferredDiscoveryVenue,
   ResolvedDirectionContext,
+  SelectedDirectionContext,
   RouteShapeContract,
   VibeAnchor,
 } from '../types/intent'
@@ -81,7 +82,7 @@ export interface BuildContractDrivenWaypointPlanInput {
   district: string
   distanceMode: IntentInput['distanceMode']
   refinementModes?: IntentInput['refinementModes']
-  selectedDirectionContext: ResolvedDirectionContext
+  selectedDirectionContext: SelectedDirectionContext
   selectedDirectionContextForValidation: ResolvedDirectionContext
   selectedDirectionContract: DirectionPlanningSelection
   selectedDirectionContractForValidation: DirectionPlanningSelection
@@ -101,7 +102,7 @@ export interface BuildContractDrivenWaypointPlanInput {
   vibe: VibeAnchor
   starterPack?: StarterPack
   requiredBuildAnchor?: {
-    role: UserStopRole
+    role: Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
     venueId: string
   } | null
   buildAnchorTruthContract?: BuildAnchorTruthContract | null
@@ -134,7 +135,7 @@ export async function buildContractDrivenBuildWaypointPlan(
 ): Promise<BuildContractDrivenWaypointPlanResult> {
   const routeShapeContract = buildRouteShapeContract({
     selectedDirection: input.selectedDirectionContract,
-    selectedDirectionContext: input.selectedDirectionContext,
+    selectedDirectionContext: input.selectedDirectionContextForValidation,
     conciergeIntent: input.conciergeIntent,
     contractConstraints: input.canonicalInterpretationBundle.contractConstraints,
   })

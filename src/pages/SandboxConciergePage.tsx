@@ -14740,7 +14740,14 @@ export function SandboxConciergePage({
             starterPack: generationStarterPack,
             selectedArtifactLineage: activeSelectedArtifactLineage,
           })
-          generatedRouteShapeContract = activeRouteShapeContract
+          generatedRouteShapeContract =
+            activeRouteShapeContract ??
+            buildRouteShapeContract({
+              selectedDirection: activeDirectionContract,
+              selectedDirectionContext: activeDirectionContext,
+              conciergeIntent: canonicalConciergeIntent,
+              contractConstraints: canonicalContractConstraints,
+            })
         }
         const canonicalStopByRoleForState = normalizeCanonicalPlanningStopIdentityByRole(
           anchoredPlan.canonicalStopByRole,

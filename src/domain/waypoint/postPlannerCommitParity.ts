@@ -125,6 +125,10 @@ export interface RunPostPlannerCommitParityStagesDependencies {
     intentProfile: IntentProfile
     lens: ExperienceLens
     contractConstraints: ContractConstraints
+    requiredBuildAnchor?: {
+      role: Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
+      venueId: string
+    }
   }): StrongCurationTastePassResult
   enforceFullStopRealityContract(params: {
     itinerary: Itinerary
