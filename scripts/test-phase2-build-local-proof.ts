@@ -7,7 +7,6 @@ import {
   buildLockInputFromRouteAuthoritySnapshot,
   buildRouteAuthoritySnapshot,
 } from '../src/app/services/routeAuthority/routeAuthorityService.ts'
-import { evaluateBuildSupportReplacementPolicy } from '../src/app/services/routeAuthority/buildSupportReplacementPolicy.ts'
 import { evaluateBuildCandidateAdmission } from '../src/app/services/buildCandidateAdmission/buildCandidateAdmissionService.ts'
 import { buildAnchorTruthContract } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import type { ContractEntryArtifact } from '../src/domain/artifacts/contractEntryArtifact.ts'
@@ -233,13 +232,6 @@ try {
   assert(!staticOnlyTruth.reviewEligible, 'Static pre-generation card must not be Review-eligible.')
   assert(!staticOnlyTruth.routeAuthorityLockReady, 'Static pre-generation card must not be lock-ready.')
 
-  const staticArtifactWithoutSupportVenueIds = buildArtifact({
-    id: 'step2_static_build_paper_plane_without_support_ids',
-    sourceOpportunityId: 'step2_static_build_paper_plane',
-    routeIds: staticRouteIds,
-    routeSummary: 'Petiscos to Paper Plane to Hedley Club Lounge.',
-    includeSupportVenueIds: false,
-  })
   const generatedSameRouteArtifact = buildArtifact({
     id: 'generated_public_build_paper_plane_same_route',
     sourceOpportunityId: 'generated_public_build_paper_plane_same_route',
@@ -251,37 +243,6 @@ try {
     routeSummary: 'Petiscos to Paper Plane to Hedley Club Lounge.',
   })
   const generatedSameRouteItinerary = buildItinerary(staticRouteIds)
-  const sameRouteReplacementPolicy = evaluateBuildSupportReplacementPolicy({
-    selectedCandidateArtifact: staticArtifactWithoutSupportVenueIds,
-    generatedArtifact: generatedSameRouteArtifact,
-    finalRoute: generatedSameRouteFinalRoute,
-    selectedArc: buildSelectedArc(staticRouteIds),
-    routeShapeContract: buildRouteShapeContractFixture(),
-    selectedAnchorVenueId: 'sj-paper-plane',
-    selectedAnchorRequiredRole: 'highlight',
-    requiredStopVenueIdsByRole: {
-      highlight: 'sj-paper-plane',
-    },
-  })
-  assert(
-    sameRouteReplacementPolicy.admitted,
-    `Same-route static support preservation must not fail on missing seed support IDs: ${JSON.stringify(
-      sameRouteReplacementPolicy,
-    )}`,
-  )
-  assert(
-    sameRouteReplacementPolicy.replacedRoles.length === 0,
-    'Same-route hosted fallback must require no support replacement.',
-  )
-  assert(
-    sameRouteReplacementPolicy.reasonCodes.includes('seed_support_stop_preserved') &&
-      sameRouteReplacementPolicy.reasonCodes.includes('no_support_replacement_required'),
-    'Same-route hosted fallback must record preserved support stops and no replacement required.',
-  )
-  assert(
-    !sameRouteReplacementPolicy.rejectionReasons.includes('replacement_role_missing_seed_identity'),
-    'Preserved support stops must not be rejected only because the static seed lacks support venue IDs.',
-  )
 
   const sameRouteAdmission = evaluateBuildCandidateAdmission({
     mode: 'build',
@@ -304,7 +265,7 @@ try {
   }
   const sameRouteGeneratedTruth = buildBuildCardTruthModel({
     artifact: generatedSameRouteArtifact,
-    selectedCandidateArtifact: staticArtifactWithoutSupportVenueIds,
+    selectedCandidateArtifact: null,
     selectedArtifactId: generatedSameRouteArtifact.id,
     selectedDirectionId: generatedSameRouteArtifact.selection.directionId,
     approvedPayload: sameRouteApprovedPayload,
@@ -312,7 +273,7 @@ try {
     anchorTruthContract: anchorContract,
     selectedAnchorRequiredRole: 'highlight',
     sourceKind: 'static',
-    routeReplacementAdmitted: sameRouteReplacementPolicy.admitted,
+    routeReplacementAdmitted: false,
     buildProviderSelectionAllowed: true,
     buildProviderMergedIntoVisiblePool: true,
     activeRole: 'start',
@@ -339,27 +300,6 @@ try {
   })
   assert(generatedAdmission.admitted, 'Generated Build route must pass anchor admission.')
 
-  const replacementPolicy = evaluateBuildSupportReplacementPolicy({
-    selectedCandidateArtifact: staticArtifact,
-    generatedArtifact,
-    finalRoute: generatedFinalRoute,
-    selectedArc: buildSelectedArc(generatedRouteIds),
-    routeShapeContract: buildRouteShapeContractFixture(),
-    selectedAnchorVenueId: 'sj-paper-plane',
-    selectedAnchorRequiredRole: 'highlight',
-    requiredStopVenueIdsByRole: {
-      highlight: 'sj-paper-plane',
-    },
-  })
-  assert(replacementPolicy.admitted, 'Deterministic replacement policy must admit generated support stops.')
-  assert(replacementPolicy.deterministic, 'Deterministic replacement policy must be deterministic.')
-  assert(
-    replacementPolicy.reasonCodes.includes('replacement_selected_by_deterministic_arc') &&
-      replacementPolicy.reasonCodes.includes('seed_support_stop_replaced_as_non_required') &&
-      replacementPolicy.reasonCodes.includes('replacement_traced_to_post_parity_route'),
-    'Deterministic replacement policy must preserve traceable reason codes.',
-  )
-
   const approvedPayload: BuildApprovedPayloadReference = {
     artifactId: generatedArtifact.id,
     selectedDirectionId: generatedFinalRoute.selectedDirectionId,
@@ -370,7 +310,7 @@ try {
   }
   const generatedTruth = buildBuildCardTruthModel({
     artifact: generatedArtifact,
-    selectedCandidateArtifact: staticArtifact,
+    selectedCandidateArtifact: null,
     selectedArtifactId: generatedArtifact.id,
     selectedDirectionId: generatedArtifact.selection.directionId,
     approvedPayload,
@@ -378,7 +318,7 @@ try {
     anchorTruthContract: anchorContract,
     selectedAnchorRequiredRole: 'highlight',
     sourceKind: 'static',
-    routeReplacementAdmitted: replacementPolicy.admitted,
+    routeReplacementAdmitted: false,
     buildProviderSelectionAllowed: true,
     buildProviderMergedIntoVisiblePool: true,
     activeRole: 'start',
@@ -390,7 +330,7 @@ try {
 
   const providerShadowTruth = buildBuildCardTruthModel({
     artifact: generatedArtifact,
-    selectedCandidateArtifact: staticArtifact,
+    selectedCandidateArtifact: null,
     selectedArtifactId: generatedArtifact.id,
     selectedDirectionId: generatedArtifact.selection.directionId,
     approvedPayload,
@@ -398,7 +338,7 @@ try {
     anchorTruthContract: anchorContract,
     selectedAnchorRequiredRole: 'highlight',
     sourceKind: 'provider_shadow',
-    routeReplacementAdmitted: replacementPolicy.admitted,
+    routeReplacementAdmitted: false,
     buildProviderSelectionAllowed: true,
     buildProviderMergedIntoVisiblePool: true,
     activeRole: 'start',
@@ -415,14 +355,18 @@ try {
     itinerary: generatedItinerary,
     buildContext: {
       mode: 'build',
-      selectedCandidateArtifact: staticArtifact,
-      selectedCandidateSourceKind: 'build_static_pre_generation',
+      selectedCandidateArtifact: null,
+      selectedCandidateSourceKind: null,
       selectedAnchorVenueId: 'sj-paper-plane',
       selectedAnchorRequiredRole: 'highlight',
-      routeReplacementAdmitted: replacementPolicy.admitted,
+      routeReplacementAdmitted: false,
     },
   })
   assert(routeAuthoritySnapshot.validationStatus === 'valid', 'routeAuthority must validate generated truth.')
+  assert(
+    !routeAuthoritySnapshot.rejectionReasons.includes('generated_route_identity_mismatch'),
+    'Generated Build routeAuthority must not compare against static seed identity.',
+  )
 
   const lockInput = buildLockInputFromRouteAuthoritySnapshot({
     snapshot: routeAuthoritySnapshot,
@@ -470,14 +414,15 @@ try {
           hasCenter: Boolean(fieldProxyRequestBody?.center),
         },
         staticReviewEligible: staticOnlyTruth.reviewEligible,
-        sameRoutePolicyAdmitted: sameRouteReplacementPolicy.admitted,
-        sameRoutePolicyReasons: sameRouteReplacementPolicy.reasonCodes,
-        sameRoutePolicyRejections: sameRouteReplacementPolicy.rejectionReasons,
         sameRouteGeneratedReviewEligible: sameRouteGeneratedTruth.reviewEligible,
-        deterministicReplacementPolicyAdmitted: replacementPolicy.admitted,
-        deterministicReplacementPolicyReasons: replacementPolicy.reasonCodes,
         generatedReviewEligible: generatedTruth.reviewEligible,
         routeAuthorityStatus: routeAuthoritySnapshot.validationStatus,
+        generatedRouteAuthorityHasStaticCandidate: Boolean(
+          routeAuthoritySnapshot.buildDiagnostics?.selectedCandidateArtifactId,
+        ),
+        generatedRouteIdentityMismatch: routeAuthoritySnapshot.rejectionReasons.includes(
+          'generated_route_identity_mismatch',
+        ),
         lockInputAvailable: lockInput.ok,
         lockRoute: lockInput.ok
           ? lockInput.input.canonicalRouteArtifact.finalRoute.stops.map((stop) => stop.venueId)

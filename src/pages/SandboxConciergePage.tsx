@@ -16846,7 +16846,6 @@ export function SandboxConciergePage({
       selectedClusterConfirmation: plan.selectedClusterConfirmation,
       itinerary: plan.itinerary,
       routeReplacementAdmitted: false,
-      buildSupportReplacementPolicy: null,
     }
   }, [
     buildSelectedAnchorRequiredRole,
@@ -21276,16 +21275,6 @@ export function SandboxConciergePage({
     routeAuthorityReasons: routeAuthoritySnapshot.rejectionReasons,
     routeAuthorityMismatchReasons: routeAuthoritySnapshot.mismatchReasons,
     routeAuthorityBuildReasons: routeAuthoritySnapshot.buildDiagnostics?.reasons ?? [],
-    buildSupportReplacementPolicyAdmitted:
-      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy?.admitted ?? false,
-    buildSupportReplacementPolicyDeterministic:
-      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy?.deterministic ?? false,
-    buildSupportReplacementPolicyReasons:
-      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy?.reasonCodes ?? [],
-    buildSupportReplacementPolicyRejections:
-      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy?.rejectionReasons ?? [],
-    buildSupportReplacementPolicyReplacedRoles:
-      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy?.replacedRoles ?? [],
     lockInputAvailable: buildSelectedCardTruthDiagnostic?.diagnostics.lockInputAvailable ?? false,
     finalRoutePresent: Boolean(routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute),
     generatedPlanPresent: Boolean(plan),
@@ -25686,32 +25675,6 @@ export function SandboxConciergePage({
                 routeAuthorityBuildReasons:{' '}
                 {publicBuildReviewGatingDiagnostics.routeAuthorityBuildReasons.length > 0
                   ? publicBuildReviewGatingDiagnostics.routeAuthorityBuildReasons.join(', ')
-                  : 'none'}
-              </div>
-              <div>
-                buildSupportReplacementPolicyAdmitted:{' '}
-                {String(publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyAdmitted)}
-              </div>
-              <div>
-                buildSupportReplacementPolicyDeterministic:{' '}
-                {String(publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyDeterministic)}
-              </div>
-              <div>
-                buildSupportReplacementPolicyReasons:{' '}
-                {publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyReasons.length > 0
-                  ? publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyReasons.join(', ')
-                  : 'none'}
-              </div>
-              <div>
-                buildSupportReplacementPolicyRejections:{' '}
-                {publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyRejections.length > 0
-                  ? publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyRejections.join(', ')
-                  : 'none'}
-              </div>
-              <div>
-                buildSupportReplacementPolicyReplacedRoles:{' '}
-                {publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyReplacedRoles.length > 0
-                  ? publicBuildReviewGatingDiagnostics.buildSupportReplacementPolicyReplacedRoles.join(', ')
                   : 'none'}
               </div>
               <div>

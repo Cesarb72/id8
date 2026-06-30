@@ -4,7 +4,6 @@ import {
   evaluateBuildStaticPreGenerationCardSelection,
 } from '../src/app/services/canonicalPublicRouteTruthService.ts'
 import { evaluateBuildCandidateAdmission } from '../src/app/services/buildCandidateAdmission/buildCandidateAdmissionService.ts'
-import { evaluateBuildSupportReplacementPolicy } from '../src/app/services/routeAuthority/buildSupportReplacementPolicy.ts'
 import { buildAnchorTruthContract } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import type { BuildAnchorCanonicalRole } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import {
@@ -478,7 +477,7 @@ async function main(): Promise<void> {
   })
   const actualGeneratedTruth = buildBuildCardTruthModel({
     artifact: actualGenerated.contractEntryArtifact,
-    selectedCandidateArtifact: paperPlane,
+    selectedCandidateArtifact: null,
     selectedArtifactId: actualGenerated.contractEntryArtifact.id,
     selectedDirectionId: actualGenerated.contractEntryArtifact.selection.directionId,
     approvedPayload: {
@@ -500,10 +499,10 @@ async function main(): Promise<void> {
   })
   assert(actualGeneratedAdmission.admitted, 'Actual generated Build route must pass anchor admission.')
   assert(
-    actualGeneratedTruth.diagnostics.routeAuthorityBuildReasons.includes(
-      'build_candidate_contract_preserved',
+    !actualGeneratedTruth.diagnostics.routeAuthorityBuildReasons.includes(
+      'generated_route_identity_mismatch',
     ),
-    'Actual generated Build route must report build_candidate_contract_preserved.',
+    'Actual generated Build route must not compare against selected static seed identity.',
   )
   assert(
     actualGeneratedTruth.diagnostics.routeAuthorityBuildReasons.includes(
@@ -534,7 +533,7 @@ async function main(): Promise<void> {
   })
   const generatedTruth = buildBuildCardTruthModel({
     artifact: generatedCanonicalArtifact,
-    selectedCandidateArtifact: paperPlane,
+    selectedCandidateArtifact: null,
     selectedArtifactId: generatedCanonicalArtifact.id,
     selectedDirectionId: generatedCanonicalArtifact.selection.directionId,
     approvedPayload: {
@@ -567,123 +566,6 @@ async function main(): Promise<void> {
     })}`,
   )
   assert(generatedTruth.cardSelectable, 'Generated Paper Plane route must remain card-selectable.')
-
-  const driftedGeneratedArtifact = generatedArtifact()
-  const driftedGeneratedRoute = generatedRuntimeRoute()
-  const driftedAdmission = evaluateBuildCandidateAdmission({
-    mode: 'build',
-    anchorContract: anchorContract('highlight'),
-    contractEntryArtifact: driftedGeneratedArtifact,
-    runtimeRouteArtifact: driftedGeneratedRoute,
-    buildParked: {
-      providerSelectionAllowed: true,
-      providerMergedIntoVisiblePool: true,
-    },
-  })
-  const driftedReplacementPolicy = evaluateBuildSupportReplacementPolicy({
-    selectedCandidateArtifact: paperPlane,
-    generatedArtifact: driftedGeneratedArtifact,
-    finalRoute: driftedGeneratedRoute,
-    selectedArc: selectedArcFixture(),
-    routeShapeContract: routeShapeContractFixture(),
-    selectedAnchorVenueId: routeIds.highlight,
-    selectedAnchorRequiredRole: 'highlight',
-    requiredStopVenueIdsByRole: {
-      highlight: routeIds.highlight,
-    },
-  })
-  assert(
-    driftedReplacementPolicy.admitted,
-    `Support replacement must be admitted when generated stops are deterministic arc winners: ${JSON.stringify(
-      driftedReplacementPolicy,
-    )}`,
-  )
-  assert(
-    driftedReplacementPolicy.reasonCodes.includes('replacement_selected_by_deterministic_arc'),
-    'Support replacement must expose deterministic selected-arc reason code.',
-  )
-  const driftedTruth = buildBuildCardTruthModel({
-    artifact: driftedGeneratedArtifact,
-    selectedCandidateArtifact: paperPlane,
-    selectedArtifactId: driftedGeneratedArtifact.id,
-    selectedDirectionId: driftedGeneratedArtifact.selection.directionId,
-    approvedPayload: {
-      artifactId: driftedGeneratedArtifact.id,
-      selectedDirectionId: driftedGeneratedRoute.selectedDirectionId,
-      finalRoute: driftedGeneratedRoute,
-      selectedClusterConfirmation: 'Paper Plane generated route drifted from selected candidate.',
-      itinerary: generatedItinerary(),
-      sourceKind: 'static',
-    },
-    candidateAdmission: driftedAdmission,
-    anchorTruthContract: anchorContract('highlight'),
-    selectedAnchorRequiredRole: 'highlight',
-    sourceKind: 'static',
-    routeReplacementAdmitted: driftedReplacementPolicy.admitted,
-    buildProviderSelectionAllowed: true,
-    buildProviderMergedIntoVisiblePool: true,
-    activeRole: 'start',
-    fallbackCity: 'San Jose',
-  })
-  assert(driftedAdmission.admitted, 'Drifted generated route still preserves Paper Plane anchor.')
-  assert(
-    driftedTruth.routeAuthorityLockReady,
-    'Generated support replacement that passes deterministic policy must become lock-ready.',
-  )
-  assert(driftedTruth.reviewEligible, 'Deterministic support replacement must be Review-eligible.')
-  assert(
-    driftedTruth.diagnostics.routeAuthorityBuildReasons.includes('build_candidate_contract_drifted'),
-    'Support replacement must still report build_candidate_contract_drifted for traceability.',
-  )
-  assert(
-    driftedTruth.diagnostics.routeAuthorityBuildReasons.includes('generated_route_identity_mismatch'),
-    'Support replacement must still report generated_route_identity_mismatch for traceability.',
-  )
-
-  const requiredSupportReplacementPolicy = evaluateBuildSupportReplacementPolicy({
-    selectedCandidateArtifact: paperPlane,
-    generatedArtifact: driftedGeneratedArtifact,
-    finalRoute: driftedGeneratedRoute,
-    selectedArc: selectedArcFixture(),
-    routeShapeContract: routeShapeContractFixture(),
-    selectedAnchorVenueId: routeIds.highlight,
-    selectedAnchorRequiredRole: 'highlight',
-    requiredStopVenueIdsByRole: {
-      start: routeIds.start,
-      highlight: routeIds.highlight,
-    },
-  })
-  assert(
-    !requiredSupportReplacementPolicy.admitted,
-    'Required support stop replacement must be rejected by deterministic policy.',
-  )
-  const requiredSupportTruth = buildBuildCardTruthModel({
-    artifact: driftedGeneratedArtifact,
-    selectedCandidateArtifact: paperPlane,
-    selectedArtifactId: driftedGeneratedArtifact.id,
-    selectedDirectionId: driftedGeneratedArtifact.selection.directionId,
-    approvedPayload: {
-      artifactId: driftedGeneratedArtifact.id,
-      selectedDirectionId: driftedGeneratedRoute.selectedDirectionId,
-      finalRoute: driftedGeneratedRoute,
-      selectedClusterConfirmation: 'Paper Plane generated route drifted from a required support stop.',
-      itinerary: generatedItinerary(),
-      sourceKind: 'static',
-    },
-    candidateAdmission: driftedAdmission,
-    anchorTruthContract: anchorContract('highlight'),
-    selectedAnchorRequiredRole: 'highlight',
-    sourceKind: 'static',
-    routeReplacementAdmitted: requiredSupportReplacementPolicy.admitted,
-    buildProviderSelectionAllowed: true,
-    buildProviderMergedIntoVisiblePool: true,
-    activeRole: 'start',
-    fallbackCity: 'San Jose',
-  })
-  assert(
-    !requiredSupportTruth.reviewEligible,
-    'Review must stay hidden when a user-required support stop is replaced.',
-  )
 
   const providerShadowSelection = evaluateBuildStaticPreGenerationCardSelection({
     artifact: paperPlane,
@@ -849,11 +731,10 @@ async function main(): Promise<void> {
         generatedRouteAuthorityLockReady: generatedTruth.routeAuthorityLockReady,
         generatedReviewEligible: generatedTruth.reviewEligible,
         generatedRouteIds: generatedRoute.stops.map((stop) => stop.venueId),
-        deterministicReplacementPolicyAdmitted: driftedReplacementPolicy.admitted,
-        deterministicReplacementReasons: driftedReplacementPolicy.reasonCodes,
-        requiredSupportReplacementPolicyAdmitted: requiredSupportReplacementPolicy.admitted,
-        deterministicReplacementRouteAuthorityLockReady: driftedTruth.routeAuthorityLockReady,
-        driftedRouteReasons: driftedTruth.diagnostics.routeAuthorityBuildReasons,
+        generatedRouteIdentityMismatchReachable:
+          generatedTruth.diagnostics.routeAuthorityBuildReasons.includes(
+            'generated_route_identity_mismatch',
+          ),
         providerShadowSelectable: providerShadowSelection.selectable,
         debugOnlySelectable: debugOnlySelection.selectable,
         wrongRoleSelectable: wrongRoleSelection.selectable,
