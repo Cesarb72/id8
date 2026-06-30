@@ -12,6 +12,16 @@ import { evaluateBuildCandidateAdmission } from '../src/app/services/buildCandid
 import { buildAnchorTruthContract } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import type { ContractEntryArtifact } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
+import {
+  BuildContractCompatibilityProjectionMutationError,
+  buildContractDrivenBuildWaypointPlan,
+} from '../src/domain/waypoint/buildContractDrivenBuildWaypointPlan.ts'
+import {
+  buildApplicationConciergeIntent,
+  projectConciergeIntentToIntentInput,
+} from '../src/app/concierge/conciergeIntentAdapter.ts'
+import { buildCanonicalInterpretationBundle } from '../src/domain/interpretation/buildCanonicalInterpretationBundle.ts'
+import type { GeneratePlanResult } from '../src/domain/runGeneratePlan.ts'
 import { curatedVenues } from '../src/data/venues.ts'
 import {
   buildProviderPublicLiveEnvelope,
@@ -20,7 +30,7 @@ import {
 import { buildProviderSourceOpportunity } from '../src/domain/providers/buildProviderSourceOpportunity.ts'
 import type { ProviderVenue } from '../src/domain/providers/providerTypes.ts'
 import type { ArcCandidate } from '../src/domain/types/arc.ts'
-import type { RouteShapeContract } from '../src/domain/types/intent.ts'
+import type { IntentInput, IntentProfile, RouteShapeContract } from '../src/domain/types/intent.ts'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
 
 const FIELD_PROXY_PATH = '/api/field/text-search'
@@ -106,6 +116,7 @@ try {
   process.env.VITE_ID8_SOURCE_MODE = 'hybrid'
 
   assertSourceLevelBrowserGap()
+  const contractDrivenProof = await assertContractDrivenBuildWaypointProof()
 
   const publicBuildEligibility = evaluateBuildProviderPublicLiveEligibility({
     isPublicSurface: true,
@@ -434,6 +445,14 @@ try {
         proofSurface: 'local-tsx-service-harness',
         browserRunnerAvailable: false,
         startPathCoveredBySourceAssertion: '/start/build?fresh=1&debug=1',
+        contractDrivenWaypointEntry: contractDrivenProof.contractDrivenWaypointEntry,
+        compatibilityProjectionMutationRejected:
+          contractDrivenProof.compatibilityProjectionMutationRejected,
+        contractAuthority: contractDrivenProof.contractAuthority,
+        plannerIntentAuthoritative: contractDrivenProof.plannerIntentAuthoritative,
+        intentProfileRole: contractDrivenProof.intentProfileRole,
+        selectedStaticCandidateInGeneratedAuthority: false,
+        generatedRouteIdentityMismatchReachable: false,
         publicBuildProviderEligible: publicBuildEligibility.eligible,
         envelope: publicBuildEligibility.envelope,
         fieldProxyFetchAttemptCount,
@@ -475,6 +494,394 @@ try {
   restoreEnv()
 }
 
+async function assertContractDrivenBuildWaypointProof(): Promise<{
+  contractAuthority: string
+  contractDrivenWaypointEntry: boolean
+  compatibilityProjectionMutationRejected: boolean
+  intentProfileRole: string
+  plannerIntentAuthoritative: boolean
+}> {
+  const selectedDirection = {
+    id: 'downtown-paper-plane',
+    label: 'Downtown Paper Plane',
+    subtitle: 'Cocktail anchor with compact support',
+    pocketId: 'downtown',
+    pocketLabel: 'Downtown',
+    archetype: 'cocktail_anchor',
+    identity: 'lively_downtown_anchor',
+    experienceFamily: 'nightlife',
+    familyConfidence: 0.9,
+    cluster: 'lively',
+    greatStopSignal: null,
+  } as any
+  const selectedDirectionContext = {
+    selectedDirectionId: 'downtown-paper-plane',
+    selectedPocketId: 'downtown',
+    directionId: 'downtown-paper-plane',
+    pocketId: 'downtown',
+    identity: 'lively_downtown_anchor',
+  } as any
+  const conciergeIntent = buildApplicationConciergeIntent({
+    mode: 'build',
+    persona: 'friends',
+    primaryVibe: 'lively',
+    city: 'San Jose',
+    anchor: {
+      venueId: 'sj-paper-plane',
+      role: 'highlight',
+    },
+    anchorDisplayName: 'Paper Plane',
+    candidateLineage: {
+      source: 'selected_candidate_route_artifact',
+      candidateArtifactId: 'step2_static_build_paper_plane',
+      directionId: 'downtown-paper-plane',
+      pocketId: 'downtown',
+      sourceOpportunityId: 'step2_static_build_paper_plane',
+      anchorVenueId: 'sj-paper-plane',
+      anchorRole: 'highlight',
+    },
+  })
+  const canonicalInterpretationBundle = buildCanonicalInterpretationBundle({
+    conciergeIntent,
+    selectedDirectionContext,
+    interpretationSource: 'test.phase2.local.contractDrivenBuild',
+  })
+  const compatibilityProjection = projectConciergeIntentToIntentInput({
+    conciergeIntent,
+    mode: 'build',
+    city: 'San Jose',
+    district: 'Downtown',
+    distanceMode: 'nearby',
+    selectedDirectionContext,
+    discoveryPreferences: [
+      { venueId: 'sj-petiscos', role: 'start' },
+      { venueId: 'sj-paper-plane', role: 'highlight' },
+      { venueId: 'sj-hedley-club-lounge', role: 'windDown' },
+    ],
+    anchor: {
+      venueId: 'sj-paper-plane',
+      role: 'highlight',
+    },
+  })
+  const mutatedCompatibilityProjection: IntentInput = {
+    ...compatibilityProjection,
+    city: 'Mutated Legacy City',
+    anchor: {
+      venueId: 'sj-haberdasher',
+      role: 'windDown',
+    },
+  }
+  let compatibilityProjectionMutationRejected = false
+  try {
+    await buildContractDrivenBuildWaypointPlan({
+      ...buildContractDrivenWaypointInputFixture({
+        canonicalInterpretationBundle,
+        conciergeIntent,
+        selectedDirection,
+        selectedDirectionContext,
+      }),
+      compatibilityProjectionForMutationProof: mutatedCompatibilityProjection,
+      runPlanBuild: async () => {
+        throw new Error('Mutated compatibility projection should be rejected before planner execution.')
+      },
+    })
+  } catch (error) {
+    compatibilityProjectionMutationRejected =
+      error instanceof BuildContractCompatibilityProjectionMutationError
+  }
+  assert(
+    compatibilityProjectionMutationRejected,
+    'Mutated projected IntentInput must be rejected before it can drive Build route behavior.',
+  )
+
+  let plannerInputSeen: IntentInput | null = null
+  const waypointPlan = await buildContractDrivenBuildWaypointPlan({
+    ...buildContractDrivenWaypointInputFixture({
+      canonicalInterpretationBundle,
+      conciergeIntent,
+      selectedDirection,
+      selectedDirectionContext,
+    }),
+    runPlanBuild: async (input) => {
+      plannerInputSeen = input
+      return buildFakeGeneratePlanResult(input)
+    },
+  })
+
+  assert(
+    plannerInputSeen?.anchor?.venueId === 'sj-paper-plane',
+    'Waypoint compatibility view must derive the Paper Plane anchor from ConciergeIntent.',
+  )
+  assert(
+    waypointPlan.nextFinalRoute.stops.some(
+      (stop) => stop.role === 'highlight' && stop.venueId === 'sj-paper-plane',
+    ),
+    'Contract-driven Waypoint Build route must preserve the ConciergeIntent hard anchor.',
+  )
+  assert(
+    waypointPlan.postParityContractEntryArtifact.anchorVenueId === 'sj-paper-plane',
+    'Generated post-parity ContractEntryArtifact must preserve the Paper Plane anchor.',
+  )
+  assert(
+    waypointPlan.diagnostics.contractAuthority === 'concierge_intent' &&
+      waypointPlan.diagnostics.compatibilityProjectionAuthoritative === false &&
+      waypointPlan.diagnostics.plannerIntentAuthoritative === false &&
+      waypointPlan.diagnostics.intentProfileRole === 'derived_compatibility_view',
+    'Waypoint diagnostics must report contract authority and derived compatibility views.',
+  )
+
+  return {
+    contractAuthority: waypointPlan.diagnostics.contractAuthority,
+    contractDrivenWaypointEntry: true,
+    compatibilityProjectionMutationRejected,
+    intentProfileRole: waypointPlan.diagnostics.intentProfileRole,
+    plannerIntentAuthoritative: waypointPlan.diagnostics.plannerIntentAuthoritative,
+  }
+}
+
+function buildContractDrivenWaypointInputFixture(params: {
+  canonicalInterpretationBundle: ReturnType<typeof buildCanonicalInterpretationBundle>
+  conciergeIntent: ReturnType<typeof buildApplicationConciergeIntent>
+  selectedDirection: any
+  selectedDirectionContext: any
+}): Parameters<typeof buildContractDrivenBuildWaypointPlan>[0] {
+  return {
+    conciergeIntent: params.conciergeIntent,
+    canonicalInterpretationBundle: params.canonicalInterpretationBundle,
+    mode: 'build',
+    city: 'San Jose',
+    district: 'Downtown',
+    distanceMode: 'nearby',
+    selectedDirectionContext: params.selectedDirectionContext,
+    selectedDirectionContextForValidation: params.selectedDirectionContext,
+    selectedDirectionContract: params.selectedDirection,
+    selectedDirectionContractForValidation: params.selectedDirection,
+    selectedDirectionId: 'downtown-paper-plane',
+    expectedDirectionIdentity: 'lively_downtown_anchor' as any,
+    discoveryPreferences: [
+      { venueId: 'sj-petiscos', role: 'start' },
+      { venueId: 'sj-paper-plane', role: 'highlight' },
+      { venueId: 'sj-hedley-club-lounge', role: 'windDown' },
+    ],
+    anchor: {
+      venueId: 'sj-paper-plane',
+      role: 'highlight',
+    },
+    sourceMode: 'hybrid',
+    sourceModeOverrideApplied: true,
+    persona: 'friends',
+    vibe: 'lively',
+    requiredBuildAnchor: {
+      role: 'highlight',
+      venueId: 'sj-paper-plane',
+    },
+    buildAnchorTruthContract: buildAnchorTruthContract({
+      identity: {
+        venueId: 'sj-paper-plane',
+        displayName: 'Paper Plane',
+      },
+      role: {
+        role: 'highlight',
+        roleResolutionSource: 'explicit',
+      },
+    }),
+    postPlannerDependencies: {
+      buildPassthroughStrongCurationTastePass: ({ itinerary, selectedArc, scoredVenues }) =>
+        buildStrongCurationPassFixture({ itinerary, selectedArc, scoredVenues }),
+      applyStrongCurationTastePass: ({ itinerary, selectedArc, scoredVenues }) =>
+        buildStrongCurationPassFixture({ itinerary, selectedArc, scoredVenues }),
+      enforceFullStopRealityContract: async ({ itinerary, selectedArc, scoredVenues }) => ({
+        itinerary,
+        selectedArc,
+        scoredVenues,
+        canonicalStopByRole: buildCanonicalStopIdentityByRole(staticRouteIds),
+        rejectedStopRoles: [],
+      }),
+      applyCanonicalIdentityToItinerary: (itinerary) => itinerary,
+      assessDirectionContractBuildability: () =>
+        ({
+          status: 'buildable',
+        }) as any,
+      validateDirectionRouteContract: () =>
+        ({
+          valid: true,
+          validatorMode: 'build',
+          generationDriftReason: null,
+          directionAlignmentScore: 1,
+          contractBuildabilityStatus: 'buildable',
+          candidatePoolSufficiencyByRole: {
+            start: 1,
+            highlight: 1,
+            windDown: 1,
+          },
+          expectedDirectionIdentity: 'lively_downtown_anchor',
+          observedDirectionIdentity: 'lively_downtown_anchor',
+          fallbackApplied: false,
+          lowAlignment: false,
+          hardAlignmentFailure: false,
+          materialAlignmentFailure: false,
+          severeGreatStopRisk: false,
+          missingRoleForContract: null,
+          thinPoolRelaxationTrace: null,
+        }) as any,
+      resolveRouteCopy: () => ({
+        routeHeadline: 'Paper Plane Night',
+        routeSummary: 'Petiscos to Paper Plane to Hedley Club Lounge.',
+      }),
+    },
+  }
+}
+
+function buildFakeGeneratePlanResult(input: IntentInput): GeneratePlanResult {
+  const intentProfile: IntentProfile = {
+    crew: 'socialite',
+    persona: input.persona,
+    personaSource: 'explicit',
+    primaryAnchor: input.primaryVibe ?? 'lively',
+    city: input.city,
+    district: input.district,
+    distanceMode: input.distanceMode,
+    prefersHiddenGems: false,
+    refinementModes: input.refinementModes ?? [],
+    mode: 'build',
+    planningMode: 'user-led',
+    anchor: {
+      venueId: input.anchor?.venueId ?? 'sj-paper-plane',
+      role: input.anchor?.role ?? 'highlight',
+    },
+    discoveryPreferences: input.discoveryPreferences,
+    selectedDirectionContext: input.selectedDirectionContext,
+  }
+  const itinerary = buildItinerary(staticRouteIds)
+  const selectedArc = buildSelectedArc(staticRouteIds)
+  const trace = {
+    intent: intentProfile,
+    lens: {
+      tone: 'lively',
+      discoveryBias: 'reliable',
+      movementTolerance: 'nearby',
+    },
+    rankingEngine: 'local-contract-driven-build-proof',
+    selectedArcId: selectedArc.id,
+    selectedDistrictId: 'downtown',
+    selectedDistrictLabel: 'Downtown',
+    selectedDistrictReason: 'Contract-driven downtown Paper Plane route.',
+    retrievalDiagnostics: {
+      liveSource: {
+        effectiveMode: 'curated',
+        provider: 'static-corpus',
+        liveFetchAttempted: false,
+        liveFetchSucceeded: false,
+        countsBySource: {
+          curated: 3,
+          live: 0,
+        },
+        liveQueryLabelsUsed: [],
+      },
+    },
+    stopExplainability: {
+      highlight: {
+        selectedBecause: 'Paper Plane is the hard Build anchor.',
+      },
+    },
+    canonicalInterpretationIngress: {
+      supplied: true,
+      plannerIntentAuthoritative: false,
+    },
+  } as any
+  return {
+    itinerary,
+    selectedArc,
+    scoredVenues: [],
+    contractEntryArtifact: buildArtifact({
+      id: 'generated_contract_driven_paper_plane',
+      sourceOpportunityId: 'generated_contract_driven_paper_plane',
+      routeIds: staticRouteIds,
+      routeSummary: 'Petiscos to Paper Plane to Hedley Club Lounge.',
+    }),
+    intentProfile,
+    lens: {
+      tone: 'lively',
+      discoveryBias: 'reliable',
+      movementTolerance: 'nearby',
+    } as any,
+    trace,
+  }
+}
+
+function buildStrongCurationPassFixture(params: {
+  itinerary: Itinerary
+  selectedArc: ArcCandidate
+  scoredVenues: GeneratePlanResult['scoredVenues']
+}) {
+  return {
+    itinerary: params.itinerary,
+    selectedArc: params.selectedArc,
+    scoredVenues: params.scoredVenues,
+    qualificationByCandidateId: {},
+    personaVibeTasteBiasSummary: 'local proof',
+    thinPoolHighlightFallbackApplied: false,
+    highlightPoolCountBefore: 1,
+    highlightPoolCountAfter: 1,
+    rolePoolCountByRoleBefore: {
+      start: 1,
+      highlight: 1,
+      windDown: 1,
+    },
+    rolePoolCountByRoleAfter: {
+      start: 1,
+      highlight: 1,
+      windDown: 1,
+    },
+    signatureHighlightShortlistCount: 1,
+    signatureHighlightShortlistIds: ['sj-paper-plane'],
+    highlightShortlistScoreSummary: 'Paper Plane',
+    selectedHighlightFromShortlist: true,
+    selectedHighlightShortlistRank: 1,
+    fallbackToQualifiedHighlightPool: false,
+    upstreamPoolSelectionApplied: false,
+    postGenerationRepairCount: 0,
+    rolePoolVenueIdsByRole: {
+      start: ['sj-petiscos'],
+      highlight: ['sj-paper-plane'],
+      windDown: ['sj-hedley-club-lounge'],
+    },
+    rolePoolVenueIdsCombined: ['sj-petiscos', 'sj-paper-plane', 'sj-hedley-club-lounge'],
+    thinPoolRelaxationTrace: {
+      triggered: false,
+      baseQualifiedHighlightCount: 1,
+      baseHighlightFloor: 1,
+      relaxedHighlightFloor: 1,
+      triggerReason: 'none',
+      relaxedRule: 'none',
+      effectSummary: 'none',
+    },
+  }
+}
+
+function buildCanonicalStopIdentityByRole(
+  routeIds: Record<'start' | 'highlight' | 'windDown', string>,
+) {
+  return {
+    start: buildCanonicalStopIdentity(routeIds.start),
+    highlight: buildCanonicalStopIdentity(routeIds.highlight),
+    windDown: buildCanonicalStopIdentity(routeIds.windDown),
+  }
+}
+
+function buildCanonicalStopIdentity(venueId: string) {
+  const stop = buildRuntimeStop('start', venueId, 0)
+  return {
+    displayName: stop.displayName,
+    providerRecordId: `provider:${venueId}`,
+    latitude: stop.latitude,
+    longitude: stop.longitude,
+    addressLine: stop.address,
+    city: 'San Jose',
+    neighborhood: stop.neighborhood,
+  }
+}
+
 function assertSourceLevelBrowserGap(): void {
   const packageJson = readFileSync('package.json', 'utf8')
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
@@ -492,6 +899,25 @@ function assertSourceLevelBrowserGap(): void {
     sandboxSource.includes('Generated route to review') &&
       sandboxSource.includes('This is the route to lock.'),
     'Public Build Review copy must identify generated route truth.',
+  )
+  assert(
+    (() => {
+      const buildBranchIndex = sandboxSource.indexOf('if (isBuildWrapperActive) {')
+      const waypointEntryIndex = sandboxSource.indexOf('buildContractDrivenBuildWaypointPlan({')
+      const compatibilityProjectionIndex = sandboxSource.indexOf(
+        'const planBuildInput = projectConciergeIntentToIntentInput({',
+      )
+      return (
+        buildBranchIndex >= 0 &&
+        waypointEntryIndex > buildBranchIndex &&
+        (compatibilityProjectionIndex === -1 || compatibilityProjectionIndex > waypointEntryIndex)
+      )
+    })(),
+    'Public Build page must enter the Waypoint contract-driven planner branch before any non-Build compatibility projection.',
+  )
+  assert(
+    !sandboxSource.includes('evaluateBuildSupportReplacementPolicy'),
+    'Public Build page must leave buildSupportReplacementPolicy unreached after Step 1b.',
   )
   assert(
     providerAdapterSource.includes('fetch(config.requestPath') &&

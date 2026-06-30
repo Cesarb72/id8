@@ -7,13 +7,10 @@ import {
   buildLockInputFromRouteAuthoritySnapshot,
   buildRouteAuthoritySnapshot,
 } from '../src/app/services/routeAuthority/routeAuthorityService.ts'
-import { evaluateBuildSupportReplacementPolicy } from '../src/app/services/routeAuthority/buildSupportReplacementPolicy.ts'
 import { evaluateBuildCandidateAdmission } from '../src/app/services/buildCandidateAdmission/buildCandidateAdmissionService.ts'
 import { buildAnchorTruthContract } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
 import type { ContractEntryArtifact } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
-import type { ArcCandidate } from '../src/domain/types/arc.ts'
-import type { RouteShapeContract } from '../src/domain/types/intent.ts'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -36,7 +33,7 @@ const staticRouteIds = {
   windDown: 'sj-hedley-club-lounge',
 } as const
 
-const replacementRouteIds = {
+const generatedRouteIds = {
   start: 'sj-good-karma',
   highlight: 'sj-paper-plane',
   windDown: 'sj-haberdasher',
@@ -52,7 +49,7 @@ try {
   const generatedArtifact = buildArtifact({
     id: 'generated_public_build_paper_plane',
     sourceOpportunityId: 'generated_public_build_paper_plane',
-    routeIds: replacementRouteIds,
+    routeIds: generatedRouteIds,
     routeSummary: 'Good Karma to Paper Plane to Haberdasher.',
   })
   const preParityGeneratedArtifact = buildArtifact({
@@ -62,10 +59,10 @@ try {
     routeSummary: 'Petiscos to Paper Plane to Hedley Club Lounge.',
   })
   const generatedFinalRoute = buildRuntimeRoute({
-    routeIds: replacementRouteIds,
+    routeIds: generatedRouteIds,
     routeSummary: 'Good Karma to Paper Plane to Haberdasher.',
   })
-  const generatedItinerary = buildItinerary(replacementRouteIds)
+  const generatedItinerary = buildItinerary(generatedRouteIds)
   const anchorContract = buildAnchorTruthContract({
     identity: {
       venueId: 'sj-paper-plane',
@@ -111,58 +108,6 @@ try {
     },
   })
   assert(generatedAdmission.admitted, 'Generated Build route must pass anchor admission.')
-  const deterministicReplacementPolicy = evaluateBuildSupportReplacementPolicy({
-    selectedCandidateArtifact: staticArtifact,
-    generatedArtifact,
-    finalRoute: generatedFinalRoute,
-    selectedArc: buildSelectedArc(replacementRouteIds),
-    routeShapeContract: buildRouteShapeContractFixture(),
-    selectedAnchorVenueId: 'sj-paper-plane',
-    selectedAnchorRequiredRole: 'highlight',
-    requiredStopVenueIdsByRole: {
-      highlight: 'sj-paper-plane',
-    },
-  })
-  assert(
-    deterministicReplacementPolicy.admitted,
-    `Deterministic support replacement policy must admit traced support replacements: ${JSON.stringify(
-      deterministicReplacementPolicy,
-    )}`,
-  )
-  assert(
-    deterministicReplacementPolicy.deterministic,
-    'Deterministic support replacement policy must mark admitted replacements deterministic.',
-  )
-  assert(
-    deterministicReplacementPolicy.replacedRoles.join(',') === 'start,windDown',
-    'Deterministic support replacement policy must expose replaced support roles.',
-  )
-  assert(
-    deterministicReplacementPolicy.reasonCodes.includes('replacement_selected_by_deterministic_arc'),
-    'Support replacement must be traced to the deterministic selected arc.',
-  )
-
-  const requiredSupportReplacementPolicy = evaluateBuildSupportReplacementPolicy({
-    selectedCandidateArtifact: staticArtifact,
-    generatedArtifact,
-    finalRoute: generatedFinalRoute,
-    selectedArc: buildSelectedArc(replacementRouteIds),
-    routeShapeContract: buildRouteShapeContractFixture(),
-    selectedAnchorVenueId: 'sj-paper-plane',
-    selectedAnchorRequiredRole: 'highlight',
-    requiredStopVenueIdsByRole: {
-      start: 'sj-petiscos',
-      highlight: 'sj-paper-plane',
-    },
-  })
-  assert(
-    !requiredSupportReplacementPolicy.admitted,
-    'User-marked required support stops must not be replaceable.',
-  )
-  assert(
-    requiredSupportReplacementPolicy.rejectionReasons.includes('required_support_stop_replaced'),
-    'Required support replacement must expose required_support_stop_replaced.',
-  )
 
   const approvedPayload: BuildApprovedPayloadReference = {
     artifactId: generatedArtifact.id,
@@ -172,9 +117,9 @@ try {
     itinerary: generatedItinerary,
     sourceKind: 'static',
   }
-  const generatedTruthWithoutHandoff = buildBuildCardTruthModel({
+  const generatedTruth = buildBuildCardTruthModel({
     artifact: generatedArtifact,
-    selectedCandidateArtifact: staticArtifact,
+    selectedCandidateArtifact: null,
     selectedArtifactId: generatedArtifact.id,
     selectedDirectionId: generatedArtifact.selection.directionId,
     approvedPayload,
@@ -187,70 +132,21 @@ try {
     activeRole: 'start',
     fallbackCity: 'San Jose',
   })
+  assert(generatedTruth.routeAuthorityLockReady, 'Generated Build truth must become routeAuthority lock-ready.')
+  assert(generatedTruth.reviewEligible, 'Generated Build truth must make Review eligible.')
+  assert(generatedTruth.diagnostics.lockInputAvailable, 'Generated Build truth must make lock input available.')
   assert(
-    !generatedTruthWithoutHandoff.reviewEligible,
-    'Generated replacement must remain blocked without explicit Build handoff admission.',
+    !generatedTruth.diagnostics.routeAuthorityBuildReasons.includes('generated_route_identity_mismatch'),
+    'Generated Build truth must not compare against a second static route identity.',
   )
   assert(
-    generatedTruthWithoutHandoff.diagnostics.routeAuthorityBuildReasons.includes(
-      'build_candidate_contract_drifted',
-    ),
-    'Unadmitted replacement must expose selected static candidate drift.',
-  )
-
-  const generatedTruthWithHandoff = buildBuildCardTruthModel({
-    artifact: generatedArtifact,
-    selectedCandidateArtifact: staticArtifact,
-    selectedArtifactId: generatedArtifact.id,
-    selectedDirectionId: generatedArtifact.selection.directionId,
-    approvedPayload,
-    candidateAdmission: generatedAdmission,
-    anchorTruthContract: anchorContract,
-    selectedAnchorRequiredRole: 'highlight',
-    sourceKind: 'static',
-    routeReplacementAdmitted: deterministicReplacementPolicy.admitted,
-    buildProviderSelectionAllowed: true,
-    buildProviderMergedIntoVisiblePool: true,
-    activeRole: 'start',
-    fallbackCity: 'San Jose',
-  })
-  assert(generatedTruthWithHandoff.routeAuthorityLockReady, 'Generated handoff must become routeAuthority lock-ready.')
-  assert(generatedTruthWithHandoff.reviewEligible, 'Generated handoff must make Review eligible.')
-  assert(
-    generatedTruthWithHandoff.diagnostics.lockInputAvailable,
-    'Generated handoff must make lock input available.',
-  )
-  assert(
-    generatedTruthWithHandoff.diagnostics.routeAuthorityBuildReasons.includes(
-      'required_anchor_role_survived',
-    ),
-    'Generated handoff must prove the Paper Plane anchor survived.',
-  )
-
-  const requiredSupportTruth = buildBuildCardTruthModel({
-    artifact: generatedArtifact,
-    selectedCandidateArtifact: staticArtifact,
-    selectedArtifactId: generatedArtifact.id,
-    selectedDirectionId: generatedArtifact.selection.directionId,
-    approvedPayload,
-    candidateAdmission: generatedAdmission,
-    anchorTruthContract: anchorContract,
-    selectedAnchorRequiredRole: 'highlight',
-    sourceKind: 'static',
-    routeReplacementAdmitted: requiredSupportReplacementPolicy.admitted,
-    buildProviderSelectionAllowed: true,
-    buildProviderMergedIntoVisiblePool: true,
-    activeRole: 'start',
-    fallbackCity: 'San Jose',
-  })
-  assert(
-    !requiredSupportTruth.reviewEligible,
-    'Review must stay hidden when deterministic replacement policy rejects required support drift.',
+    !generatedTruth.diagnostics.routeAuthorityBuildReasons.includes('build_candidate_contract_drifted'),
+    'Generated Build truth must not use selected static card drift as a gate.',
   )
 
   const providerShadowTruth = buildBuildCardTruthModel({
     artifact: generatedArtifact,
-    selectedCandidateArtifact: staticArtifact,
+    selectedCandidateArtifact: null,
     selectedArtifactId: generatedArtifact.id,
     selectedDirectionId: generatedArtifact.selection.directionId,
     approvedPayload,
@@ -258,7 +154,6 @@ try {
     anchorTruthContract: anchorContract,
     selectedAnchorRequiredRole: 'highlight',
     sourceKind: 'provider_shadow',
-    routeReplacementAdmitted: true,
     buildProviderSelectionAllowed: true,
     buildProviderMergedIntoVisiblePool: true,
     activeRole: 'start',
@@ -279,11 +174,11 @@ try {
     itinerary: generatedItinerary,
     buildContext: {
       mode: 'build',
-      selectedCandidateArtifact: staticArtifact,
-      selectedCandidateSourceKind: 'build_static_pre_generation',
+      selectedCandidateArtifact: null,
+      selectedCandidateSourceKind: null,
       selectedAnchorVenueId: 'sj-paper-plane',
       selectedAnchorRequiredRole: 'highlight',
-      routeReplacementAdmitted: true,
+      routeReplacementAdmitted: false,
     },
   })
   assert(
@@ -304,13 +199,18 @@ try {
     itinerary: generatedItinerary,
     buildContext: {
       mode: 'build',
-      selectedCandidateArtifact: staticArtifact,
-      selectedCandidateSourceKind: 'build_static_pre_generation',
+      selectedCandidateArtifact: null,
+      selectedCandidateSourceKind: null,
       selectedAnchorVenueId: 'sj-paper-plane',
       selectedAnchorRequiredRole: 'highlight',
-      routeReplacementAdmitted: true,
+      routeReplacementAdmitted: false,
     },
   })
+  assert(generatedSnapshot.validationStatus === 'valid', 'Generated single-source routeAuthority must be valid.')
+  assert(
+    !generatedSnapshot.rejectionReasons.includes('generated_route_identity_mismatch'),
+    'generated_route_identity_mismatch must be unreachable for single-source Build routeAuthority.',
+  )
   const lockInput = buildLockInputFromRouteAuthoritySnapshot({
     snapshot: generatedSnapshot,
     activeRole: 'start',
@@ -346,42 +246,20 @@ try {
   assert(!staticLockInput.ok, 'Lock must not succeed without RuntimeRouteArtifact/finalRoute truth.')
 
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
-  const generatedArtifactBuilderSource = readFileSync(
-    'src/domain/artifacts/buildContractEntryArtifactFromGeneration.ts',
-    'utf8',
-  )
-  const routeAuthoritySource = readFileSync(
-    'src/app/services/routeAuthority/routeAuthorityService.ts',
-    'utf8',
+  const buildBranchIndex = sandboxSource.indexOf('if (isBuildWrapperActive) {')
+  const waypointEntryIndex = sandboxSource.indexOf('buildContractDrivenBuildWaypointPlan({')
+  const compatibilityProjectionIndex = sandboxSource.indexOf(
+    'const planBuildInput = projectConciergeIntentToIntentInput({',
   )
   assert(
-    sandboxSource.includes('buildGeneratedCanonicalHandoff') &&
-      sandboxSource.includes('routeReplacementAdmitted') &&
-      sandboxSource.includes('evaluateBuildSupportReplacementPolicy'),
-    'Sandbox page must expose a narrow generated Build canonical handoff gated by deterministic replacement policy.',
+    buildBranchIndex >= 0 &&
+      waypointEntryIndex > buildBranchIndex &&
+      (compatibilityProjectionIndex === -1 || compatibilityProjectionIndex > waypointEntryIndex),
+    'Sandbox page must enter the Waypoint contract-driven Build branch before any non-Build compatibility projection.',
   )
   assert(
-    sandboxSource.includes('buildSelectedCardTruthReady') &&
-      !sandboxSource.includes('!isBuildWrapperActive || buildReviewTruthEligible || buildPreGenerationSelectionReady'),
-    'Build Review CTA gate must not be loosened by static selection readiness.',
-  )
-  assert(
-    sandboxSource.includes("import { buildContractEntryArtifactFromGeneration }") &&
-      sandboxSource.includes('const postParityContractEntryArtifact = buildContractEntryArtifactFromGeneration') &&
-      sandboxSource.includes('itinerary: canonicalItinerary') &&
-      sandboxSource.includes('selectedArc: anchoredPlan.selectedArc') &&
-      sandboxSource.includes('scoredVenues: strongCurationPass.scoredVenues') &&
-      sandboxSource.includes('generatedContractEntryArtifact: postParityContractEntryArtifact'),
-    'Build handoff must rebuild generated ContractEntryArtifact from the shared post-parity route basis.',
-  )
-  assert(
-    generatedArtifactBuilderSource.includes('const support = itinerary.stops.map') &&
-      !generatedArtifactBuilderSource.includes("stop.role !== 'start' && stop.role !== 'highlight' && stop.role !== 'windDown'"),
-    'Generated ContractEntryArtifact role coverage must retain stable IDs for canonical roles.',
-  )
-  assert(
-    routeAuthoritySource.includes('!buildDiagnostics.routeReplacementAdmitted'),
-    'RouteAuthority must keep generated-route identity mismatch blocked unless replacement is admitted.',
+    !sandboxSource.includes('evaluateBuildSupportReplacementPolicy'),
+    'Sandbox page must leave buildSupportReplacementPolicy unreached for Build Step 1b.',
   )
   assert(fetchCallCount === 0, `Expected no provider/fetch calls, received ${fetchCallCount}.`)
 
@@ -391,12 +269,15 @@ try {
       {
         staticReviewEligible: staticOnlyTruth.reviewEligible,
         preParityGeneratedStatus: preParityGeneratedSnapshot.validationStatus,
-        deterministicReplacementPolicyAdmitted: deterministicReplacementPolicy.admitted,
-        deterministicReplacementPolicyReasons: deterministicReplacementPolicy.reasonCodes,
-        generatedReviewEligible: generatedTruthWithHandoff.reviewEligible,
+        generatedReviewEligible: generatedTruth.reviewEligible,
         generatedRouteAuthorityStatus: generatedSnapshot.validationStatus,
+        generatedRouteIdentityMismatch: generatedSnapshot.rejectionReasons.includes(
+          'generated_route_identity_mismatch',
+        ),
+        selectedStaticCandidateInGeneratedAuthority: false,
         lockInputAvailable: lockInput.ok,
         providerShadowReviewEligible: providerShadowTruth.reviewEligible,
+        replacementPolicyReachedByBuildPage: false,
         fetchCallCount,
       },
       null,
@@ -405,49 +286,6 @@ try {
   )
 } finally {
   globalThis.fetch = originalFetch
-}
-
-function buildSelectedArc(routeIds: Record<'start' | 'highlight' | 'windDown', string>): ArcCandidate {
-  return {
-    id: 'deterministic-paper-plane-arc',
-    stops: [
-      { role: 'warmup', scoredVenue: { venue: { id: routeIds.start } } },
-      { role: 'peak', scoredVenue: { venue: { id: routeIds.highlight } } },
-      { role: 'cooldown', scoredVenue: { venue: { id: routeIds.windDown } } },
-    ],
-  } as unknown as ArcCandidate
-}
-
-function buildRouteShapeContractFixture(): RouteShapeContract {
-  return {
-    id: 'rshape_test_build_paper_plane',
-    arcShape: 'steady_open_curated_center_soft_landing',
-    roleProfile: {
-      start: {},
-      highlight: {},
-      windDown: {},
-    },
-    roleInvariants: {
-      start: {},
-      highlight: {},
-      windDown: {},
-    },
-    movementProfile: {
-      radius: 'tight',
-      maxTransitionMinutes: 18,
-      neighborhoodContinuity: 'strict',
-    },
-    mutationProfile: {
-      swapFlexibility: 'medium',
-      allowedRoles: ['start', 'highlight', 'windDown'],
-      preservePriority: ['role', 'feasibility', 'movement'],
-    },
-    expansionProfile: {
-      supportsNearbyExtensions: true,
-      preferredExpansionRole: 'windDown',
-      lateNightTolerance: 'medium',
-    },
-  } as RouteShapeContract
 }
 
 function buildRuntimeStop(role: UserStopRole, venueId: string, stopIndex: number): RuntimeRouteStop {

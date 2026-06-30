@@ -29,7 +29,6 @@ import {
 } from '../app/concierge/cardEchoPreviewSelectors'
 import {
   buildApplicationConciergeIntent,
-  projectConciergeIntentToIntentInput,
 } from '../app/concierge/conciergeIntentAdapter'
 import type {
   ConciergeCardId,
@@ -82,7 +81,7 @@ import {
   buildLockInputFromRouteAuthoritySnapshot,
   buildRouteAuthoritySnapshot,
 } from '../app/services/routeAuthority/routeAuthorityService'
-import { evaluateBuildSupportReplacementPolicy } from '../app/services/routeAuthority/buildSupportReplacementPolicy'
+import { buildContractDrivenBuildWaypointPlan } from '../domain/waypoint/buildContractDrivenBuildWaypointPlan'
 import { evaluateBuildCandidateAdmission } from '../app/services/buildCandidateAdmission/buildCandidateAdmissionService'
 import {
   buildBuildCardTruthModel,
@@ -176,6 +175,7 @@ import {
   buildCanonicalInterpretationBundle,
   normalizeExperienceContractVibe,
 } from '../domain/interpretation/buildCanonicalInterpretationBundle'
+import { projectConciergeIntentToIntentInput } from '../domain/interpretation/projectConciergeIntentToIntentInput'
 import { buildContractEntryArtifactFromVerifiedOpportunity } from '../domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity'
 import { buildLiveDistrictVerifiedCityOpportunity } from '../domain/interpretation/buildLiveDistrictVerifiedCityOpportunities'
 import {
@@ -271,7 +271,7 @@ import {
   type CanonicalPlanningStopIdentityLike,
   type FullStopRealityContractOutcome,
   type StrongCurationTastePassResult,
-} from '../app/services/sandbox/sandboxPlannerParityService'
+} from '../domain/waypoint/postPlannerCommitParity'
 import {
   getHospitalityScenarioContract,
   type HospitalityScenarioContract,
@@ -14385,12 +14385,14 @@ export function SandboxConciergePage({
         ...activeDirectionContract,
         identity: expectedDirectionIdentity,
       }
-      const activeRouteShapeContract = buildRouteShapeContract({
-        selectedDirection: activeDirectionContract,
-        selectedDirectionContext: activeDirectionContext,
-        conciergeIntent: canonicalConciergeIntent,
-        contractConstraints: canonicalContractConstraints,
-      })
+      const activeRouteShapeContract = isBuildWrapperActive
+        ? null
+        : buildRouteShapeContract({
+            selectedDirection: activeDirectionContract,
+            selectedDirectionContext: activeDirectionContext,
+            conciergeIntent: canonicalConciergeIntent,
+            contractConstraints: canonicalContractConstraints,
+          })
       const activeIntentSelectedDirectionContext = buildIntentSelectedDirectionContextEngine(
         activeDirectionContractForValidation,
       )
@@ -14562,62 +14564,124 @@ export function SandboxConciergePage({
           conciergeIntent: generationConciergeIntent,
           interpretationSource: 'app.sandbox.generate.conciergeIntentAdapter',
         })
-        const planBuildInput = projectConciergeIntentToIntentInput({
-          conciergeIntent: generationConciergeIntent,
-          mode: generationMode,
-          city: districtLocationQuery,
-          district: activeDirectionContract.pocketLabel,
-          distanceMode: 'nearby',
-          refinementModes: clusterRefinementMap[activeCluster],
-          selectedDirectionContext: activeIntentSelectedDirectionContext,
-          discoveryPreferences: selectedArtifactDiscoveryPreferences,
-          anchor: buildPlannerAnchor,
-        }) satisfies IntentInput
-        const planBuildOptions: Parameters<typeof runPlanBuild>[1] = {
-          sourceMode: generationSourceMode,
-          sourceModeOverrideApplied: true,
-          debugMode: false,
-          vibeTasteProfileScoring: isCurateWrapperActive ? 'soft_planner_scoring' : 'off',
-          occasionScoring: isCurateWrapperActive ? 'soft_curate_scoring' : 'off',
-          whenSpatialScoring: isCurateWrapperActive ? 'soft_curate_spatial' : 'off',
-          whenSignalProfile: isCurateWrapperActive
-            ? canonicalCardInputDraft.whenSignalProfile
-            : undefined,
-          curateCommitSemantics: isCurateWrapperActive
-            ? 'approved_route_hard_commit'
-            : undefined,
-          starterPack: generationStarterPack,
-          experienceContract: generationCanonicalInterpretationBundle.experienceContract,
-          contractConstraints: generationCanonicalInterpretationBundle.contractConstraints,
-          canonicalInterpretationBundle: generationCanonicalInterpretationBundle,
-          rankedDistrictPockets: districtPreviewResult?.ranked,
-          districtTasteBridgeArtifacts: plannerDistrictTasteBridgeArtifacts,
-          contractGateWorld,
-          strategyAdmissibleWorlds,
-          selectedArtifactLineage: activeSelectedArtifactLineage,
-        }
-        const result = await runPlanBuild(planBuildInput, planBuildOptions)
-        if (buildAnchorTruthContractForGeneration) {
-          const generatedArtifactAnchorValidation = validateContractEntryArtifactBuildAnchor(
-            buildAnchorTruthContractForGeneration,
-            result.contractEntryArtifact,
-          )
-          if (generatedArtifactAnchorValidation.status === 'invalid') {
-            throw new Error(
-              `Required anchor could not be preserved in generated route artifact: ${generatedArtifactAnchorValidation.reasons.join(',')}`,
-            )
-          }
-        }
         const requiredBuildAnchorForPostPlanner = deriveRequiredBuildAnchorForPostPlanner({
           isBuildWrapperActive,
           selectedBuildAnchor,
-          resultAnchor: result.intentProfile.anchor,
+          resultAnchor: buildPlannerAnchor,
           buildPlannerAnchor,
         })
-        preLineageExpectedDirectionId = activeDirectionContract.id
-        preLineageActualDirectionId = result.intentProfile.selectedDirectionContext?.directionId ?? null
-        preLineagePassed = preLineageActualDirectionId === preLineageExpectedDirectionId
-        try {
+        let result: Awaited<ReturnType<typeof runPlanBuild>>
+        let strongCurationPass: StrongCurationTastePassResult
+        let anchoredPlan: FullStopRealityContractOutcome
+        let canonicalItinerary: Itinerary
+        let contractBuildability: DirectionContractBuildability
+        let directionValidation: DirectionContractValidationResult
+        let nextFinalRoute: RuntimeRouteArtifact
+        let postParityContractEntryArtifact: ContractEntryArtifact
+        let generatedRouteShapeContract: RouteShapeContract
+
+        if (isBuildWrapperActive) {
+          const waypointPlan = await buildContractDrivenBuildWaypointPlan({
+            conciergeIntent: generationConciergeIntent,
+            canonicalInterpretationBundle: generationCanonicalInterpretationBundle,
+            mode: 'build',
+            city: districtLocationQuery,
+            district: activeDirectionContract.pocketLabel,
+            distanceMode: 'nearby',
+            refinementModes: clusterRefinementMap[activeCluster],
+            selectedDirectionContext: activeIntentSelectedDirectionContext,
+            selectedDirectionContextForValidation: activeDirectionContextForValidation,
+            selectedDirectionContract: activeDirectionContract,
+            selectedDirectionContractForValidation: activeDirectionContractForValidation,
+            selectedDirectionId: activeDirectionContract.id,
+            selectedDirectionPreviewScenarioFamily:
+              activeCandidateOpportunity?.scenarioNight?.scenarioFamily,
+            expectedDirectionIdentity,
+            discoveryPreferences: selectedArtifactDiscoveryPreferences,
+            anchor: buildPlannerAnchor,
+            selectedArtifactLineage: activeSelectedArtifactLineage,
+            sourceMode: generationSourceMode,
+            sourceModeOverrideApplied: true,
+            rankedDistrictPockets: districtPreviewResult?.ranked,
+            districtTasteBridgeArtifacts: plannerDistrictTasteBridgeArtifacts,
+            contractGateWorld,
+            strategyAdmissibleWorlds,
+            persona,
+            vibe: primaryVibe,
+            requiredBuildAnchor: requiredBuildAnchorForPostPlanner,
+            buildAnchorTruthContract: buildAnchorTruthContractForGeneration,
+            postPlannerDependencies: {
+              buildPassthroughStrongCurationTastePass,
+              applyStrongCurationTastePass,
+              enforceFullStopRealityContract,
+              applyCanonicalIdentityToItinerary,
+              assessDirectionContractBuildability,
+              validateDirectionRouteContract,
+              resolveRouteCopy: ({ canonicalItinerary }) => ({
+                routeHeadline: getPreviewOneLiner(
+                  activeCluster,
+                  canonicalItinerary,
+                  selectedDirectionPreviewContext,
+                ),
+                routeSummary: getPreviewContinuityLine(
+                  activeCluster,
+                  canonicalItinerary,
+                  selectedDirectionPreviewContext,
+                ),
+              }),
+            },
+          })
+          result = waypointPlan.result
+          strongCurationPass = waypointPlan.strongCurationPass
+          anchoredPlan = waypointPlan.anchoredPlan
+          canonicalItinerary = waypointPlan.canonicalItinerary
+          contractBuildability = waypointPlan.contractBuildability
+          directionValidation = waypointPlan.directionValidation
+          nextFinalRoute = waypointPlan.nextFinalRoute
+          postParityContractEntryArtifact = waypointPlan.postParityContractEntryArtifact
+          generatedRouteShapeContract = waypointPlan.routeShapeContract
+          preLineageExpectedDirectionId = waypointPlan.preLineage.expectedDirectionId
+          preLineageActualDirectionId = waypointPlan.preLineage.actualDirectionId
+          preLineagePassed = waypointPlan.preLineage.passed
+        } else {
+          const planBuildInput = projectConciergeIntentToIntentInput({
+            conciergeIntent: generationConciergeIntent,
+            mode: generationMode,
+            city: districtLocationQuery,
+            district: activeDirectionContract.pocketLabel,
+            distanceMode: 'nearby',
+            refinementModes: clusterRefinementMap[activeCluster],
+            selectedDirectionContext: activeIntentSelectedDirectionContext,
+            discoveryPreferences: selectedArtifactDiscoveryPreferences,
+            anchor: buildPlannerAnchor,
+          })
+          const planBuildOptions: Parameters<typeof runPlanBuild>[1] = {
+            sourceMode: generationSourceMode,
+            sourceModeOverrideApplied: true,
+            debugMode: false,
+            vibeTasteProfileScoring: isCurateWrapperActive ? 'soft_planner_scoring' : 'off',
+            occasionScoring: isCurateWrapperActive ? 'soft_curate_scoring' : 'off',
+            whenSpatialScoring: isCurateWrapperActive ? 'soft_curate_spatial' : 'off',
+            whenSignalProfile: isCurateWrapperActive
+              ? canonicalCardInputDraft.whenSignalProfile
+              : undefined,
+            curateCommitSemantics: isCurateWrapperActive
+              ? 'approved_route_hard_commit'
+              : undefined,
+            starterPack: generationStarterPack,
+            experienceContract: generationCanonicalInterpretationBundle.experienceContract,
+            contractConstraints: generationCanonicalInterpretationBundle.contractConstraints,
+            canonicalInterpretationBundle: generationCanonicalInterpretationBundle,
+            rankedDistrictPockets: districtPreviewResult?.ranked,
+            districtTasteBridgeArtifacts: plannerDistrictTasteBridgeArtifacts,
+            contractGateWorld,
+            strategyAdmissibleWorlds,
+            selectedArtifactLineage: activeSelectedArtifactLineage,
+          }
+          result = await runPlanBuild(planBuildInput, planBuildOptions)
+          preLineageExpectedDirectionId = activeDirectionContract.id
+          preLineageActualDirectionId = result.intentProfile.selectedDirectionContext?.directionId ?? null
+          preLineagePassed = preLineageActualDirectionId === preLineageExpectedDirectionId
           enforceSelectedDirectionLineage({
             wrapperSeam: 'sandbox_concierge.generate',
             expectedDirectionId: preLineageExpectedDirectionId,
@@ -14625,115 +14689,58 @@ export function SandboxConciergePage({
             errorMessage:
               'Route drifted from selected direction contract. Direction context was not preserved.',
           })
-        } catch (lineageError) {
-          setSelectedDirectionGeneratePlanTrace((current) => ({
-            requestedDirectionId: current?.requestedDirectionId ?? normalizedDirectionOverride,
-            requestedArtifactId:
-              current?.requestedArtifactId ?? normalizedSelectedRouteArtifactIdOverride,
-            activeDirectionId: activeDirectionId ?? current?.activeDirectionId ?? null,
-            activeCandidateArtifactId:
-              activeCandidateRouteArtifact?.id ?? current?.activeCandidateArtifactId ?? null,
-            requestMode:
-              current?.requestMode ??
-              (isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build'),
-            caughtDriftError: true,
-            driftErrorMessage:
-              lineageError instanceof Error ? lineageError.message : String(lineageError),
-            driftFailureDirectionId: activeDirectionId,
-            generatePlanFailureSource: 'selected_direction_lineage',
-            preLineageExpectedDirectionId,
-            preLineageActualDirectionId,
-            preLineagePassed,
-            postPlannerFailedCheck: null,
-            postPlannerGenerationDriftReason: null,
-            postPlannerExpectedDirectionIdentity: null,
-            postPlannerObservedDirectionIdentity: null,
-            postPlannerDirectionAlignmentScore: null,
-            rawDriftErrorMessageCompact: compactDiagnosticMessage(
-              lineageError instanceof Error ? lineageError.message : String(lineageError),
-            ),
-          }))
-          throw lineageError
-        }
-        // Post-orchestrator wrapper work: reconcile the engine-authored plan with current
-        // application/runtime artifacts. Keep this downstream of `runGeneratePlan`.
-        const {
-          strongCurationPass,
-          anchoredPlan,
-          canonicalItinerary,
-          contractBuildability,
-          directionValidation,
-          nextFinalRoute,
-        } = await runPostPlannerCommitParityStages(
-          {
-            result,
-            contractConstraints: generationCanonicalInterpretationBundle.contractConstraints,
-            expectedDirectionIdentity,
-            selectedDirectionContextForValidation: activeDirectionContextForValidation,
-            selectedDirectionContractForValidation: activeDirectionContractForValidation,
-            previewScenarioFamily: activeCandidateOpportunity?.scenarioNight?.scenarioFamily,
-            selectedDirectionId: activeDirectionContract.id,
-            city: districtLocationQuery,
-            persona,
-            vibe: primaryVibe,
-          },
-          {
-            buildPassthroughStrongCurationTastePass,
-            applyStrongCurationTastePass: (params) =>
-              applyStrongCurationTastePass({
-                ...params,
-                requiredBuildAnchor: requiredBuildAnchorForPostPlanner,
+          const parity = await runPostPlannerCommitParityStages(
+            {
+              result,
+              contractConstraints: generationCanonicalInterpretationBundle.contractConstraints,
+              expectedDirectionIdentity,
+              selectedDirectionContextForValidation: activeDirectionContextForValidation,
+              selectedDirectionContractForValidation: activeDirectionContractForValidation,
+              previewScenarioFamily: activeCandidateOpportunity?.scenarioNight?.scenarioFamily,
+              selectedDirectionId: activeDirectionContract.id,
+              city: districtLocationQuery,
+              persona,
+              vibe: primaryVibe,
+            },
+            {
+              buildPassthroughStrongCurationTastePass,
+              applyStrongCurationTastePass,
+              enforceFullStopRealityContract,
+              applyCanonicalIdentityToItinerary,
+              assessDirectionContractBuildability,
+              validateDirectionRouteContract,
+              resolveRouteCopy: ({ canonicalItinerary }) => ({
+                routeHeadline: getPreviewOneLiner(
+                  activeCluster,
+                  canonicalItinerary,
+                  selectedDirectionPreviewContext,
+                ),
+                routeSummary: getPreviewContinuityLine(
+                  activeCluster,
+                  canonicalItinerary,
+                  selectedDirectionPreviewContext,
+                ),
               }),
-            enforceFullStopRealityContract,
-            applyCanonicalIdentityToItinerary,
-            assessDirectionContractBuildability,
-            validateDirectionRouteContract,
-            resolveRouteCopy: ({ canonicalItinerary }) => ({
-              routeHeadline: getPreviewOneLiner(
-                activeCluster,
-                canonicalItinerary,
-                selectedDirectionPreviewContext,
-              ),
-              routeSummary: getPreviewContinuityLine(
-                activeCluster,
-                canonicalItinerary,
-                selectedDirectionPreviewContext,
-              ),
-            }),
-          },
-        )
-        if (buildAnchorTruthContractForGeneration) {
-          const runtimeAnchorValidation = validateRuntimeRouteBuildAnchor(
-            buildAnchorTruthContractForGeneration,
-            nextFinalRoute,
+            },
           )
-          if (runtimeAnchorValidation.status === 'invalid') {
-            throw new Error(
-              `Required anchor could not be preserved in this route: ${runtimeAnchorValidation.reasons.join(',')}`,
-            )
-          }
-        }
-        const postParityContractEntryArtifact = buildContractEntryArtifactFromGeneration({
-          itinerary: canonicalItinerary,
-          selectedArc: anchoredPlan.selectedArc,
-          scoredVenues: strongCurationPass.scoredVenues,
-          intentProfile: result.intentProfile,
-          lens: result.lens,
-          diagnostics: result.trace,
-          rankingEngine: result.trace.rankingEngine,
-          starterPack: generationStarterPack,
-          selectedArtifactLineage: activeSelectedArtifactLineage,
-        })
-        if (buildAnchorTruthContractForGeneration) {
-          const postParityArtifactAnchorValidation = validateContractEntryArtifactBuildAnchor(
-            buildAnchorTruthContractForGeneration,
-            postParityContractEntryArtifact,
-          )
-          if (postParityArtifactAnchorValidation.status === 'invalid') {
-            throw new Error(
-              `Required anchor could not be preserved in post-parity generated route artifact: ${postParityArtifactAnchorValidation.reasons.join(',')}`,
-            )
-          }
+          strongCurationPass = parity.strongCurationPass
+          anchoredPlan = parity.anchoredPlan
+          canonicalItinerary = parity.canonicalItinerary
+          contractBuildability = parity.contractBuildability
+          directionValidation = parity.directionValidation
+          nextFinalRoute = parity.nextFinalRoute
+          postParityContractEntryArtifact = buildContractEntryArtifactFromGeneration({
+            itinerary: canonicalItinerary,
+            selectedArc: anchoredPlan.selectedArc,
+            scoredVenues: strongCurationPass.scoredVenues,
+            intentProfile: result.intentProfile,
+            lens: result.lens,
+            diagnostics: result.trace,
+            rankingEngine: result.trace.rankingEngine,
+            starterPack: generationStarterPack,
+            selectedArtifactLineage: activeSelectedArtifactLineage,
+          })
+          generatedRouteShapeContract = activeRouteShapeContract
         }
         const canonicalStopByRoleForState = normalizeCanonicalPlanningStopIdentityByRole(
           anchoredPlan.canonicalStopByRole,
@@ -14824,7 +14831,7 @@ export function SandboxConciergePage({
           selectedCluster: activeCluster,
           selectedClusterConfirmation,
           selectedDirectionContract: activeDirectionContractForValidation,
-          routeShapeContract: activeRouteShapeContract,
+          routeShapeContract: generatedRouteShapeContract,
           tasteCurationDebug,
           selectedDirectionPreviewContext,
           selectedCandidateRouteArtifactId: activeCandidateRouteArtifact?.id ?? null,
@@ -16830,20 +16837,6 @@ export function SandboxConciergePage({
     if (!generatedSelectionMatches) {
       return null
     }
-    const buildSupportReplacementPolicy = evaluateBuildSupportReplacementPolicy({
-      selectedCandidateArtifact: selectedCandidateRouteArtifact,
-      generatedArtifact: plan.generatedContractEntryArtifact,
-      finalRoute: renderOnlyFinalRoute,
-      selectedArc: plan.selectedArc,
-      routeShapeContract: plan.routeShapeContract,
-      selectedAnchorVenueId: selectedBuildAnchor.venueId,
-      selectedAnchorRequiredRole: buildSelectedAnchorRequiredRole,
-      requiredStopVenueIdsByRole: buildSelectedAnchorRequiredRole
-        ? {
-            [buildSelectedAnchorRequiredRole]: selectedBuildAnchor.venueId,
-          }
-        : undefined,
-    })
     return {
       artifact: plan.generatedContractEntryArtifact,
       selectedCandidateArtifact: selectedCandidateRouteArtifact,
@@ -16852,8 +16845,8 @@ export function SandboxConciergePage({
       finalRoute: renderOnlyFinalRoute,
       selectedClusterConfirmation: plan.selectedClusterConfirmation,
       itinerary: plan.itinerary,
-      routeReplacementAdmitted: buildSupportReplacementPolicy.admitted,
-      buildSupportReplacementPolicy,
+      routeReplacementAdmitted: false,
+      buildSupportReplacementPolicy: null,
     }
   }, [
     buildSelectedAnchorRequiredRole,
@@ -16906,12 +16899,15 @@ export function SandboxConciergePage({
       buildContext: isBuildWrapperActive
         ? {
             mode: 'build',
-            selectedCandidateArtifact: selectedCandidateRouteArtifact,
-            selectedCandidateSourceKind: 'build_static_pre_generation',
+            selectedCandidateArtifact: buildGeneratedCanonicalHandoff
+              ? null
+              : selectedCandidateRouteArtifact,
+            selectedCandidateSourceKind: buildGeneratedCanonicalHandoff
+              ? null
+              : 'build_static_pre_generation',
             selectedAnchorVenueId: selectedBuildAnchor?.venueId ?? null,
             selectedAnchorRequiredRole: buildSelectedAnchorRequiredRole,
-            routeReplacementAdmitted:
-              buildGeneratedCanonicalHandoff?.routeReplacementAdmitted === true,
+            routeReplacementAdmitted: false,
           }
         : null,
     })
@@ -17799,7 +17795,9 @@ export function SandboxConciergePage({
     })
     return buildBuildCardTruthModel({
       artifact: canonicalBuildContractEntryArtifact,
-      selectedCandidateArtifact: selectedCandidateRouteArtifact,
+      selectedCandidateArtifact: buildGeneratedCanonicalHandoff
+        ? null
+        : selectedCandidateRouteArtifact,
       selectedArtifactId: canonicalBuildArtifactId,
       selectedDirectionId:
         buildGeneratedCanonicalHandoff?.selectedDirectionId ??
@@ -17832,8 +17830,7 @@ export function SandboxConciergePage({
       anchorTruthContract: anchorContract,
       selectedAnchorRequiredRole: buildSelectedAnchorRequiredRole,
       sourceKind: 'static',
-      routeReplacementAdmitted:
-        buildGeneratedCanonicalHandoff?.routeReplacementAdmitted === true,
+      routeReplacementAdmitted: false,
       buildProviderSelectionAllowed,
       buildProviderMergedIntoVisiblePool,
       activeRole,
@@ -21280,15 +21277,15 @@ export function SandboxConciergePage({
     routeAuthorityMismatchReasons: routeAuthoritySnapshot.mismatchReasons,
     routeAuthorityBuildReasons: routeAuthoritySnapshot.buildDiagnostics?.reasons ?? [],
     buildSupportReplacementPolicyAdmitted:
-      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy.admitted ?? false,
+      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy?.admitted ?? false,
     buildSupportReplacementPolicyDeterministic:
-      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy.deterministic ?? false,
+      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy?.deterministic ?? false,
     buildSupportReplacementPolicyReasons:
-      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy.reasonCodes ?? [],
+      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy?.reasonCodes ?? [],
     buildSupportReplacementPolicyRejections:
-      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy.rejectionReasons ?? [],
+      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy?.rejectionReasons ?? [],
     buildSupportReplacementPolicyReplacedRoles:
-      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy.replacedRoles ?? [],
+      buildGeneratedCanonicalHandoff?.buildSupportReplacementPolicy?.replacedRoles ?? [],
     lockInputAvailable: buildSelectedCardTruthDiagnostic?.diagnostics.lockInputAvailable ?? false,
     finalRoutePresent: Boolean(routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute),
     generatedPlanPresent: Boolean(plan),

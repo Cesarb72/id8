@@ -1,19 +1,15 @@
 import type { StarterPack } from '../../domain/types/starterPack'
 import type {
-  AnchorRole,
   ConciergeIntent,
   ConciergeIntentCandidateLineage,
   ConciergeObjectiveOccasion,
-  DistanceMode,
   ExperienceMode,
-  IntentInput,
   PersonaMode,
   PlanAnchor,
-  PreferredDiscoveryVenue,
-  SelectedDirectionContext,
   VibeAnchor,
 } from '../../domain/types/intent'
-import type { RefinementMode } from '../../domain/types/refinement'
+export { projectConciergeIntentToIntentInput } from '../../domain/interpretation/projectConciergeIntentToIntentInput'
+export type { ProjectConciergeIntentToIntentInputParams } from '../../domain/interpretation/projectConciergeIntentToIntentInput'
 
 type ConciergeIntentAdapterMode = ExperienceMode
 
@@ -27,19 +23,6 @@ export interface BuildApplicationConciergeIntentParams {
   anchor?: PlanAnchor | null
   anchorDisplayName?: string | null
   candidateLineage?: ConciergeIntentCandidateLineage | null
-}
-
-export interface ProjectConciergeIntentToIntentInputParams {
-  conciergeIntent: ConciergeIntent
-  mode: ExperienceMode
-  city: string
-  district?: string
-  neighborhood?: string
-  distanceMode: DistanceMode
-  refinementModes?: RefinementMode[]
-  discoveryPreferences?: PreferredDiscoveryVenue[]
-  selectedDirectionContext?: SelectedDirectionContext
-  anchor?: PlanAnchor | null
 }
 
 function normalizeConciergeIntentToken(value: string | undefined): string {
@@ -300,45 +283,5 @@ export function buildApplicationConciergeIntent(
     starterLineage: getStarterLineage(params),
     anchorLineage: getAnchorLineage(params),
     candidateLineage: getCandidateLineage(params),
-  }
-}
-
-function projectAnchorFromConciergeIntent(
-  conciergeIntent: ConciergeIntent,
-): PlanAnchor | undefined {
-  if (
-    conciergeIntent.anchorPosture.mode !== 'hard' ||
-    conciergeIntent.anchorPosture.anchorType !== 'venue' ||
-    !conciergeIntent.anchorPosture.anchorValue
-  ) {
-    return undefined
-  }
-  const roleHint = conciergeIntent.anchorPosture.roleHint
-  return {
-    venueId: conciergeIntent.anchorPosture.anchorValue,
-    role: (roleHint ?? 'highlight') as AnchorRole,
-  }
-}
-
-export function projectConciergeIntentToIntentInput(
-  params: ProjectConciergeIntentToIntentInputParams,
-): IntentInput {
-  const projectedAnchor = params.anchor ?? projectAnchorFromConciergeIntent(params.conciergeIntent)
-  return {
-    mode: params.mode,
-    planningMode:
-      params.conciergeIntent.controlPosture.mode === 'user_directed'
-        ? 'user-led'
-        : 'engine-led',
-    persona: params.conciergeIntent.experienceProfile.persona,
-    primaryVibe: params.conciergeIntent.experienceProfile.vibe,
-    city: params.city,
-    district: params.district,
-    neighborhood: params.neighborhood,
-    distanceMode: params.distanceMode,
-    refinementModes: params.refinementModes,
-    selectedDirectionContext: params.selectedDirectionContext,
-    discoveryPreferences: params.discoveryPreferences,
-    anchor: projectedAnchor,
   }
 }

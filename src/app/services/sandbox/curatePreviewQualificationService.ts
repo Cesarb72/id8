@@ -26,7 +26,7 @@ import type {
 import {
   PostPlannerCommitParityValidationError,
   type PostPlannerCommitParityStagesResult,
-} from './sandboxPlannerParityService'
+} from '../../../domain/waypoint/postPlannerCommitParity'
 
 type CurateStopRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
 type HardCommitFeasibilityState = CuratePreviewCommitabilityStateLike['hardCommitFeasibility']
