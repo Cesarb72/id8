@@ -9731,13 +9731,91 @@ function getLightConstraintBadges(stop: ItineraryStop): string[] {
     .map((item) => item.label)
 }
 
+type WalkableCloseCopyVerdict = 'yes' | 'no' | 'unknown'
+
+function resolveWalkableCloseCopyVerdict(params: {
+  itinerary?: Itinerary | null
+  movementRadius?: RouteShapeContract['movementProfile']['radius'] | null
+  selectedArc?: ArcCandidate | null
+}): WalkableCloseCopyVerdict {
+  const selectedArc = params.selectedArc ?? null
+  if (selectedArc) {
+    if (selectedArc.spatial.longTransitionCount > 0 || selectedArc.spatial.clusterEscapeCount > 0) {
+      return 'no'
+    }
+    return params.movementRadius === 'tight' ? 'yes' : 'unknown'
+  }
+
+  const transitions = params.itinerary?.transitions ?? []
+  if (transitions.length === 0) {
+    return 'unknown'
+  }
+  if (
+    transitions.every(
+      (transition) =>
+        transition.movementMode === 'walkable' &&
+        transition.neighborhoodContinuity === 'same-neighborhood',
+    )
+  ) {
+    return 'yes'
+  }
+  if (
+    transitions.some(
+      (transition) =>
+        transition.movementMode !== 'walkable' ||
+        transition.neighborhoodContinuity === 'spread',
+    )
+  ) {
+    return 'no'
+  }
+  return 'unknown'
+}
+
+function getSpatialCoherenceCopy(verdict: WalkableCloseCopyVerdict): string {
+  if (verdict === 'yes') {
+    return 'All stops stay within a short, walkable area.'
+  }
+  if (verdict === 'no') {
+    return 'The route keeps a clear center with controlled moves between stops.'
+  }
+  return 'The route has a clear center and a readable stop sequence.'
+}
+
+function getRouteSummaryContinuityCopy(verdict: WalkableCloseCopyVerdict): string {
+  if (verdict === 'yes') {
+    return 'Everything stays close and easy to move between.'
+  }
+  if (verdict === 'no') {
+    return 'A clear center keeps the night readable, with controlled moves between stops.'
+  }
+  return 'A clear center keeps the night easy to follow.'
+}
+
+function getDistrictAnchorCopy(
+  districtName: string,
+  verdict: WalkableCloseCopyVerdict,
+): string {
+  if (verdict === 'yes') {
+    return `${districtName} — Compact, walkable, steady energy`
+  }
+  if (verdict === 'no') {
+    return `${districtName} — Clear center, controlled moves, steady energy`
+  }
+  return `${districtName} — Clear center, steady energy`
+}
+
 function getPreviewContinuityLine(
   _cluster: RealityCluster,
-  _itinerary: Itinerary,
+  itinerary: Itinerary,
   _context?: SelectedDirectionPreviewContext,
-  _arc?: ArcCandidate,
+  arc?: ArcCandidate,
 ): string {
-  return 'Everything stays close and easy to move between'
+  return getRouteSummaryContinuityCopy(
+    resolveWalkableCloseCopyVerdict({
+      itinerary,
+      selectedArc: arc ?? null,
+    }),
+  )
 }
 
 function getNightPreviewHighlightReasonLine(
@@ -21033,6 +21111,14 @@ export function SandboxConciergePage({
   const activePlanPreviewStopSourceSummary = summarizeDiagnosticCounts(
     activePlanPreview?.stops.map((stop) => stop.source) ?? [],
   )
+  const previewWalkableCloseCopyVerdict = useMemo(
+    () =>
+      resolveWalkableCloseCopyVerdict({
+        movementRadius: routeShapeMovementRadius,
+        selectedArc: plan?.selectedArc ?? null,
+      }),
+    [plan?.selectedArc, routeShapeMovementRadius],
+  )
   const activeDistrictDiscoveryCard = useMemo(() => {
     if (activeDistrictPocketId === ALL_DISTRICTS_CONTEXT_ID) {
       return null
@@ -21048,19 +21134,17 @@ export function SandboxConciergePage({
       activeDistrictLabel ??
       selectedDirection?.debugMeta?.pocketLabel ??
       'Nearby districts'
-    return `${districtName} - Compact, walkable, steady energy`
+    return getDistrictAnchorCopy(districtName, previewWalkableCloseCopyVerdict)
   }, [
     activeDistrictDiscoveryCard?.name,
     activeDistrictLabel,
+    previewWalkableCloseCopyVerdict,
     selectedRouteSummaryArtifact?.districtAnchorLine,
     selectedDirection?.debugMeta?.pocketLabel,
   ])
   const previewSpatialCoherenceLine = useMemo(() => {
-    if (resolvedContractConstraints.movementTolerance === 'moderate') {
-      return 'All stops stay within a short, walkable area.'
-    }
-    return 'Movement remains easy across nearby areas.'
-  }, [resolvedContractConstraints.movementTolerance])
+    return getSpatialCoherenceCopy(previewWalkableCloseCopyVerdict)
+  }, [previewWalkableCloseCopyVerdict])
   const activePlanPreviewSpatialStartLabel =
     activePlanPreview?.storySpine.start?.trim() || previewStartLabel
   const activePlanPreviewSpatialHighlightLabel =
@@ -21402,15 +21486,10 @@ export function SandboxConciergePage({
         },
       }
     : null
-  const buildQualityCloseCopySupported =
-    !buildQualityGeneratedRouteScore
-      ? 'unknown'
-      : buildQualityGeneratedRouteScore.spatial.longTransitionCount > 0 ||
-          buildQualityGeneratedRouteScore.spatial.clusterEscapeCount > 0
-        ? 'no'
-        : routeShapeMovementRadius === 'tight'
-          ? 'yes'
-          : 'unknown'
+  const buildQualityCloseCopySupported = resolveWalkableCloseCopyVerdict({
+    movementRadius: routeShapeMovementRadius,
+    selectedArc: plan?.selectedArc ?? null,
+  })
   const buildQualityLincolnOverHedleyStatus =
     !buildQualityLincolnWindDownDiagnostic || !buildQualityHedleyWindDownDiagnostic
       ? 'unknown'
