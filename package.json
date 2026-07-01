@@ -24,6 +24,7 @@
     "test:phase2-surprise-local-proof": "tsx scripts/test-phase2-surprise-local-proof.ts",
     "test:phase2-family-local-proof": "tsx scripts/test-phase2-family-local-proof.ts",
     "test:phase2-cross-mode-convergence": "tsx scripts/test-phase2-cross-mode-convergence.ts",
+    "test:field-ledger-readiness": "tsx scripts/test-field-ledger-readiness.ts",
     "provider:dry-run": "tsx scripts/run-provider-dry-run.ts",
     "provider:build-supply-dry-run": "tsx scripts/run-build-provider-supply-dry-run.ts"
   },
