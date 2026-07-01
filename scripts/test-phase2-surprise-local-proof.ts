@@ -2,6 +2,7 @@ import {
   buildLockInputFromRouteAuthoritySnapshot,
   buildRouteAuthoritySnapshot,
 } from '../src/app/services/routeAuthority/routeAuthorityService.ts'
+import { buildLockedLiveArtifactPayload } from '../src/app/services/live/liveSessionHandoff.ts'
 import {
   buildApplicationConciergeIntent,
   projectConciergeIntentToIntentInput,
@@ -12,6 +13,7 @@ import { buildStrategyAdmissibleWorlds } from '../src/domain/bearings/buildStrat
 import { assessDirectionContractBuildability } from '../src/domain/bearings/assessDirectionContractBuildability.ts'
 import { buildFinalRoute } from '../src/domain/artifacts/runtimeRouteProjection.ts'
 import type { RuntimeRouteArtifact } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
+import { validateLockedLiveArtifactSessionPayload } from '../src/domain/live/validateLiveArtifact.ts'
 import {
   buildStopTypeCandidateBoardFromContract,
   buildStopTypeCandidateBoardFromIntent,
@@ -29,7 +31,7 @@ import type {
   ResolvedDirectionContext,
   SelectedDirectionContext,
 } from '../src/domain/types/intent.ts'
-import type { Itinerary, UserStopRole } from '../src/domain/types/itinerary.ts'
+import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
 import { buildDistrictOpportunityProfiles } from '../src/engines/district/index.ts'
 
 type FetchCounters = {
@@ -109,6 +111,11 @@ async function runSurpriseLocalProof(): Promise<{
   generatedCanonicalLockInputSource: string | null
   selectedRouteArtifactOnlyLockReady: boolean
   pageLocalOnlyLockReady: boolean
+  hiddenSurpriseHostedMismatchReproduced: boolean
+  hiddenSurpriseItineraryCompanionPreserved: boolean
+  hiddenSurpriseValidateLiveArtifactPasses: boolean
+  hiddenSurpriseVisibleRouteRoles: string[]
+  hiddenSurpriseSourceCoverageComplete: boolean
   staleProjectionIgnoredOrRejected: boolean
   staleProjectionAcceptedByPlanner: boolean
   staleProjectionChangedPlannerDiagnostics: boolean
@@ -242,6 +249,7 @@ async function runSurpriseLocalProof(): Promise<{
   )
 
   const routeAuthority = assertGeneratedCanonicalRouteAuthority(canonicalResult)
+  const hiddenSurpriseCoverage = assertHiddenSurpriseSourceItineraryCoverage(canonicalResult)
   const staleProjectionInput = mutateCompatibilityProjection(projectedInput)
   let staleProjectionAcceptedByPlanner = false
   let staleProjectionChangedPlannerDiagnostics = false
@@ -304,6 +312,15 @@ async function runSurpriseLocalProof(): Promise<{
       : null,
     selectedRouteArtifactOnlyLockReady: routeAuthority.selectedRouteArtifactOnlyLockInput.ok,
     pageLocalOnlyLockReady: routeAuthority.pageLocalOnlyLockInput.ok,
+    hiddenSurpriseHostedMismatchReproduced:
+      hiddenSurpriseCoverage.hostedMismatchReproduced,
+    hiddenSurpriseItineraryCompanionPreserved:
+      hiddenSurpriseCoverage.itineraryCompanionPreserved,
+    hiddenSurpriseValidateLiveArtifactPasses:
+      hiddenSurpriseCoverage.validateLiveArtifactPasses,
+    hiddenSurpriseVisibleRouteRoles: hiddenSurpriseCoverage.visibleRouteRoles,
+    hiddenSurpriseSourceCoverageComplete:
+      hiddenSurpriseCoverage.sourceCoverageComplete,
     staleProjectionIgnoredOrRejected,
     staleProjectionAcceptedByPlanner,
     staleProjectionChangedPlannerDiagnostics,
@@ -502,6 +519,153 @@ function assertGeneratedCanonicalRouteAuthority(result: GeneratePlanResult): {
     fixedReviewLockGateMatchesLockAction,
     selectedRouteArtifactOnlyLockInput,
     pageLocalOnlyLockInput,
+  }
+}
+
+function assertHiddenSurpriseSourceItineraryCoverage(result: GeneratePlanResult): {
+  hostedMismatchReproduced: boolean
+  itineraryCompanionPreserved: boolean
+  validateLiveArtifactPasses: boolean
+  visibleRouteRoles: string[]
+  sourceCoverageComplete: boolean
+} {
+  const hiddenSourceStopId = 'wildcard_sj-jtown-ramen-ya'
+  const windDownStop = result.itinerary.stops.find((stop) => stop.role === 'windDown')
+  assert(windDownStop, 'Hidden Surprise fixture requires an existing wind-down stop.')
+  const hiddenSurpriseStop: ItineraryStop = {
+    ...windDownStop,
+    id: hiddenSourceStopId,
+    role: 'surprise',
+    title: 'Surprise',
+    venueId: 'sj-jtown-ramen-ya',
+    venueName: 'JTown Ramen Ya',
+    subtitle: 'Hidden wildcard companion stop',
+    selectedBecause: 'Models hosted Surprise wildcard source stop identity.',
+    stopInsider: {
+      ...windDownStop.stopInsider,
+      roleReason: 'Hidden wildcard companion stop for Surprise validation.',
+    },
+  }
+  const itineraryWithHiddenSurprise: Itinerary = {
+    ...result.itinerary,
+    stops: [...result.itinerary.stops, hiddenSurpriseStop],
+  }
+  const canonicalStopByRole = buildCanonicalStopIdentityByRole(itineraryWithHiddenSurprise)
+  canonicalStopByRole.surprise = {
+    displayName: hiddenSurpriseStop.venueName,
+    providerRecordId: `provider:${hiddenSurpriseStop.venueId}`,
+    latitude: hiddenSurpriseStop.latitude ?? 37.34,
+    longitude: hiddenSurpriseStop.longitude ?? -121.89,
+    addressLine: hiddenSurpriseStop.formattedAddress ?? `${hiddenSurpriseStop.venueName}, San Jose, CA`,
+    neighborhood: hiddenSurpriseStop.neighborhood,
+  }
+  const selectedDirectionId =
+    result.contractEntryArtifact.selection.directionId ??
+    result.intentProfile.selectedDirectionContext?.directionId ??
+    'surprise-generated-direction'
+  const finalRouteWithHiddenSurprise = buildFinalRoute({
+    itinerary: itineraryWithHiddenSurprise,
+    canonicalStopByRole,
+    selectedDirectionId,
+    city: result.intentProfile.city,
+    persona: result.intentProfile.persona,
+    vibe: result.intentProfile.primaryAnchor,
+    activeRole: 'start',
+    mode: 'surprise',
+    routeHeadline: result.itinerary.storySpine?.title ?? result.itinerary.title,
+    routeSummary: result.itinerary.storySpine?.routeSummary ?? result.itinerary.shareSummary,
+  })
+  assert(finalRouteWithHiddenSurprise, 'Hidden Surprise fixture finalRoute must build.')
+  assertRuntimeRouteArtifactShape(finalRouteWithHiddenSurprise)
+  assert(
+    finalRouteWithHiddenSurprise.stops.some(
+      (stop) => stop.role === 'surprise' && stop.sourceStopId === hiddenSourceStopId,
+    ),
+    'Hidden Surprise fixture must include the wildcard source stop in finalRoute.',
+  )
+
+  const legacyCoreOnlyLockSafeStops = finalRouteWithHiddenSurprise.stops
+    .filter((stop) => stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown')
+    .map((finalStop) => {
+      const sourceStop =
+        itineraryWithHiddenSurprise.stops.find((stop) => stop.id === finalStop.sourceStopId) ??
+        itineraryWithHiddenSurprise.stops.find((stop) => stop.role === finalStop.role)
+      assert(sourceStop, `Legacy fixture source stop missing for ${finalStop.sourceStopId}.`)
+      return {
+        ...sourceStop,
+        id: finalStop.sourceStopId,
+        role: finalStop.role,
+        venueId: finalStop.venueId,
+        venueName: finalStop.displayName || sourceStop.venueName,
+      }
+    })
+  const legacyPayload = buildLockedLiveArtifactPayload({
+    canonicalRouteArtifact: {
+      selectedClusterConfirmation: 'Surprise generated route is ready for Review.',
+      itinerary: itineraryWithHiddenSurprise,
+      finalRoute: finalRouteWithHiddenSurprise,
+    },
+    lockSafeItineraryStops: legacyCoreOnlyLockSafeStops,
+    activeRole: 'start',
+    fallbackCity: result.intentProfile.city,
+    lockedAt: 1,
+    sessionId: 'surprise-hidden-source-legacy-fixture',
+  })
+  const legacyValidation = validateLockedLiveArtifactSessionPayload(legacyPayload)
+  assert(
+    !legacyValidation.ok &&
+      legacyValidation.error.code === 'final_route_itinerary_mismatch' &&
+      legacyValidation.error.detail.includes(`surprise:${hiddenSourceStopId}:missing_source_stop`),
+    'Legacy core-only lock-safe itinerary must reproduce hidden Surprise missing_source_stop.',
+  )
+
+  const snapshot = buildRouteAuthoritySnapshot({
+    contractEntryArtifact: result.contractEntryArtifact,
+    runtimeRouteArtifact: finalRouteWithHiddenSurprise,
+    selectedDirectionId,
+    selectedArtifactId: result.contractEntryArtifact.id,
+    selectedClusterConfirmation: 'Surprise generated route is ready for Review.',
+    itinerary: itineraryWithHiddenSurprise,
+  })
+  const lockInput = buildLockInputFromRouteAuthoritySnapshot({
+    snapshot,
+    activeRole: 'start',
+    fallbackCity: result.intentProfile.city,
+  })
+  assert(lockInput.ok, 'Hidden Surprise canonical truth must produce lock input.')
+  const lockSafeSourceIds = new Set(lockInput.input.lockSafeItineraryStops.map((stop) => stop.id))
+  const sourceCoverageComplete = finalRouteWithHiddenSurprise.stops.every((stop) =>
+    lockSafeSourceIds.has(stop.sourceStopId),
+  )
+  assert(
+    sourceCoverageComplete,
+    'Every hidden Surprise finalRoute sourceStopId must have a lock-safe itinerary companion.',
+  )
+  assert(
+    lockSafeSourceIds.has(hiddenSourceStopId),
+    'Hidden Surprise wildcard stop must be preserved as an itinerary companion.',
+  )
+  const fixedPayload = buildLockedLiveArtifactPayload({
+    ...lockInput.input,
+    lockedAt: 1,
+    sessionId: 'surprise-hidden-source-fixed-fixture',
+  })
+  const fixedValidation = validateLockedLiveArtifactSessionPayload(fixedPayload)
+  assert(fixedValidation.ok, 'Hidden Surprise fixed payload must validate as a live artifact.')
+  const visibleRouteRoles = finalRouteWithHiddenSurprise.stops
+    .filter((stop) => stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown')
+    .map((stop) => stop.role)
+  assert(
+    visibleRouteRoles.join('|') === 'start|highlight|windDown',
+    'Hidden Surprise stop must not become part of visible core route roles.',
+  )
+
+  return {
+    hostedMismatchReproduced: true,
+    itineraryCompanionPreserved: lockSafeSourceIds.has(hiddenSourceStopId),
+    validateLiveArtifactPasses: fixedValidation.ok,
+    visibleRouteRoles,
+    sourceCoverageComplete,
   }
 }
 

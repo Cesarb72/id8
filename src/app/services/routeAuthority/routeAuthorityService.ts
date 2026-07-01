@@ -188,6 +188,10 @@ function normalizeRole(role: string | undefined | null): CoreRouteRole | null {
   return null
 }
 
+function isRuntimeRouteItineraryRole(role: string | undefined | null): role is UserStopRole {
+  return role === 'start' || role === 'highlight' || role === 'surprise' || role === 'windDown'
+}
+
 function normalizeText(value: string | undefined | null): string {
   return value?.trim().toLowerCase().replace(/\s+/g, ' ') ?? ''
 }
@@ -851,7 +855,7 @@ function buildLockSafeItineraryStops(params: {
     ''
 
   return [...params.finalRoute.stops]
-    .filter((stop) => normalizeRole(stop.role) !== null)
+    .filter((stop) => isRuntimeRouteItineraryRole(stop.role))
     .sort((left, right) => left.stopIndex - right.stopIndex)
     .map((finalStop) => {
       const sourceStop =
