@@ -37,7 +37,16 @@ import {
 const BUILD_PROVIDER_SUPPLY_ENV_FLAG = 'VITE_ID8_BUILD_PROVIDER_SUPPLY'
 const DEFAULT_NEARBY_RADIUS_M = 900
 const DEFAULT_NEARBY_PAGE_SIZE = 5
-const DEFAULT_QUERY_LABEL = 'build-provider-nearby'
+const BUILD_PROVIDER_ROLE_QUERY_LABELS = {
+  start: 'build-provider-start',
+  highlight: 'build-provider-highlight',
+  windDown: 'build-provider-winddown',
+} as const
+const BUILD_PROVIDER_QUERY_LABELS = [
+  BUILD_PROVIDER_ROLE_QUERY_LABELS.start,
+  BUILD_PROVIDER_ROLE_QUERY_LABELS.highlight,
+  BUILD_PROVIDER_ROLE_QUERY_LABELS.windDown,
+] as const
 const DEFAULT_FIELD_MASK = [
   'places.id',
   'places.displayName',
@@ -139,11 +148,18 @@ export interface BuildProviderSourceOpportunityDiagnostics {
   buildProviderSupplyEnabled: boolean
   buildProviderAnchorCanonicalVenueId: string | null
   buildProviderAnchorProviderRecordId: string | null
+  buildProviderAttemptedQueryLabels: string[]
+  buildProviderPerLabelResultCounts: Array<{
+    queryLabel: string
+    resultCount: number
+  }>
+  buildProviderMergedUniqueResultCount: number
   buildProviderNearbyVenueCount: number
   buildProviderSuppressedVenueCount: number
   buildProviderRoleCandidateCounts: BuildProviderRoleCandidateCounts
   buildProviderSourceOpportunityEmitted: boolean
   buildProviderSupplyBlockedReason: BuildProviderSupplyBlockedReason | null
+  buildProviderStaticFallbackUsed: boolean
   buildProviderTraceBillableCallCount: number
   suppressionReasons: string[]
   nearbyCandidateReviews: BuildProviderNearbyCandidateReviewSummary[]
@@ -195,6 +211,7 @@ export interface BuildProviderSourceOpportunityInput {
 interface BuildProviderMappedVenue {
   providerVenue: ProviderVenue
   rawPlace: RawPlace
+  sourceQueryLabel: string
 }
 
 interface AdmittedNearbyCandidateReview {
@@ -331,14 +348,24 @@ function inferNeighborhoodFromAddress(
   return fallbackNeighborhood
 }
 
-function buildNearbyTextQuery(anchorVenue: Venue): string {
-  return `bars restaurants cafes dessert near ${anchorVenue.name}, ${anchorVenue.city}`
+function buildNearbyTextQuery(
+  anchorVenue: Venue,
+  queryLabel: (typeof BUILD_PROVIDER_QUERY_LABELS)[number],
+): string {
+  if (queryLabel === BUILD_PROVIDER_ROLE_QUERY_LABELS.start) {
+    return `cafes wine bars casual restaurants low key openers near ${anchorVenue.name}, ${anchorVenue.city}`
+  }
+  if (queryLabel === BUILD_PROVIDER_ROLE_QUERY_LABELS.highlight) {
+    return `destination restaurants live music nightlife experiences near ${anchorVenue.name}, ${anchorVenue.city}`
+  }
+  return `dessert quiet lounges late night cafes relaxed nightcap spots near ${anchorVenue.name}, ${anchorVenue.city}`
 }
 
 function buildNearbyQuery(params: {
   anchorCoordinates: [number, number]
   anchorVenue: Venue
   pageSize: number
+  queryLabel: (typeof BUILD_PROVIDER_QUERY_LABELS)[number]
   radiusM: number
 }): ProviderTextSearchQuery {
   const [longitude, latitude] = params.anchorCoordinates
@@ -354,16 +381,68 @@ function buildNearbyQuery(params: {
       },
     },
     pageSize: params.pageSize,
-    queryLabel: DEFAULT_QUERY_LABEL,
+    queryLabel: params.queryLabel,
     rankPreference: 'DISTANCE',
-    textQuery: buildNearbyTextQuery(params.anchorVenue),
+    textQuery: buildNearbyTextQuery(params.anchorVenue, params.queryLabel),
   }
+}
+
+function buildRoleDiverseNearbyQueries(params: {
+  anchorCoordinates: [number, number]
+  anchorVenue: Venue
+  pageSize: number
+  radiusM: number
+}): ProviderTextSearchQuery[] {
+  return BUILD_PROVIDER_QUERY_LABELS.map((queryLabel) =>
+    buildNearbyQuery({
+      ...params,
+      queryLabel,
+    }),
+  )
+}
+
+function applyBuildProviderQueryEnvelope(
+  queries: ProviderTextSearchQuery[],
+  liveEnvelope: LiveProviderEnvelope,
+): ProviderTextSearchQuery[] {
+  let plannedQueries = queries.slice()
+  if (liveEnvelope.maxQueryLabels != null) {
+    if (liveEnvelope.maxQueryLabels <= 0) {
+      plannedQueries = []
+    } else {
+      const allowedLabels = new Set(
+        plannedQueries.map((query) => query.queryLabel).slice(0, liveEnvelope.maxQueryLabels),
+      )
+      plannedQueries = plannedQueries.filter((query) => allowedLabels.has(query.queryLabel))
+    }
+  }
+  if (liveEnvelope.maxProviderCalls != null && liveEnvelope.maxProviderCalls >= 0) {
+    plannedQueries = plannedQueries.slice(0, liveEnvelope.maxProviderCalls)
+  }
+  return plannedQueries
+}
+
+function dedupeProviderSearchResults(
+  results: BuildProviderMappedVenue[],
+): BuildProviderMappedVenue[] {
+  const seen = new Set<string>()
+  const deduped: BuildProviderMappedVenue[] = []
+  for (const result of results) {
+    const key = result.providerVenue.providerRecordId.trim() || result.rawPlace.id
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    deduped.push(result)
+  }
+  return deduped
 }
 
 function mapProviderVenueToRawPlace(params: {
   anchorCoordinates: [number, number]
   anchorVenue: Venue
   providerVenue: ProviderVenue
+  sourceQueryLabel: string
 }): RawPlace {
   const { anchorCoordinates, anchorVenue, providerVenue } = params
   const venueCoordinates: [number, number] = [
@@ -394,7 +473,7 @@ function mapProviderVenueToRawPlace(params: {
     sourceOrigin: 'live',
     provider: 'google-places',
     providerRecordId: providerVenue.providerRecordId,
-    sourceQueryLabel: DEFAULT_QUERY_LABEL,
+    sourceQueryLabel: params.sourceQueryLabel,
     queryTerms: anchorVenue.name
       .split(/\s+/)
       .map((part) => part.trim().toLowerCase())
@@ -456,6 +535,12 @@ function buildBaseDiagnostics(params: {
   anchorProviderRecordId: string | null
   enabled: boolean
   blockedReason?: BuildProviderSupplyBlockedReason | null
+  attemptedQueryLabels?: string[]
+  perLabelResultCounts?: Array<{
+    queryLabel: string
+    resultCount: number
+  }>
+  mergedUniqueResultCount?: number
   trace?: ProviderCallTrace | null
   ledger?: ProviderCallLedger | null
 }): BuildProviderSourceOpportunityDiagnostics {
@@ -463,11 +548,15 @@ function buildBaseDiagnostics(params: {
     buildProviderSupplyEnabled: params.enabled,
     buildProviderAnchorCanonicalVenueId: params.anchorCanonicalVenueId,
     buildProviderAnchorProviderRecordId: params.anchorProviderRecordId,
+    buildProviderAttemptedQueryLabels: params.attemptedQueryLabels ?? [],
+    buildProviderPerLabelResultCounts: params.perLabelResultCounts ?? [],
+    buildProviderMergedUniqueResultCount: params.mergedUniqueResultCount ?? 0,
     buildProviderNearbyVenueCount: 0,
     buildProviderSuppressedVenueCount: 0,
     buildProviderRoleCandidateCounts: emptyRoleCounts(),
     buildProviderSourceOpportunityEmitted: false,
     buildProviderSupplyBlockedReason: params.blockedReason ?? null,
+    buildProviderStaticFallbackUsed: true,
     buildProviderTraceBillableCallCount: params.trace?.billableCallCount ?? 0,
     suppressionReasons: [],
     nearbyCandidateReviews: [],
@@ -700,24 +789,31 @@ export async function buildProviderSourceOpportunity(
     }
   }
 
+  const builtProviderQueries = buildRoleDiverseNearbyQueries({
+    anchorCoordinates,
+    anchorVenue: input.anchorVenue,
+    pageSize: Math.min(input.pageSize ?? DEFAULT_NEARBY_PAGE_SIZE, DEFAULT_NEARBY_PAGE_SIZE),
+    radiusM: input.radiusM ?? DEFAULT_NEARBY_RADIUS_M,
+  })
+  const attemptedProviderQueries = applyBuildProviderQueryEnvelope(
+    builtProviderQueries,
+    liveEnvelope,
+  )
+  const attemptedQueryLabels = attemptedProviderQueries.map((query) => query.queryLabel)
+
   const providerSearch = await searchPlaces<BuildProviderMappedVenue, ProviderTextSearchQuery>({
     callPurpose: 'build_anchor_nearby',
-    mapPlace: (providerVenue) => ({
+    mapPlace: (providerVenue, context) => ({
       providerVenue,
       rawPlace: mapProviderVenueToRawPlace({
         anchorCoordinates,
         anchorVenue: input.anchorVenue,
         providerVenue,
+        sourceQueryLabel: context.query.queryLabel,
       }),
+      sourceQueryLabel: context.query.queryLabel,
     }),
-    queries: [
-      buildNearbyQuery({
-        anchorCoordinates,
-        anchorVenue: input.anchorVenue,
-        pageSize: Math.min(input.pageSize ?? DEFAULT_NEARBY_PAGE_SIZE, DEFAULT_NEARBY_PAGE_SIZE),
-        radiusM: input.radiusM ?? DEFAULT_NEARBY_RADIUS_M,
-      }),
-    ],
+    queries: attemptedProviderQueries,
     sourceMode: 'live',
     envelope: {
       maxProviderCalls: liveEnvelope.maxProviderCalls,
@@ -731,6 +827,7 @@ export async function buildProviderSourceOpportunity(
     anchorCanonicalVenueId,
     anchorProviderRecordId,
     enabled,
+    attemptedQueryLabels,
     trace,
     ledger,
   })
@@ -749,6 +846,7 @@ export async function buildProviderSourceOpportunity(
     return {
       diagnostics: {
         ...baseDiagnostics,
+        buildProviderPerLabelResultCounts: providerSearch.queryCounts,
         buildProviderSupplyBlockedReason:
           providerSearch.errors.length > 0 ? 'provider_request_failed' : 'provider_zero_results',
       },
@@ -757,6 +855,7 @@ export async function buildProviderSourceOpportunity(
   }
 
   const requestedAt = Date.now()
+  const mergedProviderResults = dedupeProviderSearchResults(providerSearch.results)
   const suppressionReasons: string[] = []
   const nearbyCandidateReviews: BuildProviderNearbyCandidateReviewSummary[] = []
   const admittedNearbyCandidates: Venue[] = []
@@ -765,7 +864,7 @@ export async function buildProviderSourceOpportunity(
   const completeness: ProviderCompletenessGateResult[] = []
   const equivalence: SupplyEquivalenceResult[] = []
 
-  for (const candidate of providerSearch.results) {
+  for (const candidate of mergedProviderResults) {
     const canonicalMapping = resolveCanonicalVenueIdForProviderVenue({
       matchedAt: requestedAt,
       providerVenue: candidate.providerVenue,
@@ -887,8 +986,10 @@ export async function buildProviderSourceOpportunity(
   )
   const diagnostics: BuildProviderSourceOpportunityDiagnostics = {
     ...baseDiagnostics,
+    buildProviderPerLabelResultCounts: providerSearch.queryCounts,
+    buildProviderMergedUniqueResultCount: mergedProviderResults.length,
     buildProviderNearbyVenueCount: admittedNearbyCandidates.length,
-    buildProviderSuppressedVenueCount: providerSearch.results.length - admittedNearbyCandidates.length,
+    buildProviderSuppressedVenueCount: mergedProviderResults.length - admittedNearbyCandidates.length,
     buildProviderRoleCandidateCounts: roleCandidateCounts,
     buildProviderTraceBillableCallCount: trace.billableCallCount,
     suppressionReasons,
@@ -928,6 +1029,7 @@ export async function buildProviderSourceOpportunity(
       ...diagnostics,
       buildProviderSourceOpportunityEmitted: true,
       buildProviderSupplyBlockedReason: null,
+      buildProviderStaticFallbackUsed: false,
     },
     opportunity: {
       id: `build_provider_live_${anchorCanonicalVenueId}_${requestedAt}`,
@@ -955,9 +1057,9 @@ export async function buildProviderSourceOpportunity(
 export const buildProviderSourceOpportunityConfig = {
   envFlag: BUILD_PROVIDER_SUPPLY_ENV_FLAG,
   fieldMask: DEFAULT_FIELD_MASK,
-  maxProviderRequestsPerAttempt: 1,
+  maxProviderRequestsPerAttempt: 3,
   pageSize: DEFAULT_NEARBY_PAGE_SIZE,
   purpose: 'build_anchor_nearby' as const,
   radiusM: DEFAULT_NEARBY_RADIUS_M,
-  queryLabel: DEFAULT_QUERY_LABEL,
+  queryLabels: BUILD_PROVIDER_QUERY_LABELS,
 }

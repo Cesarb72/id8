@@ -26,11 +26,15 @@ import {
   buildProviderPublicLiveEnvelope,
   evaluateBuildProviderPublicLiveEligibility,
 } from '../src/domain/providers/buildProviderPublicLiveWiring.ts'
-import { buildProviderSourceOpportunity } from '../src/domain/providers/buildProviderSourceOpportunity.ts'
+import {
+  buildProviderSourceOpportunity,
+  type BuildProviderSourceOpportunityResult,
+} from '../src/domain/providers/buildProviderSourceOpportunity.ts'
 import type { ProviderVenue } from '../src/domain/providers/providerTypes.ts'
 import type { ArcCandidate } from '../src/domain/types/arc.ts'
 import type { IntentInput, IntentProfile, RouteShapeContract } from '../src/domain/types/intent.ts'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
+import type { Venue } from '../src/domain/types/venue.ts'
 
 const FIELD_PROXY_PATH = '/api/field/text-search'
 
@@ -53,7 +57,8 @@ const originalEnv = {
 
 let fieldProxyFetchAttemptCount = 0
 let directProviderFetchAttemptCount = 0
-let fieldProxyRequestBody: Record<string, unknown> | null = null
+let fieldProxyRequestBodies: Record<string, unknown>[] = []
+let mockProviderScenario: 'role-diverse' | 'insufficient' = 'role-diverse'
 
 globalThis.fetch = (async (input, init) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -66,7 +71,12 @@ globalThis.fetch = (async (input, init) => {
   }
 
   fieldProxyFetchAttemptCount += 1
-  fieldProxyRequestBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+  const fieldProxyRequestBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+  fieldProxyRequestBodies.push(fieldProxyRequestBody)
+  const mockedResults = buildMockProviderVenues(
+    String(fieldProxyRequestBody.queryLabel ?? ''),
+    mockProviderScenario,
+  )
   return new Response(
     JSON.stringify({
       ok: true,
@@ -74,15 +84,15 @@ globalThis.fetch = (async (input, init) => {
       budget: {
         date: '2026-06-29',
         cap: 3,
-        used: 1,
-        remaining: 2,
+        used: fieldProxyFetchAttemptCount,
+        remaining: Math.max(0, 3 - fieldProxyFetchAttemptCount),
       },
-      results: buildMockProviderVenues(),
+      results: mockedResults,
       diagnostics: {
         purpose: 'waypoint_nearby',
         queryHash: 'local-phase2-build-proof',
         providerStatus: 'mocked',
-        resultCount: 3,
+        resultCount: mockedResults.length,
         callConsumed: true,
       },
     }),
@@ -143,47 +153,87 @@ try {
     'Paper Plane provider-source coordinates must be present.',
   )
 
-  const providerResult = await buildProviderSourceOpportunity({
-    anchorVenue: paperPlane,
-    liveEnvelope: buildProviderPublicLiveEnvelope(),
-  })
-  assert(fieldProxyFetchAttemptCount === 1, 'Build flow must attempt exactly one Field proxy fetch.')
+  const roleDiverseProviderResult = await runBuildProviderScenario('role-diverse', paperPlane)
+  const roleDiverseFieldProxyRequestBodies = fieldProxyRequestBodies.slice()
+  assert(fieldProxyFetchAttemptCount === 3, 'Role-diverse Build supply must attempt three Field proxy fetches.')
   assert(directProviderFetchAttemptCount === 0, 'Build flow must not attempt direct provider fetches.')
-  assert(fieldProxyRequestBody?.purpose === 'waypoint_nearby', 'Field proxy purpose must be waypoint_nearby.')
-  assert(fieldProxyRequestBody?.mode === 'build', 'Field proxy mode must be build.')
   assert(
-    fieldProxyRequestBody?.queryLabel === 'build-provider-nearby',
-    'Field proxy query label must remain build-provider-nearby.',
-  )
-  assert(providerResult.diagnostics.trace !== null, 'Mocked Field proxy attempt must produce a trace.')
-  assert(providerResult.diagnostics.ledger !== null, 'Mocked Field proxy attempt must produce a ledger.')
-  assert(
-    providerResult.diagnostics.buildProviderTraceBillableCallCount === 1,
-    'Mocked governed supply must consume one provider call in diagnostics.',
+    roleDiverseProviderResult.diagnostics.buildProviderAttemptedQueryLabels.join('|') ===
+      'build-provider-start|build-provider-highlight|build-provider-winddown',
+    'Build provider role-diverse query plan must attempt deterministic start/highlight/winddown labels.',
   )
   assert(
-    ![
-      'build_provider_supply_disabled',
-      'anchor_canonical_identity_missing',
-      'anchor_provider_record_missing',
-      'anchor_coordinates_missing',
-      'provider_request_blocked',
-      'provider_request_failed',
-    ].includes(String(providerResult.diagnostics.buildProviderSupplyBlockedReason)),
-    `Mocked governed supply must pass eligibility, coordinate, and Field proxy gates; blockedReason=${providerResult.diagnostics.buildProviderSupplyBlockedReason}.`,
+    roleDiverseFieldProxyRequestBodies
+      .map((body) => String(body.queryLabel))
+      .join('|') === 'build-provider-start|build-provider-highlight|build-provider-winddown',
+    'Field proxy requests must use the deterministic Build provider role labels.',
   )
   assert(
-    providerResult.diagnostics.buildProviderSupplyBlockedReason ===
+    roleDiverseFieldProxyRequestBodies.every(
+      (body) => body.purpose === 'waypoint_nearby' && body.mode === 'build',
+    ),
+    'All Build provider requests must use the governed waypoint_nearby Build Field proxy path.',
+  )
+  assert(roleDiverseProviderResult.diagnostics.trace !== null, 'Mocked Field proxy attempt must produce a trace.')
+  assert(roleDiverseProviderResult.diagnostics.ledger !== null, 'Mocked Field proxy attempt must produce a ledger.')
+  assert(
+    roleDiverseProviderResult.diagnostics.buildProviderTraceBillableCallCount === 3,
+    'Role-diverse governed supply must account for three mocked provider calls.',
+  )
+  assert(
+    roleDiverseProviderResult.diagnostics.buildProviderPerLabelResultCounts.length === 3,
+    'Role-diverse diagnostics must expose per-label result counts.',
+  )
+  assert(
+    roleDiverseProviderResult.diagnostics.buildProviderMergedUniqueResultCount === 3,
+    'Role-diverse diagnostics must expose the merged unique result count.',
+  )
+  assert(
+    roleDiverseProviderResult.diagnostics.buildProviderRoleCandidateCounts.start > 0 &&
+      roleDiverseProviderResult.diagnostics.buildProviderRoleCandidateCounts.highlight > 0 &&
+      roleDiverseProviderResult.diagnostics.buildProviderRoleCandidateCounts.windDown > 0,
+    'Role-diverse mock supply must fill all role pools through existing role filters.',
+  )
+  assert(
+    roleDiverseProviderResult.diagnostics.buildProviderSupplyBlockedReason === null,
+    `Role-diverse mock supply must not be blocked; blockedReason=${roleDiverseProviderResult.diagnostics.buildProviderSupplyBlockedReason}.`,
+  )
+  assert(
+    roleDiverseProviderResult.opportunity !== null,
+    'Role-diverse mock supply must emit a live provider-source opportunity.',
+  )
+  assert(
+    roleDiverseProviderResult.diagnostics.buildProviderStaticFallbackUsed === false,
+    'Role-diverse mock supply must avoid static fallback.',
+  )
+  assert(
+    roleDiverseProviderResult.opportunity.roleCandidates.highlight.every(
+      (venue) => venue.id !== 'sj-paper-plane',
+    ),
+    'Highlight enrichment candidates must not compete with the required Paper Plane anchor.',
+  )
+
+  const insufficientProviderResult = await runBuildProviderScenario('insufficient', paperPlane)
+  assert(
+    fieldProxyFetchAttemptCount <= 3,
+    'Insufficient provider scenario must stay within the 3-call envelope.',
+  )
+  assert(directProviderFetchAttemptCount === 0, 'Insufficient scenario must not call providers directly.')
+  assert(
+    insufficientProviderResult.diagnostics.buildProviderSupplyBlockedReason ===
       'provider_insufficient_role_diversity',
-    'Local proof must model hosted provider_insufficient_role_diversity fallback after proxy success.',
+    'Insufficient mock supply must still fail closed on provider_insufficient_role_diversity.',
   )
-  assert(providerResult.opportunity === null, 'Insufficient provider role diversity must use static fallback.')
-  if (providerResult.opportunity) {
-    assert(
-      providerResult.opportunity.sourceMode === 'live',
-      'Mocked governed supply must remain a live provider-source opportunity.',
-    )
-  }
+  assert(
+    insufficientProviderResult.opportunity === null,
+    'Insufficient provider role diversity must use static fallback.',
+  )
+  assert(
+    insufficientProviderResult.diagnostics.buildProviderStaticFallbackUsed === true,
+    'Insufficient mock supply must preserve static fallback diagnostics.',
+  )
+
+  const providerResult = roleDiverseProviderResult
 
   const staticArtifact = buildArtifact({
     id: 'step2_static_build_paper_plane',
@@ -399,20 +449,29 @@ try {
         generatedRouteIdentityMismatchReachable: false,
         publicBuildProviderEligible: publicBuildEligibility.eligible,
         envelope: publicBuildEligibility.envelope,
-        fieldProxyFetchAttemptCount,
+        roleDiverseFieldProxyFetchAttemptCount: roleDiverseFieldProxyRequestBodies.length,
+        insufficientFieldProxyFetchAttemptCount: fieldProxyFetchAttemptCount,
         directProviderFetchAttemptCount,
         providerCallCount: providerResult.diagnostics.buildProviderTraceBillableCallCount,
         providerSourceOpportunityEmitted:
           providerResult.diagnostics.buildProviderSourceOpportunityEmitted,
         providerSourceAuthority: false,
         providerBlockedReason: providerResult.diagnostics.buildProviderSupplyBlockedReason,
-        staticFallbackUsed: providerResult.opportunity === null,
-        fieldProxyRequest: {
-          purpose: fieldProxyRequestBody?.purpose,
-          mode: fieldProxyRequestBody?.mode,
-          queryLabel: fieldProxyRequestBody?.queryLabel,
-          hasCenter: Boolean(fieldProxyRequestBody?.center),
-        },
+        staticFallbackUsed: providerResult.diagnostics.buildProviderStaticFallbackUsed,
+        attemptedLabels: providerResult.diagnostics.buildProviderAttemptedQueryLabels,
+        perLabelResultCounts: providerResult.diagnostics.buildProviderPerLabelResultCounts,
+        mergedUniqueResultCount: providerResult.diagnostics.buildProviderMergedUniqueResultCount,
+        rolePoolCounts: providerResult.diagnostics.buildProviderRoleCandidateCounts,
+        fieldProxyRequests: roleDiverseFieldProxyRequestBodies.map((body) => ({
+          purpose: body.purpose,
+          mode: body.mode,
+          queryLabel: body.queryLabel,
+          hasCenter: Boolean(body.center),
+        })),
+        insufficientProviderBlockedReason:
+          insufficientProviderResult.diagnostics.buildProviderSupplyBlockedReason,
+        insufficientStaticFallbackUsed:
+          insufficientProviderResult.diagnostics.buildProviderStaticFallbackUsed,
         staticReviewEligible: staticOnlyTruth.reviewEligible,
         sameRouteGeneratedReviewEligible: sameRouteGeneratedTruth.reviewEligible,
         generatedReviewEligible: generatedTruth.reviewEligible,
@@ -881,36 +940,83 @@ function restoreEnv(): void {
   }
 }
 
-function buildMockProviderVenues(): ProviderVenue[] {
-  return [
-    buildMockProviderVenue({
-      providerRecordId: 'mock-good-karma',
-      displayName: 'Good Karma',
-      primaryType: 'vegetarian_restaurant',
-      latitude: 37.3353,
-      longitude: -121.8909,
-    }),
-    buildMockProviderVenue({
-      providerRecordId: 'mock-paper-plane-nearby',
-      displayName: 'Paper Plane Nearby Echo',
-      primaryType: 'bar',
-      latitude: 37.3312,
-      longitude: -121.8879,
-    }),
-    buildMockProviderVenue({
-      providerRecordId: 'mock-haberdasher',
-      displayName: 'Haberdasher',
-      primaryType: 'cocktail_bar',
-      latitude: 37.3368,
-      longitude: -121.8898,
-    }),
-  ]
+async function runBuildProviderScenario(
+  scenario: typeof mockProviderScenario,
+  anchorVenue: Venue,
+): Promise<BuildProviderSourceOpportunityResult> {
+  mockProviderScenario = scenario
+  fieldProxyFetchAttemptCount = 0
+  directProviderFetchAttemptCount = 0
+  fieldProxyRequestBodies = []
+  return buildProviderSourceOpportunity({
+    anchorVenue,
+    liveEnvelope: buildProviderPublicLiveEnvelope(),
+  })
+}
+
+function buildMockProviderVenues(
+  queryLabel: string,
+  scenario: typeof mockProviderScenario,
+): ProviderVenue[] {
+  if (scenario === 'insufficient') {
+    return queryLabel === 'build-provider-start'
+      ? [
+          buildMockProviderVenue({
+            providerRecordId: 'mock-nirvana-soul-thin',
+            displayName: 'Nirvana Soul',
+            neighborhood: 'SoFA District',
+            primaryType: 'cafe',
+            latitude: 37.3307,
+            longitude: -121.8871,
+          }),
+        ]
+      : []
+  }
+
+  if (queryLabel === 'build-provider-start') {
+    return [
+      buildMockProviderVenue({
+        providerRecordId: 'mock-nirvana-soul-start',
+        displayName: 'Nirvana Soul',
+        neighborhood: 'SoFA District',
+        primaryType: 'cafe',
+        latitude: 37.3307,
+        longitude: -121.8871,
+      }),
+    ]
+  }
+  if (queryLabel === 'build-provider-highlight') {
+    return [
+      buildMockProviderVenue({
+        providerRecordId: 'mock-jtown-ramen-highlight',
+        displayName: 'Jtown Ramen Ya',
+        neighborhood: 'Japantown',
+        primaryType: 'restaurant',
+        latitude: 37.3481,
+        longitude: -121.8944,
+      }),
+    ]
+  }
+  if (queryLabel === 'build-provider-winddown') {
+    return [
+      buildMockProviderVenue({
+        providerRecordId: 'mock-orchard-gelato-winddown',
+        displayName: 'Orchard Artisan Gelato',
+        neighborhood: 'Downtown',
+        primaryType: 'dessert',
+        latitude: 37.3359,
+        longitude: -121.8894,
+      }),
+    ]
+  }
+  return []
 }
 
 function buildMockProviderVenue(input: {
   displayName: string
   latitude: number
   longitude: number
+  neighborhood: string
   primaryType: string
   providerRecordId: string
 }): ProviderVenue {
@@ -918,8 +1024,8 @@ function buildMockProviderVenue(input: {
     provider: 'google_places',
     providerRecordId: input.providerRecordId,
     displayName: input.displayName,
-    formattedAddress: `${input.displayName}, San Jose, CA`,
-    shortFormattedAddress: 'Downtown San Jose',
+    formattedAddress: `${input.displayName}, ${input.neighborhood}, San Jose, CA`,
+    shortFormattedAddress: `${input.neighborhood}, San Jose`,
     primaryType: input.primaryType,
     types: [input.primaryType, 'point_of_interest', 'establishment'],
     liveMusic: false,

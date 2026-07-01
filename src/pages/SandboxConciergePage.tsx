@@ -5598,6 +5598,9 @@ function buildDevSandboxBlockedProviderShadowDiagnostics(
     buildProviderSupplyEnabled: true,
     buildProviderAnchorCanonicalVenueId: anchorVenue.id?.trim() || null,
     buildProviderAnchorProviderRecordId: null,
+    buildProviderAttemptedQueryLabels: [],
+    buildProviderPerLabelResultCounts: [],
+    buildProviderMergedUniqueResultCount: 0,
     buildProviderNearbyVenueCount: 0,
     buildProviderSuppressedVenueCount: 0,
     buildProviderRoleCandidateCounts: {
@@ -5607,6 +5610,7 @@ function buildDevSandboxBlockedProviderShadowDiagnostics(
     },
     buildProviderSourceOpportunityEmitted: false,
     buildProviderSupplyBlockedReason: 'provider_request_blocked',
+    buildProviderStaticFallbackUsed: true,
     buildProviderTraceBillableCallCount: 0,
     suppressionReasons: [],
     nearbyCandidateReviews: [],
@@ -12521,6 +12525,11 @@ export function SandboxConciergePage({
     shadowBuildProviderDiagnostics?.trace?.attemptedHttpRequestCount ?? 0
   const buildProviderPublicDiagnosticsBlockedReason =
     shadowBuildProviderDiagnostics?.buildProviderSupplyBlockedReason ?? null
+  const buildProviderPublicDiagnosticsStaticFallbackUsed =
+    shadowBuildProviderDiagnostics?.buildProviderStaticFallbackUsed ??
+    candidateRouteArtifactsForDisplay.some(
+      (artifact) => artifact.sourceOpportunityId === 'step2_static_build_paper_plane',
+    )
   const publicBuildProviderDiagnosticsVisible = Boolean(
     isPublicSurface && isBuildWrapperActive && showDebug,
   )
@@ -12544,13 +12553,22 @@ export function SandboxConciergePage({
     providerRecordFound: Boolean(
       shadowBuildProviderDiagnostics?.buildProviderAnchorProviderRecordId,
     ),
-    staticFallbackUsed: candidateRouteArtifactsForDisplay.some(
-      (artifact) => artifact.sourceOpportunityId === 'step2_static_build_paper_plane',
-    ),
+    staticFallbackUsed: buildProviderPublicDiagnosticsStaticFallbackUsed,
     visibleMergeEligible: buildProviderVisibleMergeEnabled,
     fieldProxyFetchAttempted: buildProviderFieldProxyFetchAttemptedCount > 0,
     fieldProxyFetchAttemptedCount: buildProviderFieldProxyFetchAttemptedCount,
     providerCallCount: shadowBuildProviderDiagnostics?.buildProviderTraceBillableCallCount ?? 0,
+    attemptedLabels: shadowBuildProviderDiagnostics?.buildProviderAttemptedQueryLabels ?? [],
+    perLabelResultCounts:
+      shadowBuildProviderDiagnostics?.buildProviderPerLabelResultCounts ?? [],
+    mergedUniqueResultCount:
+      shadowBuildProviderDiagnostics?.buildProviderMergedUniqueResultCount ?? 0,
+    rolePoolCounts:
+      shadowBuildProviderDiagnostics?.buildProviderRoleCandidateCounts ?? {
+        start: 0,
+        highlight: 0,
+        windDown: 0,
+      },
   }
   const curateDisplayDedupeDebug = curateDisplayDedupeResult.debug
   const curateVisibleCardModels = useMemo<CurateVisibleCardModel[]>(() => {
@@ -25931,6 +25949,30 @@ export function SandboxConciergePage({
                 {publicBuildProviderDiagnostics.fieldProxyFetchAttemptedCount}
               </div>
               <div>providerCallCount: {publicBuildProviderDiagnostics.providerCallCount}</div>
+              <div>
+                attemptedLabels:{' '}
+                {publicBuildProviderDiagnostics.attemptedLabels.length > 0
+                  ? publicBuildProviderDiagnostics.attemptedLabels.join(', ')
+                  : 'none'}
+              </div>
+              <div>
+                perLabelResultCounts:{' '}
+                {publicBuildProviderDiagnostics.perLabelResultCounts.length > 0
+                  ? publicBuildProviderDiagnostics.perLabelResultCounts
+                      .map((entry) => `${entry.queryLabel}:${entry.resultCount}`)
+                      .join(', ')
+                  : 'none'}
+              </div>
+              <div>
+                mergedUniqueResultCount:{' '}
+                {publicBuildProviderDiagnostics.mergedUniqueResultCount}
+              </div>
+              <div>
+                rolePoolCounts:{' '}
+                start={publicBuildProviderDiagnostics.rolePoolCounts.start}, highlight=
+                {publicBuildProviderDiagnostics.rolePoolCounts.highlight}, windDown=
+                {publicBuildProviderDiagnostics.rolePoolCounts.windDown}
+              </div>
             </details>
           )}
           {publicBuildQualityDiagnosticsVisible && (
