@@ -27,6 +27,8 @@
     "test:field-ledger-readiness": "tsx scripts/test-field-ledger-readiness.ts",
     "test:field-proxy-ledger-cache": "tsx scripts/test-field-proxy-ledger-cache.ts",
     "test:phase3-honest-failure": "tsx scripts/test-phase3-honest-failure.ts",
+    "test:provider-governance-no-call": "tsx scripts/test-provider-governance-no-call.ts",
+    "test:provider-adapter-stop-on-429": "tsx scripts/test-provider-adapter-stop-on-429.ts",
     "provider:dry-run": "tsx scripts/run-provider-dry-run.ts",
     "provider:build-supply-dry-run": "tsx scripts/run-build-provider-supply-dry-run.ts"
   },

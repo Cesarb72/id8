@@ -155,8 +155,19 @@ try {
 
   const roleDiverseProviderResult = await runBuildProviderScenario('role-diverse', paperPlane)
   const roleDiverseFieldProxyRequestBodies = fieldProxyRequestBodies.slice()
+  const providerEnvelope = publicBuildEligibility.envelope
+  assert(providerEnvelope, 'Public Build provider envelope must be attached before live supply.')
   assert(fieldProxyFetchAttemptCount === 3, 'Role-diverse Build supply must attempt three Field proxy fetches.')
+  assert(
+    fieldProxyFetchAttemptCount <= providerEnvelope.maxProviderCalls,
+    'Role-diverse Build supply must stay within maxProviderCalls.',
+  )
   assert(directProviderFetchAttemptCount === 0, 'Build flow must not attempt direct provider fetches.')
+  assert(
+    roleDiverseProviderResult.diagnostics.buildProviderAttemptedQueryLabels.length <=
+      providerEnvelope.maxQueryLabels,
+    'Build provider attempted labels must stay within maxQueryLabels.',
+  )
   assert(
     roleDiverseProviderResult.diagnostics.buildProviderAttemptedQueryLabels.join('|') ===
       'build-provider-start|build-provider-highlight|build-provider-winddown',
@@ -174,11 +185,30 @@ try {
     ),
     'All Build provider requests must use the governed waypoint_nearby Build Field proxy path.',
   )
+  const roleDiverseCenterKeys = roleDiverseFieldProxyRequestBodies.map(getFieldProxyCenterKey)
+  assert(
+    roleDiverseCenterKeys.every((centerKey) => centerKey !== null),
+    'Every Build role-diverse Field proxy request must carry the anchor center.',
+  )
+  const uniqueRoleDiverseCenters = new Set(roleDiverseCenterKeys)
+  assert(
+    uniqueRoleDiverseCenters.size === 1,
+    'Build role-diverse query plan must use one anchor center structurally.',
+  )
+  assert(
+    uniqueRoleDiverseCenters.size <= providerEnvelope.maxCenters,
+    'Build role-diverse query plan must stay within maxCenters.',
+  )
   assert(roleDiverseProviderResult.diagnostics.trace !== null, 'Mocked Field proxy attempt must produce a trace.')
   assert(roleDiverseProviderResult.diagnostics.ledger !== null, 'Mocked Field proxy attempt must produce a ledger.')
   assert(
     roleDiverseProviderResult.diagnostics.buildProviderTraceBillableCallCount === 3,
     'Role-diverse governed supply must account for three mocked provider calls.',
+  )
+  assert(
+    roleDiverseProviderResult.diagnostics.buildProviderTraceBillableCallCount <=
+      providerEnvelope.maxProviderCalls,
+    'Build provider call count must stay within maxProviderCalls.',
   )
   assert(
     roleDiverseProviderResult.diagnostics.buildProviderPerLabelResultCounts.length === 3,
@@ -928,6 +958,18 @@ function assertSourceLevelBrowserGap(): void {
       !providerAdapterSource.includes('places.googleapis.com'),
     'ProviderAdapter must route through Field proxy and avoid browser-side Google calls.',
   )
+}
+
+function getFieldProxyCenterKey(body: Record<string, unknown>): string | null {
+  const center = body.center
+  if (!center || typeof center !== 'object') {
+    return null
+  }
+  const { lat, lng } = center as { lat?: unknown; lng?: unknown }
+  if (typeof lat !== 'number' || typeof lng !== 'number') {
+    return null
+  }
+  return `${lat.toFixed(6)},${lng.toFixed(6)}`
 }
 
 function restoreEnv(): void {
