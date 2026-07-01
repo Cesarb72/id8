@@ -102,6 +102,11 @@ async function runSurpriseLocalProof(): Promise<{
   postPlannerValidationMode: string | null
   routeAuthorityStatus: string
   lockInputAvailable: boolean
+  legacyHostedSeamReviewLockCtaWouldAppear: boolean
+  legacyHostedSeamLockInputAvailable: boolean
+  legacyHostedSeamRejectionReason: string | null
+  fixedReviewLockGateMatchesLockAction: boolean
+  generatedCanonicalLockInputSource: string | null
   selectedRouteArtifactOnlyLockReady: boolean
   pageLocalOnlyLockReady: boolean
   staleProjectionIgnoredOrRejected: boolean
@@ -288,6 +293,15 @@ async function runSurpriseLocalProof(): Promise<{
     postPlannerValidationMode: directionValidation.validatorMode ?? null,
     routeAuthorityStatus: routeAuthority.snapshot.validationStatus,
     lockInputAvailable: routeAuthority.lockInput.ok,
+    legacyHostedSeamReviewLockCtaWouldAppear:
+      routeAuthority.legacyHostedSeamReviewLockCtaWouldAppear,
+    legacyHostedSeamLockInputAvailable: routeAuthority.legacyHostedSeamLockInput.ok,
+    legacyHostedSeamRejectionReason:
+      routeAuthority.legacyHostedSeamLockInput.diagnostics.rejectionReason,
+    fixedReviewLockGateMatchesLockAction: routeAuthority.fixedReviewLockGateMatchesLockAction,
+    generatedCanonicalLockInputSource: routeAuthority.lockInput.ok
+      ? routeAuthority.lockInput.diagnostics.lockInputSource
+      : null,
     selectedRouteArtifactOnlyLockReady: routeAuthority.selectedRouteArtifactOnlyLockInput.ok,
     pageLocalOnlyLockReady: routeAuthority.pageLocalOnlyLockInput.ok,
     staleProjectionIgnoredOrRejected,
@@ -376,6 +390,9 @@ function validateSurpriseDirection(params: {
 function assertGeneratedCanonicalRouteAuthority(result: GeneratePlanResult): {
   snapshot: ReturnType<typeof buildRouteAuthoritySnapshot>
   lockInput: ReturnType<typeof buildLockInputFromRouteAuthoritySnapshot>
+  legacyHostedSeamLockInput: ReturnType<typeof buildLockInputFromRouteAuthoritySnapshot>
+  legacyHostedSeamReviewLockCtaWouldAppear: boolean
+  fixedReviewLockGateMatchesLockAction: boolean
   selectedRouteArtifactOnlyLockInput: ReturnType<typeof buildLockInputFromRouteAuthoritySnapshot>
   pageLocalOnlyLockInput: ReturnType<typeof buildLockInputFromRouteAuthoritySnapshot>
 } {
@@ -384,6 +401,35 @@ function assertGeneratedCanonicalRouteAuthority(result: GeneratePlanResult): {
     result.contractEntryArtifact.selection.directionId ??
     result.intentProfile.selectedDirectionContext?.directionId ??
     finalRoute.selectedDirectionId
+  const legacyHostedSeamSnapshot = buildRouteAuthoritySnapshot({
+    contractEntryArtifact: result.contractEntryArtifact,
+    selectedDirectionId,
+    selectedArtifactId: result.contractEntryArtifact.id,
+    pageLocalFinalRoute: finalRoute,
+    selectedClusterConfirmation: 'Surprise generated route is ready for Review.',
+    itinerary: result.itinerary,
+  })
+  const legacyHostedSeamLockInput = buildLockInputFromRouteAuthoritySnapshot({
+    snapshot: legacyHostedSeamSnapshot,
+    activeRole: 'start',
+    fallbackCity: result.intentProfile.city,
+  })
+  const legacyHostedSeamReviewLockCtaWouldAppear = Boolean(
+    result.contractEntryArtifact &&
+      finalRoute &&
+      finalRoute.selectedDirectionId === selectedDirectionId,
+  )
+  assert(
+    legacyHostedSeamReviewLockCtaWouldAppear,
+    'Legacy hosted seam must model generated route display readiness.',
+  )
+  assert(
+    !legacyHostedSeamLockInput.ok &&
+      legacyHostedSeamLockInput.diagnostics.rejectionReason ===
+        'lock_ready_requires_canonical_authority',
+    'Legacy hosted seam must reproduce page-local-only lock authority failure.',
+  )
+
   const snapshot = buildRouteAuthoritySnapshot({
     contractEntryArtifact: result.contractEntryArtifact,
     runtimeRouteArtifact: finalRoute,
@@ -399,6 +445,15 @@ function assertGeneratedCanonicalRouteAuthority(result: GeneratePlanResult): {
     fallbackCity: result.intentProfile.city,
   })
   assert(lockInput.ok, 'Generated Surprise routeAuthority truth must produce lock input.')
+  assert(
+    lockInput.diagnostics.lockInputSource === 'contract_entry_artifact.runtime_route_artifact',
+    'Generated Surprise lock input must come from generated canonical route truth.',
+  )
+  assert(
+    !snapshot.rejectionReasons.includes('lock_ready_requires_canonical_authority'),
+    'Generated Surprise canonical truth must make lock_ready_requires_canonical_authority unreachable.',
+  )
+  const fixedReviewLockGateMatchesLockAction = Boolean(lockInput.ok)
   assertRuntimeRouteArtifactShape(finalRoute)
 
   const staleSelectedRoute = buildStaleRoute(finalRoute)
@@ -442,6 +497,9 @@ function assertGeneratedCanonicalRouteAuthority(result: GeneratePlanResult): {
   return {
     snapshot,
     lockInput,
+    legacyHostedSeamLockInput,
+    legacyHostedSeamReviewLockCtaWouldAppear,
+    fixedReviewLockGateMatchesLockAction,
     selectedRouteArtifactOnlyLockInput,
     pageLocalOnlyLockInput,
   }

@@ -16994,6 +16994,43 @@ export function SandboxConciergePage({
     selectedCandidateRouteArtifact,
     selectedDirectionId,
   ])
+  const nonBuildGeneratedCanonicalHandoff = useMemo(() => {
+    if (
+      isBuildWrapperActive ||
+      !isSurpriseWrapperActive ||
+      !plan?.generatedContractEntryArtifact ||
+      !renderOnlyFinalRoute
+    ) {
+      return null
+    }
+    const selectedDirectionMatches =
+      !selectedDirectionId || selectedDirectionId === plan.selectedDirectionContract.id
+    const selectedCandidateMatches =
+      !selectedCandidateRouteArtifact ||
+      plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id
+    const generatedSelectionMatches =
+      plan.selectedDirectionContract.id === renderOnlyFinalRoute.selectedDirectionId &&
+      selectedDirectionMatches &&
+      selectedCandidateMatches
+    if (!generatedSelectionMatches) {
+      return null
+    }
+    return {
+      artifact: plan.generatedContractEntryArtifact,
+      selectedArtifactId: plan.generatedContractEntryArtifact.id,
+      selectedDirectionId: plan.selectedDirectionContract.id,
+      finalRoute: renderOnlyFinalRoute,
+      selectedClusterConfirmation: plan.selectedClusterConfirmation,
+      itinerary: plan.itinerary,
+    }
+  }, [
+    isBuildWrapperActive,
+    isSurpriseWrapperActive,
+    plan,
+    renderOnlyFinalRoute,
+    selectedCandidateRouteArtifact,
+    selectedDirectionId,
+  ])
   const routeAuthoritySnapshot = useMemo(() => {
     const activePlan = activeCurateRefinementEntryPayload?.planSnapshot ?? plan
     const approvedPayload =
@@ -17006,6 +17043,7 @@ export function SandboxConciergePage({
       buildGeneratedCanonicalHandoff?.artifact ?? generatedBuildContractEntryArtifact
     const selectedArtifact =
       buildGeneratedHandoffArtifact ??
+      nonBuildGeneratedCanonicalHandoff?.artifact ??
       explicitQualifiedCurateSelectedArtifact ??
       selectedCandidateRouteArtifact ??
       null
@@ -17014,25 +17052,34 @@ export function SandboxConciergePage({
       contractEntryArtifact: selectedArtifact,
       selectedDirectionId:
         buildGeneratedCanonicalHandoff?.selectedDirectionId ??
+        nonBuildGeneratedCanonicalHandoff?.selectedDirectionId ??
         activePlan?.selectedDirectionContract.id ??
         selectedDirectionId ??
         null,
       selectedArtifactId:
         buildGeneratedCanonicalHandoff?.selectedArtifactId ??
+        nonBuildGeneratedCanonicalHandoff?.selectedArtifactId ??
         activePlan?.selectedCandidateRouteArtifactId ??
         selectedArtifact?.id ??
         selectedStep2CandidateArtifactId ??
         null,
       runtimeRouteArtifact:
         buildGeneratedCanonicalHandoff?.finalRoute ??
+        nonBuildGeneratedCanonicalHandoff?.finalRoute ??
         (generatedBuildContractEntryArtifact && renderOnlyFinalRoute
           ? renderOnlyFinalRoute
           : undefined),
       approvedPayload,
       legacyCurateRefinementEntryPayload: activeCurateRefinementEntryPayload,
       pageLocalFinalRoute: renderOnlyFinalRoute,
-      selectedClusterConfirmation: activePlan?.selectedClusterConfirmation,
-      itinerary: activePlan?.itinerary,
+      selectedClusterConfirmation:
+        buildGeneratedCanonicalHandoff?.selectedClusterConfirmation ??
+        nonBuildGeneratedCanonicalHandoff?.selectedClusterConfirmation ??
+        activePlan?.selectedClusterConfirmation,
+      itinerary:
+        buildGeneratedCanonicalHandoff?.itinerary ??
+        nonBuildGeneratedCanonicalHandoff?.itinerary ??
+        activePlan?.itinerary,
       buildContext: isBuildWrapperActive
         ? {
             mode: 'build',
@@ -17054,6 +17101,7 @@ export function SandboxConciergePage({
     buildSelectedAnchorRequiredRole,
     explicitQualifiedCurateSelectedArtifact,
     isBuildWrapperActive,
+    nonBuildGeneratedCanonicalHandoff,
     renderOnlyFinalRoute,
     plan,
     selectedBuildAnchor?.venueId,
@@ -17081,6 +17129,15 @@ export function SandboxConciergePage({
       plan,
       routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute,
     ],
+  )
+  const routeAuthorityLockInputPreview = useMemo(
+    () =>
+      buildLockInputFromRouteAuthoritySnapshot({
+        snapshot: routeAuthoritySnapshot,
+        activeRole,
+        fallbackCity: city,
+      }),
+    [activeRole, city, routeAuthoritySnapshot],
   )
   const normalizedContractEntryArtifactDebug = useMemo(() => {
     const normalizedDirectionCardArtifacts = directionCards.map((directionCard) =>
@@ -21232,7 +21289,8 @@ export function SandboxConciergePage({
   const committedRevealReady = Boolean(
     selectedRouteArtifact?.source === 'committed' &&
       canonicalRouteArtifact &&
-      (previewSynced || committedPlanMatchesGenerateDirection),
+      (previewSynced || committedPlanMatchesGenerateDirection) &&
+      (!isSurpriseWrapperActive || routeAuthorityLockInputPreview.ok),
   )
   const hasCommittedRoutePhase = Boolean(hasRevealed && committedRevealReady)
   const publicCommittedRouteReady = Boolean(
