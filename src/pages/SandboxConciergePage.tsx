@@ -13077,6 +13077,10 @@ export function SandboxConciergePage({
     selectedDirectionId,
     selectedStep2CandidateArtifactId,
   ])
+  const effectiveBuildSelectedAnchorRequiredRole: BuildAnchorCanonicalRole | null =
+    isBuildWrapperActive && selectedBuildAnchor?.venueId
+      ? selectedCandidateRouteArtifact?.anchorRole ?? buildSelectedAnchorRequiredRole
+      : null
   const publicSurpriseVerifiedCardModels = useMemo(() => {
     if (!isPublicSurface || !isSurpriseWrapperActive) {
       return [] as CurateVisibleCardModel[]
@@ -14675,10 +14679,10 @@ export function SandboxConciergePage({
           isBuildWrapperActive,
           selectedBuildAnchor,
           activeCandidateAnchorRole:
-            buildSelectedAnchorRequiredRole ?? activeCandidateRouteArtifact?.anchorRole,
+            effectiveBuildSelectedAnchorRequiredRole ?? activeCandidateRouteArtifact?.anchorRole,
         })
         const buildAnchorRoleResolutionSource: BuildAnchorRoleResolutionSource =
-          buildSelectedAnchorRequiredRole
+          effectiveBuildSelectedAnchorRequiredRole
             ? 'explicit'
             : activeCandidateRouteArtifact?.anchorRole
               ? 'inferred'
@@ -15188,7 +15192,7 @@ export function SandboxConciergePage({
       plannerDistrictTasteBridgeArtifacts,
       persona,
       primaryVibe,
-      buildSelectedAnchorRequiredRole,
+      effectiveBuildSelectedAnchorRequiredRole,
       selectedBuildAnchor,
       selectedBuildAnchorVenue,
       selectedStep2CandidateArtifactId,
@@ -17048,7 +17052,7 @@ export function SandboxConciergePage({
       routeReplacementAdmitted: false,
     }
   }, [
-    buildSelectedAnchorRequiredRole,
+    effectiveBuildSelectedAnchorRequiredRole,
     isBuildWrapperActive,
     plan,
     renderOnlyFinalRoute,
@@ -17152,7 +17156,7 @@ export function SandboxConciergePage({
               ? null
               : 'build_static_pre_generation',
             selectedAnchorVenueId: selectedBuildAnchor?.venueId ?? null,
-            selectedAnchorRequiredRole: buildSelectedAnchorRequiredRole,
+            selectedAnchorRequiredRole: effectiveBuildSelectedAnchorRequiredRole,
             routeReplacementAdmitted: false,
           }
         : null,
@@ -17160,7 +17164,7 @@ export function SandboxConciergePage({
   }, [
     activeCurateRefinementEntryPayload,
     buildGeneratedCanonicalHandoff,
-    buildSelectedAnchorRequiredRole,
+    effectiveBuildSelectedAnchorRequiredRole,
     explicitQualifiedCurateSelectedArtifact,
     isBuildWrapperActive,
     nonBuildGeneratedCanonicalHandoff,
@@ -17900,8 +17904,8 @@ export function SandboxConciergePage({
           longitude: selectedBuildAnchorVenue?.source.longitude,
         },
         role: {
-          role: buildSelectedAnchorRequiredRole,
-          roleResolutionSource: buildSelectedAnchorRequiredRole ? 'explicit' : 'missing',
+          role: effectiveBuildSelectedAnchorRequiredRole,
+          roleResolutionSource: effectiveBuildSelectedAnchorRequiredRole ? 'explicit' : 'missing',
         },
       })
       const admission = evaluateBuildCandidateAdmission({
@@ -17930,7 +17934,7 @@ export function SandboxConciergePage({
     buildAnchorMatchedCandidateArtifacts,
     buildProviderMergedIntoVisiblePool,
     buildProviderSelectionAllowed,
-    buildSelectedAnchorRequiredRole,
+    effectiveBuildSelectedAnchorRequiredRole,
     isBuildWrapperActive,
     selectedBuildAnchor,
     selectedBuildAnchorVenue,
@@ -17990,7 +17994,7 @@ export function SandboxConciergePage({
         evaluateBuildStaticPreGenerationCardSelection({
           artifact,
           candidateAdmission: admission?.admission,
-          selectedAnchorRequiredRole: buildSelectedAnchorRequiredRole,
+          selectedAnchorRequiredRole: effectiveBuildSelectedAnchorRequiredRole,
           sourceKind: admission?.source ?? 'static',
           buildProviderSelectionAllowed,
           buildProviderMergedIntoVisiblePool,
@@ -18003,7 +18007,7 @@ export function SandboxConciergePage({
     buildCandidateAdmissionDiagnostics,
     buildProviderMergedIntoVisiblePool,
     buildProviderSelectionAllowed,
-    buildSelectedAnchorRequiredRole,
+    effectiveBuildSelectedAnchorRequiredRole,
     isBuildWrapperActive,
     selectedBuildAnchor?.venueId,
   ])
@@ -18035,8 +18039,8 @@ export function SandboxConciergePage({
         longitude: selectedBuildAnchorVenue?.source.longitude,
       },
       role: {
-        role: buildSelectedAnchorRequiredRole,
-        roleResolutionSource: buildSelectedAnchorRequiredRole ? 'explicit' : 'missing',
+        role: effectiveBuildSelectedAnchorRequiredRole,
+        roleResolutionSource: effectiveBuildSelectedAnchorRequiredRole ? 'explicit' : 'missing',
       },
     })
     const candidateAdmission = evaluateBuildCandidateAdmission({
@@ -18084,7 +18088,7 @@ export function SandboxConciergePage({
           : null,
       candidateAdmission,
       anchorTruthContract: anchorContract,
-      selectedAnchorRequiredRole: buildSelectedAnchorRequiredRole,
+      selectedAnchorRequiredRole: effectiveBuildSelectedAnchorRequiredRole,
       sourceKind: 'static',
       routeReplacementAdmitted: false,
       buildProviderSelectionAllowed,
@@ -18097,7 +18101,7 @@ export function SandboxConciergePage({
     buildGeneratedCanonicalHandoff,
     buildProviderMergedIntoVisiblePool,
     buildProviderSelectionAllowed,
-    buildSelectedAnchorRequiredRole,
+    effectiveBuildSelectedAnchorRequiredRole,
     canonicalRouteArtifact,
     city,
     districtLocationQuery,
@@ -20869,7 +20873,7 @@ export function SandboxConciergePage({
       buildCandidateAdmissionAdmittedCount,
       buildCandidateAdmissionRejectedSummaries,
       buildProviderShadowAdmissionSummary,
-      buildSelectedAnchorRequiredRole,
+      buildSelectedAnchorRequiredRole: effectiveBuildSelectedAnchorRequiredRole,
       buildSelectedArtifactId: selectedCandidateRouteArtifact?.id ?? null,
       buildSelectedDirectionId: selectedDirectionId ?? null,
       buildGeneratePlanCalled: Boolean(step2RerollTrace?.generatePlan_called),
@@ -21043,7 +21047,7 @@ export function SandboxConciergePage({
     buildProviderVerifiedOpportunityCount,
     buildProviderVerifiedOpportunityId,
     buildReviewTruthEligible,
-    buildSelectedAnchorRequiredRole,
+    effectiveBuildSelectedAnchorRequiredRole,
     buildSelectableWhenUnparked,
     buildStaticCandidateArtifactCount,
     buildStaticSourceOpportunityCount,

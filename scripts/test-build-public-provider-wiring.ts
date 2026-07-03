@@ -194,6 +194,13 @@ try {
     'Build diagnostics must expose public-live eligibility and envelope state.',
   )
   assert(
+    sandboxSource.includes('const effectiveBuildSelectedAnchorRequiredRole') &&
+      sandboxSource.includes('selectedCandidateRouteArtifact?.anchorRole ?? buildSelectedAnchorRequiredRole') &&
+      sandboxSource.includes('activeCandidateAnchorRole:\n            effectiveBuildSelectedAnchorRequiredRole') &&
+      sandboxSource.includes('selectedAnchorRequiredRole: effectiveBuildSelectedAnchorRequiredRole'),
+    'Public Build promotion must use the selected/generated artifact anchor role instead of forcing highlight.',
+  )
+  assert(
     !sandboxSource.includes('GOOGLE_PLACES_API_KEY') &&
       !sandboxSource.includes('VITE_GOOGLE_PLACES_API_KEY'),
     'Sandbox page must not expose provider key names or browser key paths.',

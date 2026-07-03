@@ -33,11 +33,16 @@ const staticRouteIds = {
   windDown: 'sj-hedley-club-lounge',
 } as const
 
-const generatedRouteIds = {
-  start: 'sj-good-karma',
-  highlight: 'sj-paper-plane',
-  windDown: 'sj-haberdasher',
-} as const
+  const generatedRouteIds = {
+    start: 'sj-good-karma',
+    highlight: 'sj-paper-plane',
+    windDown: 'sj-haberdasher',
+  } as const
+  const haberdasherRouteIds = {
+    start: 'sj-hedley-club-lounge',
+    highlight: 'sj-opera-san-jose',
+    windDown: 'sj-haberdasher',
+  } as const
 
 try {
   const staticArtifact = buildArtifact({
@@ -211,6 +216,10 @@ try {
     !generatedSnapshot.rejectionReasons.includes('generated_route_identity_mismatch'),
     'generated_route_identity_mismatch must be unreachable for single-source Build routeAuthority.',
   )
+  assert(
+    !generatedSnapshot.rejectionReasons.includes('static_candidate_not_authority'),
+    'Promoted generated Build route must not retain static candidate authority metadata.',
+  )
   const lockInput = buildLockInputFromRouteAuthoritySnapshot({
     snapshot: generatedSnapshot,
     activeRole: 'start',
@@ -245,6 +254,92 @@ try {
   })
   assert(!staticLockInput.ok, 'Lock must not succeed without RuntimeRouteArtifact/finalRoute truth.')
 
+  const haberdasherArtifact = buildArtifact({
+    id: 'generated_public_build_haberdasher',
+    sourceOpportunityId: 'generated_public_build_haberdasher',
+    routeIds: haberdasherRouteIds,
+    routeSummary: 'Hedley Club Lounge to Opera San Jose to Haberdasher.',
+    anchorVenueId: 'sj-haberdasher',
+    anchorRole: 'windDown',
+    anchorName: 'Haberdasher',
+    routeTitle: 'Haberdasher Night',
+  })
+  const haberdasherFinalRoute = buildRuntimeRoute({
+    routeIds: haberdasherRouteIds,
+    routeSummary: 'Hedley Club Lounge to Opera San Jose to Haberdasher.',
+    routeId: 'build-runtime-haberdasher',
+    routeHeadline: 'Haberdasher Night',
+  })
+  const haberdasherItinerary = buildItinerary(haberdasherRouteIds)
+  const haberdasherAnchorContract = buildAnchorTruthContract({
+    identity: {
+      venueId: 'sj-haberdasher',
+      providerRecordId: 'ChIJp3c0MJzMj4ARx0TJBncXxAA',
+      displayName: 'Haberdasher',
+    },
+    role: {
+      role: 'windDown',
+      roleResolutionSource: 'explicit',
+    },
+  })
+  const haberdasherAdmission = evaluateBuildCandidateAdmission({
+    mode: 'build',
+    anchorContract: haberdasherAnchorContract,
+    contractEntryArtifact: haberdasherArtifact,
+    runtimeRouteArtifact: haberdasherFinalRoute,
+    buildParked: {
+      providerSelectionAllowed: true,
+      providerMergedIntoVisiblePool: true,
+    },
+  })
+  assert(haberdasherAdmission.admitted, 'Haberdasher windDown generated route must pass admission.')
+  assert(
+    haberdasherAdmission.requiredAnchorRole === 'windDown',
+    'Haberdasher required anchor role must remain windDown.',
+  )
+  const haberdasherSnapshot = buildRouteAuthoritySnapshot({
+    contractEntryArtifact: haberdasherArtifact,
+    runtimeRouteArtifact: haberdasherFinalRoute,
+    selectedDirectionId: haberdasherArtifact.selection.directionId,
+    selectedArtifactId: haberdasherArtifact.id,
+    selectedClusterConfirmation: 'Generated Haberdasher route is ready for Review.',
+    itinerary: haberdasherItinerary,
+    buildContext: {
+      mode: 'build',
+      selectedCandidateArtifact: null,
+      selectedCandidateSourceKind: null,
+      selectedAnchorVenueId: 'sj-haberdasher',
+      selectedAnchorRequiredRole: 'windDown',
+      routeReplacementAdmitted: false,
+    },
+  })
+  assert(haberdasherSnapshot.validationStatus === 'valid', 'Haberdasher windDown routeAuthority must be valid.')
+  assert(
+    haberdasherSnapshot.buildDiagnostics?.reasons.includes('required_anchor_role_survived'),
+    'routeAuthority must credit Haberdasher as the required windDown anchor through runtimeRoute.',
+  )
+  assert(
+    !haberdasherSnapshot.rejectionReasons.includes('required_anchor_role_missing'),
+    'routeAuthority must not emit required_anchor_role_missing when runtimeRoute contains Haberdasher as windDown.',
+  )
+  assert(
+    !haberdasherSnapshot.rejectionReasons.includes('static_candidate_not_authority'),
+    'Promoted Haberdasher generated route must not be classified as static candidate authority.',
+  )
+  const haberdasherLockInput = buildLockInputFromRouteAuthoritySnapshot({
+    snapshot: haberdasherSnapshot,
+    activeRole: 'start',
+    fallbackCity: 'San Jose',
+  })
+  assert(haberdasherLockInput.ok, 'Haberdasher windDown generated route must produce lock input.')
+  assert(
+    haberdasherLockInput.input.canonicalRouteArtifact.finalRoute.stops
+      .map((stop) => stop.venueId)
+      .join(' -> ') ===
+      'sj-hedley-club-lounge -> sj-opera-san-jose -> sj-haberdasher',
+    'Haberdasher lock input must preserve the promoted generated finalRoute.',
+  )
+
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   const buildBranchIndex = sandboxSource.indexOf('if (isBuildWrapperActive) {')
   const waypointEntryIndex = sandboxSource.indexOf('buildContractDrivenBuildWaypointPlan({')
@@ -277,6 +372,9 @@ try {
         selectedStaticCandidateInGeneratedAuthority: false,
         lockInputAvailable: lockInput.ok,
         providerShadowReviewEligible: providerShadowTruth.reviewEligible,
+        haberdasherRouteAuthorityStatus: haberdasherSnapshot.validationStatus,
+        haberdasherRequiredAnchorRole: haberdasherAdmission.requiredAnchorRole,
+        haberdasherLockInputAvailable: haberdasherLockInput.ok,
         replacementPolicyReachedByBuildPage: false,
         fetchCallCount,
       },
@@ -296,6 +394,8 @@ function buildRuntimeStop(role: UserStopRole, venueId: string, stopIndex: number
         ? 'Paper Plane'
         : venueId === 'sj-hedley-club-lounge'
           ? 'Hedley Club Lounge'
+          : venueId === 'sj-opera-san-jose'
+            ? 'Opera San Jose'
           : venueId === 'sj-good-karma'
             ? 'Good Karma'
             : 'Haberdasher'
@@ -320,6 +420,8 @@ function buildRuntimeStop(role: UserStopRole, venueId: string, stopIndex: number
 function buildRuntimeRoute(params: {
   routeIds: Record<'start' | 'highlight' | 'windDown', string>
   routeSummary: string
+  routeId?: string
+  routeHeadline?: string
 }): RuntimeRouteArtifact {
   const stops = [
     buildRuntimeStop('start', params.routeIds.start, 0),
@@ -327,14 +429,14 @@ function buildRuntimeRoute(params: {
     buildRuntimeStop('windDown', params.routeIds.windDown, 2),
   ]
   return {
-    routeId: 'build-runtime-paper-plane',
+    routeId: params.routeId ?? 'build-runtime-paper-plane',
     selectedDirectionId: 'downtown-paper-plane',
     location: 'San Jose',
     persona: 'friends',
     vibe: 'lively',
     stops,
     activeStopIndex: 0,
-    routeHeadline: 'Paper Plane Night',
+    routeHeadline: params.routeHeadline ?? 'Paper Plane Night',
     routeSummary: params.routeSummary,
     mapMarkers: stops.map((stop) => ({
       id: stop.id,
@@ -416,21 +518,32 @@ function buildArtifact(params: {
   sourceOpportunityId: string
   routeIds: Record<'start' | 'highlight' | 'windDown', string>
   routeSummary: string
+  anchorVenueId?: string
+  anchorRole?: UserStopRole
+  anchorName?: string
+  routeTitle?: string
 }): ContractEntryArtifact {
+  const anchorVenueId = params.anchorVenueId ?? 'sj-paper-plane'
+  const anchorRole = params.anchorRole ?? 'highlight'
+  const anchorName = params.anchorName ?? 'Paper Plane'
+  const routeTitle = params.routeTitle ?? 'Paper Plane Night'
   return {
     id: params.id,
     sourceOpportunityId: params.sourceOpportunityId,
     sourceMode: 'curated',
-    anchorVenueId: 'sj-paper-plane',
-    anchorRole: 'highlight',
-    anchorName: 'Paper Plane',
-    routeTitle: 'Paper Plane Night',
+    anchorVenueId,
+    anchorRole,
+    anchorName,
+    routeTitle,
     flavorLine: 'Cocktails with a compact downtown arc.',
     routeSummary: params.routeSummary,
     traits: ['cocktails', 'downtown'],
     storySpine: {
       start: buildRuntimeStop('start', params.routeIds.start, 0).displayName,
-      highlight: 'Paper Plane',
+      highlight:
+        anchorRole === 'highlight'
+          ? anchorName
+          : buildRuntimeStop('highlight', params.routeIds.highlight, 1).displayName,
       windDown: buildRuntimeStop('windDown', params.routeIds.windDown, 2).displayName,
     },
     districtLine: 'Downtown San Jose',
@@ -444,7 +557,10 @@ function buildArtifact(params: {
     enrichment: {
       canonicalRouteRoleCoverage: {
         start: buildRuntimeStop('start', params.routeIds.start, 0).displayName,
-        highlight: 'Paper Plane',
+        highlight:
+          anchorRole === 'highlight'
+            ? anchorName
+            : buildRuntimeStop('highlight', params.routeIds.highlight, 1).displayName,
         windDown: buildRuntimeStop('windDown', params.routeIds.windDown, 2).displayName,
         support: [
           {
@@ -452,7 +568,14 @@ function buildArtifact(params: {
             name: buildRuntimeStop('start', params.routeIds.start, 0).displayName,
             venueId: params.routeIds.start,
           },
-          { role: 'highlight', name: 'Paper Plane', venueId: params.routeIds.highlight },
+          {
+            role: 'highlight',
+            name:
+              anchorRole === 'highlight'
+                ? anchorName
+                : buildRuntimeStop('highlight', params.routeIds.highlight, 1).displayName,
+            venueId: params.routeIds.highlight,
+          },
           {
             role: 'windDown',
             name: buildRuntimeStop('windDown', params.routeIds.windDown, 2).displayName,
