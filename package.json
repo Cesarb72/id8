@@ -24,6 +24,7 @@
     "test:phase2-surprise-local-proof": "tsx scripts/test-phase2-surprise-local-proof.ts",
     "test:phase2-family-local-proof": "tsx scripts/test-phase2-family-local-proof.ts",
     "test:phase2-cross-mode-convergence": "tsx scripts/test-phase2-cross-mode-convergence.ts",
+    "test:phase4-build-anchor-data-readiness": "tsx scripts/test-phase4-build-anchor-data-readiness.ts",
     "test:field-ledger-readiness": "tsx scripts/test-field-ledger-readiness.ts",
     "test:field-proxy-ledger-cache": "tsx scripts/test-field-proxy-ledger-cache.ts",
     "test:phase3-honest-failure": "tsx scripts/test-phase3-honest-failure.ts",
