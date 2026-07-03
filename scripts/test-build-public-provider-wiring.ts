@@ -6,6 +6,14 @@ function assert(condition: unknown, message: string): asserts condition {
   }
 }
 
+function sourceSlice(source: string, startMarker: string, endMarker: string): string {
+  const start = source.indexOf(startMarker)
+  const end = source.indexOf(endMarker, start + startMarker.length)
+  assert(start >= 0, `Missing source marker: ${startMarker}`)
+  assert(end > start, `Missing source marker after ${startMarker}: ${endMarker}`)
+  return source.slice(start, end)
+}
+
 const originalFetch = globalThis.fetch
 const originalSourceMode = process.env.VITE_ID8_SOURCE_MODE
 let fetchCallCount = 0
@@ -130,6 +138,56 @@ try {
     sandboxSource.includes('liveEnvelope: buildProviderLiveEnvelope'),
     'Build provider call must receive the explicit public-live envelope handle.',
   )
+  const providerRequestKeyBlock = sourceSlice(
+    sandboxSource,
+    'const buildProviderRequestAnchorKey = useMemo(',
+    'const [shadowBuildProviderSourceOpportunity',
+  )
+  assert(
+    providerRequestKeyBlock.includes('buildProviderContinueIntent') &&
+      providerRequestKeyBlock.includes('selectedBuildAnchorVenue'),
+    'Build provider request key must require explicit Continue intent and a selected anchor.',
+  )
+  const providerDispatchEffectBlock = sourceSlice(
+    sandboxSource,
+    'if (!buildProviderRequestAnchorKey) {',
+    'const shadowBuildProviderVerifiedOpportunity',
+  )
+  assert(
+    providerDispatchEffectBlock.includes('buildProviderSourceOpportunity({') &&
+      providerDispatchEffectBlock.includes('anchorVenue: selectedBuildAnchorVenue') &&
+      providerDispatchEffectBlock.includes('liveEnvelope: buildProviderLiveEnvelope'),
+    'Existing Build provider dispatch must stay in the governed effect behind the request key.',
+  )
+  const anchorSelectBlock = sourceSlice(
+    sandboxSource,
+    'const handleBuildAnchorSelect = useCallback((result: AnchorSearchResult) => {',
+    'const handleBuildContinue = useCallback(() => {',
+  )
+  assert(
+    anchorSelectBlock.includes('setBuildProviderContinueIntent(false)'),
+    'Selecting a Build anchor must clear provider Continue intent.',
+  )
+  assert(
+    !anchorSelectBlock.includes('setBuildProviderContinueIntent(true)') &&
+      !anchorSelectBlock.includes('buildProviderSourceOpportunity(') &&
+      !anchorSelectBlock.includes('/api/field/text-search'),
+    'Selecting a Build anchor must not arm or call provider dispatch.',
+  )
+  const buildContinueBlock = sourceSlice(
+    sandboxSource,
+    'const handleBuildContinue = useCallback(() => {',
+    'const handleSelectDirection = useCallback(',
+  )
+  assert(
+    buildContinueBlock.includes('setBuildProviderContinueIntent(true)'),
+    'Build Continue must explicitly arm provider dispatch.',
+  )
+  assert(
+    buildContinueBlock.indexOf('setBuildProviderContinueIntent(true)') <
+      buildContinueBlock.indexOf('setBuildAnchorReady(true)'),
+    'Build Continue must arm provider dispatch before leaving the gate.',
+  )
   assert(
     sandboxSource.includes('build_public_live_ineligible:') &&
       sandboxSource.includes('buildProviderPublicLiveEnvelope'),
@@ -155,6 +213,13 @@ try {
       buildProviderSource.includes('maxProviderCalls: liveEnvelope.maxProviderCalls') &&
       buildProviderSource.includes('maxQueryLabels: liveEnvelope.maxQueryLabels'),
     'Build provider supply must call ProviderAdapter in live mode with envelope caps.',
+  )
+  assert(
+    buildProviderSource.includes("start: 'build-provider-start'") &&
+      buildProviderSource.includes("highlight: 'build-provider-highlight'") &&
+      buildProviderSource.includes("windDown: 'build-provider-winddown'") &&
+      buildProviderSource.includes('return BUILD_PROVIDER_QUERY_LABELS.map((queryLabel)'),
+    'Build provider dispatch labels must remain the role-diverse start/highlight/wind-down set.',
   )
   assert(
     buildProviderSource.includes('input.liveEnvelope ?? CLOSED_RUNTIME_LIVE_ENVELOPE') &&

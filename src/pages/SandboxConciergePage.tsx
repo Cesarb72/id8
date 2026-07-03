@@ -10058,6 +10058,7 @@ export function SandboxConciergePage({
   const [buildAnchorReady, setBuildAnchorReady] = useState<boolean>(
     () => (isPublicSurface ? false : readSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY) === '1'),
   )
+  const [buildProviderContinueIntent, setBuildProviderContinueIntent] = useState(false)
   const [buildAnchorResults, setBuildAnchorResults] = useState<AnchorSearchResult[]>([])
   const [buildAnchorLoading, setBuildAnchorLoading] = useState(false)
   const [buildAnchorError, setBuildAnchorError] = useState<string>()
@@ -10395,6 +10396,7 @@ export function SandboxConciergePage({
         if (buildAnchorReady) {
           setBuildAnchorReady(false)
         }
+        setBuildProviderContinueIntent(false)
         writeSessionStorageValue(DEV_CLOSEOUT_BUILD_QUERY_KEY, '')
         writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY, '')
         writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, '')
@@ -10413,6 +10415,7 @@ export function SandboxConciergePage({
         if (buildAnchorReady) {
           setBuildAnchorReady(false)
         }
+        setBuildProviderContinueIntent(false)
         return
       }
       const persistedQuery = readSessionStorageValue(DEV_CLOSEOUT_BUILD_QUERY_KEY)
@@ -10464,6 +10467,7 @@ export function SandboxConciergePage({
     }
     if (isBuildEntryRoute) {
       setBuildAnchorReady(false)
+      setBuildProviderContinueIntent(false)
       writeSessionStorageValue(DEV_CLOSEOUT_ORIGIN_MODE_KEY, 'build')
       writeSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY, '0')
       return
@@ -11711,6 +11715,7 @@ export function SandboxConciergePage({
   const buildProviderRequestAnchorKey = useMemo(
     () =>
       isBuildWrapperActive &&
+      buildProviderContinueIntent &&
       buildProviderIntegrationEnabled &&
       buildProviderSupplyEnabled &&
       selectedBuildAnchorVenue
@@ -11719,6 +11724,7 @@ export function SandboxConciergePage({
     [
       buildProviderIntegrationEnabled,
       buildProviderSupplyEnabled,
+      buildProviderContinueIntent,
       isBuildWrapperActive,
       selectedBuildAnchorVenue,
     ],
@@ -15224,6 +15230,7 @@ export function SandboxConciergePage({
     setSelectedBuildAnchor(null)
     setSelectedBuildAnchorResult(null)
     setBuildAnchorReady(false)
+    setBuildProviderContinueIntent(false)
     setBuildAnchorResults([])
     setBuildAnchorError(undefined)
     setBuildAnchorLoading(false)
@@ -15301,6 +15308,7 @@ export function SandboxConciergePage({
 
   const handleBuildAnchorSelect = useCallback((result: AnchorSearchResult) => {
     const selection = buildAnchorSelectionFromSearchResult(result)
+    setBuildProviderContinueIntent(false)
     setSelectedBuildAnchor(selection)
     setSelectedBuildAnchorResult(result)
     writeSessionStorageValue(DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY, JSON.stringify(result))
@@ -15350,6 +15358,7 @@ export function SandboxConciergePage({
     setError((current) =>
       current === 'Select a required anchor before continuing.' ? undefined : current,
     )
+    setBuildProviderContinueIntent(true)
     setBuildAnchorReady(true)
     if (isPublicSurface) {
       return
