@@ -234,6 +234,43 @@ try {
     'Static Paper Plane pre-generation fallback must remain present and distinguishable.',
   )
   assert(
+    sandboxSource.includes('publicBuildGeneratedRouteTruthOwnsPostContinueSurface') &&
+      sandboxSource.includes('data-id8-route-card-display-source="build_generated_final_route"') &&
+      sandboxSource.includes('canonicalRouteArtifact.finalRoute.stops.find((stop) => stop.role === role)') &&
+      sandboxSource.includes('!publicBuildGeneratedRouteTruthOwnsPostContinueSurface && (publicSurpriseRouteChoiceVisible'),
+    'Public Build post-Continue route card surface must be owned by generated/final route truth, not the static pre-generation card.',
+  )
+  const buildReviewDiagnosticsBlock = sourceSlice(
+    sandboxSource,
+    'const publicBuildReviewGatingDiagnostics = {',
+    'const publicBuildQualityDiagnosticsVisible',
+  )
+  assert(
+    buildReviewDiagnosticsBlock.includes('postGenerationRouteTruthOwnsSurface') &&
+      sandboxSource.includes("publicBuildGeneratedRouteTruthOwnsPostContinueSurface\n    ? 'build_generated_final_route'") &&
+      buildReviewDiagnosticsBlock.includes('selectedRouteStaticPreGeneration') &&
+      buildReviewDiagnosticsBlock.includes('!publicBuildGeneratedRouteTruthOwnsPostContinueSurface'),
+    'Build Review diagnostics must show generated/final route ownership and prevent static pre-generation selection after finalRoute exists.',
+  )
+  const buildProviderDiagnosticsBlock = sourceSlice(
+    sandboxSource,
+    'const buildProviderDiagnosticsAvailable = Boolean(shadowBuildProviderDiagnostics)',
+    'const curateDisplayDedupeDebug = curateDisplayDedupeResult.debug',
+  )
+  assert(
+    buildProviderDiagnosticsBlock.includes("'diagnostics_unavailable'") &&
+      buildProviderDiagnosticsBlock.includes("'in_flight'") &&
+      buildProviderDiagnosticsBlock.includes("'settled_with_results'") &&
+      buildProviderDiagnosticsBlock.includes("'settled_zero_results'") &&
+      buildProviderDiagnosticsBlock.includes('countsRepresentSettledProvider') &&
+      buildProviderDiagnosticsBlock.includes('staticPreGenerationCandidateVisible') &&
+      buildProviderDiagnosticsBlock.includes('mergedUniqueResultCount:') &&
+      buildProviderDiagnosticsBlock.includes(': null') &&
+      buildProviderDiagnosticsBlock.includes('rolePoolCounts:') &&
+      buildProviderDiagnosticsBlock.includes(': null'),
+    'Build provider diagnostics must distinguish pending/unavailable state from settled zero counts and static fallback.',
+  )
+  assert(
     appServiceSource.includes('const STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE: LiveProviderEnvelope = {') &&
       appServiceSource.includes('maxProviderCalls: 3') &&
       appServiceSource.includes('maxQueryLabels: 3') &&

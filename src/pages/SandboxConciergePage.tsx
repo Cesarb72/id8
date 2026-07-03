@@ -12527,19 +12527,43 @@ export function SandboxConciergePage({
       candidateRouteArtifactsForDisplay.length === 0,
   )
   const buildProviderSelectionAllowed = true
+  const buildProviderDiagnosticsAvailable = Boolean(shadowBuildProviderDiagnostics)
+  const buildProviderDiagnosticsSettled = Boolean(
+    shadowBuildProviderDiagnostics && !buildProviderInFlight,
+  )
   const buildProviderFieldProxyFetchAttemptedCount =
     shadowBuildProviderDiagnostics?.trace?.attemptedHttpRequestCount ?? 0
   const buildProviderPublicDiagnosticsBlockedReason =
     shadowBuildProviderDiagnostics?.buildProviderSupplyBlockedReason ?? null
-  const buildProviderPublicDiagnosticsStaticFallbackUsed =
-    shadowBuildProviderDiagnostics?.buildProviderStaticFallbackUsed ??
-    candidateRouteArtifactsForDisplay.some(
-      (artifact) => artifact.sourceOpportunityId === 'step2_static_build_paper_plane',
-    )
+  const buildProviderSettledMergedUniqueResultCount =
+    shadowBuildProviderDiagnostics?.buildProviderMergedUniqueResultCount ?? 0
+  const buildProviderPublicDiagnosticsStaticFallbackUsed = Boolean(
+    buildProviderDiagnosticsSettled &&
+      shadowBuildProviderDiagnostics?.buildProviderStaticFallbackUsed,
+  )
+  const buildProviderStaticPreGenerationCandidateVisible = candidateRouteArtifactsForDisplay.some(
+    (artifact) => artifact.sourceOpportunityId === 'step2_static_build_paper_plane',
+  )
+  const buildProviderResultState = !buildProviderDiagnosticsAvailable
+    ? 'diagnostics_unavailable'
+    : buildProviderInFlight
+      ? 'in_flight'
+      : buildProviderSettledMergedUniqueResultCount > 0
+        ? 'settled_with_results'
+        : 'settled_zero_results'
+  const buildProviderCountsRepresentSettledProvider = Boolean(
+    buildProviderDiagnosticsSettled &&
+      buildProviderResultState !== 'diagnostics_unavailable' &&
+      buildProviderResultState !== 'in_flight',
+  )
   const publicBuildProviderDiagnosticsVisible = Boolean(
     isPublicSurface && isBuildWrapperActive && showDebug,
   )
   const publicBuildProviderDiagnostics = {
+    providerState: buildProviderResultState,
+    providerDiagnosticsAvailable: buildProviderDiagnosticsAvailable,
+    providerSettled: buildProviderDiagnosticsSettled,
+    countsRepresentSettledProvider: buildProviderCountsRepresentSettledProvider,
     providerEligible: buildProviderPublicLiveEligibility.eligible,
     sourceMode: buildProviderPublicLiveSourceMode ?? 'none',
     ineligibleReasons: buildProviderPublicLiveEligibility.reasons,
@@ -12560,21 +12584,32 @@ export function SandboxConciergePage({
       shadowBuildProviderDiagnostics?.buildProviderAnchorProviderRecordId,
     ),
     staticFallbackUsed: buildProviderPublicDiagnosticsStaticFallbackUsed,
+    staticPreGenerationCandidateVisible: buildProviderStaticPreGenerationCandidateVisible,
     visibleMergeEligible: buildProviderVisibleMergeEnabled,
     fieldProxyFetchAttempted: buildProviderFieldProxyFetchAttemptedCount > 0,
     fieldProxyFetchAttemptedCount: buildProviderFieldProxyFetchAttemptedCount,
-    providerCallCount: shadowBuildProviderDiagnostics?.buildProviderTraceBillableCallCount ?? 0,
-    attemptedLabels: shadowBuildProviderDiagnostics?.buildProviderAttemptedQueryLabels ?? [],
+    providerCallCount: buildProviderCountsRepresentSettledProvider
+      ? shadowBuildProviderDiagnostics?.buildProviderTraceBillableCallCount ?? 0
+      : null,
+    attemptedLabels: buildProviderCountsRepresentSettledProvider
+      ? shadowBuildProviderDiagnostics?.buildProviderAttemptedQueryLabels ?? []
+      : [],
     perLabelResultCounts:
-      shadowBuildProviderDiagnostics?.buildProviderPerLabelResultCounts ?? [],
+      buildProviderCountsRepresentSettledProvider
+        ? shadowBuildProviderDiagnostics?.buildProviderPerLabelResultCounts ?? []
+        : [],
     mergedUniqueResultCount:
-      shadowBuildProviderDiagnostics?.buildProviderMergedUniqueResultCount ?? 0,
+      buildProviderCountsRepresentSettledProvider
+        ? shadowBuildProviderDiagnostics?.buildProviderMergedUniqueResultCount ?? 0
+        : null,
     rolePoolCounts:
-      shadowBuildProviderDiagnostics?.buildProviderRoleCandidateCounts ?? {
-        start: 0,
-        highlight: 0,
-        windDown: 0,
-      },
+      buildProviderCountsRepresentSettledProvider
+        ? shadowBuildProviderDiagnostics?.buildProviderRoleCandidateCounts ?? {
+            start: 0,
+            highlight: 0,
+            windDown: 0,
+          }
+        : null,
   }
   const curateDisplayDedupeDebug = curateDisplayDedupeResult.debug
   const curateVisibleCardModels = useMemo<CurateVisibleCardModel[]>(() => {
@@ -21324,6 +21359,12 @@ export function SandboxConciergePage({
     isPublicSurface &&
       committedRevealReady,
   )
+  const publicBuildGeneratedRouteTruthOwnsPostContinueSurface = Boolean(
+    isPublicSurface &&
+      isBuildWrapperActive &&
+      canonicalRouteArtifact?.finalRoute &&
+      routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute,
+  )
   const publicCandidateOnlyPreviewActive = Boolean(
     isPublicSurface && selectedRouteArtifact?.source === 'candidate',
   )
@@ -21476,8 +21517,9 @@ export function SandboxConciergePage({
   const publicBuildReviewGatingDiagnosticsVisible = Boolean(
     isPublicSurface && isBuildWrapperActive && showDebug,
   )
-  const selectedArtifactDisplaySource =
-    selectedCandidateRouteArtifact?.sourceOpportunityId === 'step2_static_build_paper_plane'
+  const selectedArtifactDisplaySource = publicBuildGeneratedRouteTruthOwnsPostContinueSurface
+    ? 'build_generated_final_route'
+    : selectedCandidateRouteArtifact?.sourceOpportunityId === 'step2_static_build_paper_plane'
       ? 'build_static_pre_generation'
       : 'unknown'
   const publicBuildReviewGatingDiagnostics = {
@@ -21493,12 +21535,21 @@ export function SandboxConciergePage({
       ...(buildReviewTruthEligible ? [] : ['build_review_truth_not_eligible']),
       ...buildCardTruthRejectionReasons,
     ],
-    selectedArtifactId: selectedCandidateRouteArtifact?.id ?? null,
+    selectedArtifactId: publicBuildGeneratedRouteTruthOwnsPostContinueSurface
+      ? plan?.generatedContractEntryArtifact?.id ??
+        routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.selectedArtifactId ??
+        null
+      : selectedCandidateRouteArtifact?.id ?? null,
     selectedArtifactSourceOpportunityId:
-      selectedCandidateRouteArtifact?.sourceOpportunityId ?? null,
+      publicBuildGeneratedRouteTruthOwnsPostContinueSurface
+        ? plan?.generatedContractEntryArtifact?.sourceOpportunityId ??
+          null
+        : selectedCandidateRouteArtifact?.sourceOpportunityId ?? null,
     selectedArtifactDisplaySource,
     selectedRouteStaticPreGeneration:
+      !publicBuildGeneratedRouteTruthOwnsPostContinueSurface &&
       selectedCandidateRouteArtifact?.sourceOpportunityId === 'step2_static_build_paper_plane',
+    postGenerationRouteTruthOwnsSurface: publicBuildGeneratedRouteTruthOwnsPostContinueSurface,
     routeAuthorityStatus: routeAuthoritySnapshot.validationStatus,
     routeAuthoritySourceLabel: routeAuthoritySnapshot.sourceLabel,
     routeAuthorityReasons: routeAuthoritySnapshot.rejectionReasons,
@@ -25839,7 +25890,11 @@ export function SandboxConciergePage({
         )}
         <div className="step2-night-options">
           <p className="step2-night-options-label">
-            {publicSurpriseRouteChoiceVisible ? 'Available routes' : "Choose tonight's direction"}
+            {publicBuildGeneratedRouteTruthOwnsPostContinueSurface
+              ? 'Generated route'
+              : publicSurpriseRouteChoiceVisible
+                ? 'Available routes'
+                : "Choose tonight's direction"}
           </p>
           {publicSurpriseEmptyStateVisible && (
             <p className="preview-notice-copy">
@@ -25848,6 +25903,7 @@ export function SandboxConciergePage({
           )}
           {isBuildWrapperActive &&
             selectedBuildAnchor &&
+            !publicBuildGeneratedRouteTruthOwnsPostContinueSurface &&
             candidateRouteArtifactsForDisplay.length === 0 &&
             !buildProviderFallbackPreviewVisible && (
             <div className="preview-notice draft-feedback">
@@ -25932,6 +25988,16 @@ export function SandboxConciergePage({
               )}
             >
               <summary>Build provider diagnostics</summary>
+              <div>providerState: {publicBuildProviderDiagnostics.providerState}</div>
+              <div>
+                providerDiagnosticsAvailable:{' '}
+                {String(publicBuildProviderDiagnostics.providerDiagnosticsAvailable)}
+              </div>
+              <div>providerSettled: {String(publicBuildProviderDiagnostics.providerSettled)}</div>
+              <div>
+                countsRepresentSettledProvider:{' '}
+                {String(publicBuildProviderDiagnostics.countsRepresentSettledProvider)}
+              </div>
               <div>providerEligible: {String(publicBuildProviderDiagnostics.providerEligible)}</div>
               <div>sourceMode: {publicBuildProviderDiagnostics.sourceMode}</div>
               <div>
@@ -25948,6 +26014,10 @@ export function SandboxConciergePage({
               <div>coordinatesMissing: {String(publicBuildProviderDiagnostics.coordinatesMissing)}</div>
               <div>providerRecordFound: {String(publicBuildProviderDiagnostics.providerRecordFound)}</div>
               <div>staticFallbackUsed: {String(publicBuildProviderDiagnostics.staticFallbackUsed)}</div>
+              <div>
+                staticPreGenerationCandidateVisible:{' '}
+                {String(publicBuildProviderDiagnostics.staticPreGenerationCandidateVisible)}
+              </div>
               <div>visibleMergeEligible: {String(publicBuildProviderDiagnostics.visibleMergeEligible)}</div>
               <div>
                 fieldProxyFetchAttempted:{' '}
@@ -25957,7 +26027,10 @@ export function SandboxConciergePage({
                 fieldProxyFetchAttemptedCount:{' '}
                 {publicBuildProviderDiagnostics.fieldProxyFetchAttemptedCount}
               </div>
-              <div>providerCallCount: {publicBuildProviderDiagnostics.providerCallCount}</div>
+              <div>
+                providerCallCount:{' '}
+                {publicBuildProviderDiagnostics.providerCallCount ?? 'pending'}
+              </div>
               <div>
                 attemptedLabels:{' '}
                 {publicBuildProviderDiagnostics.attemptedLabels.length > 0
@@ -25974,13 +26047,13 @@ export function SandboxConciergePage({
               </div>
               <div>
                 mergedUniqueResultCount:{' '}
-                {publicBuildProviderDiagnostics.mergedUniqueResultCount}
+                {publicBuildProviderDiagnostics.mergedUniqueResultCount ?? 'pending'}
               </div>
               <div>
                 rolePoolCounts:{' '}
-                start={publicBuildProviderDiagnostics.rolePoolCounts.start}, highlight=
-                {publicBuildProviderDiagnostics.rolePoolCounts.highlight}, windDown=
-                {publicBuildProviderDiagnostics.rolePoolCounts.windDown}
+                {publicBuildProviderDiagnostics.rolePoolCounts
+                  ? `start=${publicBuildProviderDiagnostics.rolePoolCounts.start}, highlight=${publicBuildProviderDiagnostics.rolePoolCounts.highlight}, windDown=${publicBuildProviderDiagnostics.rolePoolCounts.windDown}`
+                  : 'pending'}
               </div>
             </details>
           )}
@@ -26110,6 +26183,10 @@ export function SandboxConciergePage({
                 selectedRouteStaticPreGeneration:{' '}
                 {String(publicBuildReviewGatingDiagnostics.selectedRouteStaticPreGeneration)}
               </div>
+              <div>
+                postGenerationRouteTruthOwnsSurface:{' '}
+                {String(publicBuildReviewGatingDiagnostics.postGenerationRouteTruthOwnsSurface)}
+              </div>
               <div>routeAuthorityStatus: {publicBuildReviewGatingDiagnostics.routeAuthorityStatus}</div>
               <div>
                 routeAuthorityReasons:{' '}
@@ -26143,7 +26220,59 @@ export function SandboxConciergePage({
             </details>
           )}
           <div className="step2-night-options-grid">
-            {(publicSurpriseRouteChoiceVisible
+            {publicBuildGeneratedRouteTruthOwnsPostContinueSurface && canonicalRouteArtifact && (
+              <button
+                type="button"
+                className="district-card step2-night-option selected"
+                data-id8-route-card-artifact-id={
+                  canonicalRouteArtifact.planSnapshot.selectedCandidateRouteArtifactId
+                }
+                data-id8-route-card-source-opportunity-id={
+                  plan?.generatedContractEntryArtifact?.sourceOpportunityId ?? 'generated_final_route'
+                }
+                data-id8-route-card-display-source="build_generated_final_route"
+                aria-pressed="true"
+                disabled
+              >
+                <h5 className="step2-night-option-anchor-title">
+                  {canonicalRouteArtifact.finalRoute.routeHeadline}
+                </h5>
+                <p className="step2-night-option-flavor-line">
+                  {canonicalRouteArtifact.finalRoute.routeSummary}
+                </p>
+                <div className="step2-night-option-traits">
+                  <span className="step2-night-option-trait">Generated</span>
+                  <span className="step2-night-option-trait">Final route truth</span>
+                </div>
+                <div className="step2-night-option-story-spine">
+                  {(['start', 'highlight', 'windDown'] as const).map((role) => {
+                    const finalStop =
+                      canonicalRouteArtifact.finalRoute.stops.find((stop) => stop.role === role) ??
+                      null
+                    const roleLabel = role === 'windDown' ? 'Wind-down' : role === 'highlight' ? 'Highlight' : 'Start'
+                    return (
+                      <div
+                        key={`build_generated_final_route_${role}`}
+                        className={`step2-night-option-story-row${role === 'highlight' ? ' highlight' : ''}`}
+                      >
+                        <span className="step2-night-option-story-role">{roleLabel}</span>
+                        <span className="step2-night-option-story-stop">
+                          {finalStop?.displayName ?? 'Selected stop'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+                <p className="step2-night-option-context">
+                  {`Mostly in ${canonicalRouteArtifact.finalRoute.location || city.trim()}`}
+                </p>
+                <p className="step2-night-option-match">Generated route ready for review</p>
+                <p className="step2-night-option-match">
+                  {canonicalRouteArtifact.selectedClusterConfirmation}
+                </p>
+              </button>
+            )}
+            {!publicBuildGeneratedRouteTruthOwnsPostContinueSurface && (publicSurpriseRouteChoiceVisible
               ? publicSurpriseSelectableCardModels
               : curatePrimaryCardDisplay.models
             ).map((cardModel) => {
