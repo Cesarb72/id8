@@ -21568,7 +21568,10 @@ export function SandboxConciergePage({
     isBuildWrapperActive && buildPreGenerationSelectionReady && loading,
   )
   const buildSelectedCardTruthReady = Boolean(
-    !isBuildWrapperActive || buildReviewTruthEligible || buildGenerationInProgress,
+    !isBuildWrapperActive ||
+      buildReviewTruthEligible ||
+      buildPreGenerationSelectionReady ||
+      buildGenerationInProgress,
   )
   const showPrimaryContinueAction = Boolean(
     !coffeeBooksCommittedRouteSummarySuppressed &&
@@ -21781,7 +21784,8 @@ export function SandboxConciergePage({
     }
     if (
       isBuildWrapperActive &&
-      !buildReviewTruthEligible
+      !buildReviewTruthEligible &&
+      !buildPreGenerationSelectionReady
     ) {
       setError('Build route review is still parked until generated authority is lock-ready.')
       return
