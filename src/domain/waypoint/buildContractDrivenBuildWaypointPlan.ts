@@ -176,18 +176,6 @@ export async function buildContractDrivenBuildWaypointPlan(
     },
   )
 
-  if (input.buildAnchorTruthContract) {
-    const generatedArtifactAnchorValidation = validateContractEntryArtifactBuildAnchor(
-      input.buildAnchorTruthContract,
-      result.contractEntryArtifact,
-    )
-    if (generatedArtifactAnchorValidation.status === 'invalid') {
-      throw new Error(
-        `Required anchor could not be preserved in generated route artifact: ${generatedArtifactAnchorValidation.reasons.join(',')}`,
-      )
-    }
-  }
-
   const preLineage = {
     expectedDirectionId: input.selectedDirectionContract.id,
     actualDirectionId: result.intentProfile.selectedDirectionContext?.directionId ?? null,
