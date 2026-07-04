@@ -21753,9 +21753,11 @@ export function SandboxConciergePage({
   const showTryAnotherAction = isSurpriseWrapperActive
   const showReturnToCurateDiscoveryAction = curatePreviewPhaseActive
   const selectedRouteArtifactIdForGeneration =
-    selectedRouteArtifact?.source === 'candidate'
-      ? selectedRouteArtifact.candidateArtifactId ?? null
-      : null
+    isBuildWrapperActive
+      ? selectedCandidateRouteArtifact?.id ?? null
+      : selectedRouteArtifact?.source === 'candidate'
+        ? selectedRouteArtifact.candidateArtifactId ?? null
+        : null
   const handleReturnToCurateDiscovery = useCallback(() => {
     if (!isCurateWrapperActive) {
       return
