@@ -6,6 +6,7 @@ import {
   validateRuntimeRouteBuildAnchor,
   type BuildAnchorTruthContract,
 } from '../artifacts/buildAnchorTruthContract'
+import { buildFinalRoute } from '../artifacts/runtimeRouteProjection'
 import { buildRouteShapeContract } from '../arc/directionPlanning'
 import type {
   DirectionContractValidationResult,
@@ -15,7 +16,7 @@ import type {
 import type { DirectionContractBuildability } from '../bearings/assessDirectionContractBuildability'
 import type { CanonicalInterpretationBundle } from '../interpretation/buildCanonicalInterpretationBundle'
 import { runGeneratePlan, type GeneratePlanResult, type RunGeneratePlanOptions } from '../runGeneratePlan'
-import type { ArcCandidate } from '../types/arc'
+import type { ArcCandidate, ScoredVenue } from '../types/arc'
 import type {
   ConciergeIntent,
   ContractConstraints,
@@ -29,13 +30,15 @@ import type {
   RouteShapeContract,
   VibeAnchor,
 } from '../types/intent'
-import type { Itinerary, UserStopRole } from '../types/itinerary'
+import type { Itinerary, ItineraryStop, UserStopRole } from '../types/itinerary'
 import type { RuntimeRouteArtifact } from '../artifacts/runtimeRouteArtifact'
 import type { SourceMode } from '../types/sourceMode'
 import type { StarterPack } from '../types/starterPack'
 import type { ExperienceLens } from '../types/experienceLens'
 import type {
+  CanonicalPlanningStopIdentityLike,
   FullStopRealityContractOutcome,
+  PostPlannerCommitParityStagesResult,
   RunPostPlannerCommitParityStagesDependencies,
   StrongCurationTastePassResult,
 } from './postPlannerCommitParity'
@@ -130,6 +133,286 @@ function assertCompatibilityProjectionNotMutated(params: {
   }
 }
 
+function roleToArcRole(
+  role: Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>,
+): ArcCandidate['stops'][number]['role'] {
+  if (role === 'start') {
+    return 'warmup'
+  }
+  if (role === 'highlight') {
+    return 'peak'
+  }
+  return 'cooldown'
+}
+
+function getRoleTitle(role: UserStopRole): ItineraryStop['title'] {
+  if (role === 'start') {
+    return 'Start'
+  }
+  if (role === 'highlight') {
+    return 'Highlight'
+  }
+  if (role === 'surprise') {
+    return 'Surprise'
+  }
+  return 'Wind Down'
+}
+
+function findRequiredAnchorSource(params: {
+  contract: BuildAnchorTruthContract
+  itinerary: Itinerary
+  scoredVenues: ScoredVenue[]
+}): {
+  itineraryStop?: ItineraryStop
+  scoredVenue?: ScoredVenue
+} {
+  return {
+    itineraryStop: params.itinerary.stops.find(
+      (stop) => stop.venueId === params.contract.canonicalVenueId,
+    ),
+    scoredVenue: params.scoredVenues.find(
+      (candidate) => candidate.venue.id === params.contract.canonicalVenueId,
+    ),
+  }
+}
+
+function buildRequiredAnchorItineraryStop(params: {
+  contract: BuildAnchorTruthContract
+  currentRoleStop: ItineraryStop
+  sourceStop?: ItineraryStop
+  sourceCandidate?: ScoredVenue
+}): ItineraryStop {
+  const { contract, currentRoleStop, sourceStop, sourceCandidate } = params
+  const venue = sourceCandidate?.venue
+  const displayName = contract.displayName ?? venue?.name ?? sourceStop?.venueName ?? contract.canonicalVenueId
+  const latitude = contract.coordinates?.latitude ?? venue?.source.latitude ?? sourceStop?.latitude ?? currentRoleStop.latitude
+  const longitude =
+    contract.coordinates?.longitude ?? venue?.source.longitude ?? sourceStop?.longitude ?? currentRoleStop.longitude
+
+  return {
+    ...currentRoleStop,
+    id: `${contract.requiredRole}:${contract.canonicalVenueId}`,
+    role: contract.requiredRole,
+    title: getRoleTitle(contract.requiredRole),
+    venueId: contract.canonicalVenueId,
+    venueName: displayName,
+    formattedAddress:
+      venue?.source.formattedAddress ?? sourceStop?.formattedAddress ?? currentRoleStop.formattedAddress,
+    ...(latitude !== undefined ? { latitude } : {}),
+    ...(longitude !== undefined ? { longitude } : {}),
+    city: venue?.city ?? sourceStop?.city ?? currentRoleStop.city,
+    category: venue?.category ?? sourceStop?.category ?? currentRoleStop.category,
+    subcategory: venue?.subcategory ?? sourceStop?.subcategory ?? currentRoleStop.subcategory,
+    priceTier: venue?.priceTier ?? sourceStop?.priceTier ?? currentRoleStop.priceTier,
+    tags: venue?.tags ?? sourceStop?.tags ?? currentRoleStop.tags,
+    vibeTags: venue?.vibeTags ?? sourceStop?.vibeTags ?? currentRoleStop.vibeTags,
+    neighborhood: venue?.neighborhood ?? sourceStop?.neighborhood ?? currentRoleStop.neighborhood,
+    driveMinutes: venue?.driveMinutes ?? sourceStop?.driveMinutes ?? currentRoleStop.driveMinutes,
+    durationClass: venue?.durationProfile.durationClass ?? sourceStop?.durationClass ?? currentRoleStop.durationClass,
+    estimatedDurationMinutes:
+      venue?.durationProfile.estimatedMinutes ??
+      sourceStop?.estimatedDurationMinutes ??
+      currentRoleStop.estimatedDurationMinutes,
+    estimatedDurationLabel: sourceStop?.estimatedDurationLabel ?? currentRoleStop.estimatedDurationLabel,
+    subtitle: sourceStop?.subtitle ?? venue?.shortDescription ?? currentRoleStop.subtitle,
+    imageUrl: venue?.imageUrl ?? sourceStop?.imageUrl ?? currentRoleStop.imageUrl,
+    selectedBecause:
+      sourceStop?.selectedBecause ??
+      currentRoleStop.selectedBecause ??
+      `Preserved required Build anchor as ${contract.requiredRole}.`,
+    stopInsider: sourceStop?.stopInsider ?? currentRoleStop.stopInsider,
+  }
+}
+
+function buildRequiredAnchorCanonicalIdentity(params: {
+  contract: BuildAnchorTruthContract
+  replacementStop: ItineraryStop
+  existingIdentity?: CanonicalPlanningStopIdentityLike
+  sourceCandidate?: ScoredVenue
+}): CanonicalPlanningStopIdentityLike | null {
+  const { contract, replacementStop, existingIdentity, sourceCandidate } = params
+  const latitude =
+    contract.coordinates?.latitude ??
+    sourceCandidate?.venue.source.latitude ??
+    replacementStop.latitude ??
+    existingIdentity?.latitude
+  const longitude =
+    contract.coordinates?.longitude ??
+    sourceCandidate?.venue.source.longitude ??
+    replacementStop.longitude ??
+    existingIdentity?.longitude
+  const providerRecordId =
+    contract.providerRecordId ??
+    sourceCandidate?.venue.source.providerRecordId ??
+    existingIdentity?.providerRecordId
+  const addressLine =
+    sourceCandidate?.venue.source.formattedAddress ??
+    replacementStop.formattedAddress ??
+    existingIdentity?.addressLine
+
+  if (
+    !providerRecordId ||
+    !addressLine ||
+    typeof latitude !== 'number' ||
+    typeof longitude !== 'number'
+  ) {
+    return null
+  }
+
+  return {
+    displayName: contract.displayName ?? sourceCandidate?.venue.name ?? replacementStop.venueName,
+    providerRecordId,
+    latitude,
+    longitude,
+    addressLine,
+    city: sourceCandidate?.venue.city ?? replacementStop.city ?? existingIdentity?.city ?? '',
+    neighborhood:
+      sourceCandidate?.venue.neighborhood ??
+      replacementStop.neighborhood ??
+      existingIdentity?.neighborhood ??
+      '',
+  }
+}
+
+function replaceRequiredAnchorArcStop(params: {
+  selectedArc: ArcCandidate
+  contract: BuildAnchorTruthContract
+  sourceCandidate?: ScoredVenue
+}): ArcCandidate {
+  const targetArcRole = roleToArcRole(params.contract.requiredRole)
+  return {
+    ...params.selectedArc,
+    stops: params.selectedArc.stops.map((stop) => {
+      if (stop.role !== targetArcRole) {
+        return stop
+      }
+      if (params.sourceCandidate) {
+        return {
+          ...stop,
+          scoredVenue: {
+            ...stop.scoredVenue,
+            venue: params.sourceCandidate.venue,
+          },
+        }
+      }
+      return {
+        ...stop,
+        scoredVenue: {
+          ...stop.scoredVenue,
+          venue: {
+            ...stop.scoredVenue.venue,
+            id: params.contract.canonicalVenueId,
+            name: params.contract.displayName ?? stop.scoredVenue.venue.name,
+            ...(params.contract.providerRecordId
+              ? {
+                  source: {
+                    ...stop.scoredVenue.venue.source,
+                    providerRecordId: params.contract.providerRecordId,
+                  },
+                }
+              : {}),
+          },
+        },
+      }
+    }),
+  }
+}
+
+function preserveRequiredBuildAnchorInParity(params: {
+  parity: PostPlannerCommitParityStagesResult
+  contract: BuildAnchorTruthContract
+  selectedDirectionId: string
+  city: string
+  persona: PersonaMode
+  vibe: VibeAnchor
+}): PostPlannerCommitParityStagesResult {
+  const runtimeAnchorValidation = validateRuntimeRouteBuildAnchor(
+    params.contract,
+    params.parity.nextFinalRoute,
+  )
+  if (runtimeAnchorValidation.status !== 'invalid') {
+    return params.parity
+  }
+
+  const currentRoleStop = params.parity.canonicalItinerary.stops.find(
+    (stop) => stop.role === params.contract.requiredRole,
+  )
+  if (!currentRoleStop) {
+    return params.parity
+  }
+
+  const source = findRequiredAnchorSource({
+    contract: params.contract,
+    itinerary: params.parity.canonicalItinerary,
+    scoredVenues: params.parity.strongCurationPass.scoredVenues,
+  })
+  const replacementStop = buildRequiredAnchorItineraryStop({
+    contract: params.contract,
+    currentRoleStop,
+    sourceStop: source.itineraryStop,
+    sourceCandidate: source.scoredVenue,
+  })
+  const replacementIdentity = buildRequiredAnchorCanonicalIdentity({
+    contract: params.contract,
+    replacementStop,
+    existingIdentity: params.parity.anchoredPlan.canonicalStopByRole[params.contract.requiredRole],
+    sourceCandidate: source.scoredVenue,
+  })
+  if (!replacementIdentity) {
+    return params.parity
+  }
+
+  const canonicalItinerary: Itinerary = {
+    ...params.parity.canonicalItinerary,
+    stops: params.parity.canonicalItinerary.stops.map((stop) =>
+      stop.role === params.contract.requiredRole ? replacementStop : stop,
+    ),
+  }
+  const selectedArc = replaceRequiredAnchorArcStop({
+    selectedArc: params.parity.anchoredPlan.selectedArc,
+    contract: params.contract,
+    sourceCandidate: source.scoredVenue,
+  })
+  const anchoredPlan: FullStopRealityContractOutcome = {
+    ...params.parity.anchoredPlan,
+    selectedArc,
+    itinerary: canonicalItinerary,
+    canonicalStopByRole: {
+      ...params.parity.anchoredPlan.canonicalStopByRole,
+      [params.contract.requiredRole]: replacementIdentity,
+    },
+  }
+  const nextFinalRoute = buildFinalRoute({
+    itinerary: canonicalItinerary,
+    canonicalStopByRole: anchoredPlan.canonicalStopByRole,
+    selectedDirectionId: params.selectedDirectionId,
+    city: params.city,
+    persona: params.persona,
+    vibe: params.vibe,
+    activeRole: 'start',
+    mode: 'build',
+    routeHeadline: params.parity.nextFinalRoute.routeHeadline,
+    routeSummary: params.parity.nextFinalRoute.routeSummary,
+  })
+  if (!nextFinalRoute) {
+    return params.parity
+  }
+  const repairedRuntimeAnchorValidation = validateRuntimeRouteBuildAnchor(
+    params.contract,
+    nextFinalRoute,
+  )
+  if (repairedRuntimeAnchorValidation.status === 'invalid') {
+    return params.parity
+  }
+
+  return {
+    ...params.parity,
+    anchoredPlan,
+    canonicalItinerary,
+    nextFinalRoute,
+  }
+}
+
 export async function buildContractDrivenBuildWaypointPlan(
   input: BuildContractDrivenWaypointPlanInput,
 ): Promise<BuildContractDrivenWaypointPlanResult> {
@@ -186,7 +469,7 @@ export async function buildContractDrivenBuildWaypointPlan(
     throw new Error('Route drifted from selected direction contract. Direction context was not preserved.')
   }
 
-  const parity = await runPostPlannerCommitParityStages(
+  const parityBeforeBuildAnchorPreservation = await runPostPlannerCommitParityStages(
     {
       result,
       contractConstraints: input.canonicalInterpretationBundle.contractConstraints,
@@ -208,6 +491,16 @@ export async function buildContractDrivenBuildWaypointPlan(
         }),
     },
   )
+  const parity = input.buildAnchorTruthContract
+    ? preserveRequiredBuildAnchorInParity({
+        parity: parityBeforeBuildAnchorPreservation,
+        contract: input.buildAnchorTruthContract,
+        selectedDirectionId: input.selectedDirectionId,
+        city: input.city,
+        persona: input.persona,
+        vibe: input.vibe,
+      })
+    : parityBeforeBuildAnchorPreservation
 
   if (input.buildAnchorTruthContract) {
     const runtimeAnchorValidation = validateRuntimeRouteBuildAnchor(
