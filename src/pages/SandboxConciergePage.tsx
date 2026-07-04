@@ -17081,22 +17081,25 @@ export function SandboxConciergePage({
       !plan?.generatedContractEntryArtifact ||
       !renderOnlyFinalRoute ||
       !selectedBuildAnchor?.venueId ||
-      !selectedCandidateRouteArtifact
+      !plan.selectedCandidateRouteArtifactId
     ) {
       return null
     }
     const selectedDirectionMatches =
       !selectedDirectionId || selectedDirectionId === plan.selectedDirectionContract.id
+    const selectedCandidateMatches =
+      !selectedCandidateRouteArtifact ||
+      plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id
     const generatedSelectionMatches =
-      plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id &&
       plan.selectedDirectionContract.id === renderOnlyFinalRoute.selectedDirectionId &&
-      selectedDirectionMatches
+      selectedDirectionMatches &&
+      selectedCandidateMatches
     if (!generatedSelectionMatches) {
       return null
     }
     return {
       artifact: plan.generatedContractEntryArtifact,
-      selectedCandidateArtifact: selectedCandidateRouteArtifact,
+      selectedCandidateArtifact: selectedCandidateRouteArtifact ?? null,
       selectedArtifactId: plan.generatedContractEntryArtifact.id,
       selectedDirectionId: plan.selectedDirectionContract.id,
       finalRoute: renderOnlyFinalRoute,

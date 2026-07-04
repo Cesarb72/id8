@@ -270,15 +270,19 @@ function buildItinerary(): Itinerary {
 
 try {
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
+  const waypointSource = readFileSync(
+    'src/domain/waypoint/buildContractDrivenBuildWaypointPlan.ts',
+    'utf8',
+  )
   const routeAuthoritySource = readFileSync(
     'src/app/services/routeAuthority/routeAuthorityService.ts',
     'utf8',
   )
   const runSummary = readJson<TechRunSummary>(
-    'tmp/phase4-runs/2026-07-04T06-08-59-563Z/run-summary.json',
+    'tmp/phase4-runs/2026-07-04T08-13-45-565Z/run-summary.json',
   )
   const diagnosticsSettle = readJson<TechDiagnosticsSettle>(
-    'tmp/phase4-runs/2026-07-04T06-08-59-563Z/diagnostics-settle.json',
+    'tmp/phase4-runs/2026-07-04T08-13-45-565Z/diagnostics-settle.json',
   )
   const settledSnapshot = last(diagnosticsSettle)
   const reviewDiagnostics = settledSnapshot.reviewGatingDiagnostics ?? runSummary.routeAuthority
@@ -329,6 +333,23 @@ try {
     'const buildGeneratedCanonicalHandoff = useMemo(() => {',
     'const nonBuildGeneratedCanonicalHandoff = useMemo(() => {',
   )
+  const generatedCanonicalHandoffGuardBlock = sourceSlice(
+    generatedCanonicalHandoffBlock,
+    'if (',
+    'const selectedDirectionMatches =',
+  )
+  const routeAuthoritySnapshotBlock = sourceSlice(
+    sandboxSource,
+    'const routeAuthoritySnapshot = useMemo(() => {',
+    'const canonicalRouteArtifact = useMemo<CanonicalRouteArtifact | null>',
+  )
+  const waypointGeneratedReturnPresent =
+    waypointSource.includes('const postParityContractEntryArtifact = buildContractEntryArtifactFromGeneration({') &&
+    waypointSource.includes('return {') &&
+    waypointSource.includes('result,') &&
+    waypointSource.includes('...parity,') &&
+    waypointSource.includes('postParityContractEntryArtifact,') &&
+    waypointSource.includes('routeShapeContract,')
 
   assert(
     includesAll(providerGenerationCandidateBlock, [
@@ -392,10 +413,27 @@ try {
     includesAll(generatedCanonicalHandoffBlock, [
       '!plan?.generatedContractEntryArtifact',
       '!renderOnlyFinalRoute',
-      '!selectedCandidateRouteArtifact',
+      '!plan.selectedCandidateRouteArtifactId',
       'plan.selectedCandidateRouteArtifactId === selectedCandidateRouteArtifact.id',
     ]),
-    'Build canonical handoff must still require generated artifact, renderOnlyFinalRoute, and selected input id parity.',
+    'Build canonical handoff must require generated artifact, renderOnlyFinalRoute, and stored selected input id parity.',
+  )
+  assert(
+    !generatedCanonicalHandoffGuardBlock.includes('!selectedCandidateRouteArtifact'),
+    'Generated Build canonical handoff must not require the provider-shadow candidate object to remain present after generation.',
+  )
+  assert(
+    includesAll(routeAuthoritySnapshotBlock, [
+      'buildGeneratedCanonicalHandoff?.artifact ?? generatedBuildContractEntryArtifact',
+      'buildGeneratedCanonicalHandoff?.finalRoute ??',
+      'generatedBuildContractEntryArtifact && renderOnlyFinalRoute',
+      'selectedCandidateSourceKind: buildGeneratedCanonicalHandoff',
+    ]),
+    'Route authority handoff must prefer generated Build artifact/runtime truth before provider-shadow candidate context.',
+  )
+  assert(
+    waypointGeneratedReturnPresent,
+    'buildContractDrivenBuildWaypointPlan must return generated contract artifact plus parity final route fields.',
   )
   assert(
     includesAll(routeAuthoritySource, [
@@ -470,42 +508,45 @@ try {
     },
     {
       row: 4,
-      label: 'runGeneratePlan returned',
-      yes:
-        runSummary.buildContractDrivenBuildWaypointPlanInvoked === true &&
-        settledSnapshot.routeSummary?.source === 'candidate',
+      label: 'buildContractDrivenBuildWaypointPlan returned',
+      yes: waypointGeneratedReturnPresent,
     },
     {
       row: 5,
-      label: 'plan.generatedContractEntryArtifact present',
-      yes:
-        buildPlanGenerationBlock.includes('postParityContractEntryArtifact = waypointPlan.postParityContractEntryArtifact') &&
-        successStorageBlock.includes('generatedContractEntryArtifact: postParityContractEntryArtifact'),
+      label: 'buildContractDriven result has generated ContractEntryArtifact',
+      yes: waypointGeneratedReturnPresent,
     },
     {
       row: 6,
+      label: 'buildContractDriven result has finalRoute / RuntimeRouteArtifact-compatible truth',
+      yes:
+        waypointGeneratedReturnPresent &&
+        buildPlanGenerationBlock.includes('nextFinalRoute = waypointPlan.nextFinalRoute'),
+    },
+    {
+      row: 7,
       label: 'setPlan called',
       yes: successStorageBlock.includes('setPlan({'),
     },
     {
-      row: 7,
+      row: 8,
       label: 'updateRenderOnlyFinalRoute called',
       yes: successStorageBlock.includes('updateRenderOnlyFinalRoute(nextFinalRoute)'),
     },
     {
-      row: 8,
+      row: 9,
       label: 'finalRoute stored',
       yes:
         buildPlanGenerationBlock.includes('nextFinalRoute = waypointPlan.nextFinalRoute') &&
         successStorageBlock.includes('updateRenderOnlyFinalRoute(nextFinalRoute)'),
     },
     {
-      row: 9,
+      row: 10,
       label: 'routeAuthority input is runtime route',
       yes: promotedSnapshot.sourceLabel === 'contract_entry_artifact.runtime_route_artifact',
     },
     {
-      row: 10,
+      row: 11,
       label: 'lockInputAvailable true',
       yes: promotedLockInput.ok === true,
     },
@@ -559,8 +600,9 @@ try {
     },
     C_wrapperMappingDropsGeneratedArtifact: {
       status: 'ruled_out_after_fix',
-      buildContractDrivenBuildWaypointPlanReturned: rows[2].yes,
+      buildContractDrivenBuildWaypointPlanReturned: rows[3].yes,
       buildContractDrivenResultHasContractEntryArtifact: rows[4].yes,
+      buildContractDrivenResultHasFinalRoute: rows[5].yes,
       generatePlanReturned: rows[1].yes,
       generatePlanResultHasGeneratedContractEntryArtifact: rows[4].yes,
       mappingDropPoint: null,
@@ -598,10 +640,10 @@ try {
     G_stateStorageMissingHandoff: {
       status: 'ruled_out_after_fix',
       generatedContractEntryArtifactExistsBeforeStorage: rows[4].yes,
-      setPlanCalled: rows[5].yes,
-      updateRenderOnlyFinalRouteCalled: rows[6].yes,
-      finalRouteStored: rows[7].yes,
-      canonicalRouteArtifactFinalRouteAvailable: rows[9].yes,
+      setPlanCalled: rows[6].yes,
+      updateRenderOnlyFinalRouteCalled: rows[7].yes,
+      finalRouteStored: rows[8].yes,
+      canonicalRouteArtifactFinalRouteAvailable: rows[10].yes,
     },
     H_runnerSurfaceExtractionMismatch: {
       status: 'captured_symptom_not_root',
@@ -631,17 +673,18 @@ try {
     generatePlanReturned: rows[1].yes,
     generatePlanThrownMessage: null,
     buildContractDrivenBuildWaypointPlanCalled: rows[2].yes,
-    buildContractDrivenBuildWaypointPlanReturned: rows[2].yes,
+    buildContractDrivenBuildWaypointPlanReturned: rows[3].yes,
     buildContractDrivenResultHasContractEntryArtifact: rows[4].yes,
-    buildContractDrivenResultHasRuntimeRouteArtifact: rows[8].yes,
+    buildContractDrivenResultHasFinalRoute: rows[5].yes,
+    buildContractDrivenResultHasRuntimeRouteArtifact: rows[5].yes,
     buildContractDrivenBuildWaypointPlanEvidence: 'captured runner flag plus source call buildContractDrivenBuildWaypointPlan',
     runGeneratePlanReturned: rows[3].yes,
     runGeneratePlanReturnEvidence: 'not directly exported; inferred only from captured candidate route summary',
     runGeneratePlanThrownMessage: null,
     generatedContractEntryArtifactPresent: rows[4].yes,
-    setPlanCalled: rows[5].yes,
-    updateRenderOnlyFinalRouteCalled: rows[6].yes,
-    finalRouteStored: rows[7].yes,
+    setPlanCalled: rows[6].yes,
+    updateRenderOnlyFinalRouteCalled: rows[7].yes,
+    finalRouteStored: rows[8].yes,
     routeAuthorityInputSource: promotedSnapshot.sourceLabel,
     lockInputAvailable: promotedLockInput.ok,
     routeAuthorityRejectionReasons: authoritySnapshot.rejectionReasons,
@@ -713,6 +756,18 @@ try {
   assert(
     output.buildContractDrivenBuildWaypointPlanCalled,
     'Captured Tech path must represent buildContractDrivenBuildWaypointPlan entry.',
+  )
+  assert(
+    output.buildContractDrivenBuildWaypointPlanReturned,
+    'buildContractDrivenBuildWaypointPlan must return generated result fields.',
+  )
+  assert(
+    output.buildContractDrivenResultHasContractEntryArtifact,
+    'buildContractDrivenBuildWaypointPlan must return postParityContractEntryArtifact.',
+  )
+  assert(
+    output.buildContractDrivenResultHasFinalRoute,
+    'buildContractDrivenBuildWaypointPlan must return nextFinalRoute/finalRoute truth.',
   )
   assert(
     output.providerShadowPreGenerationNonAuthoritative,
