@@ -12273,13 +12273,57 @@ export function SandboxConciergePage({
       verifiedCityOpportunityById,
     ],
   )
+  const buildProviderGenerationCandidateArtifact = useMemo(() => {
+    if (
+      !isBuildWrapperActive ||
+      !selectedBuildAnchor?.venueId ||
+      buildAnchorMatchedCandidateArtifacts.length > 0 ||
+      !shadowBuildProviderArtifact ||
+      !shadowBuildProviderDiagnostics?.buildProviderSourceOpportunityEmitted ||
+      buildProviderInFlight
+    ) {
+      return null
+    }
+    const providerDirection = directionCards[0] ?? allDirectionCards[0] ?? null
+    if (!providerDirection) {
+      return null
+    }
+    return enrichContractEntryArtifactWithDirectionBacking({
+      artifact: {
+        ...shadowBuildProviderArtifact,
+        selection: {
+          ...shadowBuildProviderArtifact.selection,
+          directionId: providerDirection.id,
+          pocketId: providerDirection.debugMeta?.pocketId ?? providerDirection.id,
+        },
+      },
+      directionCards,
+      allDirectionCards,
+    })
+  }, [
+    allDirectionCards,
+    buildAnchorMatchedCandidateArtifacts.length,
+    buildProviderInFlight,
+    directionCards,
+    isBuildWrapperActive,
+    selectedBuildAnchor?.venueId,
+    shadowBuildProviderArtifact,
+    shadowBuildProviderDiagnostics?.buildProviderSourceOpportunityEmitted,
+  ])
+  const buildGenerationInputCandidateArtifacts = useMemo(
+    () =>
+      buildProviderGenerationCandidateArtifact
+        ? [...buildAnchorMatchedCandidateArtifacts, buildProviderGenerationCandidateArtifact]
+        : buildAnchorMatchedCandidateArtifacts,
+    [buildAnchorMatchedCandidateArtifacts, buildProviderGenerationCandidateArtifact],
+  )
   const curateDisplayArtifactsBeforeDedupe = useMemo(
     () =>
       isBuildWrapperActive && selectedBuildAnchor
-        ? buildAnchorMatchedCandidateArtifacts
+        ? buildGenerationInputCandidateArtifacts
         : step2CandidateRouteArtifacts,
     [
-      buildAnchorMatchedCandidateArtifacts,
+      buildGenerationInputCandidateArtifacts,
       isBuildWrapperActive,
       selectedBuildAnchor,
       step2CandidateRouteArtifacts,
@@ -12288,7 +12332,7 @@ export function SandboxConciergePage({
   const buildNoAnchorValidDirectionsActive = Boolean(
     isBuildWrapperActive &&
       selectedBuildAnchor &&
-      buildAnchorMatchedCandidateArtifacts.length === 0,
+      buildGenerationInputCandidateArtifacts.length === 0,
   )
   const directionBackedDisplayArtifactsPartition = useMemo(
     () => partitionContractEntryArtifactsByDirectionBacking(curateDisplayArtifactsBeforeDedupe),
@@ -12865,13 +12909,13 @@ export function SandboxConciergePage({
       isBuildWrapperActive
         ? [
             ...new Set(
-              buildAnchorMatchedCandidateArtifacts
+              buildGenerationInputCandidateArtifacts
                 .map((artifact) => artifact.selection.directionId)
                 .filter((value): value is string => Boolean(value)),
             ),
           ]
         : [],
-    [buildAnchorMatchedCandidateArtifacts, isBuildWrapperActive],
+    [buildGenerationInputCandidateArtifacts, isBuildWrapperActive],
   )
   const buildDirectionCardCount = buildDirectionCardIds.length
   const buildVisibleDirectionCardCount = buildVisibleDirectionCardIds.length
@@ -12889,6 +12933,9 @@ export function SandboxConciergePage({
   )
   const buildAnchorMatchedCandidateArtifactCount = isBuildWrapperActive
     ? buildAnchorMatchedCandidateArtifacts.length
+    : 0
+  const buildGenerationInputCandidateArtifactCount = isBuildWrapperActive
+    ? buildGenerationInputCandidateArtifacts.length
     : 0
   const buildAnchorAllowedDirectionCount = buildAnchorAllowedDirectionIds.length
   const buildAnchorCurrentDirectionAllowed = Boolean(
@@ -13081,6 +13128,12 @@ export function SandboxConciergePage({
     isBuildWrapperActive && selectedBuildAnchor?.venueId
       ? selectedCandidateRouteArtifact?.anchorRole ?? buildSelectedAnchorRequiredRole
       : null
+  const selectedBuildCandidateSourceKind =
+    isBuildWrapperActive &&
+    buildProviderGenerationCandidateArtifact &&
+    selectedCandidateRouteArtifact?.id === buildProviderGenerationCandidateArtifact.id
+      ? 'provider_shadow'
+      : 'build_static_pre_generation'
   const publicSurpriseVerifiedCardModels = useMemo(() => {
     if (!isPublicSurface || !isSurpriseWrapperActive) {
       return [] as CurateVisibleCardModel[]
@@ -15620,7 +15673,7 @@ export function SandboxConciergePage({
       return
     }
     const allowedDirectionIds = new Set(
-      buildAnchorMatchedCandidateArtifacts
+      buildGenerationInputCandidateArtifacts
         .map((artifact) => artifact.selection.directionId)
         .filter((value): value is string => Boolean(value)),
     )
@@ -15642,7 +15695,7 @@ export function SandboxConciergePage({
     }
     handleSelectDirection(firstAllowedDirectionId)
   }, [
-    buildAnchorMatchedCandidateArtifacts,
+    buildGenerationInputCandidateArtifacts,
     handleSelectDirection,
     isBuildWrapperActive,
     selectedBuildAnchor,
@@ -17154,7 +17207,7 @@ export function SandboxConciergePage({
               : selectedCandidateRouteArtifact,
             selectedCandidateSourceKind: buildGeneratedCanonicalHandoff
               ? null
-              : 'build_static_pre_generation',
+              : selectedBuildCandidateSourceKind,
             selectedAnchorVenueId: selectedBuildAnchor?.venueId ?? null,
             selectedAnchorRequiredRole: effectiveBuildSelectedAnchorRequiredRole,
             routeReplacementAdmitted: false,
@@ -17171,6 +17224,7 @@ export function SandboxConciergePage({
     renderOnlyFinalRoute,
     plan,
     selectedBuildAnchor?.venueId,
+    selectedBuildCandidateSourceKind,
     selectedCandidateRouteArtifact,
     selectedCuratePreviewCommitability?.approvedRefinementEntryPayload,
     selectedDirectionId,
@@ -18089,7 +18143,11 @@ export function SandboxConciergePage({
       candidateAdmission,
       anchorTruthContract: anchorContract,
       selectedAnchorRequiredRole: effectiveBuildSelectedAnchorRequiredRole,
-      sourceKind: 'static',
+      sourceKind: buildGeneratedCanonicalHandoff
+        ? 'static'
+        : buildSelectedCandidateAdmissionDiagnostic?.source === 'provider_shadow'
+          ? 'provider_shadow'
+          : 'static',
       routeReplacementAdmitted: false,
       buildProviderSelectionAllowed,
       buildProviderMergedIntoVisiblePool,
@@ -18101,6 +18159,7 @@ export function SandboxConciergePage({
     buildGeneratedCanonicalHandoff,
     buildProviderMergedIntoVisiblePool,
     buildProviderSelectionAllowed,
+    buildSelectedCandidateAdmissionDiagnostic?.source,
     effectiveBuildSelectedAnchorRequiredRole,
     canonicalRouteArtifact,
     city,
@@ -18125,7 +18184,8 @@ export function SandboxConciergePage({
       selectedCandidateRouteArtifact &&
       buildProviderSelectionAllowed &&
       buildProviderMergedIntoVisiblePool &&
-      buildSelectedCandidateAdmissionDiagnostic?.source === 'static' &&
+      (buildSelectedCandidateAdmissionDiagnostic?.source === 'static' ||
+        buildSelectedCandidateAdmissionDiagnostic?.source === 'provider_shadow') &&
       buildSelectedCandidateAdmissionDiagnostic.admitted,
   )
   useEffect(() => {
@@ -23135,6 +23195,10 @@ export function SandboxConciergePage({
               <div>
                 buildAnchorMatchedCandidateArtifactCount:{' '}
                 {buildAnchorMatchedCandidateArtifactCount}
+              </div>
+              <div>
+                buildGenerationInputCandidateArtifactCount:{' '}
+                {buildGenerationInputCandidateArtifactCount}
               </div>
               <div>buildPrimarySourceOpportunityCount: {step2PrimarySourceOpportunities.length}</div>
               <div>
