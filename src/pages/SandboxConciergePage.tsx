@@ -2006,6 +2006,57 @@ function getScenarioFamilyVibeLabel(family: ScenarioFamily | null): string | nul
 }
 
 type CoreTasteRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
+
+type BuildGenerationSemanticIdentity = {
+  mode: 'build'
+  anchorVenueId: string | null
+  selectedCandidateArtifactId: string | null
+  selectedCandidateSourceOpportunityId: string | null
+  selectedCandidateSourceKind: string | null
+  requiredRole: CoreTasteRole | null
+  selectedDirectionId: string | null
+  persona: string | null
+  primaryVibe: string | null
+  locationQuery: string | null
+}
+
+function normalizeBuildGenerationIdentityValue(value: string | null | undefined): string | null {
+  const normalized = value?.trim()
+  return normalized && normalized.length > 0 ? normalized : null
+}
+
+function buildBuildGenerationSemanticIdentity(params: {
+  anchorVenueId?: string | null
+  selectedCandidateArtifact?: ContractEntryArtifact | null
+  selectedCandidateSourceKind?: string | null
+  requiredRole?: CoreTasteRole | null
+  selectedDirectionId?: string | null
+  persona?: string | null
+  primaryVibe?: string | null
+  locationQuery?: string | null
+}): BuildGenerationSemanticIdentity {
+  return {
+    mode: 'build',
+    anchorVenueId: normalizeBuildGenerationIdentityValue(params.anchorVenueId),
+    selectedCandidateArtifactId: normalizeBuildGenerationIdentityValue(params.selectedCandidateArtifact?.id),
+    selectedCandidateSourceOpportunityId: normalizeBuildGenerationIdentityValue(
+      params.selectedCandidateArtifact?.sourceOpportunityId,
+    ),
+    selectedCandidateSourceKind: normalizeBuildGenerationIdentityValue(params.selectedCandidateSourceKind),
+    requiredRole: params.requiredRole ?? null,
+    selectedDirectionId: normalizeBuildGenerationIdentityValue(params.selectedDirectionId),
+    persona: normalizeBuildGenerationIdentityValue(params.persona),
+    primaryVibe: normalizeBuildGenerationIdentityValue(params.primaryVibe),
+    locationQuery: normalizeBuildGenerationIdentityValue(params.locationQuery),
+  }
+}
+
+function buildGenerationSemanticIdentityMatches(
+  expected: BuildGenerationSemanticIdentity | null,
+  current: BuildGenerationSemanticIdentity | null,
+): boolean {
+  return Boolean(expected && current && JSON.stringify(expected) === JSON.stringify(current))
+}
 const coreTasteRoles: CoreTasteRole[] = ['start', 'highlight', 'windDown']
 
 interface TasteRoleEligibilitySnapshot {
@@ -10581,6 +10632,7 @@ export function SandboxConciergePage({
   >(new Map())
   const buildProviderActiveAttemptTokenByAnchorKeyRef = useRef<Map<string, number>>(new Map())
   const buildProviderAttemptSequenceRef = useRef(0)
+  const buildGenerationSemanticIdentityRef = useRef<BuildGenerationSemanticIdentity | null>(null)
   const updateRenderOnlyFinalRoute = useCallback((nextRoute: RuntimeRouteArtifact | null) => {
     setRenderOnlyFinalRoute(nextRoute)
     setRouteVersion((current) => (nextRoute ? current + 1 : 0))
@@ -13134,6 +13186,18 @@ export function SandboxConciergePage({
     selectedCandidateRouteArtifact?.id === buildProviderGenerationCandidateArtifact.id
       ? 'provider_shadow'
       : 'build_static_pre_generation'
+  buildGenerationSemanticIdentityRef.current = isBuildWrapperActive
+    ? buildBuildGenerationSemanticIdentity({
+        anchorVenueId: selectedBuildAnchor?.venueId,
+        selectedCandidateArtifact: selectedCandidateRouteArtifact,
+        selectedCandidateSourceKind: selectedBuildCandidateSourceKind,
+        requiredRole: effectiveBuildSelectedAnchorRequiredRole,
+        selectedDirectionId,
+        persona,
+        primaryVibe,
+        locationQuery: districtLocationQuery,
+      })
+    : null
   const publicSurpriseVerifiedCardModels = useMemo(() => {
     if (!isPublicSurface || !isSurpriseWrapperActive) {
       return [] as CurateVisibleCardModel[]
@@ -14734,6 +14798,25 @@ export function SandboxConciergePage({
           activeCandidateAnchorRole:
             effectiveBuildSelectedAnchorRequiredRole ?? activeCandidateRouteArtifact?.anchorRole,
         })
+        const activeBuildCandidateSourceKind =
+          isBuildWrapperActive &&
+          buildProviderGenerationCandidateArtifact &&
+          activeCandidateRouteArtifact?.id === buildProviderGenerationCandidateArtifact.id
+            ? 'provider_shadow'
+            : 'build_static_pre_generation'
+        const buildGenerationSemanticIdentityAtStart = isBuildWrapperActive
+          ? buildBuildGenerationSemanticIdentity({
+              anchorVenueId: selectedBuildAnchor?.venueId,
+              selectedCandidateArtifact: activeCandidateRouteArtifact,
+              selectedCandidateSourceKind: activeBuildCandidateSourceKind,
+              requiredRole:
+                effectiveBuildSelectedAnchorRequiredRole ?? activeCandidateRouteArtifact?.anchorRole ?? null,
+              selectedDirectionId: activeDirectionId,
+              persona,
+              primaryVibe,
+              locationQuery: districtLocationQuery,
+            })
+          : null
         const buildAnchorRoleResolutionSource: BuildAnchorRoleResolutionSource =
           effectiveBuildSelectedAnchorRequiredRole
             ? 'explicit'
@@ -15065,7 +15148,14 @@ export function SandboxConciergePage({
           stops: generatedVisibleStops,
           stopVenueIds: nextFinalRoute.stops.map((stop) => stop.venueId),
         })
-        if (selectionEpochRef.current !== selectionEpochAtStart) {
+        const rawSelectionEpochMatches = selectionEpochRef.current === selectionEpochAtStart
+        const buildGenerationSemanticIdentityStillMatches =
+          isBuildWrapperActive &&
+          buildGenerationSemanticIdentityMatches(
+            buildGenerationSemanticIdentityAtStart,
+            buildGenerationSemanticIdentityRef.current,
+          )
+        if (!rawSelectionEpochMatches && !buildGenerationSemanticIdentityStillMatches) {
           return false
         }
         setPlan({
