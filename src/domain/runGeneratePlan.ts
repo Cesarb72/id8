@@ -3375,9 +3375,9 @@ async function runGeneratePlanInternal(
       lockApplied: userLedFinalRoleLockApplied,
       lockSource: shouldApplyUserLedFinalRoleLock ? 'user_intent_anchor' : 'none',
       triggerReason: shouldApplyUserLedFinalRoleLock
-        ? 'user_led_highlight_anchor_survived_to_arc_candidates'
+        ? `user_led_${anchorRole ?? 'unknown'}_anchor_survived_to_arc_candidates`
         : 'lock_not_eligible',
-      lockedRole: shouldApplyUserLedFinalRoleLock ? 'highlight' : undefined,
+      lockedRole: shouldApplyUserLedFinalRoleLock ? anchorRole : undefined,
       lockedVenueId:
         shouldApplyUserLedFinalRoleLock && planningIntent.anchor?.venueId
           ? planningIntent.anchor.venueId

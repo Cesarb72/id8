@@ -259,17 +259,18 @@ export function getInvalidArcCombinationReasons(
   if (!avoidsCategoryRepetition(stops, intent, lens)) {
     reasons.push('category_repetition')
   }
+  const anchorStopPresent = hasAnchorStop(stops, intent)
   const geographyInvalid = hasArcGeographyViolation(stops, intent, crewPolicy, lens)
-  if (geographyInvalid && !hasAnchorStop(stops, intent)) {
+  if (geographyInvalid && !anchorStopPresent) {
     reasons.push('geography')
   }
   if (!honorsCrewPolicy(stops, crewPolicy)) {
     reasons.push('crew_policy')
   }
-  if (!preservesArcEnergy(stops, lens)) {
+  if (!preservesArcEnergy(stops, lens) && !anchorStopPresent) {
     reasons.push('energy_progression')
   }
-  if (!hasLensStopShapeCoherence(stops)) {
+  if (!hasLensStopShapeCoherence(stops) && !anchorStopPresent) {
     reasons.push('lens_stop_shape')
   }
 

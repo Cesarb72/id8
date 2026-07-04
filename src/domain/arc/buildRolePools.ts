@@ -1744,6 +1744,13 @@ function evaluatePreferredRoleAdmission(
     return { preferredVenueId, rejectedReason: 'rejected_structure' }
   }
 
+  if (isAnchorCandidateForRole(candidate, role, intent)) {
+    return {
+      preferredVenueId,
+      admittedCandidate: candidate,
+    }
+  }
+
   if (
     !isPreferredRoleCandidateFeasible(candidate, role, lensRole, crewPolicy) ||
     isPreferredRoleSeverelyIncompatible(candidate, role)
