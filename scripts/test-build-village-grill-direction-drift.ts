@@ -95,6 +95,50 @@ type StopDiagnostic = {
   driveMinutes: number | null
 }
 
+type HostedProviderResult = {
+  providerRecordId?: string
+  displayName?: string
+  primaryType?: string
+  types?: string[]
+  location?: {
+    latitude?: number
+    longitude?: number
+  }
+}
+
+type HostedFieldTextSearchRequest = {
+  queryLabel?: string
+  responseBody?: {
+    results?: HostedProviderResult[]
+  }
+}
+
+type HostedNetworkArtifact = {
+  fieldTextSearchRequests?: HostedFieldTextSearchRequest[]
+}
+
+type StopCompatibilityDiagnostic = {
+  role: string
+  name: string
+  category: string
+  signals: string[]
+  lowPressureCompatible: boolean
+  hardIncompatibleSignals: string[]
+}
+
+type CompatibilityConditionDiagnostic = {
+  expectedDirectionIdentity: string
+  observedDirectionIdentity: string | null
+  selectedContextCompatible: boolean
+  rolesComplete: boolean
+  hardIncompatibleSignalsPresent: boolean
+  hardIncompatibleSignals: string[]
+  allCoreStopsLowPressureCompatible: boolean
+  stopCompatibility: StopCompatibilityDiagnostic[]
+  compatibilityAccepted: boolean
+  failedCondition: string | null
+}
+
 type ParityValidationDiagnostic = {
   selectedDirectionId: string | null
   selectedDirectionContextId: string | null
@@ -124,6 +168,14 @@ type VillageRedOutput = {
   directionCompatibilityAccepted: boolean
   compatibilityRule: string | null
   arbitraryIdentityDriftStillFails: boolean
+  selectedContextCompatible: boolean
+  rolesComplete: boolean
+  hardIncompatibleSignalsPresent: boolean
+  hardIncompatibleSignals: string[]
+  allCoreStopsLowPressureCompatible: boolean
+  stopCompatibility: StopCompatibilityDiagnostic[]
+  compatibilityAccepted: boolean
+  failedCondition: string | null
   generatedContractEntryArtifactProduced: boolean
   finalRouteProduced: boolean
   runtimeRouteArtifactProduced: boolean
@@ -138,8 +190,9 @@ type VillageRedOutput = {
 
 const VILLAGE_ANCHOR_ID = 'sj-village-grill'
 const VILLAGE_DIRECTION_ID = 'easy_hang'
+const HOSTED_VILLAGE_ARTIFACT_DIR = 'tmp/phase4-runs/2026-07-05T09-04-08-737Z'
 const VILLAGE_PROVIDER_SHADOW_ARTIFACT_ID =
-  'verified_build_provider_live_sj-village-grill_1783197792734'
+  'verified_build_provider_live_sj-village-grill_1783242257407'
 const DRIFT_MESSAGE = 'Route drifted from selected direction contract. Please regenerate.'
 
 const originalFetch = globalThis.fetch
@@ -154,11 +207,110 @@ function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, 'utf8')) as T
 }
 
+function normalizeSignal(value: string | null | undefined): string {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function uniqueSignals(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.map(normalizeSignal).filter(Boolean))]
+}
+
+function hostedProviderResultsByLabel(network: HostedNetworkArtifact): Map<string, HostedProviderResult[]> {
+  const byLabel = new Map<string, HostedProviderResult[]>()
+  for (const request of network.fieldTextSearchRequests ?? []) {
+    const label = request.queryLabel
+    if (!label) {
+      continue
+    }
+    byLabel.set(label, request.responseBody?.results ?? [])
+  }
+  return byLabel
+}
+
+function deriveHostedSemanticSignals(result: HostedProviderResult): string[] {
+  const rawSignals = uniqueSignals([result.primaryType, ...(result.types ?? [])])
+  const derived = new Set(rawSignals)
+  if (rawSignals.some((signal) => signal.includes('live_music'))) {
+    derived.add('live_music')
+  }
+  if (rawSignals.some((signal) => signal.includes('cocktail'))) {
+    derived.add('cocktails')
+  }
+  if (rawSignals.some((signal) => signal.includes('night_club'))) {
+    derived.add('late_night')
+  }
+  if (rawSignals.some((signal) => signal === 'bar' || signal.includes('bar_and_grill'))) {
+    derived.add('social')
+  }
+  if (rawSignals.some((signal) => signal.includes('restaurant'))) {
+    derived.add('restaurant')
+  }
+  if (rawSignals.some((signal) => signal.includes('cafe') || signal.includes('coffee'))) {
+    derived.add('cafe')
+    derived.add('tea')
+  }
+  if (rawSignals.some((signal) => signal.includes('dessert') || signal.includes('ice_cream'))) {
+    derived.add('dessert')
+  }
+  return [...derived]
+}
+
+function hostedDirectionCategory(result: HostedProviderResult, fallback: string): string {
+  const rawSignals = uniqueSignals([result.primaryType, ...(result.types ?? [])])
+  if (rawSignals.some((signal) => signal.includes('restaurant'))) {
+    return 'restaurant'
+  }
+  if (rawSignals.some((signal) => signal.includes('cafe') || signal.includes('coffee'))) {
+    return 'cafe'
+  }
+  return normalizeSignal(result.primaryType) || fallback
+}
+
+function pickHostedResult(params: {
+  byLabel: Map<string, HostedProviderResult[]>
+  label: string
+  preferHardIncompatible?: boolean
+  excludeHardIncompatible?: boolean
+}): HostedProviderResult {
+  const results = params.byLabel.get(params.label) ?? []
+  assert(results.length > 0, `Expected hosted provider results for ${params.label}.`)
+  if (params.preferHardIncompatible) {
+    const hardResult = results.find((result) => {
+      const signals = deriveHostedSemanticSignals(result)
+      return signals.some((signal) =>
+        ['activity', 'centerpiece', 'cocktails', 'jazz', 'late_night', 'live', 'live_music', 'museum', 'park'].includes(
+          signal,
+        ),
+      )
+    })
+    if (hardResult) {
+      return hardResult
+    }
+  }
+  if (params.excludeHardIncompatible) {
+    const compatibleResult = results.find((result) => {
+      const signals = deriveHostedSemanticSignals(result)
+      return !signals.some((signal) => HARD_INCOMPATIBLE_SIGNALS.has(signal))
+    })
+    if (compatibleResult) {
+      return compatibleResult
+    }
+  }
+  return results[0]
+}
+
 function makeItineraryStop(params: {
   role: UserStopRole
   venueId: string
   venueName: string
   category?: string
+  tags?: string[]
+  vibeTags?: string[]
+  latitude?: number
+  longitude?: number
   driveMinutes?: number
 }): ItineraryStop {
   return {
@@ -173,12 +325,12 @@ function makeItineraryStop(params: {
     venueId: params.venueId,
     venueName: params.venueName,
     formattedAddress: '4075 Evergreen Village Square, San Jose, CA',
-    latitude: 37.31438909671919,
-    longitude: -121.77320854504963,
+    latitude: params.latitude ?? 37.31438909671919,
+    longitude: params.longitude ?? -121.77320854504963,
     city: 'San Jose',
     category: params.category ?? 'restaurant',
-    tags: ['provider-backed', 'friends', 'evergreen'],
-    vibeTags: ['relaxed', 'social'],
+    tags: params.tags ?? ['provider-backed', 'friends', 'evergreen'],
+    vibeTags: params.vibeTags ?? ['relaxed', 'social'],
     neighborhood: 'Evergreen Village',
     driveMinutes: params.driveMinutes ?? 22,
     durationClass: 'medium',
@@ -263,44 +415,73 @@ function makeArcCandidate(stops: ItineraryStop[]): ArcCandidate {
   } as unknown as ArcCandidate
 }
 
-function buildLocalGeneratePlanResult(): GeneratePlanResult {
+function buildHostedLikeGeneratePlanResult(network: HostedNetworkArtifact): GeneratePlanResult {
+  const byLabel = hostedProviderResultsByLabel(network)
+  const hostedStart = pickHostedResult({
+    byLabel,
+    label: 'build-provider-highlight',
+    excludeHardIncompatible: true,
+  })
+  const hostedHighlight = pickHostedResult({
+    byLabel,
+    label: 'build-provider-start',
+  })
+  const hostedWindDown = pickHostedResult({
+    byLabel,
+    label: 'build-provider-winddown',
+  })
+  const hostedStartSignals = deriveHostedSemanticSignals(hostedStart)
+  const hostedHighlightSignals = deriveHostedSemanticSignals(hostedHighlight)
+  const hostedWindDownSignals = deriveHostedSemanticSignals(hostedWindDown)
   const stops = [
     makeItineraryStop({
       role: 'start',
-      venueId: 'provider-evergreen-start',
-      venueName: 'Evergreen Start Cafe',
-      category: 'cafe',
+      venueId: `provider:${hostedStart.providerRecordId ?? 'hosted-start'}`,
+      venueName: hostedStart.displayName ?? 'Hosted Start',
+      category: hostedDirectionCategory(hostedStart, 'bar'),
+      tags: ['provider-backed', 'friends', 'hosted-replay', ...hostedStartSignals],
+      vibeTags: ['social'],
+      latitude: hostedStart.location?.latitude,
+      longitude: hostedStart.location?.longitude,
       driveMinutes: 20,
     }),
     makeItineraryStop({
       role: 'highlight',
       venueId: VILLAGE_ANCHOR_ID,
-      venueName: 'Village Grill',
-      category: 'restaurant',
+      venueName: hostedHighlight.displayName ?? 'Village Grill',
+      category: hostedDirectionCategory(hostedHighlight, 'restaurant'),
+      tags: ['provider-backed', 'friends', 'hosted-replay', ...hostedHighlightSignals],
+      vibeTags: ['relaxed'],
+      latitude: hostedHighlight.location?.latitude,
+      longitude: hostedHighlight.location?.longitude,
       driveMinutes: 22,
     }),
     makeItineraryStop({
       role: 'windDown',
-      venueId: 'provider-evergreen-wind-down',
-      venueName: 'Evergreen Wind Down',
-      category: 'dessert',
+      venueId: `provider:${hostedWindDown.providerRecordId ?? 'hosted-wind-down'}`,
+      venueName: hostedWindDown.displayName ?? 'Hosted Wind Down',
+      category: hostedDirectionCategory(hostedWindDown, 'cafe'),
+      tags: ['provider-backed', 'friends', 'hosted-replay', ...hostedWindDownSignals],
+      vibeTags: ['relaxed'],
+      latitude: hostedWindDown.location?.latitude,
+      longitude: hostedWindDown.location?.longitude,
       driveMinutes: 21,
     }),
   ]
   const itinerary: Itinerary = {
     id: 'itinerary_provider_shadow_village_grill_direction_drift',
     title: 'Village Grill Friends Route',
-    summary: 'Provider-backed Village Grill route that drifts from the selected easy hang contract.',
+    summary: 'Hosted-like provider-backed Village Grill route that drifts from the selected easy hang contract.',
     city: 'San Jose',
     neighborhood: 'Evergreen Village',
-    shareSummary: 'Evergreen Start Cafe to Village Grill to Evergreen Wind Down.',
+    shareSummary: stops.map((stop) => stop.venueName).join(' to '),
     estimatedTotalLabel: 'About 2 hours',
     story: {
-      subtitle: 'Low-pressure friends route around Village Grill.',
+      subtitle: 'Hosted-like friends route around Village Grill.',
     },
     storySpine: {
       title: 'Village Grill Friends Route',
-      routeSummary: 'Evergreen Start Cafe to Village Grill to Evergreen Wind Down.',
+      routeSummary: stops.map((stop) => stop.venueName).join(' to '),
     },
     stops,
   } as Itinerary
@@ -428,6 +609,117 @@ function buildIncompatibleEasyHangRoute(): Itinerary {
   } as Itinerary
 }
 
+const HARD_INCOMPATIBLE_SIGNALS = new Set([
+  'activity',
+  'centerpiece',
+  'cocktails',
+  'jazz',
+  'late_night',
+  'live',
+  'live_music',
+  'museum',
+  'park',
+])
+
+const LOW_PRESSURE_SIGNALS = new Set([
+  'bakery',
+  'cafe',
+  'casual_american',
+  'casual-american',
+  'dessert',
+  'friends',
+  'group_friendly',
+  'group-friendly',
+  'neighborhood',
+  'provider_backed',
+  'provider-backed',
+  'relaxed',
+  'restaurant',
+  'tea',
+])
+
+function stopSignals(stop: StopDiagnostic): string[] {
+  return uniqueSignals([stop.category, ...stop.tags, ...stop.vibeTags])
+}
+
+function evaluateEasyHangIntimateCompatibility(params: {
+  selectedDirectionContext: {
+    directionId?: string
+    selectedDirectionId?: string
+    label?: string
+    archetype?: string
+    identity?: string
+  }
+  expectedDirectionIdentity: string
+  observedDirectionIdentity: string | null
+  stops: StopDiagnostic[]
+}): CompatibilityConditionDiagnostic {
+  const contextSignals = uniqueSignals([
+    params.selectedDirectionContext.directionId,
+    params.selectedDirectionContext.selectedDirectionId,
+    params.selectedDirectionContext.label,
+    params.selectedDirectionContext.archetype,
+    params.selectedDirectionContext.identity,
+  ])
+  const selectedContextCompatible =
+    contextSignals.includes('easy_hang') ||
+    contextSignals.includes('friends_cozy') ||
+    contextSignals.includes('easy_hang_night')
+  const coreStops = {
+    start: params.stops.find((stop) => stop.role === 'start'),
+    highlight: params.stops.find((stop) => stop.role === 'highlight'),
+    windDown: params.stops.find((stop) => stop.role === 'windDown'),
+  }
+  const rolesComplete = Boolean(coreStops.start && coreStops.highlight && coreStops.windDown)
+  const stopCompatibility = [coreStops.start, coreStops.highlight, coreStops.windDown]
+    .filter((stop): stop is StopDiagnostic => Boolean(stop))
+    .map((stop) => {
+      const signals = stopSignals(stop)
+      const hardIncompatibleSignals = signals.filter((signal) => HARD_INCOMPATIBLE_SIGNALS.has(signal))
+      return {
+        role: stop.role,
+        name: stop.name ?? 'unknown',
+        category: stop.category ?? 'unknown',
+        signals,
+        lowPressureCompatible: signals.some((signal) => LOW_PRESSURE_SIGNALS.has(signal)),
+        hardIncompatibleSignals,
+      }
+    })
+  const hardIncompatibleSignals = [
+    ...new Set(stopCompatibility.flatMap((stop) => stop.hardIncompatibleSignals)),
+  ]
+  const hardIncompatibleSignalsPresent = hardIncompatibleSignals.length > 0
+  const allCoreStopsLowPressureCompatible =
+    rolesComplete && stopCompatibility.every((stop) => stop.lowPressureCompatible)
+  let failedCondition: string | null = null
+  if (params.expectedDirectionIdentity !== 'easy_hang') {
+    failedCondition = 'expected_identity_not_easy_hang'
+  } else if (params.observedDirectionIdentity !== 'intimate') {
+    failedCondition = 'observed_identity_not_intimate'
+  } else if (!selectedContextCompatible) {
+    failedCondition = 'selected_context_not_easy_hang'
+  } else if (!rolesComplete) {
+    failedCondition = 'missing_core_role'
+  } else if (hardIncompatibleSignalsPresent) {
+    failedCondition = 'hard_incompatible_easy_hang_signal'
+  } else if (!allCoreStopsLowPressureCompatible) {
+    failedCondition = 'missing_low_pressure_easy_hang_signal'
+  }
+
+  return {
+    expectedDirectionIdentity: params.expectedDirectionIdentity,
+    observedDirectionIdentity: params.observedDirectionIdentity,
+    selectedContextCompatible,
+    rolesComplete,
+    hardIncompatibleSignalsPresent,
+    hardIncompatibleSignals,
+    allCoreStopsLowPressureCompatible,
+    stopCompatibility,
+    compatibilityAccepted: failedCondition === null,
+    failedCondition,
+  }
+}
+
 function buildLocalPostPlannerDependencies(params: {
   onPostPlannerCommitParityReached: () => void
   onDirectionValidation: (diagnostic: ParityValidationDiagnostic) => void
@@ -541,8 +833,12 @@ async function main(): Promise<void> {
   const waypointSource = readFileSync('src/domain/waypoint/buildContractDrivenBuildWaypointPlan.ts', 'utf8')
   const paritySource = readFileSync('src/domain/waypoint/postPlannerCommitParity.ts', 'utf8')
   const directionPlanningSource = readFileSync('src/domain/arc/directionPlanning.ts', 'utf8')
+  const rolePoolSource = readFileSync('src/domain/arc/buildRolePools.ts', 'utf8')
   const runSummary = readJson<VillageRunSummary>(
-    'tmp/phase4-runs/2026-07-04T20-43-08-748Z/run-summary.json',
+    `${HOSTED_VILLAGE_ARTIFACT_DIR}/run-summary.json`,
+  )
+  const hostedNetwork = readJson<HostedNetworkArtifact>(
+    `${HOSTED_VILLAGE_ARTIFACT_DIR}/network.json`,
   )
   const evergreenSummary = readJson<EvergreenRunSummary>(
     'tmp/phase4-runs/2026-07-04T20-42-53-291Z/run-summary.json',
@@ -589,6 +885,12 @@ async function main(): Promise<void> {
       paritySource.includes('if (!directionValidation.valid)'),
     'Expected post-planner parity to throw the selected direction drift message before final route creation.',
   )
+  assert(
+    rolePoolSource.includes('isBuildFriendsEasyHangContext') &&
+      rolePoolSource.includes('isEasyHangHardIncompatibleCandidate') &&
+      rolePoolSource.includes('excluded hard-incompatible easy-hang signals before arc assembly'),
+    'Expected Build Friends easy-hang hard-signal exclusion to run before arc assembly.',
+  )
 
   const providerSupplyHealthy =
     runSummary.canonicalId === VILLAGE_ANCHOR_ID &&
@@ -598,8 +900,14 @@ async function main(): Promise<void> {
   const providerShadowCandidateSelected = Boolean(
     runSummary.routeAuthority?.selectedArtifactId?.includes(VILLAGE_ANCHOR_ID),
   )
+  const selectedGenerationInputArtifactId =
+    runSummary.routeAuthority?.selectedArtifactId ?? VILLAGE_PROVIDER_SHADOW_ARTIFACT_ID
   assert(providerSupplyHealthy, 'Expected hosted Village artifact to show healthy provider supply.')
   assert(providerShadowCandidateSelected, 'Expected hosted Village artifact to select provider-backed candidate.')
+  assert(
+    (hostedNetwork.fieldTextSearchRequests ?? []).length === 3,
+    'Expected latest hosted Village artifact to include all three provider response bodies.',
+  )
 
   const selectedDirectionContract: DirectionPlanningSelection = {
     id: VILLAGE_DIRECTION_ID,
@@ -636,10 +944,10 @@ async function main(): Promise<void> {
     anchorDisplayName: 'Village Grill',
     candidateLineage: {
       source: 'selected_candidate_route_artifact',
-      candidateArtifactId: VILLAGE_PROVIDER_SHADOW_ARTIFACT_ID,
+      candidateArtifactId: selectedGenerationInputArtifactId,
       directionId: VILLAGE_DIRECTION_ID,
       pocketId: 'evergreen',
-      sourceOpportunityId: VILLAGE_PROVIDER_SHADOW_ARTIFACT_ID,
+      sourceOpportunityId: selectedGenerationInputArtifactId,
       anchorVenueId: VILLAGE_ANCHOR_ID,
       anchorRole: 'highlight',
       lineageSummary: 'Provider-backed Village Grill generation input',
@@ -705,8 +1013,8 @@ async function main(): Promise<void> {
       role: 'highlight',
     },
     selectedArtifactLineage: {
-      artifactId: VILLAGE_PROVIDER_SHADOW_ARTIFACT_ID,
-      sourceOpportunityId: VILLAGE_PROVIDER_SHADOW_ARTIFACT_ID,
+      artifactId: selectedGenerationInputArtifactId,
+      sourceOpportunityId: selectedGenerationInputArtifactId,
       sourceMode: 'build_provider_live',
       anchorVenueId: VILLAGE_ANCHOR_ID,
       anchorRole: 'highlight',
@@ -734,7 +1042,7 @@ async function main(): Promise<void> {
       },
     }),
     runPlanBuild: async () => {
-      const result = buildLocalGeneratePlanResult()
+      const result = buildHostedLikeGeneratePlanResult(hostedNetwork)
       runGeneratePlanReturned = true
       return result
     },
@@ -769,6 +1077,12 @@ async function main(): Promise<void> {
   })
   const generatedRouteBeforeValidation =
     parityValidationDiagnostic?.generatedRouteBeforeValidation ?? []
+  const compatibilityDiagnostic = evaluateEasyHangIntimateCompatibility({
+    selectedDirectionContext,
+    expectedDirectionIdentity: parityValidationDiagnostic?.expectedDirectionIdentity ?? VILLAGE_DIRECTION_ID,
+    observedDirectionIdentity: parityValidationDiagnostic?.observedDirectionIdentity ?? null,
+    stops: generatedRouteBeforeValidation,
+  })
   const routeContainsSelectedAnchorInRequiredRole = generatedRouteBeforeValidation.some(
     (stop) => stop.role === 'highlight' && stop.venueId === VILLAGE_ANCHOR_ID,
   )
@@ -816,6 +1130,15 @@ async function main(): Promise<void> {
         ? 'build_easy_hang_accepts_intimate_identity_when_complete_low_pressure_friends_shape_survives'
         : null,
     arbitraryIdentityDriftStillFails,
+    selectedContextCompatible: compatibilityDiagnostic.selectedContextCompatible,
+    rolesComplete: compatibilityDiagnostic.rolesComplete,
+    hardIncompatibleSignalsPresent: compatibilityDiagnostic.hardIncompatibleSignalsPresent,
+    hardIncompatibleSignals: compatibilityDiagnostic.hardIncompatibleSignals,
+    allCoreStopsLowPressureCompatible:
+      compatibilityDiagnostic.allCoreStopsLowPressureCompatible,
+    stopCompatibility: compatibilityDiagnostic.stopCompatibility,
+    compatibilityAccepted: compatibilityDiagnostic.compatibilityAccepted,
+    failedCondition: compatibilityDiagnostic.failedCondition,
     generatedContractEntryArtifactProduced,
     finalRouteProduced,
     runtimeRouteArtifactProduced,
@@ -905,32 +1228,38 @@ async function main(): Promise<void> {
     },
     causeClassification: {
       A:
-        directionIdentityMismatch && routeContainsSelectedAnchorInRequiredRole
-          ? 'supported: generated route preserves the anchor but fails direction identity validation'
+        compatibilityDiagnostic.hardIncompatibleSignalsPresent
+          ? `supported: hosted-like replay contains hard-incompatible signals (${compatibilityDiagnostic.hardIncompatibleSignals.join(',')})`
           : 'not_supported',
       B:
-        parityValidationDiagnostic?.contractBuildabilityStatus === 'strong'
-          ? 'supported: strict identity rejection applies even with strong local buildability'
+        !compatibilityDiagnostic.allCoreStopsLowPressureCompatible
+          ? 'supported: one or more core stops lack low-pressure/easy-hang-compatible signals'
           : 'not_supported',
-      C: selectedDirectionIdMismatch
-        ? 'supported'
-        : 'not_supported: selected direction ids are preserved into validation',
-      D: generatedRouteBeforeValidation.some((stop) => !stop.category)
-        ? 'supported'
-        : 'not_supported: local generated stops carry categories/tags',
-      E: directionIdentityMismatch
-        ? 'supported: Village/category-tag semantics feed observed identity inference'
-        : 'not_supported',
+      C: compatibilityDiagnostic.selectedContextCompatible
+        ? 'not_supported: selected context is recognized as easy_hang/friends_cozy'
+        : 'supported: selected context is not recognized as easy_hang/friends_cozy',
+      D:
+        parityValidationDiagnostic?.observedDirectionIdentity === 'intimate'
+          ? 'not_supported: observed identity remains intimate in hosted-like replay'
+          : `supported: observed identity is ${parityValidationDiagnostic?.observedDirectionIdentity ?? 'unknown'}`,
+      E:
+        generatedRouteBeforeValidation.length > 0
+          ? 'not_supported: latest provider response bodies are sufficient for a hosted-like replay, but the true pre-validation route is still absent'
+          : 'supported: local test still lacks hosted route details',
       F:
-        (runSummary.rolePoolCounts?.start ?? 0) <= 4 &&
-        (runSummary.mergedUniqueResultCount ?? 0) > 0
-          ? 'possible: sparse Friends supply is healthy but thinner than other passes'
+        'partially_supported: provider response bodies are available; exact pre-validation route candidate diagnostics are not captured',
+      G:
+        compatibilityDiagnostic.failedCondition &&
+        compatibilityDiagnostic.failedCondition !== 'hard_incompatible_easy_hang_signal'
+          ? 'possible: compatibility rule may be too narrow for a semantically acceptable route'
           : 'not_supported',
-      G: sourceOrProvenanceCheckedByValidator
-        ? 'supported'
-        : 'not_supported: validator source shows identity/itinerary/buildability comparison, not provider provenance',
       H:
-        'identity taxonomy compatibility now maps selected strategy easy_hang to intimate generated mood only for complete low-pressure Friends routes',
+        compatibilityDiagnostic.hardIncompatibleSignalsPresent
+          ? 'supported: generation/admission should avoid hard-incompatible stops for easy_hang'
+          : 'not_supported',
+      I: sourceOrProvenanceCheckedByValidator
+        ? 'source_inspection_risk: validator source text includes source/provider terms'
+        : 'not_supported: validator comparison is semantic, not provider provenance',
     },
   }
 
@@ -939,13 +1268,19 @@ async function main(): Promise<void> {
   assert(output.buildContractDrivenBuildWaypointPlanInvoked, 'Expected Build Waypoint planner to be invoked.')
   assert(output.runGeneratePlanReturned, 'Expected local generation result to return before parity validation.')
   assert(output.postPlannerCommitParityReached, 'Expected post-planner parity validation to be reached.')
-  assert(!output.directionValidationThrown, 'Expected easy_hang/intimate compatibility to avoid drift throw.')
-  assert(output.directionCompatibilityAccepted, 'Expected explicit easy_hang/intimate compatibility to be recorded.')
+  assert(!output.directionValidationThrown, 'Expected hosted-like Village replay to avoid direction validation throw.')
+  assert(output.directionCompatibilityAccepted, 'Expected hosted-like replay to accept explicit easy_hang/intimate compatibility.')
+  assert(output.compatibilityAccepted, 'Expected compatibility diagnostic to accept hosted-like replay after hard-signal admission filtering.')
+  assert(output.failedCondition === null, 'Expected compatibility diagnostic to have no failed condition.')
+  assert(
+    !output.hardIncompatibleSignalsPresent,
+    'Expected hard-incompatible live_music/cocktails signals to be excluded before route validation.',
+  )
   assert(output.arbitraryIdentityDriftStillFails, 'Expected arbitrary easy_hang identity drift to remain rejected.')
-  assert(output.generatedContractEntryArtifactProduced, 'Expected generated ContractEntryArtifact after compatibility.')
-  assert(output.finalRouteProduced, 'Expected finalRoute after compatibility.')
-  assert(output.runtimeRouteArtifactProduced, 'Expected RuntimeRouteArtifact after compatibility.')
-  assert(output.lockInputAvailable, 'Expected lock input after generated runtime authority.')
+  assert(output.generatedContractEntryArtifactProduced, 'Expected generated ContractEntryArtifact after compatible route validation.')
+  assert(output.finalRouteProduced, 'Expected finalRoute after compatible route validation.')
+  assert(output.runtimeRouteArtifactProduced, 'Expected RuntimeRouteArtifact after compatible route validation.')
+  assert(output.lockInputAvailable, 'Expected lock input after generated authority handoff.')
   assert(output.fetchCallCount === 0, 'Expected zero fetch calls.')
 }
 

@@ -91,6 +91,24 @@ const starterScopedSoftHighlightStarterIds = new Set([
   'coffee-books',
 ])
 
+const easyHangCompatibleContextTokens = new Set([
+  'easy_hang',
+  'friends_cozy',
+  'easy_hang_night',
+])
+
+const easyHangHardIncompatibleSignals = new Set([
+  'activity',
+  'centerpiece',
+  'cocktails',
+  'jazz',
+  'late_night',
+  'live',
+  'live_music',
+  'museum',
+  'park',
+])
+
 export function roleToLensStop(role: InternalRole): LensStopRole {
   if (role === 'warmup') {
     return 'start'
@@ -159,6 +177,71 @@ function strengthRank(value: RoleContractStrength): number {
 function contractMinCount(role: InternalRole, strictShapeEnabled: boolean): number {
   const base = role === 'peak' ? 3 : role === 'cooldown' ? 2 : 1
   return strictShapeEnabled ? base + 1 : base
+}
+
+function normalizeSemanticToken(value: unknown): string {
+  return typeof value === 'string'
+    ? value
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+    : ''
+}
+
+function buildSemanticTokenSet(values: unknown[]): Set<string> {
+  const tokens = new Set<string>()
+  for (const value of values) {
+    const normalized = normalizeSemanticToken(value)
+    if (!normalized) {
+      continue
+    }
+    tokens.add(normalized)
+    for (const part of normalized.split('_')) {
+      if (part) {
+        tokens.add(part)
+      }
+    }
+  }
+  return tokens
+}
+
+function isBuildFriendsEasyHangContext(
+  intent?: IntentProfile,
+  experienceContract?: ExperienceContract,
+): boolean {
+  if (intent?.mode !== 'build') {
+    return false
+  }
+  const persona = intent.persona ?? experienceContract?.persona
+  if (persona !== 'friends') {
+    return false
+  }
+
+  const contextTokens = buildSemanticTokenSet([
+    intent.selectedDirectionContext?.directionId,
+    intent.selectedDirectionContext?.label,
+    intent.selectedDirectionContext?.archetype,
+    intent.selectedDirectionContext?.identity,
+    intent.selectedDirectionContext?.cluster,
+  ])
+
+  return [...contextTokens].some((token) => easyHangCompatibleContextTokens.has(token))
+}
+
+function getEasyHangHardIncompatibleSignals(candidate: ScoredVenue): string[] {
+  const candidateSignals = buildSemanticTokenSet([
+    candidate.venue.category,
+    candidate.venue.subcategory,
+    ...candidate.venue.tags,
+    ...candidate.venue.vibeTags,
+  ])
+
+  return [...easyHangHardIncompatibleSignals].filter((signal) => candidateSignals.has(signal))
+}
+
+function isEasyHangHardIncompatibleCandidate(candidate: ScoredVenue): boolean {
+  return getEasyHangHardIncompatibleSignals(candidate).length > 0
 }
 
 function contractWeight(
@@ -1771,10 +1854,11 @@ function clampContractScore(value: number): number {
 function computeContractRolePressure(params: {
   candidate: ScoredVenue
   role: InternalRole
+  intent?: IntentProfile
   contractConstraints?: ContractConstraints
   experienceContract?: ExperienceContract
 }): { scoreAdjustment: number; hardReject: boolean } {
-  const { candidate, role, contractConstraints, experienceContract } = params
+  const { candidate, role, intent, contractConstraints, experienceContract } = params
   if (!contractConstraints || !experienceContract) {
     return { scoreAdjustment: 0, hardReject: false }
   }
@@ -1809,6 +1893,17 @@ function computeContractRolePressure(params: {
 
   let scoreAdjustment = 0
   let hardReject = false
+
+  if (
+    role !== 'wildcard' &&
+    isBuildFriendsEasyHangContext(intent, experienceContract) &&
+    isEasyHangHardIncompatibleCandidate(candidate)
+  ) {
+    return {
+      scoreAdjustment: -0.42,
+      hardReject: true,
+    }
+  }
 
   if (role === 'warmup') {
     scoreAdjustment += (startFit - 0.5) * 0.18
@@ -2281,6 +2376,18 @@ function pickRoleCandidates(
     }
   }
 
+  const easyHangHardSignalFiltered =
+    isBuildFriendsEasyHangContext(intent, experienceContract) &&
+    role !== 'wildcard'
+      ? roleCandidates.filter((candidate) => !isEasyHangHardIncompatibleCandidate(candidate))
+      : roleCandidates
+  if (easyHangHardSignalFiltered.length !== roleCandidates.length) {
+    roleCandidates = easyHangHardSignalFiltered
+    fallbackReason =
+      fallbackReason ??
+      `${roleContract.label} excluded hard-incompatible easy-hang signals before arc assembly.`
+  }
+
   const scopedPeakCandidateIds =
     role === 'peak'
       ? new Set(roleCandidates.map((candidate) => getScoredVenueCandidateId(candidate)))
@@ -2330,6 +2437,7 @@ function pickRoleCandidates(
         role,
         contractConstraints,
         experienceContract,
+        intent,
       }),
     ] as const),
   )
