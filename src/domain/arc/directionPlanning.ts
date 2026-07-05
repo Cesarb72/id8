@@ -660,6 +660,106 @@ export function buildRouteShapeContract(params: {
   }
 }
 
+function normalizeDirectionToken(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
+function stopHasAnyToken(
+  stop: Pick<ItineraryStop, 'category' | 'tags' | 'vibeTags'>,
+  tokens: Set<string>,
+): boolean {
+  const values = [stop.category, ...stop.tags, ...(stop.vibeTags ?? [])]
+  return values.some((value) => tokens.has(normalizeDirectionToken(value)))
+}
+
+function isEasyHangIntimateCompatibility(params: {
+  mode?: 'surprise' | 'curate' | 'build'
+  expectedDirectionIdentity: unknown
+  observedDirectionIdentity: DirectionIdentityMode
+  selectedDirectionContext?: ResolvedDirectionContext
+  itinerary: Itinerary
+  previewScenarioFamily?: string
+}): { compatible: boolean; reason: string } {
+  if (params.mode !== 'build') {
+    return { compatible: false, reason: 'not_build_mode' }
+  }
+  if (normalizeDirectionToken(params.expectedDirectionIdentity) !== 'easy_hang') {
+    return { compatible: false, reason: 'expected_identity_not_easy_hang' }
+  }
+  if (params.observedDirectionIdentity !== 'intimate') {
+    return { compatible: false, reason: 'observed_identity_not_intimate' }
+  }
+
+  const context = params.selectedDirectionContext as
+    | (ResolvedDirectionContext & {
+        directionId?: string
+        pocketId?: string
+        cluster?: string
+      })
+    | undefined
+  const contextTokens = [
+    context?.selectedDirectionId,
+    context?.directionId,
+    context?.label,
+    context?.archetype,
+    context?.cluster,
+    params.previewScenarioFamily,
+  ]
+    .map(normalizeDirectionToken)
+    .filter(Boolean)
+  const selectedEasyHang =
+    contextTokens.includes('easy_hang') ||
+    contextTokens.includes('friends_cozy') ||
+    contextTokens.some((token) => token.includes('easy hang'))
+  if (!selectedEasyHang) {
+    return { compatible: false, reason: 'selected_context_not_easy_hang' }
+  }
+
+  const start = params.itinerary.stops.find((stop) => stop.role === 'start')
+  const highlight = params.itinerary.stops.find((stop) => stop.role === 'highlight')
+  const windDown = params.itinerary.stops.find((stop) => stop.role === 'windDown')
+  if (!start || !highlight || !windDown) {
+    return { compatible: false, reason: 'missing_core_role' }
+  }
+
+  const hardIncompatibleTokens = new Set([
+    'activity',
+    'centerpiece',
+    'cocktails',
+    'jazz',
+    'late_night',
+    'live',
+    'live_music',
+    'museum',
+    'park',
+  ])
+  if (params.itinerary.stops.some((stop) => stopHasAnyToken(stop, hardIncompatibleTokens))) {
+    return { compatible: false, reason: 'hard_incompatible_easy_hang_signal' }
+  }
+
+  const lowPressureTokens = new Set([
+    'bakery',
+    'cafe',
+    'casual-american',
+    'dessert',
+    'friends',
+    'group-friendly',
+    'neighborhood',
+    'provider-backed',
+    'relaxed',
+    'restaurant',
+    'tea',
+  ])
+  const everyStopLowPressure = [start, highlight, windDown].every((stop) =>
+    stopHasAnyToken(stop, lowPressureTokens),
+  )
+  if (!everyStopLowPressure) {
+    return { compatible: false, reason: 'missing_low_pressure_easy_hang_signal' }
+  }
+
+  return { compatible: true, reason: 'complete_low_pressure_friends_shape' }
+}
+
 export function validateDirectionRouteContract(params: {
   selectedDirectionContext?: ResolvedDirectionContext
   selectedDirection?: Pick<DirectionPlanningSelection, 'identity'>
@@ -706,6 +806,40 @@ export function validateDirectionRouteContract(params: {
   }
   const identityMismatch = observedDirectionIdentity !== expectedDirectionIdentity
   if (identityMismatch) {
+    const easyHangIntimateCompatibility = isEasyHangIntimateCompatibility({
+      mode: params.mode,
+      expectedDirectionIdentity,
+      observedDirectionIdentity,
+      selectedDirectionContext,
+      itinerary,
+      previewScenarioFamily: params.previewScenarioFamily,
+    })
+    if (easyHangIntimateCompatibility.compatible) {
+      return {
+        valid: true,
+        validatorMode,
+        generationDriftReason: 'easy_hang_intimate_semantic_compatibility',
+        expectedDirectionIdentity,
+        observedDirectionIdentity,
+        contractBuildabilityStatus: buildability.contractBuildabilityStatus,
+        missingRoleForContract: buildability.missingRoleForContract,
+        candidatePoolSufficiencyByRole: buildability.candidatePoolSufficiencyByRole,
+        fallbackApplied: true,
+        greatStopQuality,
+        thinPoolRelaxationTrace: {
+          triggered: true,
+          expectedDirectionIdentity,
+          observedDirectionIdentity,
+          contractBuildabilityStatus: buildability.contractBuildabilityStatus,
+          missingRoleForContract: buildability.missingRoleForContract,
+          candidatePoolSufficiencyByRole: buildability.candidatePoolSufficiencyByRole,
+          relaxationReason: 'easy_hang_intimate_semantic_compatibility',
+          relaxedRule:
+            'build_easy_hang_accepts_intimate_identity_when_complete_low_pressure_friends_shape_survives',
+          validationOutcome: 'accepted_with_relaxation',
+        },
+      }
+    }
     const culturedSocialIdentityTolerance =
       expectedDirectionIdentity === 'exploratory' &&
       observedDirectionIdentity === 'social' &&
