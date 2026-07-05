@@ -12325,11 +12325,18 @@ export function SandboxConciergePage({
       verifiedCityOpportunityById,
     ],
   )
+  const buildAnchorMatchedDirectionBackedCandidateCount = useMemo(
+    () =>
+      buildAnchorMatchedCandidateArtifacts.filter(
+        (artifact) => artifact.directionBacking?.status === 'backed',
+      ).length,
+    [buildAnchorMatchedCandidateArtifacts],
+  )
   const buildProviderGenerationCandidateArtifact = useMemo(() => {
     if (
       !isBuildWrapperActive ||
       !selectedBuildAnchor?.venueId ||
-      buildAnchorMatchedCandidateArtifacts.length > 0 ||
+      buildAnchorMatchedDirectionBackedCandidateCount > 0 ||
       !shadowBuildProviderArtifact ||
       !shadowBuildProviderDiagnostics?.buildProviderSourceOpportunityEmitted ||
       buildProviderInFlight
@@ -12354,7 +12361,7 @@ export function SandboxConciergePage({
     })
   }, [
     allDirectionCards,
-    buildAnchorMatchedCandidateArtifacts.length,
+    buildAnchorMatchedDirectionBackedCandidateCount,
     buildProviderInFlight,
     directionCards,
     isBuildWrapperActive,

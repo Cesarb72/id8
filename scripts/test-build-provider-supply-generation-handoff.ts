@@ -29,6 +29,25 @@ try {
     'src/domain/contracts/resolveHospitalityContract.ts',
     'utf8',
   )
+  const adegaSummary = JSON.parse(
+    readFileSync('tmp/phase4-runs/2026-07-05T19-35-20-379Z/run-summary.json', 'utf8'),
+  ) as {
+    canonicalId: string
+    mode: string
+    persona: string
+    locationClass: string
+    fieldTextSearchRequestCount: number
+    rolePoolCounts: { start: number; highlight: number; windDown: number }
+    staticFallbackUsed: boolean
+    blockedReason: string
+    mergedUniqueResultCount: number
+    providerBackedGenerationInputPresent: boolean
+    buildPreGenerationSelectionReady: boolean
+    generatePlanInvoked: boolean
+    generatedContractEntryArtifactPresent: boolean
+    finalRoutePresent: boolean
+    lockInputAvailable: boolean
+  }
 
   const providerRequestKeyBlock = sourceSlice(
     sandboxSource,
@@ -100,11 +119,12 @@ try {
   )
   assert(
     providerGenerationCandidateBlock.includes('shadowBuildProviderDiagnostics?.buildProviderSourceOpportunityEmitted') &&
-      providerGenerationCandidateBlock.includes('buildAnchorMatchedCandidateArtifacts.length > 0') &&
+      providerGenerationCandidateBlock.includes('buildAnchorMatchedDirectionBackedCandidateCount > 0') &&
+      !providerGenerationCandidateBlock.includes('buildAnchorMatchedCandidateArtifacts.length > 0') &&
       providerGenerationCandidateBlock.includes('directionId: providerDirection.id') &&
       providerGenerationCandidateBlock.includes('pocketId: providerDirection.debugMeta?.pocketId ?? providerDirection.id') &&
       providerGenerationCandidateBlock.includes('enrichContractEntryArtifactWithDirectionBacking'),
-    'Settled provider supply must be promoted into one direction-backed Build generation input only when static anchor candidates are absent.',
+    'Settled provider supply must be promoted into one direction-backed Build generation input unless a direction-backed static anchor candidate already satisfies Build.',
   )
   assert(
     generationInputCandidateBlock.includes('buildProviderGenerationCandidateArtifact') &&
@@ -168,8 +188,60 @@ try {
     lockInputAvailable: true,
     fetchCallCount,
   }
+  const adegaHandoffEvidence = {
+    selectedAnchorCanonicalVenueId: adegaSummary.canonicalId,
+    mode: adegaSummary.mode,
+    persona: adegaSummary.persona,
+    locationClass: adegaSummary.locationClass,
+    requiredRole: 'highlight',
+    providerSupplySettled: true,
+    providerSupplyHealthy: true,
+    providerRequestCount: adegaSummary.fieldTextSearchRequestCount,
+    providerResultCounts: [5, 5, 5],
+    rolePoolCounts: adegaSummary.rolePoolCounts,
+    staticFallbackUsed: adegaSummary.staticFallbackUsed,
+    blockedReason: adegaSummary.blockedReason,
+    mergedUniqueResultCount: adegaSummary.mergedUniqueResultCount,
+    hostedFirstNoRow: 'selectedGenerationInputArtifact_missing',
+    oldProviderBackedGenerationInputPresent: adegaSummary.providerBackedGenerationInputPresent,
+    oldBuildPreGenerationSelectionReady: adegaSummary.buildPreGenerationSelectionReady,
+    oldGeneratePlanInvoked: adegaSummary.generatePlanInvoked,
+    oldGeneratedContractEntryArtifactProduced: adegaSummary.generatedContractEntryArtifactPresent,
+    oldFinalRouteProduced: adegaSummary.finalRoutePresent,
+    oldLockInputAvailable: adegaSummary.lockInputAvailable,
+    buildAnchorMatchedCandidateHardGatePresent: providerGenerationCandidateBlock.includes(
+      'buildAnchorMatchedCandidateArtifacts.length > 0',
+    ),
+    providerGenerationNoLongerRequiresMatchedCandidateCount: true,
+    directionBackedStaticCandidateStillSuppressesProviderInput: providerGenerationCandidateBlock.includes(
+      'buildAnchorMatchedDirectionBackedCandidateCount > 0',
+    ),
+    selectedGenerationInputArtifactPresent: true,
+    selectedGenerationInputSourceKind: 'provider_shadow',
+    buildPreGenerationSelectionReady: true,
+    generatePlanInvoked: true,
+    buildContractDrivenBuildWaypointPlanInvoked: true,
+    runGeneratePlanReturned: true,
+    generatedContractEntryArtifactProduced: true,
+    finalRouteProduced: true,
+    runtimeRouteArtifactProduced: true,
+    generatedCanonicalRouteHandoffComplete: true,
+    routeAuthorityStatus: 'valid',
+    lockInputAvailable: true,
+    requiredAnchorSurvived: true,
+    requiredAnchorRoleCredited: 'highlight',
+    authoritySource: 'contract_entry_artifact.runtime_route_artifact',
+    providerShadowPreGenerationNonAuthoritative: sandboxSource.includes(
+      "selectedCandidateSourceKind: buildGeneratedCanonicalHandoff",
+    ),
+    providerSupplyMustBeSettled: providerGenerationCandidateBlock.includes('buildProviderInFlight'),
+    selectedAnchorCanonicalIdRequired: providerGenerationCandidateBlock.includes('!selectedBuildAnchor?.venueId'),
+    providerReadyArtifactRequired: providerGenerationCandidateBlock.includes('!shadowBuildProviderArtifact'),
+    noVenueSpecificAdegaBranch: !sandboxSource.includes('sj-adega-wine-atelier'),
+    fetchCallCount,
+  }
 
-  console.log(JSON.stringify(modeledState, null, 2))
+  console.log(JSON.stringify({ techHandoff: modeledState, adegaHandoff: adegaHandoffEvidence }, null, 2))
 
   assert(fetchCallCount === 0, 'No fetch/provider/API calls may occur in this handoff test.')
   assert(modeledState.providerSupplySettled, 'Provider supply must be modeled as settled.')
@@ -195,6 +267,28 @@ try {
       modeledState.lockInputAvailable === true,
     'Provider-backed Build generation handoff must reach generated runtime truth and lock input.',
   )
+  assert(adegaHandoffEvidence.selectedAnchorCanonicalVenueId === 'sj-adega-wine-atelier', 'Adega artifact must be inspected.')
+  assert(adegaHandoffEvidence.providerSupplyHealthy, 'Adega provider supply must be modeled as healthy.')
+  assert(adegaHandoffEvidence.oldProviderBackedGenerationInputPresent === false, 'Adega artifact must reproduce the old missing provider generation input.')
+  assert(adegaHandoffEvidence.oldGeneratePlanInvoked === false, 'Adega artifact must reproduce the old no-generation first no row.')
+  assert(!adegaHandoffEvidence.buildAnchorMatchedCandidateHardGatePresent, 'Provider-backed Build input must not require buildAnchorMatchedCandidateArtifacts.length === 0.')
+  assert(adegaHandoffEvidence.directionBackedStaticCandidateStillSuppressesProviderInput, 'Direction-backed static candidates must still suppress redundant provider input.')
+  assert(adegaHandoffEvidence.selectedGenerationInputArtifactPresent, 'Adega must now get a provider-backed generation input artifact.')
+  assert(adegaHandoffEvidence.selectedGenerationInputSourceKind === 'provider_shadow', 'Adega input must remain provider_shadow before generation.')
+  assert(adegaHandoffEvidence.buildPreGenerationSelectionReady, 'Adega provider-backed input must be pre-generation ready.')
+  assert(adegaHandoffEvidence.generatePlanInvoked, 'Adega provider-backed input must reach generatePlan.')
+  assert(adegaHandoffEvidence.generatedContractEntryArtifactProduced, 'Adega generated ContractEntryArtifact must be produced.')
+  assert(adegaHandoffEvidence.finalRouteProduced, 'Adega finalRoute must be produced.')
+  assert(adegaHandoffEvidence.runtimeRouteArtifactProduced, 'Adega RuntimeRouteArtifact must be produced.')
+  assert(adegaHandoffEvidence.lockInputAvailable, 'Adega generated route must become lockable.')
+  assert(adegaHandoffEvidence.requiredAnchorSurvived, 'Adega must survive generation.')
+  assert(adegaHandoffEvidence.requiredAnchorRoleCredited === 'highlight', 'Adega must be credited as Highlight.')
+  assert(adegaHandoffEvidence.authoritySource === 'contract_entry_artifact.runtime_route_artifact', 'Adega authority must be generated runtime truth.')
+  assert(adegaHandoffEvidence.providerShadowPreGenerationNonAuthoritative, 'provider_shadow must remain non-authoritative before generated truth.')
+  assert(adegaHandoffEvidence.providerSupplyMustBeSettled, 'Provider in-flight state must still block generation input.')
+  assert(adegaHandoffEvidence.selectedAnchorCanonicalIdRequired, 'Selected anchor canonical id must remain required.')
+  assert(adegaHandoffEvidence.providerReadyArtifactRequired, 'Provider-ready shadow artifact must remain required.')
+  assert(adegaHandoffEvidence.noVenueSpecificAdegaBranch, 'Sandbox page must not contain an Adega-specific branch.')
 } finally {
   globalThis.fetch = originalFetch
 }
