@@ -124,6 +124,7 @@ import {
   coffeeBooksSemanticRepresentationMissingReason,
 } from '../app/services/curate/coffeeBooksSemanticRepresentation'
 import { buildCuratePreviewCommitabilityCacheKey } from '../app/services/curate/curatePreviewCommitabilityCache'
+import { findScoredVenueForStopWithPolicy } from '../app/services/build/finalRouteDetailCopyTruth'
 import {
   SwapCommitCoreError,
   applyPreviewSwapCommit,
@@ -5777,17 +5778,11 @@ function resolveCanonicalPlanningStopIdentityFromScoredVenue(
 function findScoredVenueForStop(
   stop: ItineraryStop,
   selectedArc: ArcCandidate,
+  options?: {
+    allowRoleFallback?: boolean
+  },
 ): ScoredVenue | undefined {
-  const targetRole = inverseRoleProjection[stop.role]
-  const matched = selectedArc.stops.find(
-    (arcStop) =>
-      arcStop.role === targetRole &&
-      arcStop.scoredVenue.venue.id === stop.venueId,
-  )
-  if (matched) {
-    return matched.scoredVenue
-  }
-  return selectedArc.stops.find((arcStop) => arcStop.role === targetRole)?.scoredVenue
+  return findScoredVenueForStopWithPolicy(stop, selectedArc, options)
 }
 
 async function enforceFullStopRealityContract(params: {
@@ -10003,6 +9998,8 @@ function getInlineStopDetail(
   currentArc: ArcCandidate,
   lens: ExperienceLens,
   options?: {
+    scoredVenue?: ScoredVenue
+    allowRoleFallback?: boolean
     roleTravelWindowMinutes?: number
     nearbySummary?: string
     routeShapeContract?: RouteShapeContract
@@ -10013,8 +10010,13 @@ function getInlineStopDetail(
     contractConstraints?: ContractConstraints
   },
 ): InlineStopDetail & { swapCandidatePrefilterDebug: SwapCandidatePrefilterDebug } {
+  const scoredVenue =
+    options?.scoredVenue ??
+    findScoredVenueForStop(stop, currentArc, {
+      allowRoleFallback: options?.allowRoleFallback,
+    })
   const narrative = getInlineStopNarrative(stop, intent, {
-    scoredVenue: findScoredVenueForStop(stop, currentArc),
+    scoredVenue,
     roleTravelWindowMinutes: options?.roleTravelWindowMinutes,
     nearbySummary: options?.nearbySummary,
     itineraryStops,
@@ -22249,7 +22251,10 @@ export function SandboxConciergePage({
       }
     }
     const detailEntries = planningDisplayStops.map((stop) => {
-      const scoredVenue = findScoredVenueForStop(stop, plan.selectedArc)
+      const finalRouteOwnsStopIdentity = Boolean(renderOnlyFinalRoute)
+      const scoredVenue = findScoredVenueForStop(stop, plan.selectedArc, {
+        allowRoleFallback: !finalRouteOwnsStopIdentity,
+      })
       const inlineDetail = getInlineStopDetail(
         stop,
         plan.intentProfile,
@@ -22258,6 +22263,8 @@ export function SandboxConciergePage({
         plan.selectedArc,
         plan.lens,
           {
+            scoredVenue,
+            allowRoleFallback: !finalRouteOwnsStopIdentity,
             roleTravelWindowMinutes: getRoleTravelWindow(plan.itinerary, stop.role),
             nearbySummary: nearbySummaryByRole[stop.role],
             routeShapeContract: plan.routeShapeContract,
