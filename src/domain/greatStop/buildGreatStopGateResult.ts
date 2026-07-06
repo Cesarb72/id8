@@ -3,9 +3,11 @@ import type { RoutePacingDiagnostics, TransitionExplainabilityDiagnostics } from
 import type {
   BuildLocationClass,
   GreatStopGateCandidateSummary,
+  GreatStopGateCandidateIdentityDiagnostic,
   GreatStopCriterionResult,
   GreatStopGateResult,
   GreatStopGatePresetSource,
+  GreatStopGateRolePoolIdentityDiagnostics,
   GreatStopGateSelectionDiagnostics,
   GreatStopGateSelectionStage,
   GreatStopGateStatus,
@@ -16,6 +18,8 @@ import type { UserStopRole } from '../types/itinerary'
 import type { SpatialCoherenceAnalysis } from '../types/spatial'
 import { roleProjection } from '../config/roleProjection'
 import { getArcStopBaseVenueId } from '../candidates/candidateIdentity'
+
+const DIAGNOSTIC_CANDIDATE_SUMMARY_LIMIT = 25
 
 interface PlaceRightPreset {
   travelTolerance: GreatStopTravelTolerance
@@ -547,6 +551,49 @@ function buildCandidateSignature(candidate: ArcCandidate): string {
     .join('|')
 }
 
+function candidateContainsRequiredAnchorByRawId(
+  candidate: ArcCandidate,
+  requiredAnchorVenueId?: string,
+): boolean {
+  return Boolean(
+    requiredAnchorVenueId &&
+      candidate.stops.some((stop) => stop.scoredVenue.venue.id === requiredAnchorVenueId),
+  )
+}
+
+function candidateContainsRequiredAnchorByBaseVenueId(
+  candidate: ArcCandidate,
+  requiredAnchorVenueId?: string,
+): boolean {
+  return Boolean(
+    requiredAnchorVenueId &&
+      candidate.stops.some(
+        (stop) => stop.scoredVenue.candidateIdentity.baseVenueId === requiredAnchorVenueId,
+      ),
+  )
+}
+
+function candidateContainsRequiredAnchorByNormalizedHelper(
+  candidate: ArcCandidate,
+  requiredAnchorVenueId?: string,
+): boolean {
+  return Boolean(
+    requiredAnchorVenueId &&
+      candidate.stops.some((stop) => getArcStopBaseVenueId(stop) === requiredAnchorVenueId),
+  )
+}
+
+function firstRankWhereRequiredAnchorAppears(
+  candidates: ArcCandidate[],
+  requiredAnchorVenueId?: string,
+): number | undefined {
+  if (!requiredAnchorVenueId) return undefined
+  const index = candidates.findIndex((candidate) =>
+    candidateContainsRequiredAnchorByNormalizedHelper(candidate, requiredAnchorVenueId),
+  )
+  return index >= 0 ? index + 1 : undefined
+}
+
 function buildCandidateSummary(params: {
   candidate: ArcCandidate
   rank: number
@@ -571,12 +618,68 @@ function buildCandidateSummary(params: {
   }
 }
 
+function buildCandidateIdentityDiagnostic(params: {
+  candidate: ArcCandidate
+  rank: number
+  result: GreatStopGateResult
+  skippedForRequiredAnchor: boolean
+  requiredAnchorVenueId?: string
+}): GreatStopGateCandidateIdentityDiagnostic {
+  const requiredAnchorVenueId = params.requiredAnchorVenueId
+  const requiredAnchorPreserved = params.result.requiredAnchor?.survived
+  const requiredAnchorRoleCorrect = params.result.requiredAnchor
+    ? params.result.requiredAnchor.survived &&
+      params.result.requiredAnchor.creditedRole === params.result.requiredAnchor.role
+    : undefined
+  return {
+    candidateId: params.candidate.id,
+    rank: params.rank,
+    signature: buildCandidateSignature(params.candidate),
+    skippedReason: params.skippedForRequiredAnchor
+      ? 'required_anchor_role_missing'
+      : undefined,
+    preservesRequiredAnchor: requiredAnchorPreserved,
+    requiredRoleCorrect: requiredAnchorRoleCorrect,
+    structuralFailureReasons: params.skippedForRequiredAnchor
+      ? ['required_anchor_role_missing']
+      : [],
+    failedCriteria: [...params.result.failedCriteria],
+    reasons: [...params.result.reasons],
+    stops: params.candidate.stops.map((stop) => {
+      const rawVenueId = stop.scoredVenue.venue.id
+      const baseVenueId = stop.scoredVenue.candidateIdentity.baseVenueId
+      const normalizedHelperVenueId = getArcStopBaseVenueId(stop)
+      return {
+        role: roleFor(stop),
+        name: stop.scoredVenue.venue.name,
+        rawVenueId,
+        baseVenueId,
+        normalizedHelperVenueId,
+        candidateId: stop.scoredVenue.candidateIdentity.candidateId,
+        provider: stop.scoredVenue.venue.source.provider,
+        providerRecordId: stop.scoredVenue.venue.source.providerRecordId,
+        sourceOrigin: stop.scoredVenue.venue.source.sourceOrigin,
+        matchRequiredAnchorByRawId: requiredAnchorVenueId
+          ? rawVenueId === requiredAnchorVenueId
+          : undefined,
+        matchRequiredAnchorByBaseVenueId: requiredAnchorVenueId
+          ? baseVenueId === requiredAnchorVenueId
+          : undefined,
+        matchRequiredAnchorByNormalizedHelper: requiredAnchorVenueId
+          ? normalizedHelperVenueId === requiredAnchorVenueId
+          : undefined,
+      }
+    }),
+  }
+}
+
 export function selectGreatStopGatePassingCandidate(params: {
   candidates: ArcCandidate[]
   intent: IntentProfile
   locationClass?: BuildLocationClass
   locationClassSource?: GreatStopGatePresetSource
   stage: GreatStopGateSelectionStage
+  rolePoolIdentityDiagnostics?: GreatStopGateRolePoolIdentityDiagnostics
 }): {
   selectedCandidate?: ArcCandidate
   diagnostics: GreatStopGateSelectionDiagnostics
@@ -588,6 +691,7 @@ export function selectGreatStopGatePassingCandidate(params: {
     skippedForRequiredAnchor: boolean
   }> = []
   let passingCandidateCount = 0
+  const requiredAnchorVenueId = params.intent.anchor?.venueId
 
   const buildSelectionDiagnostics = (selectionParams: {
     status: GreatStopGateStatus
@@ -614,16 +718,51 @@ export function selectGreatStopGatePassingCandidate(params: {
             ...structuralFailureReasons,
             ...anchorPreservingFailingEntries.flatMap((entry) => entry.result.reasons),
           ]
+    const fullEvaluatedCandidateCount = evaluated.length
+    const evaluatedCandidateIdentitySummaries = evaluated
+      .slice(0, DIAGNOSTIC_CANDIDATE_SUMMARY_LIMIT)
+      .map((entry) =>
+        buildCandidateIdentityDiagnostic({
+          candidate: entry.candidate,
+          rank: entry.rank,
+          result: entry.result,
+          skippedForRequiredAnchor: entry.skippedForRequiredAnchor,
+          requiredAnchorVenueId,
+        }),
+      )
+    const omittedCandidateCount = Math.max(
+      0,
+      fullEvaluatedCandidateCount - evaluatedCandidateIdentitySummaries.length,
+    )
 
     return {
       status: selectionParams.status,
       stage: params.stage,
       selectedCandidateId: selectionParams.selectedCandidate?.id,
       selectedCandidateRank: selectionParams.selectedCandidateRank,
+      rankedCandidateCount: params.candidates.length,
       evaluatedCandidateCount: evaluated.length,
+      fullEvaluatedCandidateCount,
+      diagnosticCandidateSummaryLimit: DIAGNOSTIC_CANDIDATE_SUMMARY_LIMIT,
+      omittedCandidateCount,
       skippedMissingRequiredAnchorCount,
       anchorPreservingCandidateCount: anchorPreservingEntries.length,
       evaluatedAnchorPreservingCandidateCount: anchorPreservingEntries.length,
+      firstRankWhereRequiredAnchorAppears: firstRankWhereRequiredAnchorAppears(
+        params.candidates,
+        requiredAnchorVenueId,
+      ),
+      candidatesWithRequiredAnchorByRawId: params.candidates.filter((candidate) =>
+        candidateContainsRequiredAnchorByRawId(candidate, requiredAnchorVenueId),
+      ).length,
+      candidatesWithRequiredAnchorByBaseVenueId: params.candidates.filter((candidate) =>
+        candidateContainsRequiredAnchorByBaseVenueId(candidate, requiredAnchorVenueId),
+      ).length,
+      candidatesWithRequiredAnchorByNormalizedHelper: params.candidates.filter((candidate) =>
+        candidateContainsRequiredAnchorByNormalizedHelper(candidate, requiredAnchorVenueId),
+      ).length,
+      evaluatedCandidateIdentitySummaries,
+      rolePoolIdentityDiagnostics: params.rolePoolIdentityDiagnostics,
       failedTopCandidateCriteria,
       failureReasons,
       bestFailingCandidateSummary: bestFailingEntry

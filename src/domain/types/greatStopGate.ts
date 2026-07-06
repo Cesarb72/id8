@@ -108,15 +108,61 @@ export interface GreatStopGateCandidateSummary {
   reasons: string[]
 }
 
+export interface GreatStopGateCandidateStopIdentityDiagnostic {
+  role: UserStopRole
+  name: string
+  rawVenueId: string
+  baseVenueId: string
+  normalizedHelperVenueId: string
+  candidateId?: string
+  provider?: string
+  providerRecordId?: string
+  sourceOrigin?: string
+  matchRequiredAnchorByRawId?: boolean
+  matchRequiredAnchorByBaseVenueId?: boolean
+  matchRequiredAnchorByNormalizedHelper?: boolean
+}
+
+export interface GreatStopGateCandidateIdentityDiagnostic {
+  candidateId: string
+  rank: number
+  signature: string
+  skippedReason?: 'required_anchor_role_missing'
+  preservesRequiredAnchor?: boolean
+  requiredRoleCorrect?: boolean
+  structuralFailureReasons: string[]
+  failedCriteria: GreatStopGateCriterion[]
+  reasons: string[]
+  stops: GreatStopGateCandidateStopIdentityDiagnostic[]
+}
+
+export interface GreatStopGateRolePoolIdentityDiagnostics {
+  rolePoolVenueIdsByRole?: Partial<Record<UserStopRole, string[]>>
+  rolePoolBaseVenueIdsByRole?: Partial<Record<UserStopRole, string[]>>
+  requiredAnchorPresentInRolePoolByRawId?: boolean
+  requiredAnchorPresentInRolePoolByBaseVenueId?: boolean
+  requiredAnchorPresentInRolePoolByNormalizedHelper?: boolean
+}
+
 export interface GreatStopGateSelectionDiagnostics {
   status: GreatStopGateStatus
   stage: GreatStopGateSelectionStage
   selectedCandidateId?: string
   selectedCandidateRank?: number
+  rankedCandidateCount?: number
   evaluatedCandidateCount: number
+  fullEvaluatedCandidateCount?: number
+  diagnosticCandidateSummaryLimit?: number
+  omittedCandidateCount?: number
   skippedMissingRequiredAnchorCount?: number
   anchorPreservingCandidateCount?: number
   evaluatedAnchorPreservingCandidateCount?: number
+  firstRankWhereRequiredAnchorAppears?: number
+  candidatesWithRequiredAnchorByRawId?: number
+  candidatesWithRequiredAnchorByBaseVenueId?: number
+  candidatesWithRequiredAnchorByNormalizedHelper?: number
+  evaluatedCandidateIdentitySummaries?: GreatStopGateCandidateIdentityDiagnostic[]
+  rolePoolIdentityDiagnostics?: GreatStopGateRolePoolIdentityDiagnostics
   failedTopCandidateCriteria?: GreatStopGateCriterion[]
   failureReasons: string[]
   bestFailingCandidateSummary?: GreatStopGateCandidateSummary

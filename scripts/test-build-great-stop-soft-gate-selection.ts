@@ -372,6 +372,12 @@ assert(
   selection.diagnostics.selectedGateResult?.preset.source === 'explicit',
   'Great Stop selector must preserve explicit location class preset source.',
 )
+assert(
+  selection.diagnostics.rankedCandidateCount === 2 &&
+    selection.diagnostics.fullEvaluatedCandidateCount === 2 &&
+    selection.diagnostics.omittedCandidateCount === 0,
+  'Selection diagnostics must expose ranked/evaluated counts without truncating evaluation.',
+)
 
 const missingAnchorSelection = selectGreatStopGatePassingCandidate({
   candidates: [missingAnchorCandidate, secondPassingCandidate],
@@ -410,6 +416,22 @@ assert(
     !missingAnchorSelection.diagnostics.bestAnchorPreservingFailingCandidate,
   'Primary failing summaries should not point at structurally invalid candidates when a later candidate passes.',
 )
+assert(
+  missingAnchorSelection.diagnostics.evaluatedCandidateIdentitySummaries?.[0]?.skippedReason ===
+    'required_anchor_role_missing',
+  'Evaluated candidate identity diagnostics must expose structural skip reasons.',
+)
+assert(
+  missingAnchorSelection.diagnostics.evaluatedCandidateIdentitySummaries?.[0]?.stops.some(
+    (stop) =>
+      stop.role === 'highlight' &&
+      stop.rawVenueId === 'different-highlight' &&
+      stop.matchRequiredAnchorByRawId === false &&
+      stop.matchRequiredAnchorByBaseVenueId === false &&
+      stop.matchRequiredAnchorByNormalizedHelper === false,
+  ),
+  'Evaluated candidate identity diagnostics must expose raw/base/helper anchor non-matches separately.',
+)
 
 const allMissingAnchor = selectGreatStopGatePassingCandidate({
   candidates: [missingAnchorCandidate],
@@ -442,6 +464,62 @@ assert(
   !allMissingAnchor.diagnostics.bestFailingCandidateSummary &&
     !allMissingAnchor.diagnostics.bestAnchorPreservingFailingCandidate,
   'All-missing-anchor diagnostics must not use a structurally invalid candidate as the primary failing summary.',
+)
+assert(
+  allMissingAnchor.diagnostics.candidatesWithRequiredAnchorByRawId === 0 &&
+    allMissingAnchor.diagnostics.candidatesWithRequiredAnchorByBaseVenueId === 0 &&
+    allMissingAnchor.diagnostics.candidatesWithRequiredAnchorByNormalizedHelper === 0,
+  'All-missing-anchor diagnostics must show zero required-anchor matches by all identity methods.',
+)
+
+const cappedMissingAnchorCandidates = Array.from({ length: 30 }, (_, index) =>
+  buildCandidate({
+    id: `rank-${index + 1}-missing-required-anchor`,
+    stops: [
+      {
+        role: 'warmup',
+        venueId: `start-capped-${index}`,
+        lane: 'arrival',
+        cluster: 'a',
+        energy: 2,
+      },
+      {
+        role: 'peak',
+        venueId: `different-highlight-capped-${index}`,
+        lane: 'center',
+        cluster: 'a',
+        energy: 4,
+      },
+      {
+        role: 'cooldown',
+        venueId: `end-capped-${index}`,
+        lane: 'landing',
+        cluster: 'b',
+        energy: 2,
+      },
+    ],
+    transitions: [8, 9],
+    movementModes: ['walkable', 'walkable'],
+    repeatedClusterEscapeCount: 0,
+  }),
+)
+const cappedDiagnosticsSelection = selectGreatStopGatePassingCandidate({
+  candidates: cappedMissingAnchorCandidates,
+  intent,
+  locationClass: 'L2 Mid',
+  locationClassSource: 'explicit',
+  stage: 'pre_selection_gate',
+})
+assert(
+  cappedDiagnosticsSelection.diagnostics.fullEvaluatedCandidateCount === 30 &&
+    cappedDiagnosticsSelection.diagnostics.evaluatedCandidateCount === 30,
+  'Diagnostic candidate summaries may be capped, but candidate evaluation count must remain full.',
+)
+assert(
+  cappedDiagnosticsSelection.diagnostics.diagnosticCandidateSummaryLimit === 25 &&
+    cappedDiagnosticsSelection.diagnostics.evaluatedCandidateIdentitySummaries?.length === 25 &&
+    cappedDiagnosticsSelection.diagnostics.omittedCandidateCount === 5,
+  'Diagnostic candidate summaries must expose the cap and omitted candidate count.',
 )
 
 const allFail = selectGreatStopGatePassingCandidate({
@@ -639,6 +717,39 @@ assert(
   'Base-identity anchor matches must not be counted as structural missing-anchor failures.',
 )
 assert(
+  adegaIdentitySelection.diagnostics.rankedCandidateCount === 3 &&
+    adegaIdentitySelection.diagnostics.evaluatedCandidateCount === 1 &&
+    adegaIdentitySelection.diagnostics.fullEvaluatedCandidateCount === 1,
+  'Stage 2 diagnostics must distinguish the full ranked candidate pool from candidates evaluated before the first PASS.',
+)
+assert(
+  adegaIdentitySelection.diagnostics.candidatesWithRequiredAnchorByRawId === 0 &&
+    adegaIdentitySelection.diagnostics.candidatesWithRequiredAnchorByBaseVenueId === 1 &&
+    adegaIdentitySelection.diagnostics.candidatesWithRequiredAnchorByNormalizedHelper === 1 &&
+    adegaIdentitySelection.diagnostics.firstRankWhereRequiredAnchorAppears === 1,
+  'Stage 2 diagnostics must count required-anchor matches by raw id, base id, and normalized helper separately.',
+)
+const adegaIdentitySummary = adegaIdentitySelection.diagnostics.evaluatedCandidateIdentitySummaries?.[0]
+const adegaHighlightIdentity = adegaIdentitySummary?.stops.find((stop) => stop.role === 'highlight')
+assert(
+  adegaIdentitySummary?.candidateId === 'adega-provider-backed-base-identity-match' &&
+    adegaIdentitySummary.preservesRequiredAnchor === true &&
+    adegaIdentitySummary.requiredRoleCorrect === true,
+  'Provider-backed Adega candidate identity diagnostics must expose anchor preservation and credited role.',
+)
+assert(
+  adegaHighlightIdentity?.rawVenueId === 'live_google_adega-provider-record' &&
+    adegaHighlightIdentity.baseVenueId === 'sj-adega-wine-atelier' &&
+    adegaHighlightIdentity.normalizedHelperVenueId === 'sj-adega-wine-atelier' &&
+    adegaHighlightIdentity.candidateId === 'live_google_adega-provider-record::activation::featured' &&
+    adegaHighlightIdentity.providerRecordId === 'adega-provider-record' &&
+    adegaHighlightIdentity.sourceOrigin === 'provider' &&
+    adegaHighlightIdentity.matchRequiredAnchorByRawId === false &&
+    adegaHighlightIdentity.matchRequiredAnchorByBaseVenueId === true &&
+    adegaHighlightIdentity.matchRequiredAnchorByNormalizedHelper === true,
+  'Provider-backed Adega candidate identity diagnostics must expose raw id, base id, helper output, provider metadata, and separate match booleans.',
+)
+assert(
   adegaIdentitySelection.diagnostics.selectedGateResult?.requiredAnchor?.survived === true &&
     adegaIdentitySelection.diagnostics.selectedGateResult.requiredAnchor.creditedRole === 'highlight',
   'Base-identity anchor matches must survive and be credited in the required role.',
@@ -730,6 +841,12 @@ const output = {
     allFail.diagnostics.failedTopCandidateCriteria?.includes('place_right') === true,
   bestAnchorPreservingFailingCandidate:
     allFail.diagnostics.bestAnchorPreservingFailingCandidate?.candidateId ?? null,
+  diagnosticCandidateSummaryLimit:
+    cappedDiagnosticsSelection.diagnostics.diagnosticCandidateSummaryLimit,
+  fullEvaluatedCandidateCount:
+    cappedDiagnosticsSelection.diagnostics.fullEvaluatedCandidateCount,
+  omittedCandidateCount:
+    cappedDiagnosticsSelection.diagnostics.omittedCandidateCount,
   requiredAnchorIdentityBoundary: {
     requiredAnchorCanonicalId: 'sj-adega-wine-atelier',
     requiredRole: 'highlight',
@@ -751,6 +868,19 @@ const output = {
     idMismatchProven: adegaIdentityCounts.containingRequiredAnchorByVenueId === 0 &&
       adegaIdentityCounts.containingRequiredAnchorByCandidateIdentityBaseVenueId > 0,
     selectedAfterBaseIdentityFix: adegaIdentitySelection.selectedCandidate?.id,
+    stage2IdentityDiagnostics: {
+      rankedCandidateCount: adegaIdentitySelection.diagnostics.rankedCandidateCount,
+      evaluatedCandidateCount: adegaIdentitySelection.diagnostics.evaluatedCandidateCount,
+      firstRankWhereRequiredAnchorAppears:
+        adegaIdentitySelection.diagnostics.firstRankWhereRequiredAnchorAppears,
+      candidatesWithRequiredAnchorByRawId:
+        adegaIdentitySelection.diagnostics.candidatesWithRequiredAnchorByRawId,
+      candidatesWithRequiredAnchorByBaseVenueId:
+        adegaIdentitySelection.diagnostics.candidatesWithRequiredAnchorByBaseVenueId,
+      candidatesWithRequiredAnchorByNormalizedHelper:
+        adegaIdentitySelection.diagnostics.candidatesWithRequiredAnchorByNormalizedHelper,
+      evaluatedCandidateIdentitySummary: adegaIdentitySummary,
+    },
     candidateStopIdentityTable: candidateIdentityTable(
       adegaProviderBackedCandidate,
       'sj-adega-wine-atelier',

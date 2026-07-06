@@ -45,6 +45,7 @@ import {
 } from './greatStop/buildGreatStopGateResult'
 import type {
   BuildLocationClass,
+  GreatStopGateRolePoolIdentityDiagnostics,
   GreatStopGateSelectionDiagnostics,
 } from './types/greatStopGate'
 import { GreatStopGateSelectionError } from './types/greatStopGate'
@@ -1546,6 +1547,41 @@ function buildRolePoolVenueIdsByRole(
   }
 }
 
+function buildGreatStopRolePoolIdentityDiagnostics(
+  rolePools: RolePools,
+  requiredAnchorVenueId?: string,
+): GreatStopGateRolePoolIdentityDiagnostics {
+  const rolePoolVenueIdsByRole = buildRolePoolVenueIdsByRole(rolePools)
+  const rolePoolBaseVenueIdsByRole = {
+    start: [...new Set(rolePools.warmup.map((candidate) => getScoredVenueBaseVenueId(candidate)))],
+    highlight: [...new Set(rolePools.peak.map((candidate) => getScoredVenueBaseVenueId(candidate)))],
+    windDown: [...new Set(rolePools.cooldown.map((candidate) => getScoredVenueBaseVenueId(candidate)))],
+  }
+  const rawIds = [
+    ...(rolePoolVenueIdsByRole.start ?? []),
+    ...(rolePoolVenueIdsByRole.highlight ?? []),
+    ...(rolePoolVenueIdsByRole.windDown ?? []),
+  ]
+  const baseIds = [
+    ...rolePoolBaseVenueIdsByRole.start,
+    ...rolePoolBaseVenueIdsByRole.highlight,
+    ...rolePoolBaseVenueIdsByRole.windDown,
+  ]
+  return {
+    rolePoolVenueIdsByRole,
+    rolePoolBaseVenueIdsByRole,
+    requiredAnchorPresentInRolePoolByRawId: requiredAnchorVenueId
+      ? rawIds.includes(requiredAnchorVenueId)
+      : undefined,
+    requiredAnchorPresentInRolePoolByBaseVenueId: requiredAnchorVenueId
+      ? baseIds.includes(requiredAnchorVenueId)
+      : undefined,
+    requiredAnchorPresentInRolePoolByNormalizedHelper: requiredAnchorVenueId
+      ? baseIds.includes(requiredAnchorVenueId)
+      : undefined,
+  }
+}
+
 function buildBoundaryCandidateVenueIdsByRole(
   candidates: ArcCandidate[],
 ): BuildQualityRankedArcDiagnostics['boundaryCandidateVenueIdsByRole'] {
@@ -2578,6 +2614,10 @@ async function runGeneratePlanInternal(
           locationClass: options.greatStopGateLocationClass,
           locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
           stage: 'pre_selection_gate',
+          rolePoolIdentityDiagnostics: buildGreatStopRolePoolIdentityDiagnostics(
+            rolePools,
+            planningIntent.anchor?.venueId,
+          ),
         })
       : undefined
   if (buildGreatStopSelection) {
