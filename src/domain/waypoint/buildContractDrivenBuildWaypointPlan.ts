@@ -101,6 +101,7 @@ export interface BuildContractDrivenWaypointPlanInput {
   districtTasteBridgeArtifacts?: RunGeneratePlanOptions['districtTasteBridgeArtifacts']
   contractGateWorld?: RunGeneratePlanOptions['contractGateWorld']
   strategyAdmissibleWorlds?: RunGeneratePlanOptions['strategyAdmissibleWorlds']
+  greatStopGateLocationClass?: RunGeneratePlanOptions['greatStopGateLocationClass']
   persona: PersonaMode
   vibe: VibeAnchor
   starterPack?: StarterPack
@@ -455,6 +456,7 @@ export async function buildContractDrivenBuildWaypointPlan(
       districtTasteBridgeArtifacts: input.districtTasteBridgeArtifacts,
       contractGateWorld: input.contractGateWorld,
       strategyAdmissibleWorlds: input.strategyAdmissibleWorlds,
+      greatStopGateLocationClass: input.greatStopGateLocationClass,
       selectedArtifactLineage: input.selectedArtifactLineage,
     },
   )

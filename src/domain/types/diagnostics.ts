@@ -35,6 +35,7 @@ import type {
   TasteRoleSuitability,
 } from '../interpretation/taste/types'
 import type { BearingsRuntimeHoursDiagnostics } from '../bearings/runtimeHoursValidationDiagnostics'
+import type { GreatStopGateResult } from './greatStopGate'
 
 export type FallbackRelaxationLevel = 'none' | 'lens-soft' | 'lens-off'
 export type SelectionStrengthLabel =
@@ -974,6 +975,7 @@ export interface GenerationDiagnostics {
   selectedDistrictConfidence: number
   selectedDistrictReason: string
   categoryDiversity: CategoryDiversityDiagnostics
+  greatStopGateResult?: GreatStopGateResult
   strictShapeEnabled: boolean
   boundaryDiagnostics: BoundaryDiagnostics
   overlapDiagnostics?: OverlapDiagnostics

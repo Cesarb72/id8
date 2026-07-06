@@ -34,6 +34,8 @@ import { roleProjection } from './config/roleProjection'
 import { buildBoundaryTruthNotes } from './debug/buildBoundaryTruthNotes'
 import { computePairMatrix } from './debug/computeCandidateOverlap'
 import { buildStopReasons } from './explainability/buildStopReasons'
+import { buildGreatStopGateResult } from './greatStop/buildGreatStopGateResult'
+import type { BuildLocationClass } from './types/greatStopGate'
 import { recommendDistricts } from './interpretation/district/recommendDistricts'
 import { resolveDistrictAnchor } from './interpretation/district/resolveDistrictAnchor'
 import { getRoleContract } from './contracts/getRoleContract'
@@ -169,6 +171,8 @@ export interface RunGeneratePlanOptions {
   // Narrow planner handoff around selected candidate artifact lineage when present.
   selectedArtifactLineage?: ContractEntryArtifactLineage
   curateCommitSemantics?: 'seed_guided' | 'approved_route_hard_commit'
+  // Diagnostic-only Great Stop convergence input. Does not affect route selection.
+  greatStopGateLocationClass?: BuildLocationClass
 }
 
 interface RunGeneratePlanInternalOptions extends RunGeneratePlanOptions {
@@ -3671,6 +3675,37 @@ async function runGeneratePlanInternal(
     selectedDistrictConfidence: districtAnchor.confidence,
     selectedDistrictReason: districtAnchor.reason,
     categoryDiversity,
+    greatStopGateResult: buildGreatStopGateResult({
+      selectedArc,
+      intent: planningIntent,
+      locationClass: options.greatStopGateLocationClass,
+      locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
+      routePacing: {
+        transitions: selectedArc.pacing.transitions.map((transition) => ({
+          fromRole: roleProjection[transition.fromRoleKey as ArcStop['role']],
+          toRole: roleProjection[transition.toRoleKey as ArcStop['role']],
+          fromVenueId: transition.fromVenueId,
+          toVenueId: transition.toVenueId,
+          estimatedTravelMinutes: transition.estimatedTravelMinutes,
+          transitionBufferMinutes: transition.transitionBufferMinutes,
+          estimatedTransitionMinutes: transition.estimatedTransitionMinutes,
+          frictionScore: transition.frictionScore,
+          movementMode: transition.movementMode,
+          neighborhoodContinuity: transition.neighborhoodContinuity,
+          notes: transition.notes,
+        })),
+        totalRouteFriction: selectedArc.pacing.totalRouteFriction,
+        estimatedStopMinutes: selectedArc.pacing.estimatedStopMinutes,
+        estimatedTransitionMinutes: selectedArc.pacing.estimatedTransitionMinutes,
+        estimatedTotalMinutes: selectedArc.pacing.estimatedTotalMinutes,
+        estimatedTotalLabel: selectedArc.pacing.estimatedTotalLabel,
+        routeFeelLabel: selectedArc.pacing.routeFeelLabel,
+        pacingPenaltyApplied: selectedArc.pacing.pacingPenaltyApplied,
+        pacingPenaltyReasons: selectedArc.pacing.pacingPenaltyReasons,
+        smoothProgressionRewardApplied: selectedArc.pacing.smoothProgressionRewardApplied,
+        smoothProgressionRewardReasons: selectedArc.pacing.smoothProgressionRewardReasons,
+      },
+    }),
     strictShapeEnabled,
     boundaryDiagnostics,
     overlapDiagnostics,

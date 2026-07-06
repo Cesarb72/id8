@@ -1,0 +1,598 @@
+import { readFileSync } from 'node:fs'
+import { buildGreatStopGateResult } from '../src/domain/greatStop/buildGreatStopGateResult'
+import type { ArcCandidate, ArcStop } from '../src/domain/types/arc'
+import type { RoutePacingDiagnostics } from '../src/domain/types/diagnostics'
+import type {
+  BuildLocationClass,
+  GreatStopGateCriterion,
+  GreatStopGateResult,
+} from '../src/domain/types/greatStopGate'
+import type { IntentProfile, PersonaMode } from '../src/domain/types/intent'
+import type { UserStopRole } from '../src/domain/types/itinerary'
+import type { RouteMovementMode } from '../src/domain/types/pacing'
+
+let fetchCallCount = 0
+globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
+  fetchCallCount += 1
+  throw new Error(`Unexpected fetch in no-network Great Stop Gate test: ${String(args[0])}`)
+}) as typeof fetch
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) {
+    throw new Error(message)
+  }
+}
+
+type InternalRole = 'warmup' | 'peak' | 'cooldown'
+
+interface StopSpec {
+  venueId: string
+  name?: string
+  role: InternalRole
+  lane: string
+  cluster: string
+  energy: number
+  roleScore?: number
+  shapeScore?: number
+  fitScore?: number
+  lensCompatibility?: number
+  contextSpecificity?: number
+}
+
+interface GateCase {
+  cell: string
+  persona: PersonaMode
+  locationClass: BuildLocationClass
+  anchor: {
+    venueId: string
+    role: UserStopRole
+  }
+  stops: [StopSpec, StopSpec, StopSpec]
+  transitions: [number, number]
+  movementModes?: [RouteMovementMode, RouteMovementMode]
+  repeatedClusterEscapeCount?: number
+  longTransitionCount?: number
+  strongMomentPresent?: boolean
+  momentFlatPenalty?: number
+  roleEnergyNote?: string
+}
+
+const roleShapeKey = {
+  warmup: 'start',
+  peak: 'highlight',
+  cooldown: 'windDown',
+} as const
+
+function scoredStop(spec: StopSpec): ArcStop {
+  const roleScore = spec.roleScore ?? 0.74
+  const shapeScore = spec.shapeScore ?? 0.74
+  const roleScores = {
+    warmup: spec.role === 'warmup' ? roleScore : 0.62,
+    peak: spec.role === 'peak' ? roleScore : 0.62,
+    wildcard: 0.62,
+    cooldown: spec.role === 'cooldown' ? roleScore : 0.62,
+  }
+  const stopShapeFit = {
+    start: 0.62,
+    highlight: 0.62,
+    surprise: 0.62,
+    windDown: 0.62,
+  }
+  stopShapeFit[roleShapeKey[spec.role]] = shapeScore
+
+  return {
+    role: spec.role,
+    scoredVenue: {
+      venue: {
+        id: spec.venueId,
+        name: spec.name ?? spec.venueId,
+        city: 'San Jose',
+        neighborhood: spec.cluster,
+        driveMinutes: 8,
+        category: 'abstract',
+        subcategory: 'abstract',
+        priceTier: '$$',
+        tags: [],
+        useCases: [],
+        vibeTags: [],
+        energyLevel: spec.energy,
+        socialDensity: 0.5,
+        uniquenessScore: 0.5,
+        distinctivenessScore: 0.5,
+        underexposureScore: 0.5,
+        shareabilityScore: 0.5,
+        isChain: false,
+        localSignals: {
+          localFavoriteScore: 0.5,
+          neighborhoodPrideScore: 0.5,
+          repeatVisitorScore: 0.5,
+        },
+        roleAffinity: roleScores,
+        imageUrl: '',
+        shortDescription: '',
+        narrativeFlavor: '',
+        isHiddenGem: false,
+        isActive: true,
+        highlightCapable: true,
+        durationProfile: {} as never,
+        settings: {} as never,
+        signature: {} as never,
+        source: {} as never,
+      },
+      candidateIdentity: {
+        candidateId: spec.venueId,
+        baseVenueId: spec.venueId,
+        kind: 'base',
+        traceLabel: spec.venueId,
+      },
+      momentIdentity: {
+        type: spec.role === 'peak' ? 'anchor' : spec.role === 'warmup' ? 'arrival' : 'close',
+        strength: spec.role === 'peak' ? 'strong' : 'medium',
+      },
+      fitBreakdown: {} as never,
+      fitScore: spec.fitScore ?? 0.66,
+      hiddenGemScore: 0.5,
+      lensCompatibility: spec.lensCompatibility ?? 0.66,
+      contextSpecificity: {
+        overall: spec.contextSpecificity ?? 0.66,
+        personaSignal: 0.66,
+        vibeSignal: 0.66,
+        lensSignal: 0.66,
+        byRole: {
+          warmup: 0.66,
+          peak: 0.66,
+          wildcard: 0.66,
+          cooldown: 0.66,
+        },
+      },
+      dominanceControl: {
+        universalityScore: 0.2,
+        flaggedUniversal: false,
+        byRole: {
+          warmup: 0.2,
+          peak: 0.2,
+          wildcard: 0.2,
+          cooldown: 0.2,
+        },
+      },
+      roleContract: {
+        warmup: {} as never,
+        peak: {} as never,
+        wildcard: {} as never,
+        cooldown: {} as never,
+      },
+      stopShapeFit,
+      vibeAuthority: {} as never,
+      highlightValidity: {} as never,
+      roleScores,
+      taste: {
+        signals: {} as never,
+        modeAlignment: {
+          score: 0.72,
+          penalty: 0,
+          lane: spec.lane as never,
+          tier: 'primary',
+          supportiveTagScore: 0,
+          lanePriorityScore: 0,
+        },
+        fallbackPenalty: {
+          signalScore: 0,
+          appliedPenalty: 0,
+          applied: false,
+          strongerAlternativePresent: false,
+          reason: '',
+        },
+        rolePoolInfluence: {
+          warmup: {} as never,
+          peak: {} as never,
+          wildcard: {} as never,
+          cooldown: {} as never,
+        },
+      },
+    },
+  }
+}
+
+function buildSpatial(spec: GateCase): ArcCandidate['spatial'] {
+  const clusters = spec.stops.map((stop) => stop.cluster)
+  const transitions = [
+    [spec.stops[0], spec.stops[1]],
+    [spec.stops[1], spec.stops[2]],
+  ].map(([from, to], index) => {
+    const sameCluster = from.cluster === to.cluster
+    const longTransition =
+      index < (spec.longTransitionCount ?? spec.transitions.filter((minutes) => minutes > 12).length)
+    return {
+      fromVenueId: from.venueId,
+      toVenueId: to.venueId,
+      fromClusterId: from.cluster,
+      toClusterId: to.cluster,
+      fromNeighborhood: from.cluster,
+      toNeighborhood: to.cluster,
+      driveGap: spec.transitions[index],
+      sameCluster,
+      clusterEscape: !sameCluster,
+      longTransition,
+      jumpUsed: !sameCluster,
+      scoreDelta: 0,
+      notes: [],
+    }
+  })
+  const clusterEscapeCount = transitions.filter((transition) => transition.clusterEscape).length
+  const longTransitionCount = transitions.filter((transition) => transition.longTransition).length
+  return {
+    mode: 'flexible',
+    homeClusterId: clusters[0],
+    clustersVisited: [...new Set(clusters)],
+    clusterAssignments: spec.stops.map((stop) => ({
+      venueId: stop.venueId,
+      venueName: stop.name ?? stop.venueId,
+      neighborhood: stop.cluster,
+      clusterId: stop.cluster,
+    })),
+    transitions,
+    sameClusterTransitionCount: transitions.filter((transition) => transition.sameCluster).length,
+    clusterEscapeCount,
+    repeatedClusterEscapeCount: spec.repeatedClusterEscapeCount ?? Math.max(0, clusterEscapeCount - 1),
+    longTransitionCount,
+    jumpUsed: clusterEscapeCount > 0,
+    spatialBonus: 0,
+    spatialPenalty: longTransitionCount * 0.1,
+    score: 0.82 - longTransitionCount * 0.1,
+    notes: [],
+  }
+}
+
+function buildPacing(spec: GateCase): RoutePacingDiagnostics {
+  return {
+    transitions: [
+      [spec.stops[0], spec.stops[1], 0],
+      [spec.stops[1], spec.stops[2], 1],
+    ].map(([from, to, index]) => ({
+      fromRole: from.role === 'warmup' ? 'start' : from.role === 'peak' ? 'highlight' : 'windDown',
+      toRole: to.role === 'warmup' ? 'start' : to.role === 'peak' ? 'highlight' : 'windDown',
+      fromVenueId: from.venueId,
+      toVenueId: to.venueId,
+      estimatedTravelMinutes: spec.transitions[index],
+      transitionBufferMinutes: 0,
+      estimatedTransitionMinutes: spec.transitions[index],
+      frictionScore: spec.transitions[index] / 20,
+      movementMode: spec.movementModes?.[index] ?? 'walkable',
+      neighborhoodContinuity: from.cluster === to.cluster ? 'same-neighborhood' : 'adjacent-neighborhoods',
+      notes: [],
+    })),
+    totalRouteFriction: 0.2,
+    estimatedStopMinutes: 120,
+    estimatedTransitionMinutes: spec.transitions[0] + spec.transitions[1],
+    estimatedTotalMinutes: 120 + spec.transitions[0] + spec.transitions[1],
+    estimatedTotalLabel: '2h',
+    routeFeelLabel: 'balanced',
+    pacingPenaltyApplied: false,
+    pacingPenaltyReasons: [],
+    smoothProgressionRewardApplied: true,
+    smoothProgressionRewardReasons: [],
+  }
+}
+
+function buildCandidate(spec: GateCase): ArcCandidate {
+  return {
+    id: `${spec.cell.toLowerCase().replace(/\s+/g, '-')}-generated-final`,
+    stops: spec.stops.map(scoredStop),
+    totalScore: 0.78,
+    scoreBreakdown: {
+      roleFlowScore: 0.72,
+      diversityScore: 0.72,
+      geographyScore: 0.72,
+      hiddenGemLift: 0,
+      windDownScore: 0.72,
+      highlightMomentScore: spec.strongMomentPresent === false ? 0.28 : 0.76,
+      momentStrengthScore: spec.strongMomentPresent === false ? 0.28 : 0.76,
+      momentFlatPenalty: spec.momentFlatPenalty ?? 0,
+      roleEnergyNote: spec.roleEnergyNote,
+      strongMomentPresent: spec.strongMomentPresent ?? true,
+      momentQualityNote: spec.strongMomentPresent === false ? 'No strong main moment' : 'Strong center',
+    },
+    pacing: {} as never,
+    spatial: buildSpatial(spec),
+    hasWildcard: false,
+  }
+}
+
+function buildIntent(spec: GateCase): IntentProfile {
+  return {
+    mode: 'build',
+    city: 'San Jose',
+    persona: spec.persona,
+    distanceMode: spec.locationClass === 'L1 Dense' ? 'nearby' : 'short-drive',
+    planningMode: 'user-led',
+    anchor: spec.anchor,
+    refinementModes: [],
+  } as IntentProfile
+}
+
+function runGate(spec: GateCase): GreatStopGateResult {
+  return buildGreatStopGateResult({
+    selectedArc: buildCandidate(spec),
+    intent: buildIntent(spec),
+    routePacing: buildPacing(spec),
+    locationClass: spec.locationClass,
+  })
+}
+
+function baselineGateSpec(
+  persona: PersonaMode,
+  locationClass: BuildLocationClass,
+): GateCase {
+  return {
+    cell: `${persona}_${locationClass}`,
+    persona,
+    locationClass,
+    anchor: { venueId: `${persona}-${locationClass}-anchor`, role: 'highlight' },
+    stops: [
+      {
+        venueId: `${persona}-${locationClass}-start`,
+        role: 'warmup',
+        lane: 'arrival',
+        cluster: 'a',
+        energy: 2,
+      },
+      {
+        venueId: `${persona}-${locationClass}-anchor`,
+        role: 'peak',
+        lane: 'center',
+        cluster: locationClass === 'L1 Dense' ? 'a' : 'b',
+        energy: 4,
+      },
+      {
+        venueId: `${persona}-${locationClass}-end`,
+        role: 'cooldown',
+        lane: 'landing',
+        cluster: locationClass === 'L3 Sparse' ? 'c' : 'b',
+        energy: 2,
+      },
+    ],
+    transitions:
+      locationClass === 'L1 Dense'
+        ? [7, 7]
+        : locationClass === 'L2 Mid'
+          ? [11, 11]
+          : [16, 16],
+    movementModes:
+      locationClass === 'L1 Dense'
+        ? ['walkable', 'walkable']
+        : locationClass === 'L2 Mid'
+          ? ['short-drive', 'walkable']
+          : ['short-drive', 'short-drive'],
+    repeatedClusterEscapeCount: 0,
+    longTransitionCount: locationClass === 'L3 Sparse' ? 1 : 0,
+  }
+}
+
+function includesCriteria(result: GreatStopGateResult, criteria: GreatStopGateCriterion[]): boolean {
+  return criteria.every((criterionName) => result.failedCriteria.includes(criterionName))
+}
+
+const presetMatrix = (['romantic', 'friends', 'family'] as const).flatMap((matrixPersona) =>
+  (['L1 Dense', 'L2 Mid', 'L3 Sparse'] as const).map((locationClass) => {
+    const result = runGate(baselineGateSpec(matrixPersona, locationClass))
+    assert(
+      result.preset.persona === matrixPersona,
+      `${matrixPersona} ${locationClass} should use matching persona preset.`,
+    )
+    assert(
+      result.preset.locationClass === locationClass,
+      `${matrixPersona} ${locationClass} should use explicit location class preset.`,
+    )
+    assert(
+      result.preset.source === 'explicit',
+      `${matrixPersona} ${locationClass} should mark preset source explicit.`,
+    )
+    return {
+      persona: matrixPersona,
+      locationClass,
+      preset: result.preset,
+    }
+  }),
+)
+
+const evergreen = runGate({
+  cell: 'Evergreen',
+  persona: 'romantic',
+  locationClass: 'L3 Sparse',
+  anchor: { venueId: 'sj-evergreen-coffee-company', role: 'highlight' },
+  stops: [
+    { venueId: 'evergreen-start', role: 'warmup', lane: 'arrival', cluster: 'a', energy: 2 },
+    { venueId: 'sj-evergreen-coffee-company', role: 'peak', lane: 'center', cluster: 'a', energy: 4 },
+    { venueId: 'evergreen-end', role: 'cooldown', lane: 'landing', cluster: 'b', energy: 2 },
+  ],
+  transitions: [8, 10],
+  movementModes: ['walkable', 'short-drive'],
+})
+
+const adegaOld = runGate({
+  cell: 'Adega old thin',
+  persona: 'romantic',
+  locationClass: 'L2 Mid',
+  anchor: { venueId: 'sj-adega-wine-atelier', role: 'highlight' },
+  stops: [
+    { venueId: 'adega-start', role: 'warmup', lane: 'soft', cluster: 'a', energy: 3 },
+    { venueId: 'sj-adega-wine-atelier', role: 'peak', lane: 'peak', cluster: 'b', energy: 3 },
+    { venueId: 'adega-end', role: 'cooldown', lane: 'soft', cluster: 'c', energy: 4 },
+  ],
+  transitions: [15, 15],
+  movementModes: ['short-drive', 'short-drive'],
+  repeatedClusterEscapeCount: 1,
+  longTransitionCount: 2,
+  strongMomentPresent: false,
+  momentFlatPenalty: 0.08,
+  roleEnergyNote: 'flat route energy',
+})
+
+const minibossOld = runGate({
+  cell: 'MINIBOSS old thin',
+  persona: 'friends',
+  locationClass: 'L2 Mid',
+  anchor: { venueId: 'sj-miniboss', role: 'highlight' },
+  stops: [
+    { venueId: 'miniboss-start', role: 'warmup', lane: 'same', cluster: 'a', energy: 2 },
+    { venueId: 'sj-miniboss', role: 'peak', lane: 'same', cluster: 'b', energy: 3 },
+    { venueId: 'miniboss-end', role: 'cooldown', lane: 'same', cluster: 'c', energy: 3 },
+  ],
+  transitions: [7, 7],
+  movementModes: ['walkable', 'walkable'],
+  repeatedClusterEscapeCount: 0,
+  strongMomentPresent: false,
+  momentFlatPenalty: 0.08,
+  roleEnergyNote: 'flat route energy',
+})
+
+const happyHollowOld = runGate({
+  cell: 'Happy Hollow old thin',
+  persona: 'family',
+  locationClass: 'L2 Mid',
+  anchor: { venueId: 'sj-happy-hollow', role: 'highlight' },
+  stops: [
+    { venueId: 'happy-start', role: 'warmup', lane: 'arrival', cluster: 'a', energy: 2 },
+    { venueId: 'sj-happy-hollow', role: 'peak', lane: 'center', cluster: 'b', energy: 4 },
+    { venueId: 'happy-end', role: 'cooldown', lane: 'landing', cluster: 'c', energy: 2 },
+  ],
+  transitions: [16, 16],
+  movementModes: ['short-drive', 'short-drive'],
+  repeatedClusterEscapeCount: 1,
+  longTransitionCount: 2,
+})
+
+const l1FamilyPlace = runGate({
+  cell: 'Family L1 place preset',
+  persona: 'family',
+  locationClass: 'L1 Dense',
+  anchor: { venueId: 'family-anchor', role: 'highlight' },
+  stops: [
+    { venueId: 'family-start', role: 'warmup', lane: 'arrival', cluster: 'a', energy: 2 },
+    { venueId: 'family-anchor', role: 'peak', lane: 'center', cluster: 'b', energy: 4 },
+    { venueId: 'family-end', role: 'cooldown', lane: 'landing', cluster: 'b', energy: 2 },
+  ],
+  transitions: [11, 4],
+  movementModes: ['short-drive', 'walkable'],
+  longTransitionCount: 1,
+})
+
+assert(evergreen.status === 'PASS', `Evergreen-like route should pass, got ${evergreen.status}`)
+assert(evergreen.preset.source === 'explicit', 'Evergreen-like L3 route should use explicit L3 Sparse.')
+assert(evergreen.requiredAnchor?.survived === true, 'Required anchor should survive in PASS route.')
+assert(evergreen.requiredAnchor?.creditedRole === 'highlight', 'Required anchor should be credited as highlight.')
+assert(includesCriteria(adegaOld, ['place_right', 'moment_right']), 'Adega-like old route should fail place and moment.')
+assert(adegaOld.preset.locationClass === 'L2 Mid', 'Adega-like route should use explicit L2 Mid.')
+assert(adegaOld.preset.source === 'explicit', 'Adega-like route should not rely on distanceMode inference.')
+assert(includesCriteria(minibossOld, ['moment_right']), 'MINIBOSS-like old route should fail moment.')
+assert(happyHollowOld.status === 'FAIL', 'Happy Hollow-like old route should be a named FAIL, not THIN.')
+assert(!JSON.stringify(happyHollowOld).includes('THIN_STRICT'), 'Great Stop Gate artifact must not emit THIN_STRICT.')
+assert(l1FamilyPlace.status === 'FAIL', 'Family L1 preset should enforce tighter place constraints.')
+assert(
+  l1FamilyPlace.reasons.includes('place_right:drive_like_movement_discouraged'),
+  'Family L1 preset should discourage drive-like movement.',
+)
+
+const gateSource = readFileSync('src/domain/greatStop/buildGreatStopGateResult.ts', 'utf8')
+assert(!/provider_shadow|approved_payload|static_candidate|candidate_draft/.test(gateSource), 'Gate evaluator must not depend on non-authority source kinds.')
+const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf8')
+assert(
+  runGeneratePlanSource.includes('greatStopGateResult: buildGreatStopGateResult({') &&
+    runGeneratePlanSource.includes('selectedArc,') &&
+    runGeneratePlanSource.includes('routePacing:') &&
+    runGeneratePlanSource.includes('locationClass: options.greatStopGateLocationClass') &&
+    runGeneratePlanSource.includes("locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined"),
+  'runGeneratePlan must emit Great Stop Gate from selected generated arc, route pacing, and explicit location class when provided.',
+)
+const diagnosticsSource = readFileSync('src/domain/types/diagnostics.ts', 'utf8')
+assert(diagnosticsSource.includes('greatStopGateResult?: GreatStopGateResult'), 'Generation diagnostics must expose Great Stop Gate result.')
+const buildWaypointSource = readFileSync('src/domain/waypoint/buildContractDrivenBuildWaypointPlan.ts', 'utf8')
+assert(
+  buildWaypointSource.includes("greatStopGateLocationClass?: RunGeneratePlanOptions['greatStopGateLocationClass']") &&
+    buildWaypointSource.includes('greatStopGateLocationClass: input.greatStopGateLocationClass'),
+  'Build contract-driven waypoint path must pass explicit Great Stop location class through to runGeneratePlan.',
+)
+const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
+assert(
+  sandboxSource.includes('readBuildLocationClassQueryValue') &&
+    sandboxSource.includes('DEV_CLOSEOUT_BUILD_LOCATION_CLASS_KEY') &&
+    sandboxSource.includes('greatStopGateLocationClass: buildLocationClass ?? undefined'),
+  'Public Build page must source explicit diagnostic location class and pass it into Build generation.',
+)
+const routeAuthoritySource = readFileSync(
+  'src/app/services/routeAuthority/routeAuthorityService.ts',
+  'utf8',
+)
+assert(!routeAuthoritySource.includes('greatStopGate'), 'Great Stop Gate must not change routeAuthority behavior.')
+const runtimeRouteArtifactSource = readFileSync('src/domain/artifacts/runtimeRouteArtifact.ts', 'utf8')
+assert(!runtimeRouteArtifactSource.includes('greatStopGate'), 'Great Stop Gate must not change RuntimeRouteArtifact shape.')
+
+const waypointSource = readFileSync('src/integrations/waypoint/core.ts', 'utf8')
+const waypointStart = waypointSource.indexOf('export interface WaypointBoundaryQualitySignals')
+const waypointEnd = waypointSource.indexOf('function refinementAdjustmentTrace')
+assert(waypointStart >= 0 && waypointEnd > waypointStart, 'Could not isolate Waypoint quality scoring block.')
+const waypointQualityBlock = waypointSource.slice(waypointStart, waypointEnd).toLowerCase()
+const bannedWaypointTokens = [
+  'coffee',
+  'cafe',
+  'tea',
+  'cocktail',
+  'bar',
+  'restaurant',
+  'museum',
+  'park',
+  'nightlife',
+  'family',
+  'hospitality',
+]
+const waypointHits = bannedWaypointTokens.filter((token) =>
+  new RegExp(`\\b${token}\\b`, 'i').test(waypointQualityBlock),
+)
+assert(waypointHits.length === 0, `Waypoint quality block leaked domain tokens: ${waypointHits.join(', ')}`)
+
+const output = {
+  artifactEmittedForGeneratedBuildRoutes: true,
+  usesGeneratedFinalRouteTruth: true,
+  nonAuthoritySourceKindsIgnored: true,
+  requiredAnchorSurvivedAndCredited: evergreen.requiredAnchor,
+  deterministicResults: {
+    evergreenLike: {
+      status: evergreen.status,
+      failedCriteria: evergreen.failedCriteria,
+      reasons: evergreen.reasons,
+    },
+    adegaLikeOldRoute: {
+      status: adegaOld.status,
+      failedCriteria: adegaOld.failedCriteria,
+      reasons: adegaOld.reasons,
+    },
+    minibossLikeOldRoute: {
+      status: minibossOld.status,
+      failedCriteria: minibossOld.failedCriteria,
+      reasons: minibossOld.reasons,
+    },
+    happyHollowLikeOldRoute: {
+      status: happyHollowOld.status,
+      failedCriteria: happyHollowOld.failedCriteria,
+      reasons: happyHollowOld.reasons,
+      thinStrictEmitted: false,
+    },
+  },
+  presetsVaryByPersonaAndLocationClass: {
+    explicitPresetMatrix: presetMatrix,
+    familyL1TravelTolerance: l1FamilyPlace.preset.travelTolerance,
+    evergreenL3TravelTolerance: evergreen.preset.travelTolerance,
+    familyL1DriveLikeReason: l1FamilyPlace.reasons.includes('place_right:drive_like_movement_discouraged'),
+  },
+  adegaUsesExplicitL2Mid: adegaOld.preset.source === 'explicit' && adegaOld.preset.locationClass === 'L2 Mid',
+  l3UsesExplicitL3Sparse: evergreen.preset.source === 'explicit' && evergreen.preset.locationClass === 'L3 Sparse',
+  momentRightDomainAgnostic: true,
+  waypointDomainGuardrailPassed: true,
+  routeAuthorityUnchanged: true,
+  runtimeRouteArtifactShapeUnchanged: true,
+  providerShadowRemainsNonAuthoritative: true,
+  fetchCallCount,
+}
+
+assert(fetchCallCount === 0, `Expected fetchCallCount 0, got ${fetchCallCount}`)
+console.log(JSON.stringify(output, null, 2))

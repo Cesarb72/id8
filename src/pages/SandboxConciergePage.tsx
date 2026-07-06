@@ -291,6 +291,7 @@ import type {
   RouteShapeContract,
   VibeAnchor,
 } from '../domain/types/intent'
+import type { BuildLocationClass } from '../domain/types/greatStopGate'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../domain/types/itinerary'
 import type { RefinementMode } from '../domain/types/refinement'
 import type { DistrictRecommendation } from '../domain/types/district'
@@ -311,6 +312,7 @@ const DEV_CLOSEOUT_BUILD_ANCHOR_SELECTION_KEY = 'id8.dev.closeout.buildAnchorSel
 const DEV_CLOSEOUT_BUILD_ANCHOR_RESULT_KEY = 'id8.dev.closeout.buildAnchorResult'
 const DEV_CLOSEOUT_BUILD_READY_KEY = 'id8.dev.closeout.buildReady'
 const DEV_CLOSEOUT_BUILD_QUERY_KEY = 'id8.dev.closeout.buildQuery'
+const DEV_CLOSEOUT_BUILD_LOCATION_CLASS_KEY = 'id8.dev.closeout.buildLocationClass'
 const PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED = false
 const PUBLIC_CURATE_COMMITTED_ROUTE_FALLBACK_ENABLED: boolean = false
 
@@ -634,6 +636,47 @@ function normalizeCuratePreviewCommitabilityState(
   return {
     ...state,
   }
+}
+
+function normalizeBuildLocationClass(value: string | null | undefined): BuildLocationClass | null {
+  const normalized = value?.trim().toLowerCase().replace(/[_-]+/g, ' ')
+  if (!normalized) {
+    return null
+  }
+  if (normalized === 'l1' || normalized === 'l1 dense' || normalized === 'dense') {
+    return 'L1 Dense'
+  }
+  if (normalized === 'l2' || normalized === 'l2 mid' || normalized === 'mid') {
+    return 'L2 Mid'
+  }
+  if (normalized === 'l3' || normalized === 'l3 sparse' || normalized === 'sparse') {
+    return 'L3 Sparse'
+  }
+  return null
+}
+
+function readBuildLocationClassQueryValue(search: string): BuildLocationClass | null {
+  try {
+    const searchParams = new URLSearchParams(search)
+    return (
+      normalizeBuildLocationClass(searchParams.get('locationClass')) ??
+      normalizeBuildLocationClass(searchParams.get('buildLocationClass')) ??
+      normalizeBuildLocationClass(searchParams.get('location_class')) ??
+      normalizeBuildLocationClass(searchParams.get('build_location_class'))
+    )
+  } catch {
+    return null
+  }
+}
+
+function readBuildLocationClassDiagnosticInput(): BuildLocationClass | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  return (
+    readBuildLocationClassQueryValue(window.location.search) ??
+    normalizeBuildLocationClass(readSessionStorageValue(DEV_CLOSEOUT_BUILD_LOCATION_CLASS_KEY))
+  )
 }
 
 interface CurateParityRunSummary {
@@ -10111,6 +10154,9 @@ export function SandboxConciergePage({
   const [buildAnchorReady, setBuildAnchorReady] = useState<boolean>(
     () => (isPublicSurface ? false : readSessionStorageValue(DEV_CLOSEOUT_BUILD_READY_KEY) === '1'),
   )
+  const [buildLocationClass, setBuildLocationClass] = useState<BuildLocationClass | null>(() =>
+    readBuildLocationClassDiagnosticInput(),
+  )
   const [buildProviderContinueIntent, setBuildProviderContinueIntent] = useState(false)
   const [buildAnchorResults, setBuildAnchorResults] = useState<AnchorSearchResult[]>([])
   const [buildAnchorLoading, setBuildAnchorLoading] = useState(false)
@@ -10261,6 +10307,25 @@ export function SandboxConciergePage({
     new URLSearchParams(currentSearch).get('fresh') === '1'
   const publicCardPreviewQueryGateActive =
     new URLSearchParams(currentSearch).get('cards') === '1'
+  useEffect(() => {
+    if (!isBuildWrapperActive) {
+      return
+    }
+    const queryLocationClass = readBuildLocationClassQueryValue(currentSearch)
+    if (queryLocationClass) {
+      if (queryLocationClass !== buildLocationClass) {
+        setBuildLocationClass(queryLocationClass)
+      }
+      writeSessionStorageValue(DEV_CLOSEOUT_BUILD_LOCATION_CLASS_KEY, queryLocationClass)
+      return
+    }
+    const persistedLocationClass = normalizeBuildLocationClass(
+      readSessionStorageValue(DEV_CLOSEOUT_BUILD_LOCATION_CLASS_KEY),
+    )
+    if (persistedLocationClass && persistedLocationClass !== buildLocationClass) {
+      setBuildLocationClass(persistedLocationClass)
+    }
+  }, [buildLocationClass, currentSearch, isBuildWrapperActive])
   const selectedStarterPack = useMemo<StarterPack | null>(
     () => starterPacks.find((pack) => pack.id === selectedStarterPackId) ?? null,
     [selectedStarterPackId],
@@ -14946,6 +15011,7 @@ export function SandboxConciergePage({
             vibe: primaryVibe,
             requiredBuildAnchor: requiredBuildAnchorForPostPlanner,
             buildAnchorTruthContract: buildAnchorTruthContractForGeneration,
+            greatStopGateLocationClass: buildLocationClass ?? undefined,
             postPlannerDependencies: {
               buildPassthroughStrongCurationTastePass,
               applyStrongCurationTastePass,
@@ -15338,6 +15404,7 @@ export function SandboxConciergePage({
       allDirectionCards,
       districtLocationQuery,
       districtPreviewResult,
+      buildLocationClass,
       isBuildWrapperActive,
       isSurpriseWrapperActive,
       isCurateWrapperActive,
@@ -21836,6 +21903,7 @@ export function SandboxConciergePage({
     highlightShortlistIds,
     windDownCandidates: buildQualityWindDownDiagnostics,
     generatedRouteScore: buildQualityGeneratedRouteScore,
+    greatStopGateResult: plan?.generationTrace.greatStopGateResult ?? null,
     movementEvidence: {
       nirvanaSoulToPaperPlane: buildQualityFormatTransition('sj-nirvana-soul', 'sj-paper-plane'),
       paperPlaneToLincolnAvenueDeli: buildQualityFormatTransition(
@@ -26283,6 +26351,12 @@ export function SandboxConciergePage({
                 currentRouteScore:{' '}
                 {publicBuildQualityDiagnostics.generatedRouteScore
                   ? `${publicBuildQualityDiagnostics.generatedRouteScore.totalScore} | geography:${publicBuildQualityDiagnostics.generatedRouteScore.scoreBreakdown.geographyScore} | windDown:${publicBuildQualityDiagnostics.generatedRouteScore.scoreBreakdown.windDownScore} | diversityPenalty:${publicBuildQualityDiagnostics.generatedRouteScore.scoreBreakdown.categoryDiversityPenalty ?? 0}`
+                  : 'n/a'}
+              </div>
+              <div>
+                greatStopGate:{' '}
+                {publicBuildQualityDiagnostics.greatStopGateResult
+                  ? `${publicBuildQualityDiagnostics.greatStopGateResult.status} | failed:${publicBuildQualityDiagnostics.greatStopGateResult.failedCriteria.join(',') || 'none'} | reasons:${publicBuildQualityDiagnostics.greatStopGateResult.reasons.join(',') || 'none'}`
                   : 'n/a'}
               </div>
               <div>
