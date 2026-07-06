@@ -2589,6 +2589,16 @@ async function runGeneratePlanInternal(
           candidateMatchesCurateCommitPreferences(candidate, buildSelectedContractPreferences),
         )
       : []
+  const buildRequiredAnchorPreservationRequired = Boolean(
+    planningIntent.mode === 'build' &&
+      anchorApplied &&
+      planningIntent.anchor?.venueId &&
+      anchorInternalRole,
+  )
+  const buildRequiredAnchorCandidatePool =
+    buildRequiredAnchorPreservationRequired && finalAnchorCandidates.length > 0
+      ? finalAnchorCandidates
+      : rankedCandidates
   if (
     buildSelectedCandidatePreservationRequired &&
     buildSelectedCandidatePreservationCandidates.length === 0
@@ -2604,7 +2614,7 @@ async function runGeneratePlanInternal(
     buildGreatStopSelectionActive
       ? buildSelectedCandidatePreservationRequired
         ? buildSelectedCandidatePreservationCandidates
-        : rankedCandidates
+        : buildRequiredAnchorCandidatePool
       : []
   const buildGreatStopSelection =
     buildGreatStopSelectionActive
@@ -2631,9 +2641,11 @@ async function runGeneratePlanInternal(
       ? buildGreatStopSelection?.selectedCandidate
       : buildSelectedCandidatePreservationRequired
         ? buildSelectedCandidatePreservationCandidates[0]
-        : curateHardCommitRequired
-          ? curateHardCommitCandidates[0]
-          : rankedCandidates[0]) ??
+        : buildRequiredAnchorPreservationRequired && finalAnchorCandidates.length > 0
+          ? finalAnchorCandidates[0]
+          : curateHardCommitRequired
+            ? curateHardCommitCandidates[0]
+            : rankedCandidates[0]) ??
     selectFallbackArc({
       triggerStage: 'initial_selection',
       primaryPathFailureReason:

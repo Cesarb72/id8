@@ -676,11 +676,36 @@ function countCandidatesContainingRequiredAnchor(params: {
   }
 }
 
+function filterRequiredAnchorPreservingCandidates(params: {
+  candidates: ArcCandidate[]
+  requiredAnchorId: string
+  requiredRole: InternalRole
+}) {
+  const { candidates, requiredAnchorId, requiredRole } = params
+  return candidates.filter((candidate) =>
+    candidate.stops.some(
+      (stop) =>
+        stop.role === requiredRole &&
+        stop.scoredVenue.candidateIdentity.baseVenueId === requiredAnchorId,
+    ),
+  )
+}
+
 const identityMismatchPool = [
   adegaProviderBackedCandidate,
   evergreenProviderBackedCandidate,
   priorProviderBackedPassCandidate,
 ]
+const adegaRankedPoolWithAnchorAfterNonAnchorCandidates = [
+  evergreenProviderBackedCandidate,
+  priorProviderBackedPassCandidate,
+  adegaProviderBackedCandidate,
+]
+const adegaRequiredAnchorCandidatePool = filterRequiredAnchorPreservingCandidates({
+  candidates: adegaRankedPoolWithAnchorAfterNonAnchorCandidates,
+  requiredAnchorId: 'sj-adega-wine-atelier',
+  requiredRole: 'peak',
+})
 const adegaIdentityCounts = countCandidatesContainingRequiredAnchor({
   candidates: identityMismatchPool,
   requiredAnchorId: 'sj-adega-wine-atelier',
@@ -754,6 +779,11 @@ assert(
     adegaIdentitySelection.diagnostics.selectedGateResult.requiredAnchor.creditedRole === 'highlight',
   'Base-identity anchor matches must survive and be credited in the required role.',
 )
+assert(
+  adegaRequiredAnchorCandidatePool.length === 1 &&
+    adegaRequiredAnchorCandidatePool[0]?.id === adegaProviderBackedCandidate.id,
+  'Build Stage 2 candidate pool must be filterable to required-anchor-preserving candidates before Great Stop selection.',
+)
 const allFailError = new GreatStopGateSelectionError(allFail.diagnostics)
 assert(
   allFailError.greatStopGateSelectionDiagnostics.status === 'FAIL',
@@ -773,6 +803,13 @@ assert(
     runGeneratePlanSource.includes("stage: 'pre_selection_gate'") &&
     runGeneratePlanSource.includes('throw new GreatStopGateSelectionError(buildGreatStopSelection.diagnostics)'),
   'runGeneratePlan must make Great Stop gate load-bearing before selectedArc is committed when explicit Build location class is supplied.',
+)
+assert(
+  runGeneratePlanSource.includes('const buildRequiredAnchorCandidatePool') &&
+    runGeneratePlanSource.includes('buildRequiredAnchorPreservationRequired && finalAnchorCandidates.length > 0') &&
+    runGeneratePlanSource.includes(': buildRequiredAnchorCandidatePool') &&
+    runGeneratePlanSource.includes('? finalAnchorCandidates[0]'),
+  'runGeneratePlan must prefer required-anchor-preserving Build candidates before Great Stop selection and final selectedArc fallback.',
 )
 const waypointBuildSource = readFileSync('src/domain/waypoint/buildContractDrivenBuildWaypointPlan.ts', 'utf8')
 const postRepairGateIndex = waypointBuildSource.indexOf('postRepairGreatStopGateResult')
@@ -865,6 +902,17 @@ const output = {
     firstRankWhereRequiredAnchorAppears: adegaIdentityCounts.firstRankWhereRequiredAnchorAppears,
     preRepairRankedPoolTrulyZeroAnchorPreservingCandidates:
       adegaIdentityCounts.preRepairRankedPoolTrulyZeroAnchorPreservingCandidates,
+    buildRequiredAnchorCandidatePoolFiltersBeforeGreatStop:
+      adegaRequiredAnchorCandidatePool.length === 1 &&
+      adegaRequiredAnchorCandidatePool[0]?.id === 'adega-provider-backed-base-identity-match',
+    nonAnchorCandidatesExcludedFromBuildGreatStopPool:
+      adegaRequiredAnchorCandidatePool.every((candidate) =>
+        candidate.stops.some(
+          (stop) =>
+            stop.role === 'peak' &&
+            stop.scoredVenue.candidateIdentity.baseVenueId === 'sj-adega-wine-atelier',
+        ),
+      ),
     idMismatchProven: adegaIdentityCounts.containingRequiredAnchorByVenueId === 0 &&
       adegaIdentityCounts.containingRequiredAnchorByCandidateIdentityBaseVenueId > 0,
     selectedAfterBaseIdentityFix: adegaIdentitySelection.selectedCandidate?.id,
