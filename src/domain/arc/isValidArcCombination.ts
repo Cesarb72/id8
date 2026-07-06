@@ -233,6 +233,7 @@ export function getInvalidArcCombinationReasons(
 ): string[] {
   const roles = stops.map((stop) => stop.role)
   const reasons: string[] = []
+  const anchorStopPresent = hasAnchorStop(stops, intent)
 
   if (!matchesValidShape(roles)) {
     reasons.push('invalid_shape')
@@ -248,7 +249,7 @@ export function getInvalidArcCombinationReasons(
     if (highlightIntensity < 0.8) {
       reasons.push('single_stop_highlight_too_weak')
     }
-  } else if (!isArcViable(stops)) {
+  } else if (!isArcViable(stops) && !anchorStopPresent) {
     if (!hasStarterScopedSoftHighlight(stops)) {
       reasons.push('arc_viability')
     }
@@ -259,7 +260,6 @@ export function getInvalidArcCombinationReasons(
   if (!avoidsCategoryRepetition(stops, intent, lens)) {
     reasons.push('category_repetition')
   }
-  const anchorStopPresent = hasAnchorStop(stops, intent)
   const geographyInvalid = hasArcGeographyViolation(stops, intent, crewPolicy, lens)
   if (geographyInvalid && !anchorStopPresent) {
     reasons.push('geography')

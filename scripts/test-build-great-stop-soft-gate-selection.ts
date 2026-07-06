@@ -1,9 +1,12 @@
 import { readFileSync } from 'node:fs'
+import { getInvalidArcCombinationReasons } from '../src/domain/arc/isValidArcCombination'
 import {
   selectGreatStopGatePassingCandidate,
 } from '../src/domain/greatStop/buildGreatStopGateResult'
 import { GreatStopGateSelectionError } from '../src/domain/types/greatStopGate'
 import type { ArcCandidate, ArcStop } from '../src/domain/types/arc'
+import type { CrewPolicy } from '../src/domain/types/crewPolicies'
+import type { ExperienceLens } from '../src/domain/types/experienceLens'
 import type { BuildLocationClass } from '../src/domain/types/greatStopGate'
 import type { IntentProfile, PersonaMode } from '../src/domain/types/intent'
 import type { UserStopRole } from '../src/domain/types/itinerary'
@@ -39,6 +42,7 @@ interface StopSpec {
   fitScore?: number
   lensCompatibility?: number
   contextSpecificity?: number
+  momentIntensity?: number
 }
 
 interface CandidateSpec {
@@ -162,10 +166,21 @@ function scoredStop(spec: StopSpec): ArcStop {
       },
       stopShapeFit,
       vibeAuthority: {} as never,
-      highlightValidity: {} as never,
+      highlightValidity: {
+        validityLevel: 'valid',
+        packLiteralRequirementSatisfied: false,
+        packLiteralRequirementLabel: '',
+        personaVetoes: [],
+        contextVetoes: [],
+        violations: [],
+      } as never,
       roleScores,
       taste: {
-        signals: {} as never,
+        signals: {
+          momentIntensity: {
+            score: spec.momentIntensity ?? (spec.role === 'peak' ? 0.76 : 0.42),
+          },
+        } as never,
         modeAlignment: {
           score: 0.72,
           penalty: 0,
@@ -302,6 +317,41 @@ function buildIntent(params: {
     refinementModes: [],
   } as IntentProfile
 }
+
+const assemblyCrewPolicy = {
+  crew: 'couple',
+  preferredCategories: [],
+  discouragedCategories: [],
+  blockedCategories: [],
+  maxPriceTier: '$$$',
+  targetEnergy: 3,
+  hiddenGemBias: 0,
+  wildcardBias: 0,
+  diversityBias: 0,
+  proximityStrictness: 0,
+  windDownPreferredCategories: [],
+  windDownAvoidCategories: [],
+} as CrewPolicy
+
+const assemblyLens = {
+  tone: 'intimate',
+  energyBand: ['low', 'medium'],
+  discoveryBias: 'medium',
+  movementTolerance: 'medium',
+  repetitionTolerance: 'medium',
+  wildcardAggressiveness: 0,
+  preferredCategories: [],
+  discouragedCategories: [],
+  preferredTags: [],
+  discouragedTags: [],
+  windDownExpectation: {
+    preferredCategories: [],
+    discouragedCategories: [],
+    closeToBase: false,
+    maxEnergy: 'medium',
+  },
+  preferredStopShapes: {} as never,
+} as ExperienceLens
 
 const intent = buildIntent({
   persona: 'romantic',
@@ -575,6 +625,53 @@ const adegaProviderBackedCandidate = buildCandidate({
   repeatedClusterEscapeCount: 0,
 })
 
+const adegaWeakMomentRequiredAnchorCandidate = buildCandidate({
+  id: 'adega-provider-backed-weak-moment-anchor-preserving',
+  stops: [
+    { role: 'warmup', venueId: 'heritage-tea-house', lane: 'arrival', cluster: 'a', energy: 2 },
+    {
+      role: 'peak',
+      venueId: 'live_google_adega-provider-record',
+      baseVenueId: 'sj-adega-wine-atelier',
+      candidateId: 'live_google_adega-provider-record::activation::featured',
+      providerRecordId: 'adega-provider-record',
+      displayName: 'Adega',
+      sourceOrigin: 'provider',
+      lane: 'center',
+      cluster: 'a',
+      energy: 4,
+      momentIntensity: 0.42,
+    },
+    { role: 'cooldown', venueId: 'j-town-matcha', lane: 'landing', cluster: 'b', energy: 2 },
+  ],
+  transitions: [8, 9],
+  movementModes: ['walkable', 'walkable'],
+  repeatedClusterEscapeCount: 0,
+  strongMomentPresent: false,
+})
+
+const nonAnchorWeakMomentCandidate = buildCandidate({
+  id: 'non-anchor-weak-moment-still-invalid',
+  stops: [
+    { role: 'warmup', venueId: 'heritage-tea-house', lane: 'arrival', cluster: 'a', energy: 2 },
+    {
+      role: 'peak',
+      venueId: 'rose-garden-sunset-promenade',
+      baseVenueId: 'rose-garden-sunset-promenade',
+      displayName: 'Rose Garden sunset promenade',
+      lane: 'center',
+      cluster: 'a',
+      energy: 4,
+      momentIntensity: 0.42,
+    },
+    { role: 'cooldown', venueId: 'j-town-matcha', lane: 'landing', cluster: 'b', energy: 2 },
+  ],
+  transitions: [8, 9],
+  movementModes: ['walkable', 'walkable'],
+  repeatedClusterEscapeCount: 0,
+  strongMomentPresent: false,
+})
+
 const evergreenProviderBackedCandidate = buildCandidate({
   id: 'evergreen-provider-backed-base-identity-match',
   stops: [
@@ -706,6 +803,38 @@ const adegaRequiredAnchorCandidatePool = filterRequiredAnchorPreservingCandidate
   requiredAnchorId: 'sj-adega-wine-atelier',
   requiredRole: 'peak',
 })
+const adegaWeakMomentRankedPoolWithAnchorAfterNonAnchorCandidates = [
+  evergreenProviderBackedCandidate,
+  priorProviderBackedPassCandidate,
+  adegaWeakMomentRequiredAnchorCandidate,
+]
+const adegaWeakMomentRequiredAnchorCandidatePool = filterRequiredAnchorPreservingCandidates({
+  candidates: adegaWeakMomentRankedPoolWithAnchorAfterNonAnchorCandidates,
+  requiredAnchorId: 'sj-adega-wine-atelier',
+  requiredRole: 'peak',
+})
+const adegaWeakMomentInvalidReasons = getInvalidArcCombinationReasons(
+  adegaWeakMomentRequiredAnchorCandidate.stops,
+  buildIntent({
+    persona: 'romantic',
+    locationClass: 'L2 Mid',
+    anchorVenueId: 'sj-adega-wine-atelier',
+    anchorRole: 'highlight',
+  }),
+  assemblyCrewPolicy,
+  assemblyLens,
+)
+const nonAnchorWeakMomentInvalidReasons = getInvalidArcCombinationReasons(
+  nonAnchorWeakMomentCandidate.stops,
+  buildIntent({
+    persona: 'romantic',
+    locationClass: 'L2 Mid',
+    anchorVenueId: 'sj-adega-wine-atelier',
+    anchorRole: 'highlight',
+  }),
+  assemblyCrewPolicy,
+  assemblyLens,
+)
 const adegaIdentityCounts = countCandidatesContainingRequiredAnchor({
   candidates: identityMismatchPool,
   requiredAnchorId: 'sj-adega-wine-atelier',
@@ -784,6 +913,20 @@ assert(
     adegaRequiredAnchorCandidatePool[0]?.id === adegaProviderBackedCandidate.id,
   'Build Stage 2 candidate pool must be filterable to required-anchor-preserving candidates before Great Stop selection.',
 )
+assert(
+  !adegaWeakMomentInvalidReasons.includes('arc_viability'),
+  'Adega-like provider-backed required-anchor candidate should not be dropped by generic arc viability before Great Stop.',
+)
+assert(
+  nonAnchorWeakMomentInvalidReasons.includes('arc_viability'),
+  'Non-anchor weak-moment candidates must still fail generic arc viability.',
+)
+assert(
+  adegaWeakMomentRequiredAnchorCandidatePool.length === 1 &&
+    adegaWeakMomentRequiredAnchorCandidatePool[0]?.id ===
+      'adega-provider-backed-weak-moment-anchor-preserving',
+  'Build Great Stop candidate input must retain weak-moment required-anchor candidates for honest gate evaluation.',
+)
 const allFailError = new GreatStopGateSelectionError(allFail.diagnostics)
 assert(
   allFailError.greatStopGateSelectionDiagnostics.status === 'FAIL',
@@ -797,6 +940,7 @@ assert(!finalRouteProduced, 'All-fail case must not produce finalRoute.')
 assert(!lockInputAvailable, 'All-fail case must not produce lock input.')
 
 const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf8')
+const arcCombinationSource = readFileSync('src/domain/arc/isValidArcCombination.ts', 'utf8')
 assert(
   runGeneratePlanSource.includes("planningIntent.mode === 'build' && Boolean(options.greatStopGateLocationClass)") &&
     runGeneratePlanSource.includes('selectGreatStopGatePassingCandidate({') &&
@@ -810,6 +954,11 @@ assert(
     runGeneratePlanSource.includes(': buildRequiredAnchorCandidatePool') &&
     runGeneratePlanSource.includes('? finalAnchorCandidates[0]'),
   'runGeneratePlan must prefer required-anchor-preserving Build candidates before Great Stop selection and final selectedArc fallback.',
+)
+assert(
+  arcCombinationSource.includes('const anchorStopPresent = hasAnchorStop(stops, intent)') &&
+    arcCombinationSource.includes('} else if (!isArcViable(stops) && !anchorStopPresent)'),
+  'Arc candidate assembly must not drop multi-stop required-anchor candidates solely on generic arc viability before Great Stop.',
 )
 const waypointBuildSource = readFileSync('src/domain/waypoint/buildContractDrivenBuildWaypointPlan.ts', 'utf8')
 const postRepairGateIndex = waypointBuildSource.indexOf('postRepairGreatStopGateResult')
@@ -905,6 +1054,16 @@ const output = {
     buildRequiredAnchorCandidatePoolFiltersBeforeGreatStop:
       adegaRequiredAnchorCandidatePool.length === 1 &&
       adegaRequiredAnchorCandidatePool[0]?.id === 'adega-provider-backed-base-identity-match',
+    requiredAnchorCandidateSurvivesAssemblyArcViability:
+      !adegaWeakMomentInvalidReasons.includes('arc_viability'),
+    nonAnchorCandidateStillFailsArcViability:
+      nonAnchorWeakMomentInvalidReasons.includes('arc_viability'),
+    weakMomentAnchorCandidatePoolAvailableForGreatStop:
+      adegaWeakMomentRequiredAnchorCandidatePool.length === 1 &&
+      adegaWeakMomentRequiredAnchorCandidatePool[0]?.id ===
+        'adega-provider-backed-weak-moment-anchor-preserving',
+    adegaWeakMomentInvalidReasons,
+    nonAnchorWeakMomentInvalidReasons,
     nonAnchorCandidatesExcludedFromBuildGreatStopPool:
       adegaRequiredAnchorCandidatePool.every((candidate) =>
         candidate.stops.some(
