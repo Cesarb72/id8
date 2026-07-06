@@ -20,6 +20,7 @@ type InternalRole = 'warmup' | 'peak' | 'cooldown'
 
 interface StopSpec {
   venueId: string
+  baseVenueId?: string
   role: InternalRole
   lane: string
   cluster: string
@@ -99,7 +100,7 @@ function scoredStop(spec: StopSpec): ArcStop {
       },
       candidateIdentity: {
         candidateId: spec.venueId,
-        baseVenueId: spec.venueId,
+        baseVenueId: spec.baseVenueId ?? spec.venueId,
         kind: 'base',
         traceLabel: spec.venueId,
       },
@@ -464,11 +465,57 @@ assert(
   'Lane variance should improve lane signals over repeated opaque lane identity.',
 )
 
+const providerBackedRequiredStop = rankPair('sj-adega-wine-atelier', [
+  {
+    id: 'provider-backed-base-id-required-stop',
+    baseScore: 0.75,
+    stops: [
+      {
+        venueId: 'provider-start',
+        role: 'warmup',
+        lane: 'opaque-a',
+        cluster: 'cluster-a',
+        energy: 2,
+        roleScore: 0.72,
+        shapeScore: 0.74,
+      },
+      {
+        venueId: 'live_google_adega-provider-record',
+        baseVenueId: 'sj-adega-wine-atelier',
+        role: 'peak',
+        lane: 'opaque-b',
+        cluster: 'cluster-a',
+        energy: 4,
+        roleScore: 0.88,
+        shapeScore: 0.9,
+      },
+      {
+        venueId: 'provider-close',
+        role: 'cooldown',
+        lane: 'opaque-c',
+        cluster: 'cluster-a',
+        energy: 2,
+        roleScore: 0.73,
+        shapeScore: 0.76,
+      },
+    ],
+  },
+])
+assert(
+  providerBackedRequiredStop.contractTrace.requiredStopSurvivingCandidateCount === 1,
+  'Waypoint required-stop guarantee must count provider-backed candidates by candidateIdentity.baseVenueId.',
+)
+assert(
+  providerBackedRequiredStop.contractTrace.topCandidatePreservesRequiredStop === true,
+  'Waypoint required-stop guarantee must recognize canonical base identity, not only raw venue.id.',
+)
+
 const output = {
   waypointQualityAdjustmentImplemented: true,
   domainGuardrailPassed: true,
   opaqueLaneEqualityOnly: true,
   requiredAnchorPreservationProtected: true,
+  providerBackedRequiredStopRecognizedByBaseVenueId: true,
   routeAuthorityChanged: false,
   runtimeRouteArtifactShapeChanged: false,
   providerShadowAuthorityChanged: false,

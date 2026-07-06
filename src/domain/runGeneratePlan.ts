@@ -29,6 +29,10 @@
  */
 import { assembleArcCandidates } from './arc/assembleArcCandidates'
 import { buildRolePools, type RolePools } from './arc/buildRolePools'
+import {
+  getArcStopBaseVenueId,
+  getScoredVenueBaseVenueId,
+} from './candidates/candidateIdentity'
 import { getRoleAlternatives } from './arc/getRoleAlternatives'
 import { roleProjection } from './config/roleProjection'
 import { buildBoundaryTruthNotes } from './debug/buildBoundaryTruthNotes'
@@ -477,8 +481,16 @@ function matchesPreferredDiscoveryRole(
   const expectedRole =
     role === 'start' ? 'warmup' : role === 'highlight' ? 'peak' : 'cooldown'
   return candidate.stops.some(
-    (stop) => stop.role === expectedRole && stop.scoredVenue.venue.id === venueId,
+    (stop) => stop.role === expectedRole && arcStopMatchesVenueId(stop, venueId),
   )
+}
+
+function scoredVenueMatchesVenueId(candidate: ScoredVenue, venueId: string): boolean {
+  return getScoredVenueBaseVenueId(candidate) === venueId || candidate.venue.id === venueId
+}
+
+function arcStopMatchesVenueId(stop: ArcStop, venueId: string): boolean {
+  return getArcStopBaseVenueId(stop) === venueId || stop.scoredVenue.venue.id === venueId
 }
 
 function buildWaypointContractInput(params: {
@@ -545,7 +557,7 @@ function findCurateHardCommitRolePoolVenue(params: {
     return undefined
   }
   return rolePoolForCurateHardCommitRole(params.rolePools, params.role).find(
-    (candidate) => candidate.venue.id === normalizedVenueId,
+    (candidate) => scoredVenueMatchesVenueId(candidate, normalizedVenueId),
   )
 }
 
@@ -629,7 +641,7 @@ function findSelectedContractScoredVenue(params: {
   if (!normalizedVenueId) {
     return undefined
   }
-  return params.scoredVenues.find((entry) => entry.venue.id === normalizedVenueId)
+  return params.scoredVenues.find((entry) => scoredVenueMatchesVenueId(entry, normalizedVenueId))
 }
 
 function buildCanonicalBuildSelectedContractCandidate(params: {
@@ -1583,13 +1595,13 @@ function summarizeBuildQualityRankedCandidate(params: {
   const { candidate, planningIntent, anchorInternalRole } = params
   const requiredAnchorVenueId = planningIntent.anchor?.venueId
   const requiredAnchorPresent = requiredAnchorVenueId
-    ? candidate.stops.some((stop) => stop.scoredVenue.venue.id === requiredAnchorVenueId)
+    ? candidate.stops.some((stop) => arcStopMatchesVenueId(stop, requiredAnchorVenueId))
     : undefined
   const requiredAnchorRoleCorrect =
     requiredAnchorVenueId && anchorInternalRole
       ? candidate.stops.some(
           (stop) =>
-            stop.role === anchorInternalRole && stop.scoredVenue.venue.id === requiredAnchorVenueId,
+            stop.role === anchorInternalRole && arcStopMatchesVenueId(stop, requiredAnchorVenueId),
         )
       : undefined
   const invalidationReasons = getInvalidArcCombinationReasons(
@@ -2225,7 +2237,7 @@ async function runGeneratePlanInternal(
           candidate.stops.some(
             (stop) =>
               stop.role === anchorInternalRole &&
-              stop.scoredVenue.venue.id === planningIntent.anchor!.venueId,
+              arcStopMatchesVenueId(stop, planningIntent.anchor!.venueId),
           ),
         )
       : undefined
@@ -2239,8 +2251,10 @@ async function runGeneratePlanInternal(
           : undefined
   const anchorRolePoolVenueIds = anchorRolePool?.map((candidate) => candidate.venue.id)
   const anchorRolePoolIndex =
-    anchorApplied && planningIntent.anchor?.venueId && anchorRolePoolVenueIds
-      ? anchorRolePoolVenueIds.indexOf(planningIntent.anchor.venueId)
+    anchorApplied && planningIntent.anchor?.venueId && anchorRolePool
+      ? anchorRolePool.findIndex((candidate) =>
+          scoredVenueMatchesVenueId(candidate, planningIntent.anchor!.venueId),
+        )
       : undefined
   const anchorRolePoolStatus =
     anchorApplied && anchorInternalRole
@@ -2270,7 +2284,9 @@ async function runGeneratePlanInternal(
             : anchorInternalRole === 'peak'
             ? rolePools.peak
             : rolePools.cooldown
-        ).some((candidate) => candidate.venue.id === planningIntent.anchor!.venueId)
+        ).some((candidate) =>
+          scoredVenueMatchesVenueId(candidate, planningIntent.anchor!.venueId),
+        )
           ? 'anchor_missing_from_role_pool'
           : 'anchor_trimmed_before_arc_assembly')
       : undefined
@@ -2280,7 +2296,7 @@ async function runGeneratePlanInternal(
           candidate.stops.some(
             (stop) =>
               stop.role === anchorInternalRole &&
-              stop.scoredVenue.venue.id === planningIntent.anchor!.venueId,
+              arcStopMatchesVenueId(stop, planningIntent.anchor!.venueId),
           ),
         ).length
       : 0
@@ -2294,7 +2310,7 @@ async function runGeneratePlanInternal(
           candidate.stops.some(
             (stop) =>
               stop.role === anchorInternalRole &&
-              stop.scoredVenue.venue.id === planningIntent.anchor!.venueId,
+              arcStopMatchesVenueId(stop, planningIntent.anchor!.venueId),
           ),
         )
       : arcCandidates
@@ -2326,7 +2342,7 @@ async function runGeneratePlanInternal(
           candidate.stops.some(
             (stop) =>
               stop.role === anchorInternalRole &&
-              stop.scoredVenue.venue.id === planningIntent.anchor!.venueId,
+              arcStopMatchesVenueId(stop, planningIntent.anchor!.venueId),
           ),
         )
       : []
@@ -2338,7 +2354,7 @@ async function runGeneratePlanInternal(
             !candidate.stops.some(
               (stop) =>
                 stop.role === anchorInternalRole &&
-                stop.scoredVenue.venue.id === planningIntent.anchor!.venueId,
+                arcStopMatchesVenueId(stop, planningIntent.anchor!.venueId),
             ),
         )
       : undefined

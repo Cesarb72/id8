@@ -12,6 +12,7 @@
  */
 import { deterministicTiebreaker } from '../../lib/ids'
 import type { ArcCandidate } from '../../domain/types/arc'
+import { getArcStopBaseVenueId } from '../../domain/candidates/candidateIdentity'
 import type { ContractGateWorld } from '../../domain/bearings/buildContractGateWorld'
 import type { StrategyAdmissibleWorld } from '../../domain/bearings/buildStrategyAdmissibleWorlds'
 import type { CanonicalInterpretationBundle } from '../../domain/interpretation/buildCanonicalInterpretationBundle'
@@ -180,6 +181,18 @@ function countRepeatedPairs(values: string[], isProtectedIndex: (index: number) 
   return { repeatedPairs, protectedPairs }
 }
 
+function candidateStopMatchesRequiredGuarantee(params: {
+  stop: ArcCandidate['stops'][number]
+  internalRole: 'warmup' | 'peak' | 'cooldown'
+  venueId: string
+}): boolean {
+  return (
+    params.stop.role === params.internalRole &&
+    (getArcStopBaseVenueId(params.stop) === params.venueId ||
+      params.stop.scoredVenue.venue.id === params.venueId)
+  )
+}
+
 function waypointBoundaryQualityTrace(
   candidate: ArcCandidate,
   contract: WaypointContractInput | undefined,
@@ -196,8 +209,11 @@ function waypointBoundaryQualityTrace(
         guarantee?.required &&
         guarantee.venueId &&
         requiredRole &&
-        stop.role === requiredRole &&
-        stop.scoredVenue.venue.id === guarantee.venueId,
+        candidateStopMatchesRequiredGuarantee({
+          stop,
+          internalRole: requiredRole,
+          venueId: guarantee.venueId,
+        }),
     )
   }
   const lanes = coreStops.map((stop) => String(stop.scoredVenue.taste.modeAlignment.lane))
@@ -335,8 +351,14 @@ function candidatePreservesRequiredStop(
   if (!guarantee?.required || !guarantee.venueId || !internalRole) {
     return false
   }
+  const venueId = guarantee.venueId
   return candidate.stops.some(
-    (stop) => stop.role === internalRole && stop.scoredVenue.venue.id === guarantee.venueId,
+    (stop) =>
+      candidateStopMatchesRequiredGuarantee({
+        stop,
+        internalRole,
+        venueId,
+      }),
   )
 }
 
