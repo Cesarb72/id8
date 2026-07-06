@@ -62,10 +62,22 @@ export interface WaypointRankedCandidate {
   candidate: ArcCandidate
   rankingScore: number
   boundaryBaseScore: number
+  boundaryQualityAdjustment: number
+  boundaryQualitySignals: WaypointBoundaryQualitySignals
   refinementNudge: number
   refinementTokensApplied: string[]
   refinementTokenDeltas: Record<string, number>
   tiebreaker: number
+}
+
+export interface WaypointBoundaryQualitySignals {
+  supportLaneVarianceScore: number
+  laneRepetitionPenalty: number
+  clusterCoherenceScore: number
+  movementFrictionPenalty: number
+  arcProgressionScore: number
+  requiredAnchorPreservationNeutrality: number
+  totalAdjustment: number
 }
 
 export interface WaypointRankResponse {
@@ -133,6 +145,140 @@ function candidateDeterministicKey(candidate: ArcCandidate): string {
   return candidate.stops
     .map((stop) => `${stop.role}:${stop.scoredVenue.venue.id}`)
     .join('|')
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function clamp01(value: number): number {
+  return clamp(value, 0, 1)
+}
+
+function roundToFour(value: number): number {
+  return Number(value.toFixed(4))
+}
+
+function countRepeatedPairs(values: string[], isProtectedIndex: (index: number) => boolean): {
+  repeatedPairs: number
+  protectedPairs: number
+} {
+  let repeatedPairs = 0
+  let protectedPairs = 0
+  for (let left = 0; left < values.length; left += 1) {
+    for (let right = left + 1; right < values.length; right += 1) {
+      if (values[left] !== values[right]) {
+        continue
+      }
+      if (isProtectedIndex(left) || isProtectedIndex(right)) {
+        protectedPairs += 1
+      } else {
+        repeatedPairs += 1
+      }
+    }
+  }
+  return { repeatedPairs, protectedPairs }
+}
+
+function waypointBoundaryQualityTrace(
+  candidate: ArcCandidate,
+  contract: WaypointContractInput | undefined,
+): WaypointBoundaryQualitySignals {
+  const coreStops = candidate.stops.filter(
+    (stop) => stop.role === 'warmup' || stop.role === 'peak' || stop.role === 'cooldown',
+  )
+  const guarantee = contract?.requiredStopGuarantee
+  const requiredRole = roleToInternal(guarantee?.role)
+  const isRequiredStopIndex = (index: number): boolean => {
+    const stop = coreStops[index]
+    return Boolean(
+      stop &&
+        guarantee?.required &&
+        guarantee.venueId &&
+        requiredRole &&
+        stop.role === requiredRole &&
+        stop.scoredVenue.venue.id === guarantee.venueId,
+    )
+  }
+  const lanes = coreStops.map((stop) => String(stop.scoredVenue.taste.modeAlignment.lane))
+  const uniqueLaneCount = new Set(lanes).size
+  const laneDiversityRatio =
+    lanes.length > 1 ? (uniqueLaneCount - 1) / Math.max(1, lanes.length - 1) : 0.5
+  const repeatedLanePairs = countRepeatedPairs(lanes, isRequiredStopIndex)
+  const supportLaneVarianceScore = clamp((laneDiversityRatio - 0.5) * 0.06, -0.03, 0.03)
+  const laneRepetitionPenalty = clamp(
+    repeatedLanePairs.repeatedPairs * 0.018 + repeatedLanePairs.protectedPairs * 0.009,
+    0,
+    0.054,
+  )
+
+  const transitionCount = Math.max(1, candidate.spatial.transitions.length)
+  const sameClusterRate = candidate.spatial.sameClusterTransitionCount / transitionCount
+  const longTransitionRate = candidate.spatial.longTransitionCount / transitionCount
+  const clusterCoherenceScore = clamp(
+    sameClusterRate * 0.03 +
+      (candidate.spatial.clustersVisited.length <= 2 ? 0.012 : 0) +
+      (candidate.spatial.longTransitionCount === 0 ? 0.012 : 0),
+    0,
+    0.054,
+  )
+  const movementFrictionPenalty = clamp(
+    longTransitionRate * 0.035 +
+      candidate.spatial.repeatedClusterEscapeCount * 0.02 +
+      Math.max(0, candidate.spatial.clusterEscapeCount - 1) * 0.012 +
+      candidate.spatial.spatialPenalty * 0.02,
+    0,
+    0.064,
+  )
+
+  const warmup = coreStops.find((stop) => stop.role === 'warmup')
+  const peak = coreStops.find((stop) => stop.role === 'peak')
+  const cooldown = coreStops.find((stop) => stop.role === 'cooldown')
+  let arcProgressionScore = 0
+  if (warmup && peak && cooldown) {
+    const supportRoleAverage =
+      (warmup.scoredVenue.roleScores.warmup + cooldown.scoredVenue.roleScores.cooldown) / 2
+    const peakRoleAdvantage = clamp01((peak.scoredVenue.roleScores.peak - supportRoleAverage + 0.4) / 0.8)
+    const roleShapeAverage =
+      (warmup.scoredVenue.stopShapeFit.start +
+        peak.scoredVenue.stopShapeFit.highlight +
+        cooldown.scoredVenue.stopShapeFit.windDown) /
+      3
+    const peakEnergy = peak.scoredVenue.venue.energyLevel
+    const warmupEnergy = warmup.scoredVenue.venue.energyLevel
+    const cooldownEnergy = cooldown.scoredVenue.venue.energyLevel
+    const energyProgression =
+      (peakEnergy >= warmupEnergy ? 0.34 : 0) +
+      (cooldownEnergy <= peakEnergy ? 0.34 : 0) +
+      (peakEnergy > Math.max(warmupEnergy, cooldownEnergy) ? 0.32 : 0)
+    const progressionQuality = clamp01(
+      peakRoleAdvantage * 0.36 + roleShapeAverage * 0.34 + energyProgression * 0.3,
+    )
+    arcProgressionScore = clamp((progressionQuality - 0.5) * 0.08, -0.04, 0.04)
+  }
+
+  const requiredAnchorPreservationNeutrality =
+    guarantee?.required && guarantee.venueId && requiredRole ? 0 : 0
+  const totalAdjustment = clamp(
+    supportLaneVarianceScore +
+      clusterCoherenceScore +
+      arcProgressionScore +
+      requiredAnchorPreservationNeutrality -
+      laneRepetitionPenalty -
+      movementFrictionPenalty,
+    -0.08,
+    0.08,
+  )
+
+  return {
+    supportLaneVarianceScore: roundToFour(supportLaneVarianceScore),
+    laneRepetitionPenalty: roundToFour(laneRepetitionPenalty),
+    clusterCoherenceScore: roundToFour(clusterCoherenceScore),
+    movementFrictionPenalty: roundToFour(movementFrictionPenalty),
+    arcProgressionScore: roundToFour(arcProgressionScore),
+    requiredAnchorPreservationNeutrality,
+    totalAdjustment: roundToFour(totalAdjustment),
+  }
 }
 
 function refinementAdjustmentTrace(candidate: ArcCandidate, intent: IntentProfile): {
@@ -259,12 +405,19 @@ function rankWithWaypointBoundaryInternal(
       const refinementTrace = refinementAdjustmentTrace(candidate, request.intent)
       const tiebreaker = deterministicTiebreaker(candidateDeterministicKey(candidate)) * 0.01
       const contractAdjustment = requiredStopRankingAdjustment(candidate, request.contract)
+      const qualityTrace = waypointBoundaryQualityTrace(candidate, request.contract)
       const rankingScore =
-        boundaryBaseScore + refinementTrace.totalAdjustment + contractAdjustment + tiebreaker
+        boundaryBaseScore +
+        qualityTrace.totalAdjustment +
+        refinementTrace.totalAdjustment +
+        contractAdjustment +
+        tiebreaker
       return {
         candidate,
         rankingScore,
         boundaryBaseScore,
+        boundaryQualityAdjustment: qualityTrace.totalAdjustment,
+        boundaryQualitySignals: qualityTrace,
         refinementNudge: refinementTrace.totalAdjustment,
         refinementTokensApplied: refinementTrace.tokensApplied,
         refinementTokenDeltas: refinementTrace.tokenDeltas,
