@@ -15,6 +15,7 @@ import type { DistanceMode, IntentProfile, PersonaMode } from '../types/intent'
 import type { UserStopRole } from '../types/itinerary'
 import type { SpatialCoherenceAnalysis } from '../types/spatial'
 import { roleProjection } from '../config/roleProjection'
+import { getArcStopBaseVenueId } from '../candidates/candidateIdentity'
 
 interface PlaceRightPreset {
   travelTolerance: GreatStopTravelTolerance
@@ -371,8 +372,13 @@ function creditedAnchorRole(params: {
   venueId?: string
 }): UserStopRole | undefined {
   if (!params.venueId) return undefined
-  const stop = params.candidate.stops.find((entry) => entry.scoredVenue.venue.id === params.venueId)
+  const venueId = params.venueId
+  const stop = params.candidate.stops.find((entry) => stopMatchesRequiredAnchor(entry, venueId))
   return stop ? roleFor(stop) : undefined
+}
+
+function stopMatchesRequiredAnchor(stop: ArcStop, venueId: string): boolean {
+  return getArcStopBaseVenueId(stop) === venueId || stop.scoredVenue.venue.id === venueId
 }
 
 export function buildGreatStopRoutePacingDiagnostics(
@@ -464,15 +470,16 @@ export function buildGreatStopGateResult(params: {
   })
   const momentRight = evaluateMomentRight(selectedArc)
   const requiredAnchorRole = intent.anchor?.role
+  const requiredAnchorVenueId = intent.anchor?.venueId
   const requiredAnchorInternalRole = internalRoleFor(requiredAnchorRole)
   const creditedRole = creditedAnchorRole({
     candidate: selectedArc,
-    venueId: intent.anchor?.venueId,
+    venueId: requiredAnchorVenueId,
   })
   const requiredAnchor =
-    intent.anchor?.venueId && requiredAnchorRole
+    requiredAnchorVenueId && requiredAnchorRole
       ? {
-          venueId: intent.anchor.venueId,
+          venueId: requiredAnchorVenueId,
           role: requiredAnchorRole,
           survived: Boolean(
             creditedRole &&
@@ -480,7 +487,7 @@ export function buildGreatStopGateResult(params: {
                 selectedArc.stops.some(
                   (stop) =>
                     stop.role === requiredAnchorInternalRole &&
-                    stop.scoredVenue.venue.id === intent.anchor?.venueId,
+                    stopMatchesRequiredAnchor(stop, requiredAnchorVenueId),
                 )),
           ),
           creditedRole,

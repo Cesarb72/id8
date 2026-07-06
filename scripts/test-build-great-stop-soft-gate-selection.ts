@@ -26,6 +26,11 @@ type InternalRole = 'warmup' | 'peak' | 'cooldown'
 interface StopSpec {
   role: InternalRole
   venueId: string
+  baseVenueId?: string
+  candidateId?: string
+  providerRecordId?: string
+  displayName?: string
+  sourceOrigin?: string
   lane: string
   cluster: string
   energy: number
@@ -76,7 +81,7 @@ function scoredStop(spec: StopSpec): ArcStop {
     scoredVenue: {
       venue: {
         id: spec.venueId,
-        name: spec.venueId,
+        name: spec.displayName ?? spec.venueId,
         city: 'San Jose',
         neighborhood: spec.cluster,
         driveMinutes: 8,
@@ -108,13 +113,16 @@ function scoredStop(spec: StopSpec): ArcStop {
         durationProfile: {} as never,
         settings: {} as never,
         signature: {} as never,
-        source: {} as never,
+        source: {
+          sourceOrigin: spec.sourceOrigin ?? 'curated',
+          providerRecordId: spec.providerRecordId,
+        } as never,
       },
       candidateIdentity: {
-        candidateId: spec.venueId,
-        baseVenueId: spec.venueId,
+        candidateId: spec.candidateId ?? spec.venueId,
+        baseVenueId: spec.baseVenueId ?? spec.venueId,
         kind: 'base',
-        traceLabel: spec.venueId,
+        traceLabel: spec.displayName ?? spec.venueId,
       },
       momentIdentity: {
         type: spec.role === 'peak' ? 'anchor' : spec.role === 'warmup' ? 'arrival' : 'close',
@@ -465,6 +473,176 @@ assert(
     allFail.diagnostics.bestFailingCandidateSummary?.candidateId === topFailingCandidate.id,
   'Best failing summaries should use the best anchor-preserving failing candidate when one exists.',
 )
+
+const adegaProviderBackedCandidate = buildCandidate({
+  id: 'adega-provider-backed-base-identity-match',
+  stops: [
+    { role: 'warmup', venueId: 'heritage-tea-house', lane: 'arrival', cluster: 'a', energy: 2 },
+    {
+      role: 'peak',
+      venueId: 'live_google_adega-provider-record',
+      baseVenueId: 'sj-adega-wine-atelier',
+      candidateId: 'live_google_adega-provider-record::activation::featured',
+      providerRecordId: 'adega-provider-record',
+      displayName: 'Adega',
+      sourceOrigin: 'provider',
+      lane: 'center',
+      cluster: 'a',
+      energy: 4,
+    },
+    { role: 'cooldown', venueId: 'j-town-matcha', lane: 'landing', cluster: 'b', energy: 2 },
+  ],
+  transitions: [8, 9],
+  movementModes: ['walkable', 'walkable'],
+  repeatedClusterEscapeCount: 0,
+})
+
+const evergreenProviderBackedCandidate = buildCandidate({
+  id: 'evergreen-provider-backed-base-identity-match',
+  stops: [
+    { role: 'warmup', venueId: 'heritage-tea-house', lane: 'arrival', cluster: 'a', energy: 2 },
+    {
+      role: 'peak',
+      venueId: 'live_google_evergreen-provider-record',
+      baseVenueId: 'sj-evergreen-coffee-company',
+      candidateId: 'live_google_evergreen-provider-record::activation::featured',
+      providerRecordId: 'evergreen-provider-record',
+      displayName: 'Evergreen Coffee Company',
+      sourceOrigin: 'provider',
+      lane: 'center',
+      cluster: 'a',
+      energy: 4,
+    },
+    { role: 'cooldown', venueId: 'jtown-manju-house', lane: 'landing', cluster: 'b', energy: 2 },
+  ],
+  transitions: [8, 9],
+  movementModes: ['walkable', 'walkable'],
+  repeatedClusterEscapeCount: 0,
+})
+
+const priorProviderBackedPassCandidate = buildCandidate({
+  id: 'prior-tech-provider-backed-base-identity-match',
+  stops: [
+    { role: 'warmup', venueId: 'dumont-start', lane: 'arrival', cluster: 'a', energy: 2 },
+    {
+      role: 'peak',
+      venueId: 'live_google_tech-provider-record',
+      baseVenueId: 'sj-tech-interactive',
+      candidateId: 'live_google_tech-provider-record::activation::family',
+      providerRecordId: 'tech-provider-record',
+      displayName: 'The Tech Interactive',
+      sourceOrigin: 'provider',
+      lane: 'center',
+      cluster: 'a',
+      energy: 4,
+    },
+    { role: 'cooldown', venueId: 'dumont-winddown', lane: 'landing', cluster: 'b', energy: 2 },
+  ],
+  transitions: [8, 9],
+  movementModes: ['walkable', 'walkable'],
+  repeatedClusterEscapeCount: 0,
+})
+
+function candidateIdentityTable(candidate: ArcCandidate, requiredAnchorId: string) {
+  return candidate.stops.map((stop) => ({
+    role: stop.role,
+    displayName: stop.scoredVenue.venue.name,
+    venueId: stop.scoredVenue.venue.id,
+    baseVenueId: stop.scoredVenue.candidateIdentity.baseVenueId,
+    canonicalVenueId: stop.scoredVenue.candidateIdentity.baseVenueId,
+    providerPlaceId: stop.scoredVenue.venue.source.providerRecordId,
+    candidateId: stop.scoredVenue.candidateIdentity.candidateId,
+    normalizedIdHelperOutput: stop.scoredVenue.candidateIdentity.baseVenueId,
+    sourceOrigin: stop.scoredVenue.venue.source.sourceOrigin,
+    matchesByVenueId: stop.scoredVenue.venue.id === requiredAnchorId,
+    matchesByBaseVenueId: stop.scoredVenue.candidateIdentity.baseVenueId === requiredAnchorId,
+    matchesByNormalizedHelper: stop.scoredVenue.candidateIdentity.baseVenueId === requiredAnchorId,
+  }))
+}
+
+function countCandidatesContainingRequiredAnchor(params: {
+  candidates: ArcCandidate[]
+  requiredAnchorId: string
+  requiredRole: InternalRole
+}) {
+  const { candidates, requiredAnchorId, requiredRole } = params
+  const byVenueId = candidates.filter((candidate) =>
+    candidate.stops.some((stop) => stop.scoredVenue.venue.id === requiredAnchorId),
+  ).length
+  const byBaseVenueId = candidates.filter((candidate) =>
+    candidate.stops.some(
+      (stop) => stop.scoredVenue.candidateIdentity.baseVenueId === requiredAnchorId,
+    ),
+  ).length
+  const byNormalizedHelper = byBaseVenueId
+  const preservingRequiredRole = candidates.filter((candidate) =>
+    candidate.stops.some(
+      (stop) =>
+        stop.role === requiredRole &&
+        stop.scoredVenue.candidateIdentity.baseVenueId === requiredAnchorId,
+    ),
+  ).length
+  const firstRankWhereAnchorAppears = candidates.findIndex((candidate) =>
+    candidate.stops.some(
+      (stop) => stop.scoredVenue.candidateIdentity.baseVenueId === requiredAnchorId,
+    ),
+  )
+  return {
+    fullRankedCandidateCount: candidates.length,
+    containingRequiredAnchorByVenueId: byVenueId,
+    containingRequiredAnchorByCandidateIdentityBaseVenueId: byBaseVenueId,
+    containingRequiredAnchorByNormalizedCanonicalHelper: byNormalizedHelper,
+    preservingRequiredAnchorInRequiredRole: preservingRequiredRole,
+    firstRankWhereRequiredAnchorAppears: firstRankWhereAnchorAppears >= 0 ? firstRankWhereAnchorAppears + 1 : null,
+    preRepairRankedPoolTrulyZeroAnchorPreservingCandidates: preservingRequiredRole === 0,
+  }
+}
+
+const identityMismatchPool = [
+  adegaProviderBackedCandidate,
+  evergreenProviderBackedCandidate,
+  priorProviderBackedPassCandidate,
+]
+const adegaIdentityCounts = countCandidatesContainingRequiredAnchor({
+  candidates: identityMismatchPool,
+  requiredAnchorId: 'sj-adega-wine-atelier',
+  requiredRole: 'peak',
+})
+const adegaIdentitySelection = selectGreatStopGatePassingCandidate({
+  candidates: identityMismatchPool,
+  intent: buildIntent({
+    persona: 'romantic',
+    locationClass: 'L2 Mid',
+    anchorVenueId: 'sj-adega-wine-atelier',
+    anchorRole: 'highlight',
+  }),
+  locationClass: 'L2 Mid',
+  locationClassSource: 'explicit',
+  stage: 'pre_selection_gate',
+})
+assert(
+  adegaIdentityCounts.containingRequiredAnchorByVenueId === 0,
+  'Provider-backed candidate should not match the required anchor by raw venue.id.',
+)
+assert(
+  adegaIdentityCounts.containingRequiredAnchorByCandidateIdentityBaseVenueId === 1 &&
+    adegaIdentityCounts.preservingRequiredAnchorInRequiredRole === 1,
+  'Provider-backed candidate should match the required anchor by candidateIdentity.baseVenueId.',
+)
+assert(
+  adegaIdentitySelection.selectedCandidate?.id === adegaProviderBackedCandidate.id,
+  'Great Stop gate must treat candidateIdentity.baseVenueId as required-anchor identity.',
+)
+assert(
+  adegaIdentitySelection.diagnostics.skippedMissingRequiredAnchorCount === 0 &&
+    adegaIdentitySelection.diagnostics.anchorPreservingCandidateCount === 1,
+  'Base-identity anchor matches must not be counted as structural missing-anchor failures.',
+)
+assert(
+  adegaIdentitySelection.diagnostics.selectedGateResult?.requiredAnchor?.survived === true &&
+    adegaIdentitySelection.diagnostics.selectedGateResult.requiredAnchor.creditedRole === 'highlight',
+  'Base-identity anchor matches must survive and be credited in the required role.',
+)
 const allFailError = new GreatStopGateSelectionError(allFail.diagnostics)
 assert(
   allFailError.greatStopGateSelectionDiagnostics.status === 'FAIL',
@@ -552,6 +730,40 @@ const output = {
     allFail.diagnostics.failedTopCandidateCriteria?.includes('place_right') === true,
   bestAnchorPreservingFailingCandidate:
     allFail.diagnostics.bestAnchorPreservingFailingCandidate?.candidateId ?? null,
+  requiredAnchorIdentityBoundary: {
+    requiredAnchorCanonicalId: 'sj-adega-wine-atelier',
+    requiredRole: 'highlight',
+    selectedArtifactId: 'adega-provider-backed-base-identity-match',
+    selectedArtifactSource: 'provider_shadow',
+    providerSeedId: 'adega-provider-record',
+    candidateIdentityBaseVenueIdEquivalent: 'sj-adega-wine-atelier',
+    fullRankedCandidateCount: adegaIdentityCounts.fullRankedCandidateCount,
+    containingRequiredAnchorByVenueId: adegaIdentityCounts.containingRequiredAnchorByVenueId,
+    containingRequiredAnchorByCandidateIdentityBaseVenueId:
+      adegaIdentityCounts.containingRequiredAnchorByCandidateIdentityBaseVenueId,
+    containingRequiredAnchorByNormalizedCanonicalHelper:
+      adegaIdentityCounts.containingRequiredAnchorByNormalizedCanonicalHelper,
+    preservingRequiredAnchorInRequiredRole:
+      adegaIdentityCounts.preservingRequiredAnchorInRequiredRole,
+    firstRankWhereRequiredAnchorAppears: adegaIdentityCounts.firstRankWhereRequiredAnchorAppears,
+    preRepairRankedPoolTrulyZeroAnchorPreservingCandidates:
+      adegaIdentityCounts.preRepairRankedPoolTrulyZeroAnchorPreservingCandidates,
+    idMismatchProven: adegaIdentityCounts.containingRequiredAnchorByVenueId === 0 &&
+      adegaIdentityCounts.containingRequiredAnchorByCandidateIdentityBaseVenueId > 0,
+    selectedAfterBaseIdentityFix: adegaIdentitySelection.selectedCandidate?.id,
+    candidateStopIdentityTable: candidateIdentityTable(
+      adegaProviderBackedCandidate,
+      'sj-adega-wine-atelier',
+    ),
+    evergreenCandidateStopIdentityTable: candidateIdentityTable(
+      evergreenProviderBackedCandidate,
+      'sj-evergreen-coffee-company',
+    ),
+    priorProviderBackedPassIdentityTable: candidateIdentityTable(
+      priorProviderBackedPassCandidate,
+      'sj-tech-interactive',
+    ),
+  },
   explicitLocationClassPreserved:
     selection.diagnostics.selectedGateResult?.preset.source === 'explicit',
   postRepairVerificationBeforeArtifactCreation: artifactIndex > postRepairGateIndex,
