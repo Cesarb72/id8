@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { curatedVenues } from '../src/data/venues.ts'
+import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
+import type { IntentInput } from '../src/domain/types/intent.ts'
 
 type Role = 'start' | 'highlight' | 'windDown'
 type CellKind = 'THIN' | 'PASS'
@@ -698,12 +700,158 @@ function classify(
   }
 }
 
+async function runRankedArcCaptureProbe(): Promise<object> {
+  const input: IntentInput = {
+    persona: 'romantic',
+    primaryVibe: 'lively',
+    city: 'San Jose',
+    district: 'Downtown',
+    distanceMode: 'nearby',
+    mode: 'build',
+    planningMode: 'user-led',
+    anchor: {
+      venueId: 'sj-haberdasher',
+      role: 'windDown',
+    },
+    discoveryPreferences: [
+      {
+        venueId: 'sj-haberdasher',
+        role: 'windDown',
+      },
+    ],
+  }
+  const result = await runGeneratePlan(input, {
+    seedVenues: curatedVenues,
+    sourceMode: 'curated',
+    sourceModeOverrideApplied: true,
+  })
+  const diagnostics = result.trace.boundaryDiagnostics.buildQualityRankedArcDiagnostics
+  assert(diagnostics, 'Expected buildQualityRankedArcDiagnostics to be populated.')
+  assert(
+    diagnostics.stage === 'post_anchor_role_lock_pre_selection',
+    'Expected ranked arc diagnostics to identify post-anchor role-lock stage.',
+  )
+  assert(
+    diagnostics.repairStage === 'pre_post_planner_repair',
+    'Expected ranked arc diagnostics to identify pre-post-planner-repair stage.',
+  )
+  assert(
+    diagnostics.postPlannerRepairObserved === false,
+    'runGeneratePlan diagnostics must not claim to observe post-planner repair.',
+  )
+  assert(
+    diagnostics.rankedCandidateCount === diagnostics.rankedCandidates.length,
+    'Expected ranked candidate count to match captured summaries.',
+  )
+  assert(diagnostics.rankedCandidateCount > 0, 'Expected at least one ranked candidate summary.')
+  assert(
+    diagnostics.selectedWaypointRank != null && diagnostics.selectedWaypointRank > 0,
+    'Expected selected live Waypoint rank to be exposed.',
+  )
+  assert(
+    diagnostics.selectedCandidateId === result.selectedArc.id,
+    'Expected selected candidate id to match the generated selected arc.',
+  )
+  assert(
+    diagnostics.selectedCandidateSignature ===
+      result.selectedArc.stops
+        .map((stop) => {
+          const role =
+            stop.role === 'warmup'
+              ? 'start'
+              : stop.role === 'peak'
+                ? 'highlight'
+                : stop.role === 'cooldown'
+                  ? 'windDown'
+                  : 'surprise'
+          return `${role}:${stop.scoredVenue.venue.id}`
+        })
+        .join('|'),
+    'Expected selected candidate signature to match selected arc stops.',
+  )
+  assert(
+    diagnostics.selectedCandidatePreservesRequiredAnchor === true,
+    'Expected selected ranked candidate to preserve required anchor.',
+  )
+  assert(
+    diagnostics.selectedCandidateRequiredRoleCorrect === true,
+    'Expected selected ranked candidate to preserve required anchor role.',
+  )
+  const selectedSummary = diagnostics.rankedCandidates.find(
+    (candidate) => candidate.candidateId === diagnostics.selectedCandidateId,
+  )
+  assert(selectedSummary, 'Expected selected ranked candidate summary to be present.')
+  assert(
+    selectedSummary.invalidationReasons.length === 0,
+    'Expected selected ranked candidate to have no revalidated rejection reasons.',
+  )
+  assert(
+    diagnostics.rankedCandidates.every((candidate) => Array.isArray(candidate.invalidationReasons)),
+    'Expected every ranked candidate to expose rejection reasons array where available.',
+  )
+  assert(
+    diagnostics.boundaryCandidateVenueIdsByRole.windDown?.includes('sj-haberdasher') === true,
+    'Expected post-anchor boundary venue ids to include the required windDown anchor.',
+  )
+  assert(
+    result.trace.selectedStopIds.join('|') ===
+      result.selectedArc.stops.map((stop) => stop.scoredVenue.venue.id).join('|'),
+    'Expected selected final route behavior to remain tied to selectedArc.',
+  )
+
+  const runtimeRouteArtifactSource = readFileSync(
+    'src/domain/artifacts/runtimeRouteArtifact.ts',
+    'utf8',
+  )
+  const routeAuthoritySource = readFileSync(
+    'src/app/services/routeAuthority/routeAuthorityService.ts',
+    'utf8',
+  )
+  assert(
+    !runtimeRouteArtifactSource.includes('buildQualityRankedArcDiagnostics'),
+    'RuntimeRouteArtifact shape must not include ranked arc diagnostics.',
+  )
+  assert(
+    !routeAuthoritySource.includes('buildQualityRankedArcDiagnostics'),
+    'routeAuthority must not consume ranked arc diagnostics.',
+  )
+  assert(
+    routeAuthoritySource.includes('provider_shadow_not_authority'),
+    'provider_shadow must remain non-authoritative.',
+  )
+
+  return {
+    selectedAnchorCanonicalVenueId: 'sj-haberdasher',
+    requiredRole: 'windDown',
+    diagnosticFieldPresent: true,
+    stage: diagnostics.stage,
+    repairStage: diagnostics.repairStage,
+    postPlannerRepairObserved: diagnostics.postPlannerRepairObserved,
+    boundaryCandidateCount: diagnostics.boundaryCandidateCount,
+    rankedCandidateCount: diagnostics.rankedCandidateCount,
+    selectedCandidateId: diagnostics.selectedCandidateId,
+    selectedCandidateSignature: diagnostics.selectedCandidateSignature,
+    selectedWaypointRank: diagnostics.selectedWaypointRank,
+    selectedCandidatePreservesRequiredAnchor:
+      diagnostics.selectedCandidatePreservesRequiredAnchor,
+    selectedCandidateRequiredRoleCorrect: diagnostics.selectedCandidateRequiredRoleCorrect,
+    selectedCandidateInvalidationReasons: selectedSummary.invalidationReasons,
+    selectedStopIds: result.trace.selectedStopIds,
+    routeBehaviorUnchangedProbe: true,
+    routeAuthorityUnchangedProbe: true,
+    runtimeRouteArtifactShapeUnchangedProbe: true,
+    providerShadowRemainsNonAuthoritativeProbe: true,
+  }
+}
+
 const diagnostics = cells.map(diagnose)
+const rankedArcCaptureProbe = await runRankedArcCaptureProbe()
 
 const output = {
   test: 'Build quality required-anchor-preserving ranked arc diagnostic',
   mode: 'no-network artifact replay',
   fetchCallCount,
+  rankedArcCaptureProbe,
   artifactsInspected: cells.map((cell) => cell.path),
   contractValidityRule:
     'Only candidates that include the selected Build anchor in the credited required role, contain no duplicate venues, and remain non-authoritative pre-generation are ranked as alternatives.',

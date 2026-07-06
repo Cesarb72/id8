@@ -25,6 +25,75 @@ export interface RankedArcCandidateSnapshot extends ArcCandidateSnapshot {
   boundaryRefinementTokenDeltas?: Record<string, number>
 }
 
+export interface BuildQualityRankedArcStopSummary {
+  role: UserStopRole
+  venueId: string
+  canonicalVenueId: string
+  candidateId?: string
+  name: string
+  category?: string
+  subcategory?: string
+  lane?: string
+  tags: string[]
+  neighborhood?: string
+  cluster?: string
+  sourceOrigin?: string
+  roleScore?: number
+}
+
+export interface BuildQualityRankedArcCandidateSummary {
+  rank: number
+  candidateId: string
+  signature: string
+  stopVenueIdsByRole: Partial<Record<UserStopRole, string>>
+  stopNamesByRole: Partial<Record<UserStopRole, string>>
+  stops: BuildQualityRankedArcStopSummary[]
+  totalScore: number
+  boundaryScore: number
+  boundaryBaseScore?: number
+  boundaryRefinementNudge?: number
+  boundaryTiebreaker?: number
+  requiredAnchorPresent?: boolean
+  requiredAnchorRoleCorrect?: boolean
+  duplicateVenue: boolean
+  roleShapeValid: boolean
+  invalidationReasons: string[]
+  hardInvalidationReason?: string
+  qualityProxy: {
+    clusterTransitionCount?: number
+    laneRepetitionCount: number
+    laneDiversityCount: number
+    strongMomentPresent?: boolean
+    supportVariance: number
+    categoryDiversityPenalty?: number
+    repeatedCategoryCount?: number
+  }
+}
+
+export interface BuildQualityRankedArcDiagnostics {
+  stage: 'post_anchor_role_lock_pre_selection'
+  repairStage: 'pre_post_planner_repair'
+  postPlannerRepairObserved: false
+  candidatePoolSource: 'boundary_candidates_after_anchor_role_lock'
+  rankedCandidateSource: 'waypoint_ranked_boundary_candidates'
+  rejectionReasonSource: 'accepted_ranked_candidates_revalidated'
+  rejectedCandidateReasonsAvailable: boolean
+  rolePoolVenueIdsByRole: Partial<Record<UserStopRole, string[]>>
+  boundaryCandidateVenueIdsByRole: Partial<Record<UserStopRole, string[]>>
+  boundaryCandidateCount: number
+  rankedCandidateCount: number
+  selectedCandidateId: string
+  selectedCandidateSignature: string
+  selectedWaypointRank: number | null
+  selectedCandidatePreservesRequiredAnchor?: boolean
+  selectedCandidateRequiredRoleCorrect?: boolean
+  requiredAnchorVenueId?: string
+  requiredAnchorRole?: UserStopRole
+  userLedFinalRoleLockApplied: boolean
+  finalArcFilteredToAnchorRole: boolean
+  rankedCandidates: BuildQualityRankedArcCandidateSummary[]
+}
+
 export interface BoundaryRefinementNudgeTrace {
   requestedTokens: string[]
   adjustedCandidateCount: number
@@ -63,6 +132,7 @@ export interface BoundaryDiagnostics {
   boundaryContributionLevel: BoundaryContributionLevel
   preBoundarySnapshot: ArcCandidateSnapshot[]
   postBoundarySnapshot: RankedArcCandidateSnapshot[]
+  buildQualityRankedArcDiagnostics?: BuildQualityRankedArcDiagnostics
   refinementNudgeTrace?: BoundaryRefinementNudgeTrace
   waypointContractTrace?: {
     supplied: boolean

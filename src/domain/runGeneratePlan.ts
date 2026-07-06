@@ -57,7 +57,10 @@ import {
   type OccasionScoringMode,
   type VibeTasteProfileScoringMode,
 } from './retrieval/scoreVenueFit'
-import { isValidArcCombination } from './arc/isValidArcCombination'
+import {
+  getInvalidArcCombinationReasons,
+  isValidArcCombination,
+} from './arc/isValidArcCombination'
 import {
   isArcViable,
   scoreArcAssembly,
@@ -90,6 +93,8 @@ import type {
 import type {
   ArcCandidateSnapshot,
   BoundaryDiagnostics,
+  BuildQualityRankedArcCandidateSummary,
+  BuildQualityRankedArcDiagnostics,
   OverlapDiagnostics,
   OverlapScenarioDiagnostics,
   RankedArcCandidateSnapshot,
@@ -1507,6 +1512,216 @@ function buildArcSnapshot(candidate: ArcCandidate): ArcCandidateSnapshot {
   }
 }
 
+function buildRolePoolVenueIdsByRole(
+  rolePools: RolePools,
+): BuildQualityRankedArcDiagnostics['rolePoolVenueIdsByRole'] {
+  return {
+    start: [...new Set(rolePools.warmup.map((candidate) => candidate.venue.id))],
+    highlight: [...new Set(rolePools.peak.map((candidate) => candidate.venue.id))],
+    windDown: [...new Set(rolePools.cooldown.map((candidate) => candidate.venue.id))],
+  }
+}
+
+function buildBoundaryCandidateVenueIdsByRole(
+  candidates: ArcCandidate[],
+): BuildQualityRankedArcDiagnostics['boundaryCandidateVenueIdsByRole'] {
+  const byRole: BuildQualityRankedArcDiagnostics['boundaryCandidateVenueIdsByRole'] = {
+    start: [],
+    highlight: [],
+    windDown: [],
+  }
+  for (const candidate of candidates) {
+    for (const stop of candidate.stops) {
+      const role = roleProjection[stop.role]
+      if (role === 'surprise') {
+        continue
+      }
+      byRole[role] = [...new Set([...(byRole[role] ?? []), stop.scoredVenue.venue.id])]
+    }
+  }
+  return byRole
+}
+
+function buildArcCandidateSignature(candidate: ArcCandidate): string {
+  return candidate.stops
+    .map((stop) => `${roleProjection[stop.role]}:${stop.scoredVenue.venue.id}`)
+    .join('|')
+}
+
+function countLaneRepetitions(lanes: string[]): number {
+  const counts = new Map<string, number>()
+  for (const lane of lanes) {
+    counts.set(lane, (counts.get(lane) ?? 0) + 1)
+  }
+  return [...counts.values()].reduce((total, count) => total + Math.max(0, count - 1), 0)
+}
+
+function summarizeBuildQualityRankedCandidate(params: {
+  candidate: ArcCandidate
+  rank: number
+  boundaryScore: number
+  boundaryBaseScore?: number
+  boundaryRefinementNudge?: number
+  boundaryTiebreaker?: number
+  planningIntent: IntentProfile
+  crewPolicy: ReturnType<typeof getCrewPolicy>
+  lens: ExperienceLens
+  anchorInternalRole?: ArcStop['role']
+}): BuildQualityRankedArcCandidateSummary {
+  const { candidate, planningIntent, anchorInternalRole } = params
+  const requiredAnchorVenueId = planningIntent.anchor?.venueId
+  const requiredAnchorPresent = requiredAnchorVenueId
+    ? candidate.stops.some((stop) => stop.scoredVenue.venue.id === requiredAnchorVenueId)
+    : undefined
+  const requiredAnchorRoleCorrect =
+    requiredAnchorVenueId && anchorInternalRole
+      ? candidate.stops.some(
+          (stop) =>
+            stop.role === anchorInternalRole && stop.scoredVenue.venue.id === requiredAnchorVenueId,
+        )
+      : undefined
+  const invalidationReasons = getInvalidArcCombinationReasons(
+    candidate.stops,
+    planningIntent,
+    params.crewPolicy,
+    params.lens,
+  )
+  const stopVenueIdsByRole: Partial<Record<UserStopRole, string>> = {}
+  const stopNamesByRole: Partial<Record<UserStopRole, string>> = {}
+  const venueIds = candidate.stops.map((stop) => stop.scoredVenue.venue.id)
+  const lanes = candidate.stops.map((stop) => stop.scoredVenue.taste.modeAlignment.lane)
+  for (const stop of candidate.stops) {
+    const role = roleProjection[stop.role]
+    stopVenueIdsByRole[role] = stop.scoredVenue.venue.id
+    stopNamesByRole[role] = stop.scoredVenue.venue.name
+  }
+
+  return {
+    rank: params.rank,
+    candidateId: candidate.id,
+    signature: buildArcCandidateSignature(candidate),
+    stopVenueIdsByRole,
+    stopNamesByRole,
+    stops: candidate.stops.map((stop) => ({
+      role: roleProjection[stop.role],
+      venueId: stop.scoredVenue.venue.id,
+      canonicalVenueId: stop.scoredVenue.candidateIdentity.baseVenueId,
+      candidateId: stop.scoredVenue.candidateIdentity.candidateId,
+      name: stop.scoredVenue.venue.name,
+      category: stop.scoredVenue.venue.category,
+      subcategory: stop.scoredVenue.venue.subcategory,
+      lane: stop.scoredVenue.taste.modeAlignment.lane,
+      tags: stop.scoredVenue.venue.tags.slice(0, 8),
+      neighborhood: stop.scoredVenue.venue.neighborhood,
+      sourceOrigin: stop.scoredVenue.venue.source.sourceOrigin,
+      roleScore: roundToHundredths(stop.scoredVenue.roleScores[stop.role]),
+    })),
+    totalScore: roundToHundredths(candidate.totalScore),
+    boundaryScore: roundToHundredths(params.boundaryScore),
+    boundaryBaseScore:
+      typeof params.boundaryBaseScore === 'number'
+        ? roundToHundredths(params.boundaryBaseScore)
+        : undefined,
+    boundaryRefinementNudge:
+      typeof params.boundaryRefinementNudge === 'number'
+        ? roundToHundredths(params.boundaryRefinementNudge)
+        : undefined,
+    boundaryTiebreaker:
+      typeof params.boundaryTiebreaker === 'number'
+        ? roundToHundredths(params.boundaryTiebreaker)
+        : undefined,
+    requiredAnchorPresent,
+    requiredAnchorRoleCorrect,
+    duplicateVenue: new Set(venueIds).size !== venueIds.length,
+    roleShapeValid: !invalidationReasons.includes('invalid_shape'),
+    invalidationReasons,
+    hardInvalidationReason: invalidationReasons[0],
+    qualityProxy: {
+      clusterTransitionCount: candidate.spatial.clusterEscapeCount,
+      laneRepetitionCount: countLaneRepetitions(lanes),
+      laneDiversityCount: new Set(lanes).size,
+      strongMomentPresent: candidate.scoreBreakdown.strongMomentPresent,
+      supportVariance: new Set(
+        candidate.stops
+          .filter((stop) => stop.role !== 'peak')
+          .map((stop) => stop.scoredVenue.taste.modeAlignment.lane),
+      ).size,
+      categoryDiversityPenalty: candidate.scoreBreakdown.categoryDiversityPenalty,
+      repeatedCategoryCount: candidate.scoreBreakdown.repeatedCategoryCount,
+    },
+  }
+}
+
+function buildBuildQualityRankedArcDiagnostics(params: {
+  rolePools: RolePools
+  boundaryCandidates: ArcCandidate[]
+  ranking: ReturnType<typeof rankArcCandidatesWithDiagnostics>
+  selectedArc: ArcCandidate
+  planningIntent: IntentProfile
+  crewPolicy: ReturnType<typeof getCrewPolicy>
+  lens: ExperienceLens
+  anchorRole?: UserStopRole
+  anchorInternalRole?: ArcStop['role']
+  userLedFinalRoleLockApplied: boolean
+  finalArcFilteredToAnchorRole: boolean
+}): BuildQualityRankedArcDiagnostics {
+  const selectedRankIndex = params.ranking.ranked.findIndex(
+    (entry) => entry.candidate.id === params.selectedArc.id,
+  )
+  const selectedSummary =
+    selectedRankIndex >= 0
+      ? summarizeBuildQualityRankedCandidate({
+          candidate: params.ranking.ranked[selectedRankIndex]!.candidate,
+          rank: selectedRankIndex + 1,
+          boundaryScore: params.ranking.ranked[selectedRankIndex]!.rankingScore,
+          boundaryBaseScore: params.ranking.ranked[selectedRankIndex]!.boundaryBaseScore,
+          boundaryRefinementNudge: params.ranking.ranked[selectedRankIndex]!.refinementNudge,
+          boundaryTiebreaker: params.ranking.ranked[selectedRankIndex]!.tiebreaker,
+          planningIntent: params.planningIntent,
+          crewPolicy: params.crewPolicy,
+          lens: params.lens,
+          anchorInternalRole: params.anchorInternalRole,
+        })
+      : undefined
+
+  return {
+    stage: 'post_anchor_role_lock_pre_selection',
+    repairStage: 'pre_post_planner_repair',
+    postPlannerRepairObserved: false,
+    candidatePoolSource: 'boundary_candidates_after_anchor_role_lock',
+    rankedCandidateSource: 'waypoint_ranked_boundary_candidates',
+    rejectionReasonSource: 'accepted_ranked_candidates_revalidated',
+    rejectedCandidateReasonsAvailable: true,
+    rolePoolVenueIdsByRole: buildRolePoolVenueIdsByRole(params.rolePools),
+    boundaryCandidateVenueIdsByRole: buildBoundaryCandidateVenueIdsByRole(params.boundaryCandidates),
+    boundaryCandidateCount: params.boundaryCandidates.length,
+    rankedCandidateCount: params.ranking.ranked.length,
+    selectedCandidateId: params.selectedArc.id,
+    selectedCandidateSignature: buildArcCandidateSignature(params.selectedArc),
+    selectedWaypointRank: selectedRankIndex >= 0 ? selectedRankIndex + 1 : null,
+    selectedCandidatePreservesRequiredAnchor: selectedSummary?.requiredAnchorPresent,
+    selectedCandidateRequiredRoleCorrect: selectedSummary?.requiredAnchorRoleCorrect,
+    requiredAnchorVenueId: params.planningIntent.anchor?.venueId,
+    requiredAnchorRole: params.anchorRole,
+    userLedFinalRoleLockApplied: params.userLedFinalRoleLockApplied,
+    finalArcFilteredToAnchorRole: params.finalArcFilteredToAnchorRole,
+    rankedCandidates: params.ranking.ranked.map((entry, index) =>
+      summarizeBuildQualityRankedCandidate({
+        candidate: entry.candidate,
+        rank: index + 1,
+        boundaryScore: entry.rankingScore,
+        boundaryBaseScore: entry.boundaryBaseScore,
+        boundaryRefinementNudge: entry.refinementNudge,
+        boundaryTiebreaker: entry.tiebreaker,
+        planningIntent: params.planningIntent,
+        crewPolicy: params.crewPolicy,
+        lens: params.lens,
+        anchorInternalRole: params.anchorInternalRole,
+      }),
+    ),
+  }
+}
+
 function computeTopCandidateOverlapPct(candidates: ArcCandidate[], limit = 8): number {
   const signatures = candidates.slice(0, limit).map((candidate) => arcSignature(candidate))
   if (signatures.length <= 1) {
@@ -2621,6 +2836,19 @@ async function runGeneratePlanInternal(
     ),
     preBoundarySnapshot,
     postBoundarySnapshot,
+    buildQualityRankedArcDiagnostics: buildBuildQualityRankedArcDiagnostics({
+      rolePools,
+      boundaryCandidates,
+      ranking,
+      selectedArc,
+      planningIntent,
+      crewPolicy,
+      lens,
+      anchorRole,
+      anchorInternalRole,
+      userLedFinalRoleLockApplied,
+      finalArcFilteredToAnchorRole,
+    }),
     warnings: [],
   }
   boundaryDiagnostics.warnings = buildBoundaryTruthNotes({
