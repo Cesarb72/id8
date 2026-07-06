@@ -32,13 +32,85 @@ const failedDiagnostics: GreatStopGateSelectionDiagnostics = {
   status: 'FAIL',
   stage: 'pre_selection_gate',
   evaluatedCandidateCount: 4,
+  skippedMissingRequiredAnchorCount: 4,
+  anchorPreservingCandidateCount: 0,
+  evaluatedAnchorPreservingCandidateCount: 0,
+  passingCandidateCount: 0,
+  failedTopCandidateCriteria: [],
+  failureReasons: ['required_anchor_role_missing'],
+  structuralFailureReasons: ['required_anchor_role_missing'],
+  selectedGateResult: {
+    status: 'FAIL',
+    failedCriteria: ['place_right'],
+    reasons: ['place_right:cluster_escape_limit_exceeded'],
+    routeId: 'rank-1-missing-anchor',
+    requiredAnchor: {
+      venueId: 'sj-adega-wine-atelier',
+      role: 'highlight',
+      survived: false,
+    },
+    criteria: {
+      real: { passed: true, reasons: [] },
+      roleRight: { passed: true, reasons: [] },
+      intentRight: { passed: true, reasons: [] },
+      placeRight: { passed: false, reasons: ['place_right:cluster_escape_limit_exceeded'] },
+      momentRight: { passed: true, reasons: [] },
+    },
+    preset: {
+      persona: 'romantic',
+      locationClass: 'L2 Mid',
+      travelTolerance: 'tight',
+      source: 'explicit',
+    },
+    diagnostics: {
+      movement: {
+        totalEstimatedTransitionMinutes: 28,
+        maxSingleTransitionMinutes: 16,
+        transitionCount: 2,
+        driveLikeMovement: true,
+        transitionLimitMinutes: 14,
+        totalLimitMinutes: 24,
+      },
+      clusterCoherence: {
+        clusterEscapeCount: 1,
+        repeatedClusterEscapeCount: 0,
+        longTransitionCount: 1,
+        maxClusterEscapes: 1,
+        spatialScore: 0.7,
+        notes: [],
+      },
+      zigzagOrBacktrack: { detected: false },
+      arcProgression: {
+        startPresent: true,
+        highlightPresent: true,
+        windDownPresent: true,
+        peakRoleAdvantage: 0,
+        supportAverageRoleFit: 1,
+        energyProgressionValid: true,
+      },
+      laneVariance: {
+        uniqueLaneCount: 3,
+        laneRepetitionCount: 0,
+        supportLaneVariance: 2,
+      },
+      strongMoment: {
+        present: true,
+        note: 'Clear main moment with distinct support beats.',
+      },
+    },
+  },
+}
+
+const anchorPreservingQualityFailure: GreatStopGateSelectionDiagnostics = {
+  status: 'FAIL',
+  stage: 'pre_selection_gate',
+  evaluatedCandidateCount: 1,
+  skippedMissingRequiredAnchorCount: 0,
+  anchorPreservingCandidateCount: 1,
+  evaluatedAnchorPreservingCandidateCount: 1,
   passingCandidateCount: 0,
   failedTopCandidateCriteria: ['place_right', 'moment_right'],
-  failureReasons: [
-    'required_anchor_role_missing',
-    'place_right:cluster_escape_limit_exceeded',
-    'moment_right:no_strong_moment',
-  ],
+  failureReasons: ['place_right:cluster_escape_limit_exceeded', 'moment_right:no_strong_moment'],
   bestFailingCandidateSummary: {
     candidateId: 'rank-1-thin-route',
     rank: 1,
@@ -48,12 +120,14 @@ const failedDiagnostics: GreatStopGateSelectionDiagnostics = {
       highlight: 'sj-adega-wine-atelier',
       windDown: 'sj-jtown-matcha-kissaten',
     },
-    requiredAnchorPreserved: false,
-    requiredAnchorRoleCorrect: false,
+    requiredAnchorPreserved: true,
+    requiredAnchorRoleCorrect: true,
     failedCriteria: ['place_right', 'moment_right'],
-    reasons: ['required_anchor_role_missing', 'no_passing_great_stop_candidate'],
+    reasons: ['place_right:cluster_escape_limit_exceeded', 'moment_right:no_strong_moment'],
   },
 }
+anchorPreservingQualityFailure.bestAnchorPreservingFailingCandidate =
+  anchorPreservingQualityFailure.bestFailingCandidateSummary
 
 const thrown = new GreatStopGateSelectionError(failedDiagnostics)
 assert(
@@ -68,9 +142,18 @@ const modeledPageBoundary = {
   routeAuthorityStatus: 'invalid',
   greatStopGateSelectionDiagnostics: thrown.greatStopGateSelectionDiagnostics,
   greatStopGateFailureClassification:
-    thrown.greatStopGateSelectionDiagnostics.status === 'FAIL'
-      ? 'HONEST_FAIL_GREAT_STOP'
-      : null,
+    thrown.greatStopGateSelectionDiagnostics.status === 'FAIL' &&
+    (thrown.greatStopGateSelectionDiagnostics.structuralFailureReasons?.includes(
+      'required_anchor_role_missing',
+    ) ||
+      ((thrown.greatStopGateSelectionDiagnostics.anchorPreservingCandidateCount ??
+        thrown.greatStopGateSelectionDiagnostics.evaluatedAnchorPreservingCandidateCount ??
+        0) === 0 &&
+        (thrown.greatStopGateSelectionDiagnostics.skippedMissingRequiredAnchorCount ?? 0) > 0))
+      ? 'HONEST_FAIL_GREAT_STOP_STRUCTURAL'
+      : thrown.greatStopGateSelectionDiagnostics.status === 'FAIL'
+        ? 'HONEST_FAIL_GREAT_STOP'
+        : null,
 }
 
 assert(
@@ -90,8 +173,25 @@ assert(
   'Page boundary model must preserve passing candidate count.',
 )
 assert(
-  modeledPageBoundary.greatStopGateFailureClassification === 'HONEST_FAIL_GREAT_STOP',
-  'Great Stop all-candidates-fail must be distinguishable from authority failure.',
+  modeledPageBoundary.greatStopGateFailureClassification === 'HONEST_FAIL_GREAT_STOP_STRUCTURAL',
+  'Great Stop structural candidate-pool failure must be distinguishable from route-quality failure.',
+)
+assert(
+  modeledPageBoundary.greatStopGateSelectionDiagnostics.anchorPreservingCandidateCount === 0,
+  'Structural failure diagnostics must preserve zero anchor-preserving candidates.',
+)
+assert(
+  modeledPageBoundary.greatStopGateSelectionDiagnostics.skippedMissingRequiredAnchorCount === 4,
+  'Structural failure diagnostics must preserve skipped missing-anchor count.',
+)
+assert(
+  modeledPageBoundary.greatStopGateSelectionDiagnostics.failedTopCandidateCriteria?.length === 0,
+  'Structural failure diagnostics must not report place_right from a missing-anchor candidate.',
+)
+assert(
+  anchorPreservingQualityFailure.failedTopCandidateCriteria?.includes('place_right') &&
+    anchorPreservingQualityFailure.bestAnchorPreservingFailingCandidate?.requiredAnchorRoleCorrect === true,
+  'Anchor-preserving route-quality failures must still report place_right from the best valid failing candidate.',
 )
 assert(
   !modeledPageBoundary.generatedContractEntryArtifactProduced &&
@@ -117,8 +217,10 @@ assert(
   'Sandbox catch path must preserve thrown GreatStopGateSelectionDiagnostics in page diagnostics state.',
 )
 assert(
-  sandboxSource.includes("greatStopGateDiagnostics?.status === 'FAIL' ? 'HONEST_FAIL_GREAT_STOP' : null"),
-  'Sandbox catch path must classify Great Stop all-fail as HONEST_FAIL_GREAT_STOP.',
+  sandboxSource.includes('function classifyGreatStopGateFailure(') &&
+    sandboxSource.includes('HONEST_FAIL_GREAT_STOP_STRUCTURAL') &&
+    sandboxSource.includes('classifyGreatStopGateFailure(greatStopGateDiagnostics)'),
+  'Sandbox catch path must classify structural Great Stop failures separately.',
 )
 assert(
   sandboxSource.includes('generationContractDebug?.greatStopGateSelectionDiagnostics'),
@@ -154,8 +256,19 @@ const output = {
   failedTopCandidateCriteria:
     modeledPageBoundary.greatStopGateSelectionDiagnostics.failedTopCandidateCriteria,
   failureReasons: modeledPageBoundary.greatStopGateSelectionDiagnostics.failureReasons,
+  skippedMissingRequiredAnchorCount:
+    modeledPageBoundary.greatStopGateSelectionDiagnostics.skippedMissingRequiredAnchorCount,
+  anchorPreservingCandidateCount:
+    modeledPageBoundary.greatStopGateSelectionDiagnostics.anchorPreservingCandidateCount,
+  structuralFailureReasons:
+    modeledPageBoundary.greatStopGateSelectionDiagnostics.structuralFailureReasons,
   bestFailingCandidateSummaryPresent:
     Boolean(modeledPageBoundary.greatStopGateSelectionDiagnostics.bestFailingCandidateSummary),
+  bestAnchorPreservingFailingCandidatePresent: Boolean(
+    modeledPageBoundary.greatStopGateSelectionDiagnostics.bestAnchorPreservingFailingCandidate,
+  ),
+  anchorPreservingPlaceRightFailureStillReported:
+    anchorPreservingQualityFailure.failedTopCandidateCriteria?.includes('place_right') === true,
   classification: modeledPageBoundary.greatStopGateFailureClassification,
   generatedContractEntryArtifactProduced:
     modeledPageBoundary.generatedContractEntryArtifactProduced,

@@ -8,6 +8,7 @@ import type {
   GreatStopGatePresetSource,
   GreatStopGateSelectionDiagnostics,
   GreatStopGateSelectionStage,
+  GreatStopGateStatus,
   GreatStopTravelTolerance,
 } from '../types/greatStopGate'
 import type { DistanceMode, IntentProfile, PersonaMode } from '../types/intent'
@@ -581,6 +582,63 @@ export function selectGreatStopGatePassingCandidate(params: {
   }> = []
   let passingCandidateCount = 0
 
+  const buildSelectionDiagnostics = (selectionParams: {
+    status: GreatStopGateStatus
+    selectedCandidate?: ArcCandidate
+    selectedCandidateRank?: number
+    selectedGateResult?: GreatStopGateResult
+  }): GreatStopGateSelectionDiagnostics => {
+    const anchorPreservingEntries = evaluated.filter((entry) => !entry.skippedForRequiredAnchor)
+    const anchorPreservingFailingEntries = anchorPreservingEntries.filter(
+      (entry) => entry.result.status === 'FAIL',
+    )
+    const skippedMissingRequiredAnchorCount = evaluated.filter(
+      (entry) => entry.skippedForRequiredAnchor,
+    ).length
+    const structuralFailureReasons =
+      skippedMissingRequiredAnchorCount > 0 ? ['required_anchor_role_missing'] : []
+    const bestAnchorPreservingFailingEntry = anchorPreservingFailingEntries[0]
+    const bestFailingEntry = bestAnchorPreservingFailingEntry
+    const failedTopCandidateCriteria = bestAnchorPreservingFailingEntry?.result.failedCriteria ?? []
+    const failureReasons =
+      evaluated.length === 0
+        ? ['no_ranked_candidates_available']
+        : [
+            ...structuralFailureReasons,
+            ...anchorPreservingFailingEntries.flatMap((entry) => entry.result.reasons),
+          ]
+
+    return {
+      status: selectionParams.status,
+      stage: params.stage,
+      selectedCandidateId: selectionParams.selectedCandidate?.id,
+      selectedCandidateRank: selectionParams.selectedCandidateRank,
+      evaluatedCandidateCount: evaluated.length,
+      skippedMissingRequiredAnchorCount,
+      anchorPreservingCandidateCount: anchorPreservingEntries.length,
+      evaluatedAnchorPreservingCandidateCount: anchorPreservingEntries.length,
+      failedTopCandidateCriteria,
+      failureReasons,
+      bestFailingCandidateSummary: bestFailingEntry
+        ? buildCandidateSummary({
+            candidate: bestFailingEntry.candidate,
+            rank: bestFailingEntry.rank,
+            result: bestFailingEntry.result,
+          })
+        : undefined,
+      bestAnchorPreservingFailingCandidate: bestAnchorPreservingFailingEntry
+        ? buildCandidateSummary({
+            candidate: bestAnchorPreservingFailingEntry.candidate,
+            rank: bestAnchorPreservingFailingEntry.rank,
+            result: bestAnchorPreservingFailingEntry.result,
+          })
+        : undefined,
+      structuralFailureReasons,
+      passingCandidateCount,
+      selectedGateResult: selectionParams.selectedGateResult,
+    }
+  }
+
   for (let index = 0; index < params.candidates.length; index += 1) {
     const candidate = params.candidates[index]!
     const result = buildGreatStopGateResult({
@@ -604,64 +662,21 @@ export function selectGreatStopGatePassingCandidate(params: {
       passingCandidateCount += 1
       return {
         selectedCandidate: candidate,
-        diagnostics: {
+        diagnostics: buildSelectionDiagnostics({
           status: 'PASS',
-          stage: params.stage,
-          selectedCandidateId: candidate.id,
           selectedCandidateRank: index + 1,
-          evaluatedCandidateCount: evaluated.length,
-          failedTopCandidateCriteria: evaluated[0]?.result.failedCriteria,
-          failureReasons: evaluated
-            .slice(0, -1)
-            .flatMap((entry) =>
-              entry.skippedForRequiredAnchor
-                ? ['required_anchor_role_missing']
-                : entry.result.reasons,
-            ),
-          bestFailingCandidateSummary: evaluated
-            .filter((entry) => entry.skippedForRequiredAnchor || entry.result.status === 'FAIL')
-            .map((entry) =>
-              buildCandidateSummary({
-                candidate: entry.candidate,
-                rank: entry.rank,
-                result: entry.result,
-              }),
-            )[0],
-          passingCandidateCount,
+          selectedCandidate: candidate,
           selectedGateResult: result,
-        },
+        }),
       }
     }
   }
 
-  const failingCandidates = evaluated.filter(
-    (entry) => entry.skippedForRequiredAnchor || entry.result.status === 'FAIL',
-  )
-  const bestFailingCandidate = failingCandidates[0]
   return {
-    diagnostics: {
+    diagnostics: buildSelectionDiagnostics({
       status: 'FAIL',
-      stage: params.stage,
-      evaluatedCandidateCount: evaluated.length,
-      failedTopCandidateCriteria: evaluated[0]?.result.failedCriteria,
-      failureReasons:
-        evaluated.length === 0
-          ? ['no_ranked_candidates_available']
-          : evaluated.flatMap((entry) =>
-              entry.skippedForRequiredAnchor
-                ? ['required_anchor_role_missing']
-                : entry.result.reasons,
-            ),
-      bestFailingCandidateSummary: bestFailingCandidate
-        ? buildCandidateSummary({
-            candidate: bestFailingCandidate.candidate,
-            rank: bestFailingCandidate.rank,
-            result: bestFailingCandidate.result,
-          })
-        : undefined,
-      passingCandidateCount,
       selectedGateResult: evaluated[0]?.result,
-    },
+    }),
   }
 }
 

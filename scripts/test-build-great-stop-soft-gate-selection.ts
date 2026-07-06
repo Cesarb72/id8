@@ -380,6 +380,61 @@ assert(
   missingAnchorSelection.diagnostics.failureReasons.includes('required_anchor_role_missing'),
   'Required anchor skip should be named.',
 )
+assert(
+  missingAnchorSelection.diagnostics.skippedMissingRequiredAnchorCount === 1,
+  'Missing required-anchor candidates should be counted separately.',
+)
+assert(
+  missingAnchorSelection.diagnostics.anchorPreservingCandidateCount === 1 &&
+    missingAnchorSelection.diagnostics.evaluatedAnchorPreservingCandidateCount === 1,
+  'Anchor-preserving candidate counts should exclude skipped structural candidates.',
+)
+assert(
+  missingAnchorSelection.diagnostics.failedTopCandidateCriteria?.length === 0,
+  'A skipped missing-anchor candidate must not contribute Great Stop failure criteria.',
+)
+assert(
+  missingAnchorSelection.diagnostics.structuralFailureReasons?.includes('required_anchor_role_missing'),
+  'Structural required-anchor failure should be separated from Great Stop criteria.',
+)
+assert(
+  !missingAnchorSelection.diagnostics.bestFailingCandidateSummary &&
+    !missingAnchorSelection.diagnostics.bestAnchorPreservingFailingCandidate,
+  'Primary failing summaries should not point at structurally invalid candidates when a later candidate passes.',
+)
+
+const allMissingAnchor = selectGreatStopGatePassingCandidate({
+  candidates: [missingAnchorCandidate],
+  intent,
+  locationClass: 'L2 Mid',
+  locationClassSource: 'explicit',
+  stage: 'pre_selection_gate',
+})
+assert(!allMissingAnchor.selectedCandidate, 'All-missing-anchor case must not select a candidate.')
+assert(allMissingAnchor.diagnostics.status === 'FAIL', 'All-missing-anchor diagnostics should fail.')
+assert(
+  allMissingAnchor.diagnostics.skippedMissingRequiredAnchorCount === 1 &&
+    allMissingAnchor.diagnostics.anchorPreservingCandidateCount === 0,
+  'All-missing-anchor diagnostics should expose structural candidate-pool failure.',
+)
+assert(
+  allMissingAnchor.diagnostics.structuralFailureReasons?.includes('required_anchor_role_missing'),
+  'All-missing-anchor diagnostics should name required_anchor_role_missing structurally.',
+)
+assert(
+  allMissingAnchor.diagnostics.failureReasons.length === 1 &&
+    allMissingAnchor.diagnostics.failureReasons[0] === 'required_anchor_role_missing',
+  'All-missing-anchor diagnostics should not repeat or mix Great Stop criteria into structural failure.',
+)
+assert(
+  allMissingAnchor.diagnostics.failedTopCandidateCriteria?.length === 0,
+  'All-missing-anchor diagnostics must not report place_right from a structurally invalid candidate.',
+)
+assert(
+  !allMissingAnchor.diagnostics.bestFailingCandidateSummary &&
+    !allMissingAnchor.diagnostics.bestAnchorPreservingFailingCandidate,
+  'All-missing-anchor diagnostics must not use a structurally invalid candidate as the primary failing summary.',
+)
 
 const allFail = selectGreatStopGatePassingCandidate({
   candidates: [topFailingCandidate],
@@ -394,6 +449,21 @@ assert(
   allFail.diagnostics.failureReasons.includes('place_right:total_movement_over_preset') ||
     allFail.diagnostics.failureReasons.includes('moment_right:no_strong_main_moment'),
   'All-candidates-fail diagnostics should expose named reason codes.',
+)
+assert(
+  allFail.diagnostics.anchorPreservingCandidateCount === 1 &&
+    allFail.diagnostics.skippedMissingRequiredAnchorCount === 0,
+  'Anchor-preserving Great Stop failures should remain distinct from structural skips.',
+)
+assert(
+  allFail.diagnostics.failedTopCandidateCriteria?.includes('place_right') &&
+    allFail.diagnostics.failedTopCandidateCriteria?.includes('moment_right'),
+  'Anchor-preserving Great Stop failure should still expose place_right and moment_right.',
+)
+assert(
+  allFail.diagnostics.bestAnchorPreservingFailingCandidate?.candidateId === topFailingCandidate.id &&
+    allFail.diagnostics.bestFailingCandidateSummary?.candidateId === topFailingCandidate.id,
+  'Best failing summaries should use the best anchor-preserving failing candidate when one exists.',
 )
 const allFailError = new GreatStopGateSelectionError(allFail.diagnostics)
 assert(
@@ -473,6 +543,15 @@ const output = {
   allCandidatesFailProducesNoLockableRoute:
     !generatedContractEntryArtifactProduced && !finalRouteProduced && !lockInputAvailable,
   missingRequiredAnchorSkipped: missingAnchorSelection.selectedCandidate?.id === secondPassingCandidate.id,
+  skippedMissingRequiredAnchorCount:
+    allMissingAnchor.diagnostics.skippedMissingRequiredAnchorCount,
+  structuralFailureReasons: allMissingAnchor.diagnostics.structuralFailureReasons,
+  structuralFailureDoesNotReportPlaceRight:
+    allMissingAnchor.diagnostics.failedTopCandidateCriteria?.includes('place_right') !== true,
+  anchorPreservingPlaceRightStillReported:
+    allFail.diagnostics.failedTopCandidateCriteria?.includes('place_right') === true,
+  bestAnchorPreservingFailingCandidate:
+    allFail.diagnostics.bestAnchorPreservingFailingCandidate?.candidateId ?? null,
   explicitLocationClassPreserved:
     selection.diagnostics.selectedGateResult?.preset.source === 'explicit',
   postRepairVerificationBeforeArtifactCreation: artifactIndex > postRepairGateIndex,

@@ -114,9 +114,14 @@ export interface GreatStopGateSelectionDiagnostics {
   selectedCandidateId?: string
   selectedCandidateRank?: number
   evaluatedCandidateCount: number
+  skippedMissingRequiredAnchorCount?: number
+  anchorPreservingCandidateCount?: number
+  evaluatedAnchorPreservingCandidateCount?: number
   failedTopCandidateCriteria?: GreatStopGateCriterion[]
   failureReasons: string[]
   bestFailingCandidateSummary?: GreatStopGateCandidateSummary
+  bestAnchorPreservingFailingCandidate?: GreatStopGateCandidateSummary
+  structuralFailureReasons?: string[]
   passingCandidateCount?: number
   selectedGateResult?: GreatStopGateResult
 }
@@ -127,6 +132,7 @@ export class GreatStopGateSelectionError extends Error {
   constructor(diagnostics: GreatStopGateSelectionDiagnostics) {
     const failedCriteria =
       diagnostics.failedTopCandidateCriteria?.join(',') ||
+      diagnostics.structuralFailureReasons?.join(',') ||
       diagnostics.bestFailingCandidateSummary?.failedCriteria.join(',') ||
       'unknown'
     const reasons = diagnostics.failureReasons.join(',') || 'no_passing_great_stop_candidate'

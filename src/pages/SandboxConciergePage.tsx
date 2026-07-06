@@ -578,8 +578,12 @@ interface GenerationContractDebugBreadcrumb {
   plannerInputSummary?: string
   postPlannerStagesSummary?: string
   greatStopGateSelectionDiagnostics?: GreatStopGateSelectionDiagnostics | null
-  greatStopGateFailureClassification?: 'HONEST_FAIL_GREAT_STOP' | null
+  greatStopGateFailureClassification?: GreatStopGateFailureClassification | null
 }
+
+type GreatStopGateFailureClassification =
+  | 'HONEST_FAIL_GREAT_STOP'
+  | 'HONEST_FAIL_GREAT_STOP_STRUCTURAL'
 
 type LegacyCurateApprovedRefinementPayload = LegacyCurateRefinementEntryPayload<
   DemoPlanState,
@@ -2125,6 +2129,22 @@ function readGreatStopGateSelectionDiagnostics(
     return null
   }
   return diagnostics as GreatStopGateSelectionDiagnostics
+}
+
+function classifyGreatStopGateFailure(
+  diagnostics: GreatStopGateSelectionDiagnostics | null,
+): GreatStopGateFailureClassification | null {
+  if (diagnostics?.status !== 'FAIL') {
+    return null
+  }
+  const structuralReasons = diagnostics.structuralFailureReasons ?? []
+  const noAnchorPreservingCandidates =
+    (diagnostics.anchorPreservingCandidateCount ??
+      diagnostics.evaluatedAnchorPreservingCandidateCount ??
+      0) === 0 && (diagnostics.skippedMissingRequiredAnchorCount ?? 0) > 0
+  return structuralReasons.includes('required_anchor_role_missing') || noAnchorPreservingCandidates
+    ? 'HONEST_FAIL_GREAT_STOP_STRUCTURAL'
+    : 'HONEST_FAIL_GREAT_STOP'
 }
 
 function buildGenerationSemanticIdentityMatches(
@@ -15374,7 +15394,7 @@ export function SandboxConciergePage({
                 errorMessageRaw: rawMessage || null,
                 greatStopGateSelectionDiagnostics: greatStopGateDiagnostics,
                 greatStopGateFailureClassification:
-                  greatStopGateDiagnostics?.status === 'FAIL' ? 'HONEST_FAIL_GREAT_STOP' : null,
+                  classifyGreatStopGateFailure(greatStopGateDiagnostics),
               }
             : {
                 validatorMode: isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build',
@@ -15393,7 +15413,7 @@ export function SandboxConciergePage({
                 errorMessageRaw: rawMessage || null,
                 greatStopGateSelectionDiagnostics: greatStopGateDiagnostics,
                 greatStopGateFailureClassification:
-                  greatStopGateDiagnostics?.status === 'FAIL' ? 'HONEST_FAIL_GREAT_STOP' : null,
+                  classifyGreatStopGateFailure(greatStopGateDiagnostics),
               },
         )
         if (
