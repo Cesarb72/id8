@@ -1,10 +1,13 @@
 import type { ArcCandidate, ArcStop } from '../types/arc'
-import type { RoutePacingDiagnostics } from '../types/diagnostics'
+import type { RoutePacingDiagnostics, TransitionExplainabilityDiagnostics } from '../types/diagnostics'
 import type {
   BuildLocationClass,
+  GreatStopGateCandidateSummary,
   GreatStopCriterionResult,
   GreatStopGateResult,
   GreatStopGatePresetSource,
+  GreatStopGateSelectionDiagnostics,
+  GreatStopGateSelectionStage,
   GreatStopTravelTolerance,
 } from '../types/greatStopGate'
 import type { DistanceMode, IntentProfile, PersonaMode } from '../types/intent'
@@ -371,6 +374,74 @@ function creditedAnchorRole(params: {
   return stop ? roleFor(stop) : undefined
 }
 
+export function buildGreatStopRoutePacingDiagnostics(
+  candidate: ArcCandidate,
+): RoutePacingDiagnostics {
+  const candidatePacing = candidate.pacing as Partial<ArcCandidate['pacing']> | undefined
+  if (!candidatePacing?.transitions) {
+    const transitions: TransitionExplainabilityDiagnostics[] = candidate.spatial.transitions.map((transition, index) => {
+      const fromStop = candidate.stops[index]
+      const toStop = candidate.stops[index + 1]
+      const estimatedTransitionMinutes = Math.max(0, transition.driveGap ?? 0)
+      return {
+        fromRole: fromStop ? roleFor(fromStop) : 'start',
+        toRole: toStop ? roleFor(toStop) : 'highlight',
+        fromVenueId: transition.fromVenueId,
+        toVenueId: transition.toVenueId,
+        estimatedTravelMinutes: estimatedTransitionMinutes,
+        transitionBufferMinutes: 0,
+        estimatedTransitionMinutes,
+        frictionScore: estimatedTransitionMinutes / 20,
+        movementMode: transition.longTransition ? 'short-drive' : 'walkable',
+        neighborhoodContinuity: transition.sameCluster ? 'same-neighborhood' : 'adjacent-neighborhoods',
+        notes: [...transition.notes],
+      }
+    })
+    const estimatedTransitionMinutes = transitions.reduce(
+      (sum, transition) => sum + transition.estimatedTransitionMinutes,
+      0,
+    )
+    return {
+      transitions,
+      totalRouteFriction: 0,
+      estimatedStopMinutes: 0,
+      estimatedTransitionMinutes,
+      estimatedTotalMinutes: estimatedTransitionMinutes,
+      estimatedTotalLabel: `${estimatedTransitionMinutes}m`,
+      routeFeelLabel: 'diagnostic',
+      pacingPenaltyApplied: false,
+      pacingPenaltyReasons: [],
+      smoothProgressionRewardApplied: false,
+      smoothProgressionRewardReasons: [],
+    }
+  }
+  return {
+    transitions: candidatePacing.transitions.map((transition) => ({
+      fromRole: roleProjection[transition.fromRoleKey as ArcStop['role']],
+      toRole: roleProjection[transition.toRoleKey as ArcStop['role']],
+      fromVenueId: transition.fromVenueId,
+      toVenueId: transition.toVenueId,
+      estimatedTravelMinutes: transition.estimatedTravelMinutes,
+      transitionBufferMinutes: transition.transitionBufferMinutes,
+      estimatedTransitionMinutes: transition.estimatedTransitionMinutes,
+      frictionScore: transition.frictionScore,
+      movementMode: transition.movementMode,
+      neighborhoodContinuity: transition.neighborhoodContinuity,
+      notes: transition.notes,
+    })),
+    totalRouteFriction: candidatePacing.totalRouteFriction ?? 0,
+    estimatedStopMinutes: candidatePacing.estimatedStopMinutes ?? 0,
+    estimatedTransitionMinutes: candidatePacing.estimatedTransitionMinutes ?? 0,
+    estimatedTotalMinutes: candidatePacing.estimatedTotalMinutes ?? 0,
+    estimatedTotalLabel: candidatePacing.estimatedTotalLabel ?? 'n/a',
+    routeFeelLabel: candidatePacing.routeFeelLabel ?? 'diagnostic',
+    pacingPenaltyApplied: candidatePacing.pacingPenaltyApplied ?? false,
+    pacingPenaltyReasons: candidatePacing.pacingPenaltyReasons ?? [],
+    smoothProgressionRewardApplied: candidatePacing.smoothProgressionRewardApplied ?? false,
+    smoothProgressionRewardReasons: candidatePacing.smoothProgressionRewardReasons ?? [],
+  }
+}
+
 export function buildGreatStopGateResult(params: {
   selectedArc: ArcCandidate
   intent: IntentProfile
@@ -458,6 +529,138 @@ export function buildGreatStopGateResult(params: {
       arcProgression: momentRight.diagnostics.arcProgression,
       laneVariance: momentRight.diagnostics.laneVariance,
       strongMoment: momentRight.diagnostics.strongMoment,
+    },
+  }
+}
+
+function buildCandidateSignature(candidate: ArcCandidate): string {
+  return candidate.stops
+    .map((stop) => `${roleFor(stop)}:${stop.scoredVenue.venue.id}`)
+    .join('|')
+}
+
+function buildCandidateSummary(params: {
+  candidate: ArcCandidate
+  rank: number
+  result: GreatStopGateResult
+}): GreatStopGateCandidateSummary {
+  const stopVenueIdsByRole: Partial<Record<UserStopRole, string>> = {}
+  for (const stop of params.candidate.stops) {
+    stopVenueIdsByRole[roleFor(stop)] = stop.scoredVenue.venue.id
+  }
+  return {
+    candidateId: params.candidate.id,
+    rank: params.rank,
+    signature: buildCandidateSignature(params.candidate),
+    stopVenueIdsByRole,
+    requiredAnchorPreserved: params.result.requiredAnchor?.survived,
+    requiredAnchorRoleCorrect: params.result.requiredAnchor
+      ? params.result.requiredAnchor.survived &&
+        params.result.requiredAnchor.creditedRole === params.result.requiredAnchor.role
+      : undefined,
+    failedCriteria: [...params.result.failedCriteria],
+    reasons: [...params.result.reasons],
+  }
+}
+
+export function selectGreatStopGatePassingCandidate(params: {
+  candidates: ArcCandidate[]
+  intent: IntentProfile
+  locationClass?: BuildLocationClass
+  locationClassSource?: GreatStopGatePresetSource
+  stage: GreatStopGateSelectionStage
+}): {
+  selectedCandidate?: ArcCandidate
+  diagnostics: GreatStopGateSelectionDiagnostics
+} {
+  const evaluated: Array<{
+    candidate: ArcCandidate
+    rank: number
+    result: GreatStopGateResult
+    skippedForRequiredAnchor: boolean
+  }> = []
+  let passingCandidateCount = 0
+
+  for (let index = 0; index < params.candidates.length; index += 1) {
+    const candidate = params.candidates[index]!
+    const result = buildGreatStopGateResult({
+      selectedArc: candidate,
+      intent: params.intent,
+      routePacing: buildGreatStopRoutePacingDiagnostics(candidate),
+      locationClass: params.locationClass,
+      locationClassSource: params.locationClassSource,
+    })
+    const skippedForRequiredAnchor =
+      result.requiredAnchor != null &&
+      (!result.requiredAnchor.survived ||
+        result.requiredAnchor.creditedRole !== result.requiredAnchor.role)
+    evaluated.push({
+      candidate,
+      rank: index + 1,
+      result,
+      skippedForRequiredAnchor,
+    })
+    if (!skippedForRequiredAnchor && result.status === 'PASS') {
+      passingCandidateCount += 1
+      return {
+        selectedCandidate: candidate,
+        diagnostics: {
+          status: 'PASS',
+          stage: params.stage,
+          selectedCandidateId: candidate.id,
+          selectedCandidateRank: index + 1,
+          evaluatedCandidateCount: evaluated.length,
+          failedTopCandidateCriteria: evaluated[0]?.result.failedCriteria,
+          failureReasons: evaluated
+            .slice(0, -1)
+            .flatMap((entry) =>
+              entry.skippedForRequiredAnchor
+                ? ['required_anchor_role_missing']
+                : entry.result.reasons,
+            ),
+          bestFailingCandidateSummary: evaluated
+            .filter((entry) => entry.skippedForRequiredAnchor || entry.result.status === 'FAIL')
+            .map((entry) =>
+              buildCandidateSummary({
+                candidate: entry.candidate,
+                rank: entry.rank,
+                result: entry.result,
+              }),
+            )[0],
+          passingCandidateCount,
+          selectedGateResult: result,
+        },
+      }
+    }
+  }
+
+  const failingCandidates = evaluated.filter(
+    (entry) => entry.skippedForRequiredAnchor || entry.result.status === 'FAIL',
+  )
+  const bestFailingCandidate = failingCandidates[0]
+  return {
+    diagnostics: {
+      status: 'FAIL',
+      stage: params.stage,
+      evaluatedCandidateCount: evaluated.length,
+      failedTopCandidateCriteria: evaluated[0]?.result.failedCriteria,
+      failureReasons:
+        evaluated.length === 0
+          ? ['no_ranked_candidates_available']
+          : evaluated.flatMap((entry) =>
+              entry.skippedForRequiredAnchor
+                ? ['required_anchor_role_missing']
+                : entry.result.reasons,
+            ),
+      bestFailingCandidateSummary: bestFailingCandidate
+        ? buildCandidateSummary({
+            candidate: bestFailingCandidate.candidate,
+            rank: bestFailingCandidate.rank,
+            result: bestFailingCandidate.result,
+          })
+        : undefined,
+      passingCandidateCount,
+      selectedGateResult: evaluated[0]?.result,
     },
   }
 }

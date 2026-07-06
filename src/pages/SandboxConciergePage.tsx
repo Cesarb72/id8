@@ -292,6 +292,7 @@ import type {
   VibeAnchor,
 } from '../domain/types/intent'
 import type { BuildLocationClass } from '../domain/types/greatStopGate'
+import type { GreatStopGateSelectionDiagnostics } from '../domain/types/greatStopGate'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../domain/types/itinerary'
 import type { RefinementMode } from '../domain/types/refinement'
 import type { DistrictRecommendation } from '../domain/types/district'
@@ -2093,6 +2094,30 @@ function buildBuildGenerationSemanticIdentity(params: {
     primaryVibe: normalizeBuildGenerationIdentityValue(params.primaryVibe),
     locationQuery: normalizeBuildGenerationIdentityValue(params.locationQuery),
   }
+}
+
+function readGreatStopGateSelectionDiagnostics(
+  error: unknown,
+): GreatStopGateSelectionDiagnostics | null {
+  if (!error || typeof error !== 'object') {
+    return null
+  }
+  const diagnostics = (error as { greatStopGateSelectionDiagnostics?: unknown })
+    .greatStopGateSelectionDiagnostics
+  if (!diagnostics || typeof diagnostics !== 'object') {
+    return null
+  }
+  const record = diagnostics as Partial<GreatStopGateSelectionDiagnostics>
+  if (record.status !== 'PASS' && record.status !== 'FAIL') {
+    return null
+  }
+  if (
+    record.stage !== 'pre_selection_gate' &&
+    record.stage !== 'post_repair_verification'
+  ) {
+    return null
+  }
+  return diagnostics as GreatStopGateSelectionDiagnostics
 }
 
 function buildGenerationSemanticIdentityMatches(
@@ -14612,6 +14637,15 @@ export function SandboxConciergePage({
       userSelectedDirection.directionId === selectedDirectionId,
   )
   const toUserSafeGenerateError = useCallback((nextError: unknown): string => {
+    const greatStopGateDiagnostics = readGreatStopGateSelectionDiagnostics(nextError)
+    if (greatStopGateDiagnostics?.status === 'FAIL') {
+      const criteria =
+        greatStopGateDiagnostics.failedTopCandidateCriteria?.join(', ') ||
+        greatStopGateDiagnostics.bestFailingCandidateSummary?.failedCriteria.join(', ') ||
+        'quality criteria'
+      const reasons = greatStopGateDiagnostics.failureReasons.slice(0, 4).join(', ')
+      return `Could not find a Great Stop route that passes ${criteria}.${reasons ? ` ${reasons}` : ''}`
+    }
     const rawMessage = nextError instanceof Error ? nextError.message : ''
     if (rawMessage.toLowerCase().includes('fallback arc recovery failed')) {
       return 'No reliable surprise route is available for this setup yet. Try a nearby location or generate again.'

@@ -34,8 +34,16 @@ import { roleProjection } from './config/roleProjection'
 import { buildBoundaryTruthNotes } from './debug/buildBoundaryTruthNotes'
 import { computePairMatrix } from './debug/computeCandidateOverlap'
 import { buildStopReasons } from './explainability/buildStopReasons'
-import { buildGreatStopGateResult } from './greatStop/buildGreatStopGateResult'
-import type { BuildLocationClass } from './types/greatStopGate'
+import {
+  buildGreatStopGateResult,
+  buildGreatStopRoutePacingDiagnostics,
+  selectGreatStopGatePassingCandidate,
+} from './greatStop/buildGreatStopGateResult'
+import type {
+  BuildLocationClass,
+  GreatStopGateSelectionDiagnostics,
+} from './types/greatStopGate'
+import { GreatStopGateSelectionError } from './types/greatStopGate'
 import { recommendDistricts } from './interpretation/district/recommendDistricts'
 import { resolveDistrictAnchor } from './interpretation/district/resolveDistrictAnchor'
 import { getRoleContract } from './contracts/getRoleContract'
@@ -2537,12 +2545,39 @@ async function runGeneratePlanInternal(
       'Selected Build candidate contract could not be preserved exactly during generation.',
     )
   }
+  let greatStopGateSelectionDiagnostics: GreatStopGateSelectionDiagnostics | undefined
+  const buildGreatStopSelectionActive =
+    planningIntent.mode === 'build' && Boolean(options.greatStopGateLocationClass)
+  const buildGreatStopCandidatePool =
+    buildGreatStopSelectionActive
+      ? buildSelectedCandidatePreservationRequired
+        ? buildSelectedCandidatePreservationCandidates
+        : rankedCandidates
+      : []
+  const buildGreatStopSelection =
+    buildGreatStopSelectionActive
+      ? selectGreatStopGatePassingCandidate({
+          candidates: buildGreatStopCandidatePool,
+          intent: planningIntent,
+          locationClass: options.greatStopGateLocationClass,
+          locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
+          stage: 'pre_selection_gate',
+        })
+      : undefined
+  if (buildGreatStopSelection) {
+    greatStopGateSelectionDiagnostics = buildGreatStopSelection.diagnostics
+    if (!buildGreatStopSelection.selectedCandidate) {
+      throw new GreatStopGateSelectionError(buildGreatStopSelection.diagnostics)
+    }
+  }
   let selectedArc =
-    (buildSelectedCandidatePreservationRequired
-      ? buildSelectedCandidatePreservationCandidates[0]
-      : curateHardCommitRequired
-        ? curateHardCommitCandidates[0]
-        : rankedCandidates[0]) ??
+    (buildGreatStopSelectionActive
+      ? buildGreatStopSelection?.selectedCandidate
+      : buildSelectedCandidatePreservationRequired
+        ? buildSelectedCandidatePreservationCandidates[0]
+        : curateHardCommitRequired
+          ? curateHardCommitCandidates[0]
+          : rankedCandidates[0]) ??
     selectFallbackArc({
       triggerStage: 'initial_selection',
       primaryPathFailureReason:
@@ -3675,36 +3710,13 @@ async function runGeneratePlanInternal(
     selectedDistrictConfidence: districtAnchor.confidence,
     selectedDistrictReason: districtAnchor.reason,
     categoryDiversity,
+    greatStopGateSelectionDiagnostics,
     greatStopGateResult: buildGreatStopGateResult({
       selectedArc,
       intent: planningIntent,
       locationClass: options.greatStopGateLocationClass,
       locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
-      routePacing: {
-        transitions: selectedArc.pacing.transitions.map((transition) => ({
-          fromRole: roleProjection[transition.fromRoleKey as ArcStop['role']],
-          toRole: roleProjection[transition.toRoleKey as ArcStop['role']],
-          fromVenueId: transition.fromVenueId,
-          toVenueId: transition.toVenueId,
-          estimatedTravelMinutes: transition.estimatedTravelMinutes,
-          transitionBufferMinutes: transition.transitionBufferMinutes,
-          estimatedTransitionMinutes: transition.estimatedTransitionMinutes,
-          frictionScore: transition.frictionScore,
-          movementMode: transition.movementMode,
-          neighborhoodContinuity: transition.neighborhoodContinuity,
-          notes: transition.notes,
-        })),
-        totalRouteFriction: selectedArc.pacing.totalRouteFriction,
-        estimatedStopMinutes: selectedArc.pacing.estimatedStopMinutes,
-        estimatedTransitionMinutes: selectedArc.pacing.estimatedTransitionMinutes,
-        estimatedTotalMinutes: selectedArc.pacing.estimatedTotalMinutes,
-        estimatedTotalLabel: selectedArc.pacing.estimatedTotalLabel,
-        routeFeelLabel: selectedArc.pacing.routeFeelLabel,
-        pacingPenaltyApplied: selectedArc.pacing.pacingPenaltyApplied,
-        pacingPenaltyReasons: selectedArc.pacing.pacingPenaltyReasons,
-        smoothProgressionRewardApplied: selectedArc.pacing.smoothProgressionRewardApplied,
-        smoothProgressionRewardReasons: selectedArc.pacing.smoothProgressionRewardReasons,
-      },
+      routePacing: buildGreatStopRoutePacingDiagnostics(selectedArc),
     }),
     strictShapeEnabled,
     boundaryDiagnostics,

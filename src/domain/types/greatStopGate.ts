@@ -94,3 +94,44 @@ export interface GreatStopGateResult {
   preset: GreatStopGatePreset
   diagnostics: GreatStopGateDiagnostics
 }
+
+export type GreatStopGateSelectionStage = 'pre_selection_gate' | 'post_repair_verification'
+
+export interface GreatStopGateCandidateSummary {
+  candidateId: string
+  rank: number
+  signature: string
+  stopVenueIdsByRole: Partial<Record<UserStopRole, string>>
+  requiredAnchorPreserved?: boolean
+  requiredAnchorRoleCorrect?: boolean
+  failedCriteria: GreatStopGateCriterion[]
+  reasons: string[]
+}
+
+export interface GreatStopGateSelectionDiagnostics {
+  status: GreatStopGateStatus
+  stage: GreatStopGateSelectionStage
+  selectedCandidateId?: string
+  selectedCandidateRank?: number
+  evaluatedCandidateCount: number
+  failedTopCandidateCriteria?: GreatStopGateCriterion[]
+  failureReasons: string[]
+  bestFailingCandidateSummary?: GreatStopGateCandidateSummary
+  passingCandidateCount?: number
+  selectedGateResult?: GreatStopGateResult
+}
+
+export class GreatStopGateSelectionError extends Error {
+  readonly greatStopGateSelectionDiagnostics: GreatStopGateSelectionDiagnostics
+
+  constructor(diagnostics: GreatStopGateSelectionDiagnostics) {
+    const failedCriteria =
+      diagnostics.failedTopCandidateCriteria?.join(',') ||
+      diagnostics.bestFailingCandidateSummary?.failedCriteria.join(',') ||
+      'unknown'
+    const reasons = diagnostics.failureReasons.join(',') || 'no_passing_great_stop_candidate'
+    super(`Great Stop gate failed (${diagnostics.stage}): ${failedCriteria}; ${reasons}`)
+    this.name = 'GreatStopGateSelectionError'
+    this.greatStopGateSelectionDiagnostics = diagnostics
+  }
+}
