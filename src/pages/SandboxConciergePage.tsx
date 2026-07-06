@@ -577,6 +577,8 @@ interface GenerationContractDebugBreadcrumb {
   selectedArtifactLineageSummary?: string
   plannerInputSummary?: string
   postPlannerStagesSummary?: string
+  greatStopGateSelectionDiagnostics?: GreatStopGateSelectionDiagnostics | null
+  greatStopGateFailureClassification?: 'HONEST_FAIL_GREAT_STOP' | null
 }
 
 type LegacyCurateApprovedRefinementPayload = LegacyCurateRefinementEntryPayload<
@@ -1062,7 +1064,12 @@ interface SelectedDirectionGeneratePlanTrace {
   caughtDriftError: boolean
   driftErrorMessage: string | null
   driftFailureDirectionId: string | null
-  generatePlanFailureSource: 'selected_direction_lineage' | 'post_planner_contract' | 'unknown' | null
+  generatePlanFailureSource:
+    | 'selected_direction_lineage'
+    | 'post_planner_contract'
+    | 'great_stop_gate'
+    | 'unknown'
+    | null
   preLineageExpectedDirectionId: string | null
   preLineageActualDirectionId: string | null
   preLineagePassed: boolean | null
@@ -15241,6 +15248,8 @@ export function SandboxConciergePage({
           curateHardCommit: result.trace.curateHardCommit,
           curateCommitSemantics: result.trace.curateHardCommit?.curateCommitSemantics ?? null,
           hardCommitRequired: result.trace.curateHardCommit?.hardCommitRequired ?? false,
+          greatStopGateSelectionDiagnostics: result.trace.greatStopGateSelectionDiagnostics ?? null,
+          greatStopGateFailureClassification: null,
           selectedDirectionIdSnapshot: activeDirectionContract.id,
           activeDistrictPocketIdSnapshot: activeDistrictPocketId,
           selectedArtifactLineageSummary,
@@ -15338,9 +15347,12 @@ export function SandboxConciergePage({
         const rawMessage = nextError instanceof Error ? nextError.message : ''
         const compactRawMessage = compactDiagnosticMessage(rawMessage)
         const postPlannerDiagnostics = readPostPlannerContractDiagnostics(nextError)
+        const greatStopGateDiagnostics = readGreatStopGateSelectionDiagnostics(nextError)
         const generatePlanFailureSource =
           postPlannerDiagnostics != null
             ? 'post_planner_contract'
+            : greatStopGateDiagnostics != null
+              ? 'great_stop_gate'
             : rawMessage.toLowerCase().includes('direction context was not preserved')
               ? 'selected_direction_lineage'
               : rawMessage.toLowerCase().includes('route drifted from selected direction contract')
@@ -15360,6 +15372,9 @@ export function SandboxConciergePage({
             ? {
                 ...current,
                 errorMessageRaw: rawMessage || null,
+                greatStopGateSelectionDiagnostics: greatStopGateDiagnostics,
+                greatStopGateFailureClassification:
+                  greatStopGateDiagnostics?.status === 'FAIL' ? 'HONEST_FAIL_GREAT_STOP' : null,
               }
             : {
                 validatorMode: isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build',
@@ -15376,6 +15391,9 @@ export function SandboxConciergePage({
                 observedDirectionIdentity: 'exploratory',
                 fallbackApplied: false,
                 errorMessageRaw: rawMessage || null,
+                greatStopGateSelectionDiagnostics: greatStopGateDiagnostics,
+                greatStopGateFailureClassification:
+                  greatStopGateDiagnostics?.status === 'FAIL' ? 'HONEST_FAIL_GREAT_STOP' : null,
               },
         )
         if (
@@ -21938,6 +21956,12 @@ export function SandboxConciergePage({
     windDownCandidates: buildQualityWindDownDiagnostics,
     generatedRouteScore: buildQualityGeneratedRouteScore,
     greatStopGateResult: plan?.generationTrace.greatStopGateResult ?? null,
+    greatStopGateSelectionDiagnostics:
+      plan?.generationTrace.greatStopGateSelectionDiagnostics ??
+      generationContractDebug?.greatStopGateSelectionDiagnostics ??
+      null,
+    greatStopGateFailureClassification:
+      generationContractDebug?.greatStopGateFailureClassification ?? null,
     movementEvidence: {
       nirvanaSoulToPaperPlane: buildQualityFormatTransition('sj-nirvana-soul', 'sj-paper-plane'),
       paperPlaneToLincolnAvenueDeli: buildQualityFormatTransition(
@@ -26392,6 +26416,16 @@ export function SandboxConciergePage({
                 {publicBuildQualityDiagnostics.greatStopGateResult
                   ? `${publicBuildQualityDiagnostics.greatStopGateResult.status} | failed:${publicBuildQualityDiagnostics.greatStopGateResult.failedCriteria.join(',') || 'none'} | reasons:${publicBuildQualityDiagnostics.greatStopGateResult.reasons.join(',') || 'none'}`
                   : 'n/a'}
+              </div>
+              <div>
+                greatStopGateSelection:{' '}
+                {publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics
+                  ? `${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.status} | stage:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.stage} | evaluated:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.evaluatedCandidateCount} | passing:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.passingCandidateCount} | failedTop:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.failedTopCandidateCriteria?.join(',') || 'none'} | reasons:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.failureReasons.join(',') || 'none'}`
+                  : 'n/a'}
+              </div>
+              <div>
+                greatStopGateFailureClassification:{' '}
+                {publicBuildQualityDiagnostics.greatStopGateFailureClassification ?? 'n/a'}
               </div>
               <div>
                 movementEvidence.NirvanaSoulToPaperPlane:{' '}
