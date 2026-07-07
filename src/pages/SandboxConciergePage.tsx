@@ -125,6 +125,7 @@ import {
 } from '../app/services/curate/coffeeBooksSemanticRepresentation'
 import { buildCuratePreviewCommitabilityCacheKey } from '../app/services/curate/curatePreviewCommitabilityCache'
 import { findScoredVenueForStopWithPolicy } from '../app/services/build/finalRouteDetailCopyTruth'
+import { buildRouteRecommendationLifecycleDiagnostics } from '../app/services/routeRecommendationLifecycle'
 import {
   SwapCommitCoreError,
   applyPreviewSwapCommit,
@@ -21612,10 +21613,6 @@ export function SandboxConciergePage({
     ],
   )
   const planPreviewRouteDiagramRenderActive = Boolean(activePlanPreview)
-  const previewBridgeLine = 'Generated route summary'
-  const previewBridgeSubline =
-    previewHighlightProvenanceLine ??
-    'Start, Highlight, and Wind-down are ready. Review the full route.'
   const renderedCommittedRouteArtifactForSummary =
     selectedRouteArtifact?.source === 'committed' ? canonicalRouteArtifact : null
   const renderedCommittedRouteSummarySource =
@@ -21873,6 +21870,36 @@ export function SandboxConciergePage({
     ),
     generatedSelectedArtifactId: plan?.selectedCandidateRouteArtifactId ?? null,
   }
+  const buildRouteLifecycleDiagnostics = buildRouteRecommendationLifecycleDiagnostics({
+    routeSummarySource: selectedRouteSummaryArtifact?.source ?? null,
+    routeSummaryProvenance: activePlanPreview?.provenance ?? null,
+    renderedRouteSource: renderedCommittedRouteSummarySource,
+    generatedContractEntryArtifactPresent:
+      publicBuildReviewGatingDiagnostics.generatedContractEntryArtifactPresent,
+    finalRoutePresent: publicBuildReviewGatingDiagnostics.finalRoutePresent,
+    runtimeRouteArtifactPresent: false,
+    greatStopStatus:
+      plan?.generationTrace.greatStopGateResult?.status ??
+      generationContractDebug?.greatStopGateSelectionDiagnostics?.status ??
+      null,
+    greatStopFailureClassification:
+      generationContractDebug?.greatStopGateFailureClassification ?? null,
+    routeAuthorityStatus: publicBuildReviewGatingDiagnostics.routeAuthorityStatus,
+    lockInputAvailable: publicBuildReviewGatingDiagnostics.lockInputAvailable,
+    reviewEligible: publicBuildReviewGatingDiagnostics.buildReviewTruthEligible,
+    lockEligible: publicBuildReviewGatingDiagnostics.lockInputAvailable,
+  })
+  const previewBridgeLine =
+    isPublicSurface && isBuildWrapperActive
+      ? buildRouteLifecycleDiagnostics.userFacingLabel
+      : 'Generated route summary'
+  const previewBridgeSubline =
+    isPublicSurface &&
+    isBuildWrapperActive &&
+    buildRouteLifecycleDiagnostics.phase === 'candidate_preview'
+      ? 'This preview is not generated route truth yet. Continue must produce an authority-valid route before Review or Lock.'
+      : previewHighlightProvenanceLine ??
+        'Start, Highlight, and Wind-down are ready. Review the full route.'
   const publicBuildQualityDiagnosticsVisible = Boolean(
     isPublicSurface && isBuildWrapperActive && showDebug,
   )
@@ -21982,6 +22009,7 @@ export function SandboxConciergePage({
       null,
     greatStopGateFailureClassification:
       generationContractDebug?.greatStopGateFailureClassification ?? null,
+    routeLifecycleDiagnostics: buildRouteLifecycleDiagnostics,
     movementEvidence: {
       nirvanaSoulToPaperPlane: buildQualityFormatTransition('sj-nirvana-soul', 'sj-paper-plane'),
       paperPlaneToLincolnAvenueDeli: buildQualityFormatTransition(
@@ -26448,6 +26476,10 @@ export function SandboxConciergePage({
                 {publicBuildQualityDiagnostics.greatStopGateFailureClassification ?? 'n/a'}
               </div>
               <div>
+                routeLifecycle:{' '}
+                {`${publicBuildQualityDiagnostics.routeLifecycleDiagnostics.phase} | label:${publicBuildQualityDiagnostics.routeLifecycleDiagnostics.userFacingLabel} | reviewEligible:${String(publicBuildQualityDiagnostics.routeLifecycleDiagnostics.reviewEligible)} | lockEligible:${String(publicBuildQualityDiagnostics.routeLifecycleDiagnostics.lockEligible)} | reasons:${publicBuildQualityDiagnostics.routeLifecycleDiagnostics.reasons.join(',') || 'none'}`}
+              </div>
+              <div>
                 movementEvidence.NirvanaSoulToPaperPlane:{' '}
                 {`${publicBuildQualityDiagnostics.movementEvidence.nirvanaSoulToPaperPlane.fromNeighborhood ?? 'n/a'} -> ${publicBuildQualityDiagnostics.movementEvidence.nirvanaSoulToPaperPlane.toNeighborhood ?? 'n/a'} | driveGap:${publicBuildQualityDiagnostics.movementEvidence.nirvanaSoulToPaperPlane.driveGap ?? 'n/a'} | observed:${String(publicBuildQualityDiagnostics.movementEvidence.nirvanaSoulToPaperPlane.observedInGeneratedRoute)} | long:${String(publicBuildQualityDiagnostics.movementEvidence.nirvanaSoulToPaperPlane.longTransition)}`}
               </div>
@@ -26982,6 +27014,8 @@ export function SandboxConciergePage({
           data-id8-route-summary-source={selectedRouteSummaryArtifact?.source ?? 'unknown'}
           data-id8-route-summary-provenance={activePlanPreview?.provenance ?? 'unknown'}
           data-id8-route-summary-rendered-route-source={renderedCommittedRouteSummarySource}
+          data-id8-route-lifecycle-phase={buildRouteLifecycleDiagnostics.phase}
+          data-id8-route-lifecycle-label={buildRouteLifecycleDiagnostics.userFacingLabel}
           data-id8-route-summary-active-starter-id={activeCurateStarterPackId ?? 'none'}
           data-id8-route-summary-semantic-status={
             coffeeBooksCommittedRouteSummaryAdmission.semanticRepresentationStatus ?? 'not_applicable'
