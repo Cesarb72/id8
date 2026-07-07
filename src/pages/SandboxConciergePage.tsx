@@ -22258,6 +22258,61 @@ export function SandboxConciergePage({
       lincolnOverHedley: buildQualityLincolnOverHedleyStatus,
     },
   }
+  type PublicBuildGreatStopFailureDetails = NonNullable<
+    NonNullable<
+      typeof publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics
+    >['greatStopCandidateFailureDetails']
+  >
+  type PublicBuildGreatStopCandidateFailureDetail =
+    PublicBuildGreatStopFailureDetails['topFailingCandidates'][number]
+  const greatStopCandidateFailureDetails =
+    publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics
+      ?.greatStopCandidateFailureDetails ?? null
+  const formatGreatStopRepeatedFailureReasonCounts = (
+    counts: Record<string, number>,
+  ) =>
+    Object.entries(counts)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([reason, count]) => `${reason}=${count}`)
+      .join(',') || 'none'
+  const formatGreatStopScoreSummary = (
+    scoreSummary: PublicBuildGreatStopCandidateFailureDetail['scoreSummary'],
+  ) =>
+    [
+      `total:${scoreSummary.totalScore}`,
+      typeof scoreSummary.geographyScore === 'number'
+        ? `geography:${scoreSummary.geographyScore}`
+        : null,
+      typeof scoreSummary.roleFlowScore === 'number'
+        ? `roleFlow:${scoreSummary.roleFlowScore}`
+        : null,
+      typeof scoreSummary.diversityScore === 'number'
+        ? `diversity:${scoreSummary.diversityScore}`
+        : null,
+      typeof scoreSummary.windDownScore === 'number'
+        ? `windDown:${scoreSummary.windDownScore}`
+        : null,
+      typeof scoreSummary.highlightMomentScore === 'number'
+        ? `highlightMoment:${scoreSummary.highlightMomentScore}`
+        : null,
+      typeof scoreSummary.momentStrengthScore === 'number'
+        ? `momentStrength:${scoreSummary.momentStrengthScore}`
+        : null,
+      typeof scoreSummary.momentFlatPenalty === 'number'
+        ? `momentFlatPenalty:${scoreSummary.momentFlatPenalty}`
+        : null,
+    ]
+      .filter((part): part is string => Boolean(part))
+      .join(',')
+  const formatGreatStopCandidateFailureDetail = (
+    candidate: PublicBuildGreatStopCandidateFailureDetail,
+  ) =>
+    `rank:${candidate.rank} | id:${candidate.candidateId} | route:${candidate.routeNames.join(' -> ') || 'n/a'} | rawIds:${candidate.stopIds.join(',') || 'none'} | baseIds:${candidate.baseVenueIds.join(',') || 'none'} | roles:${candidate.creditedRoles.join(',') || 'none'} | anchor:${String(candidate.requiredAnchorPresent)} | anchorRole:${candidate.requiredAnchorRole ?? 'n/a'} | anchorRoleCorrect:${String(candidate.requiredAnchorRoleCorrect)} | failed:${candidate.failedCriteria.join(',') || 'none'} | reasons:${candidate.failureReasons.join(',') || 'none'} | movement:${candidate.totalMovementEstimate}/${candidate.totalLimitMinutes} | maxTransition:${candidate.maxSingleTransitionEstimate}/${candidate.transitionLimitMinutes} | clusters:${candidate.clusterPath.join('>') || 'n/a'} | escapes:${candidate.clusterEscapeCount} | backtrack:${String(candidate.backtrackDetected)} | driveLike:${String(candidate.driveLikeMovementDetected)} | moment:${candidate.momentFailureReasons.join(',') || 'none'} | energy:${candidate.roleEnergyNote ?? 'n/a'} | score:${formatGreatStopScoreSummary(candidate.scoreSummary)}`
+  const greatStopTopFailingCandidates =
+    greatStopCandidateFailureDetails?.topFailingCandidates.slice(
+      0,
+      greatStopCandidateFailureDetails.detailCandidateLimit,
+    ) ?? []
   const showTryAnotherAction = isSurpriseWrapperActive
   const showReturnToCurateDiscoveryAction = curatePreviewPhaseActive
   const selectedRouteArtifactIdForGeneration =
@@ -26703,6 +26758,38 @@ export function SandboxConciergePage({
                   ? `${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.status} | stage:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.stage} | evaluated:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.evaluatedCandidateCount} | passing:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.passingCandidateCount} | failedTop:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.failedTopCandidateCriteria?.join(',') || 'none'} | reasons:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.failureReasons.join(',') || 'none'}`
                   : 'n/a'}
               </div>
+              <div>
+                greatStopCandidateFailureDetails:{' '}
+                {greatStopCandidateFailureDetails
+                  ? `evaluated:${greatStopCandidateFailureDetails.evaluatedCandidateCount} | passing:${greatStopCandidateFailureDetails.passingCandidateCount} | detailLimit:${greatStopCandidateFailureDetails.detailCandidateLimit} | oneCriterion:${greatStopCandidateFailureDetails.candidatesFailingOnlyOneCriterionCount} | movementOnly:${greatStopCandidateFailureDetails.candidatesFailingOnlyMovementCount} | momentOnly:${greatStopCandidateFailureDetails.candidatesFailingOnlyMomentCount} | placeAndMoment:${greatStopCandidateFailureDetails.candidatesFailingBothPlaceAndMomentCount} | requiredAnchorPreserved:${greatStopCandidateFailureDetails.requiredAnchorPreservedCount} | compactness:${greatStopCandidateFailureDetails.compactnessCandidateCount ?? 'n/a'} | backtrack:${greatStopCandidateFailureDetails.backtrackPatternCount}`
+                  : 'n/a'}
+              </div>
+              <div>
+                greatStopCandidateFailureReasonCounts:{' '}
+                {greatStopCandidateFailureDetails
+                  ? formatGreatStopRepeatedFailureReasonCounts(
+                      greatStopCandidateFailureDetails.repeatedFailureReasonCounts,
+                    )
+                  : 'n/a'}
+              </div>
+              <div>
+                greatStopNearestToPass:{' '}
+                {greatStopCandidateFailureDetails?.nearestToPassCandidate
+                  ? formatGreatStopCandidateFailureDetail(
+                      greatStopCandidateFailureDetails.nearestToPassCandidate,
+                    )
+                  : 'n/a'}
+              </div>
+              {greatStopTopFailingCandidates.length > 0 ? (
+                greatStopTopFailingCandidates.map((candidate) => (
+                  <div key={`great-stop-top-failing-${candidate.rank}-${candidate.candidateId}`}>
+                    greatStopTopFailingCandidate.{candidate.rank}:{' '}
+                    {formatGreatStopCandidateFailureDetail(candidate)}
+                  </div>
+                ))
+              ) : (
+                <div>greatStopTopFailingCandidates: n/a</div>
+              )}
               <div>
                 greatStopGateFailureClassification:{' '}
                 {publicBuildQualityDiagnostics.greatStopGateFailureClassification ?? 'n/a'}
