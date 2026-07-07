@@ -22268,6 +22268,9 @@ export function SandboxConciergePage({
   const greatStopCandidateFailureDetails =
     publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics
       ?.greatStopCandidateFailureDetails ?? null
+  const greatStopCompactnessRankingDiagnostics =
+    publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics
+      ?.compactnessRankingDiagnostics ?? null
   const formatGreatStopRepeatedFailureReasonCounts = (
     counts: Record<string, number>,
   ) =>
@@ -22308,10 +22311,21 @@ export function SandboxConciergePage({
     candidate: PublicBuildGreatStopCandidateFailureDetail,
   ) =>
     `rank:${candidate.rank} | id:${candidate.candidateId} | route:${candidate.routeNames.join(' -> ') || 'n/a'} | rawIds:${candidate.stopIds.join(',') || 'none'} | baseIds:${candidate.baseVenueIds.join(',') || 'none'} | roles:${candidate.creditedRoles.join(',') || 'none'} | anchor:${String(candidate.requiredAnchorPresent)} | anchorRole:${candidate.requiredAnchorRole ?? 'n/a'} | anchorRoleCorrect:${String(candidate.requiredAnchorRoleCorrect)} | failed:${candidate.failedCriteria.join(',') || 'none'} | reasons:${candidate.failureReasons.join(',') || 'none'} | movement:${candidate.totalMovementEstimate}/${candidate.totalLimitMinutes} | maxTransition:${candidate.maxSingleTransitionEstimate}/${candidate.transitionLimitMinutes} | clusters:${candidate.clusterPath.join('>') || 'n/a'} | escapes:${candidate.clusterEscapeCount} | backtrack:${String(candidate.backtrackDetected)} | driveLike:${String(candidate.driveLikeMovementDetected)} | moment:${candidate.momentFailureReasons.join(',') || 'none'} | energy:${candidate.roleEnergyNote ?? 'n/a'} | score:${formatGreatStopScoreSummary(candidate.scoreSummary)}`
+  const formatGreatStopCompactnessCandidateDetail = (
+    candidate: NonNullable<
+      typeof greatStopCompactnessRankingDiagnostics
+    >['topCandidateDetails'][number],
+  ) =>
+    `rank:${candidate.rank} | id:${candidate.candidateId} | route:${candidate.routeNames.join(' -> ') || 'n/a'} | rawIds:${candidate.stopIds.join(',') || 'none'} | baseIds:${candidate.baseVenueIds.join(',') || 'none'} | anchor:${String(candidate.requiredAnchorPresent)} | anchorRole:${candidate.requiredAnchorRole ?? 'n/a'} | movement:${candidate.totalMovementEstimate}/${candidate.totalMovementLimit ?? 'n/a'} | maxTransition:${candidate.maxSingleTransitionEstimate}/${candidate.maxTransitionLimit ?? 'n/a'} | clusters:${candidate.clusterPath.join('>') || 'n/a'} | escapes:${candidate.clusterEscapeCount} | backtrack:${String(candidate.backtrackDetected)} | repeatedEscape:${String(candidate.repeatedClusterEscapeDetected)} | driveLike:${String(candidate.driveLikeMovementDetected)} | compactnessAdjustment:${candidate.compactnessAdjustmentScore} | reasons:${candidate.compactnessReasonSummary.join(',') || 'none'} | score:${candidate.originalWaypointScore}->${candidate.adjustedWaypointScore}`
   const greatStopTopFailingCandidates =
     greatStopCandidateFailureDetails?.topFailingCandidates.slice(
       0,
       greatStopCandidateFailureDetails.detailCandidateLimit,
+    ) ?? []
+  const greatStopCompactnessTopCandidates =
+    greatStopCompactnessRankingDiagnostics?.topCandidateDetails.slice(
+      0,
+      greatStopCompactnessRankingDiagnostics.detailCandidateLimit,
     ) ?? []
   const showTryAnotherAction = isSurpriseWrapperActive
   const showReturnToCurateDiscoveryAction = curatePreviewPhaseActive
@@ -26758,6 +26772,54 @@ export function SandboxConciergePage({
                   ? `${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.status} | stage:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.stage} | evaluated:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.evaluatedCandidateCount} | passing:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.passingCandidateCount} | failedTop:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.failedTopCandidateCriteria?.join(',') || 'none'} | reasons:${publicBuildQualityDiagnostics.greatStopGateSelectionDiagnostics.failureReasons.join(',') || 'none'}`
                   : 'n/a'}
               </div>
+              <div>
+                greatStopCompactnessActivation:{' '}
+                {greatStopCompactnessRankingDiagnostics
+                  ? `active:${String(greatStopCompactnessRankingDiagnostics.routeShapeCompactnessAdjustmentActive)} | reason:${greatStopCompactnessRankingDiagnostics.compactnessActivationReason} | radius:${greatStopCompactnessRankingDiagnostics.movementRadius ?? 'n/a'} | maxTransition:${greatStopCompactnessRankingDiagnostics.maxTransitionMinutes ?? 'n/a'} | continuity:${greatStopCompactnessRankingDiagnostics.neighborhoodContinuity ?? 'n/a'} | preserveMovement:${String(greatStopCompactnessRankingDiagnostics.preservePriorityIncludesMovement)}`
+                  : 'n/a'}
+              </div>
+              <div>
+                greatStopCompactnessRanking:{' '}
+                {greatStopCompactnessRankingDiagnostics
+                  ? `evaluated:${greatStopCompactnessRankingDiagnostics.compactnessEvaluatedCandidateCount} | adjusted:${greatStopCompactnessRankingDiagnostics.compactnessAdjustedCandidateCount} | compact:${greatStopCompactnessRankingDiagnostics.compactnessCandidateCount} | placeRight:${greatStopCompactnessRankingDiagnostics.compactnessPassingPlaceRightCandidateCount ?? 'n/a'} | firstCompactRank:${greatStopCompactnessRankingDiagnostics.firstCompactCandidateRank ?? 'none'} | firstPlaceRightRank:${greatStopCompactnessRankingDiagnostics.firstPlaceRightCandidateRank ?? 'none'} | compactRanks:${greatStopCompactnessRankingDiagnostics.compactCandidateRanks.join(',') || 'none'} | overTotal:${greatStopCompactnessRankingDiagnostics.candidatesOverTotalMovementLimitCount} | overMax:${greatStopCompactnessRankingDiagnostics.candidatesOverMaxTransitionLimitCount} | backtrack:${greatStopCompactnessRankingDiagnostics.candidatesWithBacktrackCount} | repeatedEscape:${greatStopCompactnessRankingDiagnostics.candidatesWithRepeatedClusterEscapeCount} | extraEscape:${greatStopCompactnessRankingDiagnostics.candidatesWithExtraClusterEscapeCount} | driveLike:${greatStopCompactnessRankingDiagnostics.candidatesWithDriveLikeMovementCount}`
+                  : 'n/a'}
+              </div>
+              <div>
+                greatStopCompactnessPoolVisibility:{' '}
+                {greatStopCompactnessRankingDiagnostics
+                  ? `beforeTop40:${greatStopCompactnessRankingDiagnostics.poolVisibility.beforeTop40Preservation} (${greatStopCompactnessRankingDiagnostics.poolVisibility.beforeTop40PreservationReason}) | afterTop40:${greatStopCompactnessRankingDiagnostics.poolVisibility.afterTop40PreservationCandidateCount} | afterWaypoint:${greatStopCompactnessRankingDiagnostics.poolVisibility.afterWaypointRankingCandidateCount} | greatStopEvaluated:${greatStopCompactnessRankingDiagnostics.poolVisibility.greatStopEvaluatedCandidateCount} | firstCompactOutsideEvaluated:${String(greatStopCompactnessRankingDiagnostics.poolVisibility.firstCompactCandidateOutsideGreatStopEvaluatedSet ?? 'n/a')} | rolePool:${greatStopCompactnessRankingDiagnostics.poolVisibility.rolePoolCompactnessVisibility} (${greatStopCompactnessRankingDiagnostics.poolVisibility.rolePoolCompactnessVisibilityReason})`
+                  : 'n/a'}
+              </div>
+              {greatStopCompactnessRankingDiagnostics?.nearestCompactCandidate ? (
+                <div>
+                  greatStopNearestCompactCandidate:{' '}
+                  {formatGreatStopCompactnessCandidateDetail(
+                    greatStopCompactnessRankingDiagnostics.nearestCompactCandidate,
+                  )}
+                </div>
+              ) : (
+                <div>greatStopNearestCompactCandidate: n/a</div>
+              )}
+              {greatStopCompactnessRankingDiagnostics?.nearestPlaceRightCandidate ? (
+                <div>
+                  greatStopNearestPlaceRightCandidate:{' '}
+                  {formatGreatStopCompactnessCandidateDetail(
+                    greatStopCompactnessRankingDiagnostics.nearestPlaceRightCandidate,
+                  )}
+                </div>
+              ) : (
+                <div>greatStopNearestPlaceRightCandidate: n/a</div>
+              )}
+              {greatStopCompactnessTopCandidates.length > 0 ? (
+                greatStopCompactnessTopCandidates.map((candidate) => (
+                  <div key={`great-stop-compactness-top-${candidate.rank}-${candidate.candidateId}`}>
+                    greatStopCompactnessTopCandidate.{candidate.rank}:{' '}
+                    {formatGreatStopCompactnessCandidateDetail(candidate)}
+                  </div>
+                ))
+              ) : (
+                <div>greatStopCompactnessTopCandidates: n/a</div>
+              )}
               <div>
                 greatStopCandidateFailureDetails:{' '}
                 {greatStopCandidateFailureDetails

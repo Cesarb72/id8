@@ -3,6 +3,7 @@ import type { RoutePacingDiagnostics, TransitionExplainabilityDiagnostics } from
 import type {
   BuildLocationClass,
   GreatStopCandidateFailureDetails,
+  GreatStopCompactnessRankingDiagnostics,
   GreatStopGateCandidateFailureDetail,
   GreatStopGateCandidateSummary,
   GreatStopGateCandidateIdentityDiagnostic,
@@ -824,6 +825,7 @@ export function selectGreatStopGatePassingCandidate(params: {
   locationClassSource?: GreatStopGatePresetSource
   stage: GreatStopGateSelectionStage
   rolePoolIdentityDiagnostics?: GreatStopGateRolePoolIdentityDiagnostics
+  compactnessRankingDiagnostics?: GreatStopCompactnessRankingDiagnostics
 }): {
   selectedCandidate?: ArcCandidate
   diagnostics: GreatStopGateSelectionDiagnostics
@@ -931,6 +933,7 @@ export function selectGreatStopGatePassingCandidate(params: {
           })
         : undefined,
       greatStopCandidateFailureDetails,
+      compactnessRankingDiagnostics: params.compactnessRankingDiagnostics,
       structuralFailureReasons,
       passingCandidateCount,
       selectedGateResult: selectionParams.selectedGateResult,

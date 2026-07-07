@@ -7,7 +7,10 @@ import { GreatStopGateSelectionError } from '../src/domain/types/greatStopGate'
 import type { ArcCandidate, ArcStop } from '../src/domain/types/arc'
 import type { CrewPolicy } from '../src/domain/types/crewPolicies'
 import type { ExperienceLens } from '../src/domain/types/experienceLens'
-import type { BuildLocationClass } from '../src/domain/types/greatStopGate'
+import type {
+  BuildLocationClass,
+  GreatStopCompactnessRankingDiagnostics,
+} from '../src/domain/types/greatStopGate'
 import type { IntentProfile, PersonaMode } from '../src/domain/types/intent'
 import type { UserStopRole } from '../src/domain/types/itinerary'
 import type { RouteMovementMode } from '../src/domain/types/pacing'
@@ -400,12 +403,123 @@ const missingAnchorCandidate = buildCandidate({
   repeatedClusterEscapeCount: 0,
 })
 
+const compactnessRankingDiagnostics: GreatStopCompactnessRankingDiagnostics = {
+  routeShapeCompactnessAdjustmentActive: true,
+  compactnessActivationReason: 'tight_strict_movement_preserved',
+  movementRadius: 'tight',
+  maxTransitionMinutes: 14,
+  neighborhoodContinuity: 'strict',
+  preservePriorityIncludesMovement: true,
+  compactnessEvaluatedCandidateCount: 2,
+  compactnessAdjustedCandidateCount: 2,
+  compactnessCandidateCount: 1,
+  compactnessPassingPlaceRightCandidateCount: 1,
+  firstCompactCandidateRank: 2,
+  firstPlaceRightCandidateRank: 2,
+  compactCandidateRanks: [2],
+  compactCandidateRankLimit: 25,
+  candidatesOverTotalMovementLimitCount: 1,
+  candidatesOverMaxTransitionLimitCount: 1,
+  candidatesWithBacktrackCount: 1,
+  candidatesWithRepeatedClusterEscapeCount: 1,
+  candidatesWithExtraClusterEscapeCount: 1,
+  candidatesWithDriveLikeMovementCount: 1,
+  detailCandidateLimit: 5,
+  topCandidateDetails: [
+    {
+      rank: 1,
+      candidateId: topFailingCandidate.id,
+      routeNames: topFailingCandidate.stops.map((stop) => stop.scoredVenue.venue.name),
+      stopIds: topFailingCandidate.stops.map((stop) => stop.scoredVenue.venue.id),
+      baseVenueIds: topFailingCandidate.stops.map(
+        (stop) => stop.scoredVenue.candidateIdentity.baseVenueId,
+      ),
+      requiredAnchorPresent: true,
+      requiredAnchorRole: 'highlight',
+      totalMovementEstimate: 32,
+      totalMovementLimit: 24,
+      maxSingleTransitionEstimate: 16,
+      maxTransitionLimit: 14,
+      clusterPath: ['a', 'b', 'c'],
+      clusterEscapeCount: 2,
+      backtrackDetected: true,
+      repeatedClusterEscapeDetected: true,
+      driveLikeMovementDetected: true,
+      compactnessAdjustmentScore: -0.12,
+      compactnessReasonSummary: ['total_movement_over_tight_limit'],
+      originalWaypointScore: 0.9,
+      adjustedWaypointScore: 0.78,
+    },
+  ],
+  nearestCompactCandidate: {
+    rank: 2,
+    candidateId: secondPassingCandidate.id,
+    routeNames: secondPassingCandidate.stops.map((stop) => stop.scoredVenue.venue.name),
+    stopIds: secondPassingCandidate.stops.map((stop) => stop.scoredVenue.venue.id),
+    baseVenueIds: secondPassingCandidate.stops.map(
+      (stop) => stop.scoredVenue.candidateIdentity.baseVenueId,
+    ),
+    requiredAnchorPresent: true,
+    requiredAnchorRole: 'highlight',
+    totalMovementEstimate: 17,
+    totalMovementLimit: 24,
+    maxSingleTransitionEstimate: 9,
+    maxTransitionLimit: 14,
+    clusterPath: ['a', 'a', 'b'],
+    clusterEscapeCount: 1,
+    backtrackDetected: false,
+    repeatedClusterEscapeDetected: false,
+    driveLikeMovementDetected: false,
+    compactnessAdjustmentScore: 0.07,
+    compactnessReasonSummary: ['compact_support_bonus'],
+    originalWaypointScore: 0.85,
+    adjustedWaypointScore: 0.92,
+  },
+  nearestPlaceRightCandidate: {
+    rank: 2,
+    candidateId: secondPassingCandidate.id,
+    routeNames: secondPassingCandidate.stops.map((stop) => stop.scoredVenue.venue.name),
+    stopIds: secondPassingCandidate.stops.map((stop) => stop.scoredVenue.venue.id),
+    baseVenueIds: secondPassingCandidate.stops.map(
+      (stop) => stop.scoredVenue.candidateIdentity.baseVenueId,
+    ),
+    requiredAnchorPresent: true,
+    requiredAnchorRole: 'highlight',
+    totalMovementEstimate: 17,
+    totalMovementLimit: 24,
+    maxSingleTransitionEstimate: 9,
+    maxTransitionLimit: 14,
+    clusterPath: ['a', 'a', 'b'],
+    clusterEscapeCount: 1,
+    backtrackDetected: false,
+    repeatedClusterEscapeDetected: false,
+    driveLikeMovementDetected: false,
+    compactnessAdjustmentScore: 0.07,
+    compactnessReasonSummary: ['compact_support_bonus'],
+    originalWaypointScore: 0.85,
+    adjustedWaypointScore: 0.92,
+  },
+  poolVisibility: {
+    beforeTop40Preservation: 'not_captured',
+    beforeTop40PreservationReason:
+      'assembleArcCandidates currently returns the preserved/pruned candidate set only.',
+    afterTop40PreservationCandidateCount: 2,
+    afterWaypointRankingCandidateCount: 2,
+    greatStopEvaluatedCandidateCount: 2,
+    firstCompactCandidateOutsideGreatStopEvaluatedSet: false,
+    rolePoolCompactnessVisibility: 'not_captured',
+    rolePoolCompactnessVisibilityReason:
+      'role pools contain stops, not route-level movement/cluster compactness candidates.',
+  },
+}
+
 const selection = selectGreatStopGatePassingCandidate({
   candidates: [topFailingCandidate, secondPassingCandidate],
   intent,
   locationClass: 'L2 Mid',
   locationClassSource: 'explicit',
   stage: 'pre_selection_gate',
+  compactnessRankingDiagnostics,
 })
 
 assert(selection.selectedCandidate?.id === secondPassingCandidate.id, 'Second ranked PASS candidate should be selected.')
@@ -427,6 +541,13 @@ assert(
     selection.diagnostics.fullEvaluatedCandidateCount === 2 &&
     selection.diagnostics.omittedCandidateCount === 0,
   'Selection diagnostics must expose ranked/evaluated counts without truncating evaluation.',
+)
+assert(
+  selection.diagnostics.compactnessRankingDiagnostics?.routeShapeCompactnessAdjustmentActive === true &&
+    selection.diagnostics.compactnessRankingDiagnostics.firstCompactCandidateRank === 2 &&
+    selection.diagnostics.compactnessRankingDiagnostics.firstPlaceRightCandidateRank === 2 &&
+    selection.diagnostics.compactnessRankingDiagnostics.topCandidateDetails.length === 1,
+  'Great Stop selection diagnostics must preserve compactness activation, first ranks, and capped detail rows.',
 )
 
 const missingAnchorSelection = selectGreatStopGatePassingCandidate({

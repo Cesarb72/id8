@@ -71,10 +71,36 @@ export interface WaypointRankedCandidate {
   boundaryBaseScore: number
   boundaryQualityAdjustment: number
   boundaryQualitySignals: WaypointBoundaryQualitySignals
+  routeShapeCompactnessAdjustment: number
+  routeShapeCompactnessSignals: WaypointRouteShapeCompactnessSignals
   refinementNudge: number
   refinementTokensApplied: string[]
   refinementTokenDeltas: Record<string, number>
   tiebreaker: number
+}
+
+export interface WaypointRouteShapeCompactnessSignals {
+  active: boolean
+  activationReason: string
+  movementRadius?: RouteShapeContract['movementProfile']['radius']
+  maxTransitionMinutes?: number
+  neighborhoodContinuity?: RouteShapeContract['movementProfile']['neighborhoodContinuity']
+  preservePriorityIncludesMovement: boolean
+  totalMovementEstimate: number
+  totalMovementLimit?: number
+  maxSingleTransitionEstimate: number
+  maxTransitionLimit?: number
+  clusterEscapeCount: number
+  repeatedClusterEscapeCount: number
+  extraClusterEscapeCount: number
+  backtrackDetected: boolean
+  longTransitionCount: number
+  driveLikeMovementDetected: boolean
+  compactCandidate: boolean
+  reasonSummary: string[]
+  compactBonus: number
+  compactnessPenalty: number
+  adjustment: number
 }
 
 export interface WaypointBoundaryQualitySignals {
@@ -441,13 +467,37 @@ function anchorAdjacentSameClusterRate(
   )
 }
 
-function routeShapeCompactnessAdjustment(
+function evaluateRouteShapeCompactness(
   candidate: ArcCandidate,
   contract: WaypointContractInput | undefined,
-): number {
+): WaypointRouteShapeCompactnessSignals {
+  const minutes = transitionMinutes(candidate)
+  const totalMovement = minutes.reduce((sum, value) => sum + value, 0)
+  const maxTransition = minutes.reduce((max, value) => Math.max(max, value), 0)
+  const repeatedEscapeCount = candidate.spatial.repeatedClusterEscapeCount
+  const extraClusterEscapeCount = Math.max(0, candidate.spatial.clusterEscapeCount - 1)
+  const backtrackDetected = detectClusterBacktrack(candidate)
+  const driveLikeMovementDetected = candidate.spatial.longTransitionCount > 0
   const routeShapeContract = contract?.routeShapeContract
   if (!routeShapeContract) {
-    return 0
+    return {
+      active: false,
+      activationReason: 'route_shape_contract_missing',
+      preservePriorityIncludesMovement: false,
+      totalMovementEstimate: totalMovement,
+      maxSingleTransitionEstimate: maxTransition,
+      clusterEscapeCount: candidate.spatial.clusterEscapeCount,
+      repeatedClusterEscapeCount: repeatedEscapeCount,
+      extraClusterEscapeCount,
+      backtrackDetected,
+      longTransitionCount: candidate.spatial.longTransitionCount,
+      driveLikeMovementDetected,
+      compactCandidate: false,
+      reasonSummary: ['route_shape_contract_missing'],
+      compactBonus: 0,
+      compactnessPenalty: 0,
+      adjustment: 0,
+    }
   }
   const movementProfile = routeShapeContract.movementProfile
   const movementPriority = routeShapeContract.mutationProfile.preservePriority.includes('movement')
@@ -456,21 +506,40 @@ function routeShapeCompactnessAdjustment(
     movementProfile.neighborhoodContinuity === 'strict' &&
     movementPriority
   if (!tightProfile) {
-    return 0
+    const reasonSummary = [
+      movementProfile.radius === 'tight' ? null : 'radius_not_tight',
+      movementProfile.neighborhoodContinuity === 'strict' ? null : 'continuity_not_strict',
+      movementPriority ? null : 'movement_not_preserved',
+    ].filter((reason): reason is string => Boolean(reason))
+    return {
+      active: false,
+      activationReason: reasonSummary.join('|') || 'compactness_not_required',
+      movementRadius: movementProfile.radius,
+      maxTransitionMinutes: movementProfile.maxTransitionMinutes,
+      neighborhoodContinuity: movementProfile.neighborhoodContinuity,
+      preservePriorityIncludesMovement: movementPriority,
+      totalMovementEstimate: totalMovement,
+      maxSingleTransitionEstimate: maxTransition,
+      clusterEscapeCount: candidate.spatial.clusterEscapeCount,
+      repeatedClusterEscapeCount: repeatedEscapeCount,
+      extraClusterEscapeCount,
+      backtrackDetected,
+      longTransitionCount: candidate.spatial.longTransitionCount,
+      driveLikeMovementDetected,
+      compactCandidate: false,
+      reasonSummary,
+      compactBonus: 0,
+      compactnessPenalty: 0,
+      adjustment: 0,
+    }
   }
 
-  const minutes = transitionMinutes(candidate)
   const transitionCount = Math.max(1, minutes.length)
   const maxTransitionLimit = Math.max(1, movementProfile.maxTransitionMinutes)
-  const totalMovement = minutes.reduce((sum, value) => sum + value, 0)
-  const maxTransition = minutes.reduce((max, value) => Math.max(max, value), 0)
   const totalMovementLimit = maxTransitionLimit * transitionCount * 0.86
   const totalOverageRatio = Math.max(0, totalMovement - totalMovementLimit) / totalMovementLimit
   const maxTransitionOverageRatio =
     Math.max(0, maxTransition - maxTransitionLimit) / maxTransitionLimit
-  const repeatedEscapeCount = candidate.spatial.repeatedClusterEscapeCount
-  const extraClusterEscapeCount = Math.max(0, candidate.spatial.clusterEscapeCount - 1)
-  const backtrackDetected = detectClusterBacktrack(candidate)
   const sameClusterRate =
     candidate.spatial.sameClusterTransitionCount / Math.max(1, candidate.spatial.transitions.length)
   const anchorNearSupportRate = anchorAdjacentSameClusterRate(candidate, contract)
@@ -492,8 +561,46 @@ function routeShapeCompactnessAdjustment(
     0,
     0.34,
   )
+  const reasonSummary = [
+    totalOverageRatio > 0 ? 'total_movement_over_tight_limit' : null,
+    maxTransitionOverageRatio > 0 ? 'max_transition_over_tight_limit' : null,
+    repeatedEscapeCount > 0 ? 'repeated_cluster_escape' : null,
+    extraClusterEscapeCount > 0 ? 'extra_cluster_escape' : null,
+    backtrackDetected ? 'backtrack_detected' : null,
+    candidate.spatial.longTransitionCount > 0 ? 'long_transition_detected' : null,
+    compactBonus > 0 ? 'compact_support_bonus' : null,
+  ].filter((reason): reason is string => Boolean(reason))
+  const compactCandidate =
+    totalOverageRatio === 0 &&
+    maxTransitionOverageRatio === 0 &&
+    repeatedEscapeCount === 0 &&
+    extraClusterEscapeCount === 0 &&
+    !backtrackDetected &&
+    candidate.spatial.longTransitionCount === 0
 
-  return Number((compactBonus - compactnessPenalty).toFixed(4))
+  return {
+    active: true,
+    activationReason: 'tight_strict_movement_preserved',
+    movementRadius: movementProfile.radius,
+    maxTransitionMinutes: movementProfile.maxTransitionMinutes,
+    neighborhoodContinuity: movementProfile.neighborhoodContinuity,
+    preservePriorityIncludesMovement: movementPriority,
+    totalMovementEstimate: totalMovement,
+    totalMovementLimit: Number(totalMovementLimit.toFixed(2)),
+    maxSingleTransitionEstimate: maxTransition,
+    maxTransitionLimit,
+    clusterEscapeCount: candidate.spatial.clusterEscapeCount,
+    repeatedClusterEscapeCount: repeatedEscapeCount,
+    extraClusterEscapeCount,
+    backtrackDetected,
+    longTransitionCount: candidate.spatial.longTransitionCount,
+    driveLikeMovementDetected,
+    compactCandidate,
+    reasonSummary,
+    compactBonus: Number(compactBonus.toFixed(4)),
+    compactnessPenalty: Number(compactnessPenalty.toFixed(4)),
+    adjustment: Number((compactBonus - compactnessPenalty).toFixed(4)),
+  }
 }
 
 function buildContractTrace(params: {
@@ -549,9 +656,13 @@ function rankWithWaypointBoundaryInternal(
       const boundaryBaseScore = candidate.totalScore
       const refinementTrace = refinementAdjustmentTrace(candidate, request.intent)
       const tiebreaker = deterministicTiebreaker(candidateDeterministicKey(candidate)) * 0.01
+      const routeShapeCompactnessSignals = evaluateRouteShapeCompactness(
+        candidate,
+        request.contract,
+      )
       const contractAdjustment =
         requiredStopRankingAdjustment(candidate, request.contract) +
-        routeShapeCompactnessAdjustment(candidate, request.contract)
+        routeShapeCompactnessSignals.adjustment
       const qualityTrace = waypointBoundaryQualityTrace(candidate, request.contract)
       const rankingScore =
         boundaryBaseScore +
@@ -565,6 +676,8 @@ function rankWithWaypointBoundaryInternal(
         boundaryBaseScore,
         boundaryQualityAdjustment: qualityTrace.totalAdjustment,
         boundaryQualitySignals: qualityTrace,
+        routeShapeCompactnessAdjustment: routeShapeCompactnessSignals.adjustment,
+        routeShapeCompactnessSignals,
         refinementNudge: refinementTrace.totalAdjustment,
         refinementTokensApplied: refinementTrace.tokensApplied,
         refinementTokenDeltas: refinementTrace.tokenDeltas,

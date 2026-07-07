@@ -356,6 +356,25 @@ const tightStrictMovementRouteShapeContract: RouteShapeContract = {
   },
 }
 
+const balancedMovementRouteShapeContract: RouteShapeContract = {
+  ...tightStrictMovementRouteShapeContract,
+  id: 'test-balanced-movement-contract',
+  movementProfile: {
+    radius: 'balanced',
+    maxTransitionMinutes: 24,
+    neighborhoodContinuity: 'preferred',
+  },
+}
+
+const nonMovementPreservingRouteShapeContract: RouteShapeContract = {
+  ...tightStrictMovementRouteShapeContract,
+  id: 'test-tight-strict-no-movement-preserve-contract',
+  mutationProfile: {
+    ...tightStrictMovementRouteShapeContract.mutationProfile,
+    preservePriority: ['role', 'feasibility'],
+  },
+}
+
 function buildContract(
   anchorVenueId: string,
   routeShapeContract?: RouteShapeContract,
@@ -404,6 +423,8 @@ function rankPair(
       baseScore: entry.boundaryBaseScore,
       qualityAdjustment: entry.boundaryQualityAdjustment,
       qualitySignals: entry.boundaryQualitySignals,
+      compactnessAdjustment: entry.routeShapeCompactnessAdjustment,
+      compactnessSignals: entry.routeShapeCompactnessSignals,
       rankingScore: Number(entry.rankingScore.toFixed(4)),
       spatial: {
         clustersVisited: entry.candidate.spatial.clustersVisited,
@@ -697,6 +718,26 @@ assert(
   'The modeled over-budget candidate must represent the hosted 45/24 and 18/14 movement failure shape.',
 )
 assert(
+  tightL2CompactCandidate?.compactnessSignals.active === true &&
+    tightL2CompactCandidate.compactnessSignals.activationReason ===
+      'tight_strict_movement_preserved',
+  'Compactness diagnostics must expose activation for tight/strict movement-preserving route shape.',
+)
+assert(
+  tightL2CompactCandidate.compactnessAdjustment > 0,
+  'Compact candidate must expose a positive compactness adjustment.',
+)
+assert(
+  tightL2BacktrackingCandidate.compactnessAdjustment < 0 &&
+    tightL2BacktrackingCandidate.compactnessSignals.reasonSummary.includes(
+      'total_movement_over_tight_limit',
+    ) &&
+    tightL2BacktrackingCandidate.compactnessSignals.reasonSummary.includes(
+      'backtrack_detected',
+    ),
+  'Over-budget backtracking candidate must expose compactness penalty reasons.',
+)
+assert(
   tightL2BacktrackingCandidate.spatial.repeatedClusterEscapeCount > 0,
   'The modeled over-budget candidate must carry a backtracking/repeated-cluster pattern.',
 )
@@ -704,6 +745,43 @@ assert(
   tightL2CompactCandidate &&
     tightL2BacktrackingCandidate.rankingScore < tightL2CompactCandidate.rankingScore,
   'Over-budget backtracking candidate must be deprioritized behind compact same/near-cluster support.',
+)
+const balancedContractRanking = rankPair(
+  'sj-adega-wine-atelier',
+  [
+    makeRoute(
+      'balanced-contract-candidate',
+      0.77,
+      'sj-adega-wine-atelier',
+      ['opaque-a', 'opaque-b', 'opaque-c'],
+      ['cluster-a', 'cluster-a', 'cluster-a'],
+    ),
+  ],
+  balancedMovementRouteShapeContract,
+)
+assert(
+  balancedContractRanking.ranked[0]?.compactnessSignals.active === false &&
+    balancedContractRanking.ranked[0].compactnessAdjustment === 0,
+  'Compactness adjustment must not activate for non-tight route shapes.',
+)
+const noMovementPreserveRanking = rankPair(
+  'sj-adega-wine-atelier',
+  [
+    makeRoute(
+      'no-movement-preserve-candidate',
+      0.77,
+      'sj-adega-wine-atelier',
+      ['opaque-a', 'opaque-b', 'opaque-c'],
+      ['cluster-a', 'cluster-a', 'cluster-a'],
+    ),
+  ],
+  nonMovementPreservingRouteShapeContract,
+)
+assert(
+  noMovementPreserveRanking.ranked[0]?.compactnessSignals.active === false &&
+    noMovementPreserveRanking.ranked[0].compactnessSignals.activationReason ===
+      'movement_not_preserved',
+  'Compactness adjustment must not activate without movement preserve priority.',
 )
 
 const source = readFileSync('src/integrations/waypoint/core.ts', 'utf8')
@@ -717,7 +795,7 @@ const runtimeRouteArtifactSource = readFileSync(
 )
 const greatStopSource = readFileSync('src/domain/greatStop/buildGreatStopGateResult.ts', 'utf8')
 assert(
-  source.includes('routeShapeCompactnessAdjustment') &&
+  source.includes('evaluateRouteShapeCompactness') &&
     source.includes("movementProfile.radius === 'tight'") &&
     source.includes("movementProfile.neighborhoodContinuity === 'strict'") &&
     source.includes("preservePriority.includes('movement')"),
@@ -725,7 +803,7 @@ assert(
 )
 assert(
   source.includes('requiredStopRankingAdjustment(candidate, request.contract) +') &&
-    source.includes('routeShapeCompactnessAdjustment(candidate, request.contract)'),
+    source.includes('routeShapeCompactnessSignals.adjustment'),
   'Compactness must adjust deterministic ranking before Great Stop selection.',
 )
 assert(
@@ -758,6 +836,19 @@ const output = {
     tightL2BacktrackingCandidate.movement.maxTransition === 18 &&
     tightL2CompactCandidate !== undefined &&
     tightL2BacktrackingCandidate.rankingScore < tightL2CompactCandidate.rankingScore,
+  compactnessActivationVisible:
+    tightL2CompactCandidate?.compactnessSignals.active === true,
+  compactnessScoreVisible:
+    typeof tightL2CompactCandidate?.compactnessAdjustment === 'number' &&
+    typeof tightL2BacktrackingCandidate?.compactnessAdjustment === 'number',
+  compactnessPenaltyReasonVisible:
+    tightL2BacktrackingCandidate?.compactnessSignals.reasonSummary.includes(
+      'total_movement_over_tight_limit',
+    ) === true,
+  compactnessInactiveForNonTight:
+    balancedContractRanking.ranked[0]?.compactnessSignals.active === false,
+  compactnessInactiveWithoutMovementPreserve:
+    noMovementPreserveRanking.ranked[0]?.compactnessSignals.active === false,
   routeAuthorityChanged: !routeAuthoritySource.includes(
     "reasons.push('provider_shadow_not_authority')",
   ),

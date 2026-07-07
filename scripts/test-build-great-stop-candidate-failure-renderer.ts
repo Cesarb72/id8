@@ -51,6 +51,16 @@ const requiredRendererTokens = [
   'clusters:${candidate.clusterPath.join',
   'moment:${candidate.momentFailureReasons.join',
   'score:${formatGreatStopScoreSummary(candidate.scoreSummary)}',
+  'greatStopCompactnessActivation:',
+  'greatStopCompactnessRanking:',
+  'greatStopCompactnessPoolVisibility:',
+  'greatStopNearestCompactCandidate:',
+  'greatStopNearestPlaceRightCandidate:',
+  'greatStopCompactnessTopCandidate.',
+  'formatGreatStopCompactnessCandidateDetail',
+  'greatStopCompactnessRankingDiagnostics.detailCandidateLimit',
+  'compactnessAdjustment:${candidate.compactnessAdjustmentScore}',
+  'score:${candidate.originalWaypointScore}->${candidate.adjustedWaypointScore}',
 ]
 
 for (const token of requiredRendererTokens) {
@@ -74,6 +84,12 @@ assert(
 assert(
   greatStopGateTypesSource.includes('greatStopCandidateFailureDetails?: GreatStopCandidateFailureDetails'),
   'Candidate failure details must remain optional under GreatStopGateSelectionDiagnostics.',
+)
+assert(
+  greatStopGateTypesSource.includes(
+    'compactnessRankingDiagnostics?: GreatStopCompactnessRankingDiagnostics',
+  ),
+  'Compactness ranking diagnostics must remain optional under GreatStopGateSelectionDiagnostics.',
 )
 assert(
   greatStopGateSource.includes('const GREAT_STOP_FAILURE_DETAIL_LIMIT = 5') &&
@@ -110,6 +126,24 @@ const output = {
   ),
   rendererPrintsRepeatedFailureReasonCounts: sandboxSource.includes(
     'greatStopCandidateFailureReasonCounts:',
+  ),
+  rendererPrintsCompactnessActivation: sandboxSource.includes(
+    'greatStopCompactnessActivation:',
+  ),
+  rendererPrintsCompactnessRanking: sandboxSource.includes(
+    'greatStopCompactnessRanking:',
+  ),
+  rendererPrintsCompactnessPoolVisibility: sandboxSource.includes(
+    'greatStopCompactnessPoolVisibility:',
+  ),
+  rendererPrintsNearestCompactCandidate: sandboxSource.includes(
+    'greatStopNearestCompactCandidate:',
+  ),
+  rendererPrintsNearestPlaceRightCandidate: sandboxSource.includes(
+    'greatStopNearestPlaceRightCandidate:',
+  ),
+  rendererPrintsCappedCompactnessTopCandidates: sandboxSource.includes(
+    'greatStopCompactnessTopCandidate.',
   ),
   candidateDetailRowsCappedByExistingLimit:
     sandboxSource.includes('topFailingCandidates.slice(') &&

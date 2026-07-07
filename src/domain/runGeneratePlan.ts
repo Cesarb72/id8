@@ -45,6 +45,8 @@ import {
 } from './greatStop/buildGreatStopGateResult'
 import type {
   BuildLocationClass,
+  GreatStopCompactnessCandidateDetail,
+  GreatStopCompactnessRankingDiagnostics,
   GreatStopGateRolePoolIdentityDiagnostics,
   GreatStopGateSelectionDiagnostics,
 } from './types/greatStopGate'
@@ -86,6 +88,7 @@ import {
   rankArcCandidatesWithDiagnostics,
   type WaypointContractInput,
 } from '../integrations/waypoint/rankArcCandidates'
+import type { WaypointRankedCandidate } from '../integrations/waypoint/core'
 import type { RankedPocket } from '../engines/district/types/districtTypes'
 import type { ContractGateWorld } from './bearings/buildContractGateWorld'
 import {
@@ -495,6 +498,180 @@ function scoredVenueMatchesVenueId(candidate: ScoredVenue, venueId: string): boo
 
 function arcStopMatchesVenueId(stop: ArcStop, venueId: string): boolean {
   return getArcStopBaseVenueId(stop) === venueId || stop.scoredVenue.venue.id === venueId
+}
+
+function userRoleForArcStop(stop: ArcStop): UserStopRole {
+  if (stop.role === 'warmup') {
+    return 'start'
+  }
+  if (stop.role === 'cooldown') {
+    return 'windDown'
+  }
+  return 'highlight'
+}
+
+function buildCompactnessCandidateDetail(params: {
+  entry: WaypointRankedCandidate
+  rank: number
+  requiredAnchorVenueId?: string
+  requiredAnchorRole?: UserStopRole
+}): GreatStopCompactnessCandidateDetail {
+  const { entry, rank, requiredAnchorVenueId, requiredAnchorRole } = params
+  const signals = entry.routeShapeCompactnessSignals
+  return {
+    rank,
+    candidateId: entry.candidate.id,
+    routeNames: entry.candidate.stops.map((stop) => stop.scoredVenue.venue.name),
+    stopIds: entry.candidate.stops.map((stop) => stop.scoredVenue.venue.id),
+    baseVenueIds: entry.candidate.stops.map((stop) => getArcStopBaseVenueId(stop)),
+    requiredAnchorPresent: requiredAnchorVenueId
+      ? entry.candidate.stops.some((stop) => arcStopMatchesVenueId(stop, requiredAnchorVenueId))
+      : undefined,
+    requiredAnchorRole,
+    totalMovementEstimate: signals.totalMovementEstimate,
+    totalMovementLimit: signals.totalMovementLimit,
+    maxSingleTransitionEstimate: signals.maxSingleTransitionEstimate,
+    maxTransitionLimit: signals.maxTransitionLimit,
+    clusterPath: entry.candidate.spatial.clusterAssignments.map(
+      (assignment) => assignment.clusterId,
+    ),
+    clusterEscapeCount: signals.clusterEscapeCount,
+    backtrackDetected: signals.backtrackDetected,
+    repeatedClusterEscapeDetected: signals.repeatedClusterEscapeCount > 0,
+    driveLikeMovementDetected: signals.driveLikeMovementDetected,
+    compactnessAdjustmentScore: signals.adjustment,
+    compactnessReasonSummary: [...signals.reasonSummary],
+    originalWaypointScore: roundToHundredths(
+      entry.rankingScore - entry.routeShapeCompactnessAdjustment,
+    ),
+    adjustedWaypointScore: roundToHundredths(entry.rankingScore),
+  }
+}
+
+function buildGreatStopCompactnessRankingDiagnostics(params: {
+  rankedEntries: WaypointRankedCandidate[]
+  candidatePool: ArcCandidate[]
+  intent: IntentProfile
+  locationClass?: BuildLocationClass
+  locationClassSource?: 'explicit'
+}): GreatStopCompactnessRankingDiagnostics | undefined {
+  const { rankedEntries, candidatePool, intent, locationClass, locationClassSource } = params
+  if (rankedEntries.length === 0) {
+    return undefined
+  }
+  const candidatePoolIds = new Set(candidatePool.map((candidate) => candidate.id))
+  const poolEntries = rankedEntries.filter((entry) => candidatePoolIds.has(entry.candidate.id))
+  const entries = poolEntries.length > 0 ? poolEntries : rankedEntries
+  const firstSignals = entries[0]?.routeShapeCompactnessSignals
+  const compactEntries = entries
+    .map((entry, index) => ({ entry, rank: index + 1 }))
+    .filter(({ entry }) => entry.routeShapeCompactnessSignals.compactCandidate)
+  const adjustedEntries = entries.filter(
+    (entry) => Math.abs(entry.routeShapeCompactnessAdjustment) > 0,
+  )
+  const overTotalMovementEntries = entries.filter((entry) => {
+    const signals = entry.routeShapeCompactnessSignals
+    return (
+      typeof signals.totalMovementLimit === 'number' &&
+      signals.totalMovementEstimate > signals.totalMovementLimit
+    )
+  })
+  const overMaxTransitionEntries = entries.filter((entry) => {
+    const signals = entry.routeShapeCompactnessSignals
+    return (
+      typeof signals.maxTransitionLimit === 'number' &&
+      signals.maxSingleTransitionEstimate > signals.maxTransitionLimit
+    )
+  })
+  const placeRightEntries =
+    locationClass && locationClassSource
+      ? entries
+          .map((entry, index) => ({
+            entry,
+            rank: index + 1,
+            gateResult: buildGreatStopGateResult({
+              selectedArc: entry.candidate,
+              intent,
+              routePacing: buildGreatStopRoutePacingDiagnostics(entry.candidate),
+              locationClass,
+              locationClassSource,
+            }),
+          }))
+          .filter(({ gateResult }) => gateResult.criteria.placeRight.passed)
+      : []
+  const topRows = entries.slice(0, 5).map((entry, index) =>
+    buildCompactnessCandidateDetail({
+      entry,
+      rank: index + 1,
+      requiredAnchorVenueId: intent.anchor?.venueId,
+      requiredAnchorRole: intent.anchor?.role,
+    }),
+  )
+  const nearestCompact = compactEntries[0]
+  const nearestPlaceRight = placeRightEntries[0]
+
+  return {
+    routeShapeCompactnessAdjustmentActive: Boolean(firstSignals?.active),
+    compactnessActivationReason:
+      firstSignals?.activationReason ?? 'ranked_candidate_compactness_signal_missing',
+    movementRadius: firstSignals?.movementRadius,
+    maxTransitionMinutes: firstSignals?.maxTransitionMinutes,
+    neighborhoodContinuity: firstSignals?.neighborhoodContinuity,
+    preservePriorityIncludesMovement: Boolean(firstSignals?.preservePriorityIncludesMovement),
+    compactnessEvaluatedCandidateCount: entries.length,
+    compactnessAdjustedCandidateCount: adjustedEntries.length,
+    compactnessCandidateCount: compactEntries.length,
+    compactnessPassingPlaceRightCandidateCount: locationClass ? placeRightEntries.length : undefined,
+    firstCompactCandidateRank: nearestCompact?.rank,
+    firstPlaceRightCandidateRank: nearestPlaceRight?.rank,
+    compactCandidateRanks: compactEntries.slice(0, 25).map(({ rank }) => rank),
+    compactCandidateRankLimit: 25,
+    candidatesOverTotalMovementLimitCount: overTotalMovementEntries.length,
+    candidatesOverMaxTransitionLimitCount: overMaxTransitionEntries.length,
+    candidatesWithBacktrackCount: entries.filter(
+      (entry) => entry.routeShapeCompactnessSignals.backtrackDetected,
+    ).length,
+    candidatesWithRepeatedClusterEscapeCount: entries.filter(
+      (entry) => entry.routeShapeCompactnessSignals.repeatedClusterEscapeCount > 0,
+    ).length,
+    candidatesWithExtraClusterEscapeCount: entries.filter(
+      (entry) => entry.routeShapeCompactnessSignals.extraClusterEscapeCount > 0,
+    ).length,
+    candidatesWithDriveLikeMovementCount: entries.filter(
+      (entry) => entry.routeShapeCompactnessSignals.driveLikeMovementDetected,
+    ).length,
+    detailCandidateLimit: 5,
+    topCandidateDetails: topRows,
+    nearestCompactCandidate: nearestCompact
+      ? buildCompactnessCandidateDetail({
+          entry: nearestCompact.entry,
+          rank: nearestCompact.rank,
+          requiredAnchorVenueId: intent.anchor?.venueId,
+          requiredAnchorRole: intent.anchor?.role,
+        })
+      : undefined,
+    nearestPlaceRightCandidate: nearestPlaceRight
+      ? buildCompactnessCandidateDetail({
+          entry: nearestPlaceRight.entry,
+          rank: nearestPlaceRight.rank,
+          requiredAnchorVenueId: intent.anchor?.venueId,
+          requiredAnchorRole: intent.anchor?.role,
+        })
+      : undefined,
+    poolVisibility: {
+      beforeTop40Preservation: 'not_captured',
+      beforeTop40PreservationReason:
+        'assembleArcCandidates currently returns the preserved/pruned candidate set only.',
+      afterTop40PreservationCandidateCount: candidatePool.length,
+      afterWaypointRankingCandidateCount: entries.length,
+      greatStopEvaluatedCandidateCount: candidatePool.length,
+      firstCompactCandidateOutsideGreatStopEvaluatedSet:
+        typeof nearestCompact?.rank === 'number' ? nearestCompact.rank > candidatePool.length : undefined,
+      rolePoolCompactnessVisibility: 'not_captured',
+      rolePoolCompactnessVisibilityReason:
+        'role pools contain stops, not route-level movement/cluster compactness candidates.',
+    },
+  }
 }
 
 function buildWaypointContractInput(params: {
@@ -2622,6 +2799,16 @@ async function runGeneratePlanInternal(
         ? buildSelectedCandidatePreservationCandidates
         : buildRequiredAnchorCandidatePool
       : []
+  const compactnessRankingDiagnostics =
+    buildGreatStopSelectionActive
+      ? buildGreatStopCompactnessRankingDiagnostics({
+          rankedEntries: ranking.ranked,
+          candidatePool: buildGreatStopCandidatePool,
+          intent: planningIntent,
+          locationClass: options.greatStopGateLocationClass,
+          locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
+        })
+      : undefined
   const buildGreatStopSelection =
     buildGreatStopSelectionActive
       ? selectGreatStopGatePassingCandidate({
@@ -2634,6 +2821,7 @@ async function runGeneratePlanInternal(
             rolePools,
             planningIntent.anchor?.venueId,
           ),
+          compactnessRankingDiagnostics,
         })
       : undefined
   if (buildGreatStopSelection) {

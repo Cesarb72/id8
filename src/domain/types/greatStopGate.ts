@@ -159,6 +159,66 @@ export interface GreatStopCandidateFailureDetails {
   backtrackPatternCount: number
 }
 
+export interface GreatStopCompactnessCandidateDetail {
+  rank: number
+  candidateId: string
+  routeNames: string[]
+  stopIds: string[]
+  baseVenueIds: string[]
+  requiredAnchorPresent?: boolean
+  requiredAnchorRole?: UserStopRole
+  totalMovementEstimate: number
+  totalMovementLimit?: number
+  maxSingleTransitionEstimate: number
+  maxTransitionLimit?: number
+  clusterPath: string[]
+  clusterEscapeCount: number
+  backtrackDetected: boolean
+  repeatedClusterEscapeDetected: boolean
+  driveLikeMovementDetected: boolean
+  compactnessAdjustmentScore: number
+  compactnessReasonSummary: string[]
+  originalWaypointScore: number
+  adjustedWaypointScore: number
+}
+
+export interface GreatStopCompactnessRankingDiagnostics {
+  routeShapeCompactnessAdjustmentActive: boolean
+  compactnessActivationReason: string
+  movementRadius?: string
+  maxTransitionMinutes?: number
+  neighborhoodContinuity?: string
+  preservePriorityIncludesMovement: boolean
+  compactnessEvaluatedCandidateCount: number
+  compactnessAdjustedCandidateCount: number
+  compactnessCandidateCount: number
+  compactnessPassingPlaceRightCandidateCount?: number
+  firstCompactCandidateRank?: number
+  firstPlaceRightCandidateRank?: number
+  compactCandidateRanks: number[]
+  compactCandidateRankLimit: number
+  candidatesOverTotalMovementLimitCount: number
+  candidatesOverMaxTransitionLimitCount: number
+  candidatesWithBacktrackCount: number
+  candidatesWithRepeatedClusterEscapeCount: number
+  candidatesWithExtraClusterEscapeCount: number
+  candidatesWithDriveLikeMovementCount: number
+  detailCandidateLimit: number
+  topCandidateDetails: GreatStopCompactnessCandidateDetail[]
+  nearestCompactCandidate?: GreatStopCompactnessCandidateDetail
+  nearestPlaceRightCandidate?: GreatStopCompactnessCandidateDetail
+  poolVisibility: {
+    beforeTop40Preservation: 'not_captured'
+    beforeTop40PreservationReason: string
+    afterTop40PreservationCandidateCount: number
+    afterWaypointRankingCandidateCount: number
+    greatStopEvaluatedCandidateCount: number
+    firstCompactCandidateOutsideGreatStopEvaluatedSet?: boolean
+    rolePoolCompactnessVisibility: 'not_captured'
+    rolePoolCompactnessVisibilityReason: string
+  }
+}
+
 export interface GreatStopGateCandidateStopIdentityDiagnostic {
   role: UserStopRole
   name: string
@@ -219,6 +279,7 @@ export interface GreatStopGateSelectionDiagnostics {
   bestFailingCandidateSummary?: GreatStopGateCandidateSummary
   bestAnchorPreservingFailingCandidate?: GreatStopGateCandidateSummary
   greatStopCandidateFailureDetails?: GreatStopCandidateFailureDetails
+  compactnessRankingDiagnostics?: GreatStopCompactnessRankingDiagnostics
   structuralFailureReasons?: string[]
   passingCandidateCount?: number
   selectedGateResult?: GreatStopGateResult
