@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import { rankArcCandidatesFromContract } from '../src/integrations/waypoint/rankArcCandidates'
 import type { ArcCandidate, ArcStop } from '../src/domain/types/arc'
 import type { WaypointContractInput } from '../src/integrations/waypoint/core'
+import type { RoutePacingAnalysis } from '../src/domain/types/pacing'
+import type { RouteShapeContract } from '../src/domain/types/intent'
 
 let fetchCallCount = 0
 const originalFetch = globalThis.fetch
@@ -36,6 +38,7 @@ interface RouteSpec {
   longTransitionCount?: number
   repeatedClusterEscapeCount?: number
   spatialPenalty?: number
+  transitionMinutes?: number[]
 }
 
 const roleShapeKey = {
@@ -223,6 +226,65 @@ function buildSpatial(spec: RouteSpec): ArcCandidate['spatial'] {
   }
 }
 
+function buildPacing(spec: RouteSpec): RoutePacingAnalysis {
+  const transitionMinutes =
+    spec.transitionMinutes ??
+    [spec.longTransitionCount && spec.longTransitionCount > 0 ? 16 : 8, 7]
+  const transitions = transitionMinutes.map((minutes, index) => {
+    const from = spec.stops[Math.min(index, spec.stops.length - 1)]!
+    const to = spec.stops[Math.min(index + 1, spec.stops.length - 1)]!
+    return {
+      fromRoleKey: from.role,
+      toRoleKey: to.role,
+      fromVenueId: from.venueId,
+      toVenueId: to.venueId,
+      estimatedTravelMinutes: minutes,
+      transitionBufferMinutes: 0,
+      estimatedTransitionMinutes: minutes,
+      frictionScore: minutes > 14 ? 4 : minutes > 10 ? 3 : 1,
+      movementMode: minutes > 14 ? 'short-drive' : 'walkable',
+      neighborhoodContinuity:
+        from.cluster === to.cluster ? 'same-neighborhood' : 'spread',
+      energyDelta: Math.abs(from.energy - to.energy),
+      notes: [],
+    }
+  })
+  const estimatedTransitionMinutes = transitions.reduce(
+    (sum, transition) => sum + transition.estimatedTransitionMinutes,
+    0,
+  )
+  const totalRouteFriction = transitions.reduce(
+    (sum, transition) => sum + transition.frictionScore,
+    0,
+  )
+
+  return {
+    stops: spec.stops.map((stop) => ({
+      roleKey: stop.role,
+      venueId: stop.venueId,
+      durationClass: 'M',
+      estimatedDurationMinutes: 60,
+    })),
+    transitions,
+    estimatedStopMinutes: 180,
+    estimatedTransitionMinutes,
+    estimatedTotalMinutes: 180 + estimatedTransitionMinutes,
+    estimatedTotalLabel: `${180 + estimatedTransitionMinutes} min`,
+    totalRouteFriction,
+    averageTransitionFriction:
+      transitions.length > 0 ? totalRouteFriction / transitions.length : 0,
+    routeFeelLabel: 'test route',
+    pacingScore: 0.7,
+    transitionSmoothnessScore: 0.7,
+    outingLengthScore: 0.7,
+    awkwardPacingPenalty: 0,
+    pacingPenaltyApplied: false,
+    pacingPenaltyReasons: [],
+    smoothProgressionRewardApplied: false,
+    smoothProgressionRewardReasons: [],
+  }
+}
+
 function candidate(spec: RouteSpec): ArcCandidate {
   return {
     id: spec.id,
@@ -235,13 +297,69 @@ function candidate(spec: RouteSpec): ArcCandidate {
       hiddenGemLift: 0,
       windDownScore: 0.7,
     },
-    pacing: {} as never,
+    pacing: buildPacing(spec),
     spatial: buildSpatial(spec),
     hasWildcard: false,
   }
 }
 
-function buildContract(anchorVenueId: string): WaypointContractInput {
+const roleInvariant = {
+  requiredTraits: [],
+  preferredTraits: [],
+  forbiddenTraits: [],
+  allowSwapToWeaker: false,
+  allowEscalation: false,
+}
+
+const tightStrictMovementRouteShapeContract: RouteShapeContract = {
+  id: 'test-tight-strict-movement-contract',
+  arcShape: 'fast_open_strong_center_clean_landing',
+  roleProfile: {
+    start: {
+      intent: 'set-tone',
+      energyLevel: 'low',
+      pacing: 'quick',
+      variability: 'fixed',
+    },
+    highlight: {
+      intent: 'centerpiece',
+      energyLevel: 'medium',
+      pacing: 'linger',
+      variability: 'fixed',
+    },
+    windDown: {
+      intent: 'landing',
+      energyLevel: 'low',
+      pacing: 'quick',
+      variability: 'fixed',
+    },
+  },
+  roleInvariants: {
+    start: roleInvariant,
+    highlight: roleInvariant,
+    windDown: roleInvariant,
+  },
+  movementProfile: {
+    radius: 'tight',
+    maxTransitionMinutes: 14,
+    neighborhoodContinuity: 'strict',
+  },
+  mutationProfile: {
+    swapFlexibility: 'low',
+    allowedRoles: ['start', 'highlight', 'windDown'],
+    preservePriority: ['role', 'movement', 'feasibility'],
+  },
+  expansionProfile: {
+    supportsNearbyExtensions: false,
+    preferredExpansionRole: 'windDown',
+    lateNightTolerance: 'low',
+  },
+}
+
+function buildContract(
+  anchorVenueId: string,
+  routeShapeContract?: RouteShapeContract,
+): WaypointContractInput {
   return {
     strategyAdmissibleWorlds: [],
     requiredStopGuarantee: {
@@ -251,6 +369,7 @@ function buildContract(anchorVenueId: string): WaypointContractInput {
       source: 'test',
       reasonCodes: ['test_required_anchor'],
     },
+    routeShapeContract,
     normalizedContext: {},
     compatibilityIntent: {
       mode: 'build',
@@ -268,17 +387,37 @@ function buildContract(anchorVenueId: string): WaypointContractInput {
   }
 }
 
-function rankPair(anchorVenueId: string, routeSpecs: RouteSpec[]) {
+function rankPair(
+  anchorVenueId: string,
+  routeSpecs: RouteSpec[],
+  routeShapeContract?: RouteShapeContract,
+) {
   const candidates = routeSpecs.map(candidate)
-  const response = rankArcCandidatesFromContract(candidates, buildContract(anchorVenueId))
+  const response = rankArcCandidatesFromContract(
+    candidates,
+    buildContract(anchorVenueId, routeShapeContract),
+  )
   return {
     topId: response.ranked[0]?.candidate.id ?? null,
-  ranked: response.ranked.map((entry) => ({
+    ranked: response.ranked.map((entry) => ({
       id: entry.candidate.id,
       baseScore: entry.boundaryBaseScore,
       qualityAdjustment: entry.boundaryQualityAdjustment,
       qualitySignals: entry.boundaryQualitySignals,
       rankingScore: Number(entry.rankingScore.toFixed(4)),
+      spatial: {
+        clustersVisited: entry.candidate.spatial.clustersVisited,
+        clusterEscapeCount: entry.candidate.spatial.clusterEscapeCount,
+        repeatedClusterEscapeCount: entry.candidate.spatial.repeatedClusterEscapeCount,
+      },
+      movement: {
+        total: entry.candidate.pacing.estimatedTransitionMinutes,
+        maxTransition: Math.max(
+          ...entry.candidate.pacing.transitions.map(
+            (transition) => transition.estimatedTransitionMinutes,
+          ),
+        ),
+      },
     })),
     contractTrace: response.contractTrace,
   }
@@ -510,15 +649,127 @@ assert(
   'Waypoint required-stop guarantee must recognize canonical base identity, not only raw venue.id.',
 )
 
+const tightL2CompactnessRanking = rankPair(
+  'sj-adega-wine-atelier',
+  [
+    makeRoute(
+      'tight-l2-cross-cluster-backtracking-45-24',
+      0.86,
+      'sj-adega-wine-atelier',
+      ['opaque-a', 'opaque-b', 'opaque-c'],
+      ['cluster-a', 'cluster-b', 'cluster-a'],
+      {
+        longTransitionCount: 2,
+        repeatedClusterEscapeCount: 1,
+        spatialPenalty: 0.36,
+        transitionMinutes: [18, 14, 13],
+      },
+    ),
+    makeRoute(
+      'tight-l2-compact-anchor-near',
+      0.77,
+      'sj-adega-wine-atelier',
+      ['opaque-a', 'opaque-b', 'opaque-c'],
+      ['cluster-a', 'cluster-a', 'cluster-a'],
+      {
+        longTransitionCount: 0,
+        repeatedClusterEscapeCount: 0,
+        spatialPenalty: 0.01,
+        transitionMinutes: [8, 7, 6],
+      },
+    ),
+  ],
+  tightStrictMovementRouteShapeContract,
+)
+assert(
+  tightL2CompactnessRanking.topId === 'tight-l2-compact-anchor-near',
+  'Tight/strict L2 movement contract must rank compact anchor-preserving candidates ahead of cross-cluster backtracking candidates.',
+)
+const tightL2BacktrackingCandidate = tightL2CompactnessRanking.ranked.find(
+  (entry) => entry.id === 'tight-l2-cross-cluster-backtracking-45-24',
+)
+const tightL2CompactCandidate = tightL2CompactnessRanking.ranked.find(
+  (entry) => entry.id === 'tight-l2-compact-anchor-near',
+)
+assert(
+  tightL2BacktrackingCandidate?.movement.total === 45 &&
+    tightL2BacktrackingCandidate.movement.maxTransition === 18,
+  'The modeled over-budget candidate must represent the hosted 45/24 and 18/14 movement failure shape.',
+)
+assert(
+  tightL2BacktrackingCandidate.spatial.repeatedClusterEscapeCount > 0,
+  'The modeled over-budget candidate must carry a backtracking/repeated-cluster pattern.',
+)
+assert(
+  tightL2CompactCandidate &&
+    tightL2BacktrackingCandidate.rankingScore < tightL2CompactCandidate.rankingScore,
+  'Over-budget backtracking candidate must be deprioritized behind compact same/near-cluster support.',
+)
+
+const source = readFileSync('src/integrations/waypoint/core.ts', 'utf8')
+const routeAuthoritySource = readFileSync(
+  'src/app/services/routeAuthority/routeAuthorityService.ts',
+  'utf8',
+)
+const runtimeRouteArtifactSource = readFileSync(
+  'src/domain/artifacts/runtimeRouteArtifact.ts',
+  'utf8',
+)
+const greatStopSource = readFileSync('src/domain/greatStop/buildGreatStopGateResult.ts', 'utf8')
+assert(
+  source.includes('routeShapeCompactnessAdjustment') &&
+    source.includes("movementProfile.radius === 'tight'") &&
+    source.includes("movementProfile.neighborhoodContinuity === 'strict'") &&
+    source.includes("preservePriority.includes('movement')"),
+  'Waypoint compactness ranking must be driven by route-shape movement contract fields.',
+)
+assert(
+  source.includes('requiredStopRankingAdjustment(candidate, request.contract) +') &&
+    source.includes('routeShapeCompactnessAdjustment(candidate, request.contract)'),
+  'Compactness must adjust deterministic ranking before Great Stop selection.',
+)
+assert(
+  greatStopSource.includes('maxComfortableTotalMovementMinutes: 24') &&
+    greatStopSource.includes('maxSingleTransitionMinutes: 14'),
+  'Great Stop thresholds must remain unchanged.',
+)
+assert(
+  routeAuthoritySource.includes("reasons.push('provider_shadow_not_authority')"),
+  'routeAuthority must still reject provider_shadow as non-authority.',
+)
+assert(
+  runtimeRouteArtifactSource.includes('export interface RuntimeRouteArtifact') &&
+    !runtimeRouteArtifactSource.includes('routeShapeCompactnessAdjustment'),
+  'RuntimeRouteArtifact shape must remain unchanged.',
+)
+
 const output = {
   waypointQualityAdjustmentImplemented: true,
+  routeShapeCompactnessAdjustmentImplemented: true,
   domainGuardrailPassed: true,
   opaqueLaneEqualityOnly: true,
   requiredAnchorPreservationProtected: true,
   providerBackedRequiredStopRecognizedByBaseVenueId: true,
-  routeAuthorityChanged: false,
-  runtimeRouteArtifactShapeChanged: false,
-  providerShadowAuthorityChanged: false,
+  tightL2CompactnessRanking,
+  compactCandidateOutranksCrossClusterBacktrackingCandidate:
+    tightL2CompactnessRanking.topId === 'tight-l2-compact-anchor-near',
+  movement45Over24CandidateDeprioritized:
+    tightL2BacktrackingCandidate?.movement.total === 45 &&
+    tightL2BacktrackingCandidate.movement.maxTransition === 18 &&
+    tightL2CompactCandidate !== undefined &&
+    tightL2BacktrackingCandidate.rankingScore < tightL2CompactCandidate.rankingScore,
+  routeAuthorityChanged: !routeAuthoritySource.includes(
+    "reasons.push('provider_shadow_not_authority')",
+  ),
+  runtimeRouteArtifactShapeChanged: runtimeRouteArtifactSource.includes(
+    'routeShapeCompactnessAdjustment',
+  ),
+  providerShadowAuthorityChanged: !routeAuthoritySource.includes(
+    'provider_shadow_not_authority',
+  ),
+  greatStopThresholdsUnchanged:
+    greatStopSource.includes('maxComfortableTotalMovementMinutes: 24') &&
+    greatStopSource.includes('maxSingleTransitionMinutes: 14'),
   fetchCallCount,
   clampBounds: [-0.08, 0.08],
   localRankingImpact: impact,

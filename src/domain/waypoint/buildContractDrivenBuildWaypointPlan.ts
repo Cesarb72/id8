@@ -464,6 +464,7 @@ export async function buildContractDrivenBuildWaypointPlan(
       contractGateWorld: input.contractGateWorld,
       strategyAdmissibleWorlds: input.strategyAdmissibleWorlds,
       greatStopGateLocationClass: input.greatStopGateLocationClass,
+      routeShapeContract,
       selectedArtifactLineage: input.selectedArtifactLineage,
     },
   )

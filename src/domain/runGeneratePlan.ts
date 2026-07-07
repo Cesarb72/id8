@@ -130,6 +130,7 @@ import type {
   IntentInput,
   IntentProfile,
   PersonaMode,
+  RouteShapeContract,
   VibeAnchor,
 } from './types/intent'
 import type { Itinerary, UserStopRole } from './types/itinerary'
@@ -186,6 +187,8 @@ export interface RunGeneratePlanOptions {
   curateCommitSemantics?: 'seed_guided' | 'approved_route_hard_commit'
   // Diagnostic-only Great Stop convergence input. Does not affect route selection.
   greatStopGateLocationClass?: BuildLocationClass
+  // Contract-driven Waypoint ranking input. Affects candidate order before Great Stop.
+  routeShapeContract?: RouteShapeContract
 }
 
 interface RunGeneratePlanInternalOptions extends RunGeneratePlanOptions {
@@ -499,6 +502,7 @@ function buildWaypointContractInput(params: {
   contractGateWorld?: ContractGateWorld
   strategyAdmissibleWorlds?: StrategyAdmissibleWorld[]
   compatibilityIntent: IntentProfile
+  routeShapeContract?: RouteShapeContract
 }): WaypointContractInput | undefined {
   const { canonicalInterpretationBundle, contractGateWorld, compatibilityIntent } = params
   if (!contractGateWorld && !canonicalInterpretationBundle) {
@@ -517,6 +521,7 @@ function buildWaypointContractInput(params: {
       required: false,
       reasonCodes: ['contract_gate_world_missing'],
     },
+    routeShapeContract: params.routeShapeContract,
     normalizedContext: {
       pacing: normalizedIntent?.experienceProfile.pacing,
       anchorPosture: normalizedIntent?.anchorPosture,
@@ -2367,6 +2372,7 @@ async function runGeneratePlanInternal(
     contractGateWorld: options.contractGateWorld,
     strategyAdmissibleWorlds: options.strategyAdmissibleWorlds,
     compatibilityIntent: planningIntent,
+    routeShapeContract: options.routeShapeContract,
   })
   const ranking = waypointContractInput
     ? rankArcCandidatesFromContract(boundaryCandidates, waypointContractInput)

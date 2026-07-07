@@ -16,7 +16,12 @@ import { getArcStopBaseVenueId } from '../../domain/candidates/candidateIdentity
 import type { ContractGateWorld } from '../../domain/bearings/buildContractGateWorld'
 import type { StrategyAdmissibleWorld } from '../../domain/bearings/buildStrategyAdmissibleWorlds'
 import type { CanonicalInterpretationBundle } from '../../domain/interpretation/buildCanonicalInterpretationBundle'
-import type { AnchorRole, GreatStopDownstreamSignal, IntentProfile } from '../../domain/types/intent'
+import type {
+  AnchorRole,
+  GreatStopDownstreamSignal,
+  IntentProfile,
+  RouteShapeContract,
+} from '../../domain/types/intent'
 
 export interface WaypointRankRequest {
   candidates: ArcCandidate[]
@@ -27,6 +32,7 @@ export interface WaypointContractInput {
   canonicalInterpretationBundle?: CanonicalInterpretationBundle
   strategyAdmissibleWorlds: StrategyAdmissibleWorld[]
   requiredStopGuarantee: ContractGateWorld['requiredStopGuarantee']
+  routeShapeContract?: RouteShapeContract
   normalizedContext: {
     pacing?: CanonicalInterpretationBundle['normalizedIntent']['experienceProfile']['pacing']
     anchorPosture?: CanonicalInterpretationBundle['normalizedIntent']['anchorPosture']
@@ -373,6 +379,123 @@ function requiredStopRankingAdjustment(
   return candidatePreservesRequiredStop(candidate, contract) ? 0.25 : -0.4
 }
 
+function transitionMinutes(candidate: ArcCandidate): number[] {
+  const pacingTransitions = candidate.pacing?.transitions ?? []
+  if (pacingTransitions.length > 0) {
+    return pacingTransitions.map((transition) =>
+      Math.max(0, transition.estimatedTransitionMinutes),
+    )
+  }
+
+  return candidate.spatial.transitions.map((transition) => Math.max(0, transition.driveGap))
+}
+
+function detectClusterBacktrack(candidate: ArcCandidate): boolean {
+  const clusters = candidate.spatial.clusterAssignments.map((assignment) => assignment.clusterId)
+  const visited = new Set<string>()
+  let previous: string | undefined
+  for (const cluster of clusters) {
+    if (cluster !== previous && visited.has(cluster)) {
+      return true
+    }
+    visited.add(cluster)
+    previous = cluster
+  }
+  return false
+}
+
+function anchorAdjacentSameClusterRate(
+  candidate: ArcCandidate,
+  contract: WaypointContractInput | undefined,
+): number {
+  const guarantee = contract?.requiredStopGuarantee
+  const requiredRole = roleToInternal(guarantee?.role)
+  if (!guarantee?.required || !guarantee.venueId || !requiredRole) {
+    return 0
+  }
+  const requiredIndex = candidate.stops.findIndex((stop) =>
+    candidateStopMatchesRequiredGuarantee({
+      stop,
+      internalRole: requiredRole,
+      venueId: guarantee.venueId!,
+    }),
+  )
+  if (requiredIndex < 0) {
+    return 0
+  }
+
+  const assignments = candidate.spatial.clusterAssignments
+  const requiredCluster = assignments[requiredIndex]?.clusterId
+  if (!requiredCluster) {
+    return 0
+  }
+  const adjacent = [assignments[requiredIndex - 1], assignments[requiredIndex + 1]].filter(
+    (assignment): assignment is NonNullable<typeof assignment> => Boolean(assignment),
+  )
+  if (adjacent.length === 0) {
+    return 0
+  }
+  return (
+    adjacent.filter((assignment) => assignment.clusterId === requiredCluster).length /
+    adjacent.length
+  )
+}
+
+function routeShapeCompactnessAdjustment(
+  candidate: ArcCandidate,
+  contract: WaypointContractInput | undefined,
+): number {
+  const routeShapeContract = contract?.routeShapeContract
+  if (!routeShapeContract) {
+    return 0
+  }
+  const movementProfile = routeShapeContract.movementProfile
+  const movementPriority = routeShapeContract.mutationProfile.preservePriority.includes('movement')
+  const tightProfile =
+    movementProfile.radius === 'tight' &&
+    movementProfile.neighborhoodContinuity === 'strict' &&
+    movementPriority
+  if (!tightProfile) {
+    return 0
+  }
+
+  const minutes = transitionMinutes(candidate)
+  const transitionCount = Math.max(1, minutes.length)
+  const maxTransitionLimit = Math.max(1, movementProfile.maxTransitionMinutes)
+  const totalMovement = minutes.reduce((sum, value) => sum + value, 0)
+  const maxTransition = minutes.reduce((max, value) => Math.max(max, value), 0)
+  const totalMovementLimit = maxTransitionLimit * transitionCount * 0.86
+  const totalOverageRatio = Math.max(0, totalMovement - totalMovementLimit) / totalMovementLimit
+  const maxTransitionOverageRatio =
+    Math.max(0, maxTransition - maxTransitionLimit) / maxTransitionLimit
+  const repeatedEscapeCount = candidate.spatial.repeatedClusterEscapeCount
+  const extraClusterEscapeCount = Math.max(0, candidate.spatial.clusterEscapeCount - 1)
+  const backtrackDetected = detectClusterBacktrack(candidate)
+  const sameClusterRate =
+    candidate.spatial.sameClusterTransitionCount / Math.max(1, candidate.spatial.transitions.length)
+  const anchorNearSupportRate = anchorAdjacentSameClusterRate(candidate, contract)
+
+  const compactBonus = clamp(
+    sameClusterRate * 0.025 +
+      anchorNearSupportRate * 0.025 +
+      (totalOverageRatio === 0 && maxTransitionOverageRatio === 0 ? 0.02 : 0),
+    0,
+    0.07,
+  )
+  const compactnessPenalty = clamp(
+    totalOverageRatio * 0.16 +
+      maxTransitionOverageRatio * 0.18 +
+      repeatedEscapeCount * 0.07 +
+      extraClusterEscapeCount * 0.04 +
+      (backtrackDetected ? 0.09 : 0) +
+      candidate.spatial.longTransitionCount * 0.035,
+    0,
+    0.34,
+  )
+
+  return Number((compactBonus - compactnessPenalty).toFixed(4))
+}
+
 function buildContractTrace(params: {
   contract?: WaypointContractInput
   ranked: WaypointRankedCandidate[]
@@ -426,7 +549,9 @@ function rankWithWaypointBoundaryInternal(
       const boundaryBaseScore = candidate.totalScore
       const refinementTrace = refinementAdjustmentTrace(candidate, request.intent)
       const tiebreaker = deterministicTiebreaker(candidateDeterministicKey(candidate)) * 0.01
-      const contractAdjustment = requiredStopRankingAdjustment(candidate, request.contract)
+      const contractAdjustment =
+        requiredStopRankingAdjustment(candidate, request.contract) +
+        routeShapeCompactnessAdjustment(candidate, request.contract)
       const qualityTrace = waypointBoundaryQualityTrace(candidate, request.contract)
       const rankingScore =
         boundaryBaseScore +
