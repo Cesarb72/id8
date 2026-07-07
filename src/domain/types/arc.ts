@@ -386,6 +386,7 @@ export interface AnchorArcTraceDiagnostics {
 
 export interface AssembleArcCandidatesResult {
   candidates: ArcCandidate[]
+  preTop40Candidates?: ArcCandidate[]
   surpriseDiagnostics: ArcAssemblySurpriseDiagnostics
   anchorTrace?: AnchorArcTraceDiagnostics
 }

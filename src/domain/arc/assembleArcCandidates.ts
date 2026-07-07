@@ -1259,6 +1259,7 @@ export function assembleArcCandidates(
 
   return {
     candidates: prunedCandidates,
+    preTop40Candidates: rankedCandidates,
     surpriseDiagnostics,
     anchorTrace,
   }

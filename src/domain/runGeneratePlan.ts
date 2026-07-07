@@ -44,6 +44,8 @@ import {
   selectGreatStopGatePassingCandidate,
 } from './greatStop/buildGreatStopGateResult'
 import type {
+  BuildCandidatePoolCompactnessCandidateDetail,
+  BuildCandidatePoolCompactnessDiagnostics,
   BuildLocationClass,
   GreatStopCompactnessCandidateDetail,
   GreatStopCompactnessRankingDiagnostics,
@@ -671,6 +673,351 @@ function buildGreatStopCompactnessRankingDiagnostics(params: {
       rolePoolCompactnessVisibilityReason:
         'role pools contain stops, not route-level movement/cluster compactness candidates.',
     },
+  }
+}
+
+const BUILD_CANDIDATE_POOL_COMPACTNESS_DETAIL_LIMIT = 5
+
+function candidateHasRequiredAnchorInRole(params: {
+  candidate: ArcCandidate
+  requiredAnchorVenueId?: string
+  requiredAnchorRole?: UserStopRole
+}): boolean {
+  const { candidate, requiredAnchorVenueId, requiredAnchorRole } = params
+  if (!requiredAnchorVenueId) {
+    return false
+  }
+  return candidate.stops.some((stop) => {
+    const roleMatches = requiredAnchorRole ? userRoleForArcStop(stop) === requiredAnchorRole : true
+    return roleMatches && arcStopMatchesVenueId(stop, requiredAnchorVenueId)
+  })
+}
+
+function buildRolePoolNearAnchorSupportVisibility(params: {
+  rolePools: RolePools
+  requiredAnchorVenueId?: string
+}): BuildCandidatePoolCompactnessDiagnostics['rolePoolNearAnchorSupportVisibility'] {
+  const { rolePools, requiredAnchorVenueId } = params
+  if (!requiredAnchorVenueId) {
+    return {
+      status: 'not_captured',
+      reason: 'required_anchor_missing',
+    }
+  }
+  const allRolePoolVenues = [
+    ...rolePools.warmup,
+    ...rolePools.peak,
+    ...rolePools.cooldown,
+  ]
+  const anchorVenue = allRolePoolVenues.find((candidate) =>
+    scoredVenueMatchesVenueId(candidate, requiredAnchorVenueId),
+  )
+  if (!anchorVenue?.venue.neighborhood) {
+    return {
+      status: 'not_captured',
+      reason: 'anchor_neighborhood_not_available_in_role_pools',
+    }
+  }
+
+  const sameNeighborhood = (candidate: ScoredVenue) =>
+    candidate.venue.neighborhood === anchorVenue.venue.neighborhood
+
+  return {
+    status: 'captured',
+    reason:
+      'same-neighborhood role-pool support is captured; cluster-level role-pool support is not available until route assembly.',
+    startNearAnchorCount: rolePools.warmup.filter(sameNeighborhood).length,
+    windDownNearAnchorCount: rolePools.cooldown.filter(sameNeighborhood).length,
+  }
+}
+
+function isNearCompactCandidate(params: {
+  entry: WaypointRankedCandidate
+  gateResult?: ReturnType<typeof buildGreatStopGateResult>
+}): boolean {
+  const { entry, gateResult } = params
+  const signals = entry.routeShapeCompactnessSignals
+  if (signals.compactCandidate) {
+    return true
+  }
+  const movement = gateResult?.diagnostics.movement
+  const cluster = gateResult?.diagnostics.clusterCoherence
+  const totalLimit = movement?.totalLimitMinutes ?? signals.totalMovementLimit
+  const maxLimit = movement?.transitionLimitMinutes ?? signals.maxTransitionLimit
+  const maxClusterEscapes = cluster?.maxClusterEscapes ?? 1
+  const totalWithinNearLimit =
+    typeof totalLimit === 'number'
+      ? signals.totalMovementEstimate <= totalLimit * 1.25
+      : false
+  const maxTransitionWithinNearLimit =
+    typeof maxLimit === 'number'
+      ? signals.maxSingleTransitionEstimate <= maxLimit + 4
+      : false
+  return (
+    totalWithinNearLimit &&
+    maxTransitionWithinNearLimit &&
+    signals.clusterEscapeCount <= maxClusterEscapes + 1 &&
+    signals.repeatedClusterEscapeCount === 0 &&
+    !signals.backtrackDetected &&
+    !signals.driveLikeMovementDetected
+  )
+}
+
+function compactnessDistance(params: {
+  entry: WaypointRankedCandidate
+  gateResult?: ReturnType<typeof buildGreatStopGateResult>
+}): number {
+  const { entry, gateResult } = params
+  const signals = entry.routeShapeCompactnessSignals
+  const movement = gateResult?.diagnostics.movement
+  const totalLimit = movement?.totalLimitMinutes ?? signals.totalMovementLimit
+  const maxLimit = movement?.transitionLimitMinutes ?? signals.maxTransitionLimit
+  const totalOverage =
+    typeof totalLimit === 'number'
+      ? Math.max(0, signals.totalMovementEstimate - totalLimit)
+      : signals.totalMovementEstimate
+  const maxOverage =
+    typeof maxLimit === 'number'
+      ? Math.max(0, signals.maxSingleTransitionEstimate - maxLimit)
+      : signals.maxSingleTransitionEstimate
+  return (
+    totalOverage +
+    maxOverage * 1.5 +
+    signals.extraClusterEscapeCount * 6 +
+    signals.repeatedClusterEscapeCount * 8 +
+    (signals.backtrackDetected ? 10 : 0) +
+    (signals.driveLikeMovementDetected ? 10 : 0)
+  )
+}
+
+function buildBuildCandidatePoolCompactnessCandidateDetail(params: {
+  entry: WaypointRankedCandidate
+  preTop40Rank: number
+  postTop40Rank?: number
+  gateResult?: ReturnType<typeof buildGreatStopGateResult>
+  requiredAnchorVenueId?: string
+  requiredAnchorRole?: UserStopRole
+}): BuildCandidatePoolCompactnessCandidateDetail {
+  const { entry, gateResult, preTop40Rank, postTop40Rank } = params
+  const signals = entry.routeShapeCompactnessSignals
+  return {
+    preTop40Rank,
+    postTop40Rank,
+    candidateId: entry.candidate.id,
+    routeNames: entry.candidate.stops.map((stop) => stop.scoredVenue.venue.name),
+    stopIds: entry.candidate.stops.map((stop) => stop.scoredVenue.venue.id),
+    baseVenueIds: entry.candidate.stops.map((stop) => getArcStopBaseVenueId(stop)),
+    roles: entry.candidate.stops.map((stop) => stop.role),
+    requiredAnchorPresent: params.requiredAnchorVenueId
+      ? entry.candidate.stops.some((stop) =>
+          arcStopMatchesVenueId(stop, params.requiredAnchorVenueId!),
+        )
+      : undefined,
+    requiredAnchorRoleCorrect: candidateHasRequiredAnchorInRole({
+      candidate: entry.candidate,
+      requiredAnchorVenueId: params.requiredAnchorVenueId,
+      requiredAnchorRole: params.requiredAnchorRole,
+    }),
+    stopCount: entry.candidate.stops.length,
+    hasSurprise: Boolean(entry.candidate.surpriseInjection),
+    hasWildcard: entry.candidate.hasWildcard,
+    totalMovementEstimate: signals.totalMovementEstimate,
+    compactnessTotalMovementLimit: signals.totalMovementLimit,
+    greatStopTotalMovementLimit: gateResult?.diagnostics.movement.totalLimitMinutes,
+    maxTransitionEstimate: signals.maxSingleTransitionEstimate,
+    maxTransitionLimit:
+      gateResult?.diagnostics.movement.transitionLimitMinutes ?? signals.maxTransitionLimit,
+    clusterPath: entry.candidate.spatial.clusterAssignments.map(
+      (assignment) => assignment.clusterId,
+    ),
+    clusterEscapeCount: signals.clusterEscapeCount,
+    backtrackDetected: signals.backtrackDetected,
+    repeatedClusterEscapeDetected: signals.repeatedClusterEscapeCount > 0,
+    driveLikeMovementDetected: signals.driveLikeMovementDetected,
+    compactnessAdjustmentScore: signals.adjustment,
+    compactnessReasonSummary: [...signals.reasonSummary],
+    survivedTop40: typeof postTop40Rank === 'number',
+    pruneReason:
+      typeof postTop40Rank === 'number' ? undefined : 'pruned_before_top40_preservation',
+  }
+}
+
+function buildBuildCandidatePoolCompactnessDiagnostics(params: {
+  preTop40RankedEntries: WaypointRankedCandidate[]
+  postTop40RankedEntries: WaypointRankedCandidate[]
+  postTop40Candidates: ArcCandidate[]
+  rolePools: RolePools
+  intent: IntentProfile
+  locationClass?: BuildLocationClass
+  locationClassSource?: 'explicit'
+}): BuildCandidatePoolCompactnessDiagnostics | undefined {
+  const {
+    preTop40RankedEntries,
+    postTop40RankedEntries,
+    postTop40Candidates,
+    rolePools,
+    intent,
+    locationClass,
+    locationClassSource,
+  } = params
+  if (preTop40RankedEntries.length === 0) {
+    return undefined
+  }
+
+  const requiredAnchorVenueId = intent.anchor?.venueId
+  const requiredAnchorRole = intent.anchor?.role
+  const postTop40Ids = new Set(postTop40Candidates.map((candidate) => candidate.id))
+  const postTop40RankById = new Map(
+    postTop40RankedEntries.map((entry, index) => [entry.candidate.id, index + 1] as const),
+  )
+  const evaluated = preTop40RankedEntries.map((entry, index) => {
+    const gateResult =
+      locationClass && locationClassSource
+        ? buildGreatStopGateResult({
+            selectedArc: entry.candidate,
+            intent,
+            routePacing: buildGreatStopRoutePacingDiagnostics(entry.candidate),
+            locationClass,
+            locationClassSource,
+          })
+        : undefined
+    return {
+      entry,
+      rank: index + 1,
+      postTop40Rank: postTop40RankById.get(entry.candidate.id),
+      gateResult,
+      requiredAnchorPreserved: candidateHasRequiredAnchorInRole({
+        candidate: entry.candidate,
+        requiredAnchorVenueId,
+        requiredAnchorRole,
+      }),
+      nearCompact: isNearCompactCandidate({ entry, gateResult }),
+    }
+  })
+  const preCompact = evaluated.filter(
+    ({ entry }) => entry.routeShapeCompactnessSignals.compactCandidate,
+  )
+  const prePlaceRight = evaluated.filter(
+    ({ gateResult }) => gateResult?.criteria.placeRight.passed,
+  )
+  const preNearCompact = evaluated.filter(({ nearCompact }) => nearCompact)
+  const postEvaluated = evaluated.filter(({ entry }) => postTop40Ids.has(entry.candidate.id))
+  const postCompact = postEvaluated.filter(
+    ({ entry }) => entry.routeShapeCompactnessSignals.compactCandidate,
+  )
+  const postPlaceRight = postEvaluated.filter(
+    ({ gateResult }) => gateResult?.criteria.placeRight.passed,
+  )
+  const preCompactPruned = preCompact.filter(({ entry }) => !postTop40Ids.has(entry.candidate.id))
+  const prePlaceRightPruned = prePlaceRight.filter(
+    ({ entry }) => !postTop40Ids.has(entry.candidate.id),
+  )
+  const preNearCompactPruned = preNearCompact.filter(
+    ({ entry }) => !postTop40Ids.has(entry.candidate.id),
+  )
+  const firstSignals = preTop40RankedEntries[0]?.routeShapeCompactnessSignals
+  const firstGate = evaluated.find(({ gateResult }) => gateResult)?.gateResult
+  const compactnessTotalMovementLimit = firstSignals?.totalMovementLimit
+  const greatStopTotalMovementLimit = firstGate?.diagnostics.movement.totalLimitMinutes
+  const compactnessLimitMatchesGreatStopLimit =
+    typeof compactnessTotalMovementLimit === 'number' &&
+    typeof greatStopTotalMovementLimit === 'number'
+      ? compactnessTotalMovementLimit === greatStopTotalMovementLimit
+      : undefined
+  const sortedByMovement = [...evaluated].sort((left, right) => {
+    const distanceDelta =
+      compactnessDistance(left) - compactnessDistance(right)
+    return distanceDelta !== 0 ? distanceDelta : left.rank - right.rank
+  })
+  const detailFor = (entry: (typeof evaluated)[number]) =>
+    buildBuildCandidatePoolCompactnessCandidateDetail({
+      entry: entry.entry,
+      preTop40Rank: entry.rank,
+      postTop40Rank: entry.postTop40Rank,
+      gateResult: entry.gateResult,
+      requiredAnchorVenueId,
+      requiredAnchorRole,
+    })
+
+  return {
+    fullAssembledCandidateCount: preTop40RankedEntries.length,
+    anchorPreservingAssembledCandidateCount: evaluated.filter(
+      ({ requiredAnchorPreserved }) => requiredAnchorPreserved,
+    ).length,
+    threeStopCandidateCount: preTop40RankedEntries.filter(
+      (entry) => entry.candidate.stops.length === 3,
+    ).length,
+    fourStopCandidateCount: preTop40RankedEntries.filter(
+      (entry) => entry.candidate.stops.length === 4,
+    ).length,
+    withSurpriseCandidateCount: preTop40RankedEntries.filter(
+      (entry) => entry.candidate.hasWildcard || entry.candidate.surpriseInjection,
+    ).length,
+    withoutSurpriseCandidateCount: preTop40RankedEntries.filter(
+      (entry) => !entry.candidate.hasWildcard && !entry.candidate.surpriseInjection,
+    ).length,
+    preTop40CandidateCount: preTop40RankedEntries.length,
+    postTop40CandidateCount: postTop40Candidates.length,
+    requiredAnchorPreservedPreTop40Count: evaluated.filter(
+      ({ requiredAnchorPreserved }) => requiredAnchorPreserved,
+    ).length,
+    requiredAnchorPreservedPostTop40Count: postEvaluated.filter(
+      ({ requiredAnchorPreserved }) => requiredAnchorPreserved,
+    ).length,
+    preTop40CompactCandidateCount: preCompact.length,
+    preTop40PlaceRightCandidateCount: prePlaceRight.length,
+    preTop40NearCompactCandidateCount: preNearCompact.length,
+    postTop40CompactCandidateCount: postCompact.length,
+    postTop40PlaceRightCandidateCount: postPlaceRight.length,
+    firstCompactPreTop40Rank: preCompact[0]?.rank,
+    firstPlaceRightPreTop40Rank: prePlaceRight[0]?.rank,
+    firstCompactPostTop40Rank: postCompact[0]?.postTop40Rank,
+    firstPlaceRightPostTop40Rank: postPlaceRight[0]?.postTop40Rank,
+    compactCandidatesPrunedBeforeTop40Count: preCompactPruned.length,
+    placeRightCandidatesPrunedBeforeTop40Count: prePlaceRightPruned.length,
+    nearCompactCandidatesPrunedBeforeTop40Count: preNearCompactPruned.length,
+    candidateShapeCounts: {
+      threeStop: preTop40RankedEntries.filter((entry) => entry.candidate.stops.length === 3)
+        .length,
+      fourStop: preTop40RankedEntries.filter((entry) => entry.candidate.stops.length === 4)
+        .length,
+      withSurprise: preTop40RankedEntries.filter(
+        (entry) => entry.candidate.hasWildcard || entry.candidate.surpriseInjection,
+      ).length,
+      withoutSurprise: preTop40RankedEntries.filter(
+        (entry) => !entry.candidate.hasWildcard && !entry.candidate.surpriseInjection,
+      ).length,
+    },
+    rolePoolNearAnchorSupportVisibility: buildRolePoolNearAnchorSupportVisibility({
+      rolePools,
+      requiredAnchorVenueId,
+    }),
+    compactnessTotalMovementLimit,
+    greatStopTotalMovementLimit,
+    maxTransitionLimit:
+      firstGate?.diagnostics.movement.transitionLimitMinutes ?? firstSignals?.maxTransitionLimit,
+    compactnessLimitMatchesGreatStopLimit,
+    compactnessLimitSource: firstSignals?.totalMovementLimit
+      ? 'WaypointRouteShapeCompactnessSignals.totalMovementLimit'
+      : 'not_captured',
+    greatStopLimitSource: firstGate
+      ? 'GreatStopGateResult.diagnostics.movement.totalLimitMinutes'
+      : 'not_captured',
+    mismatchExplanation:
+      compactnessLimitMatchesGreatStopLimit === false
+        ? 'Waypoint compactness total movement limit is transition-count based; Great Stop place-right total movement limit comes from the explicit location/persona preset.'
+        : undefined,
+    detailCandidateLimit: BUILD_CANDIDATE_POOL_COMPACTNESS_DETAIL_LIMIT,
+    nearestPreTop40CompactCandidate: preCompact[0] ? detailFor(preCompact[0]) : undefined,
+    nearestPreTop40PlaceRightCandidate: prePlaceRight[0]
+      ? detailFor(prePlaceRight[0])
+      : undefined,
+    bestPreTop40NearCompactCandidate: preNearCompact[0]
+      ? detailFor(preNearCompact[0])
+      : undefined,
+    topPreTop40MovementCandidates: sortedByMovement
+      .slice(0, BUILD_CANDIDATE_POOL_COMPACTNESS_DETAIL_LIMIT)
+      .map(detailFor),
   }
 }
 
@@ -2799,6 +3146,25 @@ async function runGeneratePlanInternal(
         ? buildSelectedCandidatePreservationCandidates
         : buildRequiredAnchorCandidatePool
       : []
+  const preTop40ArcCandidates = arcAssembly.preTop40Candidates ?? arcCandidates
+  const preTop40Ranking =
+    buildGreatStopSelectionActive && preTop40ArcCandidates.length > 0
+      ? waypointContractInput
+        ? rankArcCandidatesFromContract(preTop40ArcCandidates, waypointContractInput)
+        : rankArcCandidatesWithDiagnostics(preTop40ArcCandidates, planningIntent)
+      : undefined
+  const buildCandidatePoolCompactnessDiagnostics =
+    buildGreatStopSelectionActive && preTop40Ranking
+      ? buildBuildCandidatePoolCompactnessDiagnostics({
+          preTop40RankedEntries: preTop40Ranking.ranked,
+          postTop40RankedEntries: ranking.ranked,
+          postTop40Candidates: arcCandidates,
+          rolePools,
+          intent: planningIntent,
+          locationClass: options.greatStopGateLocationClass,
+          locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
+        })
+      : undefined
   const compactnessRankingDiagnostics =
     buildGreatStopSelectionActive
       ? buildGreatStopCompactnessRankingDiagnostics({
@@ -2821,7 +3187,12 @@ async function runGeneratePlanInternal(
             rolePools,
             planningIntent.anchor?.venueId,
           ),
-          compactnessRankingDiagnostics,
+          compactnessRankingDiagnostics: compactnessRankingDiagnostics
+            ? {
+                ...compactnessRankingDiagnostics,
+                buildCandidatePoolCompactnessDiagnostics,
+              }
+            : compactnessRankingDiagnostics,
         })
       : undefined
   if (buildGreatStopSelection) {

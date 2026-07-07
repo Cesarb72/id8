@@ -217,6 +217,87 @@ export interface GreatStopCompactnessRankingDiagnostics {
     rolePoolCompactnessVisibility: 'not_captured'
     rolePoolCompactnessVisibilityReason: string
   }
+  buildCandidatePoolCompactnessDiagnostics?: BuildCandidatePoolCompactnessDiagnostics
+}
+
+export interface BuildCandidatePoolCompactnessCandidateDetail {
+  preTop40Rank: number
+  postTop40Rank?: number
+  candidateId: string
+  routeNames: string[]
+  stopIds: string[]
+  baseVenueIds: string[]
+  roles: string[]
+  requiredAnchorPresent?: boolean
+  requiredAnchorRoleCorrect?: boolean
+  stopCount: number
+  hasSurprise: boolean
+  hasWildcard: boolean
+  totalMovementEstimate: number
+  compactnessTotalMovementLimit?: number
+  greatStopTotalMovementLimit?: number
+  maxTransitionEstimate: number
+  maxTransitionLimit?: number
+  clusterPath: string[]
+  clusterEscapeCount: number
+  backtrackDetected: boolean
+  repeatedClusterEscapeDetected: boolean
+  driveLikeMovementDetected: boolean
+  compactnessAdjustmentScore: number
+  compactnessReasonSummary: string[]
+  survivedTop40: boolean
+  pruneReason?: string
+}
+
+export interface BuildCandidatePoolCompactnessDiagnostics {
+  fullAssembledCandidateCount: number
+  anchorPreservingAssembledCandidateCount: number
+  threeStopCandidateCount: number
+  fourStopCandidateCount: number
+  withSurpriseCandidateCount: number
+  withoutSurpriseCandidateCount: number
+  preTop40CandidateCount: number
+  postTop40CandidateCount: number
+  requiredAnchorPreservedPreTop40Count: number
+  requiredAnchorPreservedPostTop40Count: number
+  preTop40CompactCandidateCount: number
+  preTop40PlaceRightCandidateCount: number
+  preTop40NearCompactCandidateCount: number
+  postTop40CompactCandidateCount: number
+  postTop40PlaceRightCandidateCount: number
+  firstCompactPreTop40Rank?: number
+  firstPlaceRightPreTop40Rank?: number
+  firstCompactPostTop40Rank?: number
+  firstPlaceRightPostTop40Rank?: number
+  compactCandidatesPrunedBeforeTop40Count: number
+  placeRightCandidatesPrunedBeforeTop40Count: number
+  nearCompactCandidatesPrunedBeforeTop40Count: number
+  candidateShapeCounts: {
+    threeStop: number
+    fourStop: number
+    withSurprise: number
+    withoutSurprise: number
+  }
+  rolePoolNearAnchorSupportVisibility: {
+    status: 'captured' | 'not_captured'
+    reason?: string
+    startNearAnchorCount?: number
+    windDownNearAnchorCount?: number
+    sameClusterStartCount?: number
+    sameClusterWindDownCount?: number
+  }
+  compactnessTotalMovementLimit?: number
+  greatStopTotalMovementLimit?: number
+  maxTransitionLimit?: number
+  compactnessLimitMatchesGreatStopLimit?: boolean
+  compactnessLimitSource: string
+  greatStopLimitSource: string
+  mismatchExplanation?: string
+  detailCandidateLimit: number
+  nearestPreTop40CompactCandidate?: BuildCandidatePoolCompactnessCandidateDetail
+  nearestPreTop40PlaceRightCandidate?: BuildCandidatePoolCompactnessCandidateDetail
+  bestPreTop40NearCompactCandidate?: BuildCandidatePoolCompactnessCandidateDetail
+  topPreTop40MovementCandidates: BuildCandidatePoolCompactnessCandidateDetail[]
 }
 
 export interface GreatStopGateCandidateStopIdentityDiagnostic {
