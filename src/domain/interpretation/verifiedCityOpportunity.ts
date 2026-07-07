@@ -62,6 +62,19 @@ export type BuiltScenarioNightPreviewModel = {
   stops: BuiltScenarioPreviewStop[]
 }
 
+export type ProviderShadowPreviewDiagnostics = {
+  providerShadowPreviewDuplicateVenueDetected: boolean
+  providerShadowPreviewDuplicateVenueAvoided: boolean
+  providerShadowPreviewDuplicateVenueUnavoidable: boolean
+  providerShadowPreviewDistinctSupportAvailable: boolean
+  providerShadowPreviewSelectedStartId: string | null
+  providerShadowPreviewSelectedAnchorId: string
+  providerShadowPreviewSelectedWindDownId: string | null
+  providerShadowPreviewSelectedStartBaseVenueId: string | null
+  providerShadowPreviewSelectedAnchorBaseVenueId: string
+  providerShadowPreviewSelectedWindDownBaseVenueId: string | null
+}
+
 export type VerifiedCityOpportunity = {
   id: string
   sourceMode: EngineSourceMode
@@ -135,6 +148,7 @@ export type VerifiedCityOpportunity = {
   starterSemanticRepresentation?: StarterSemanticRepresentation
   scenarioNight?: BuiltScenarioNight
   scenarioPreviewModel?: BuiltScenarioNightPreviewModel
+  providerShadowPreviewDiagnostics?: ProviderShadowPreviewDiagnostics
 }
 
 interface ScenarioDirectionCardHint {

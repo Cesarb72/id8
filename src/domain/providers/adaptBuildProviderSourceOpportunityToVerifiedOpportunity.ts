@@ -1,5 +1,6 @@
 import type {
   CityOpportunityStopOption,
+  ProviderShadowPreviewDiagnostics,
   VerifiedCityOpportunity,
 } from '../interpretation/verifiedCityOpportunity'
 import {
@@ -11,6 +12,7 @@ import { interpretVenueTaste } from '../interpretation/taste/interpretVenueTaste
 import { mapVenueToTasteInput } from '../interpretation/taste/mapVenueToTasteInput'
 import type { Venue } from '../types/venue'
 import type { BuildProviderSourceOpportunity } from './buildProviderSourceOpportunity'
+import { providerCanonicalVenueSeeds } from './providerCanonicalVenueSeeds'
 
 const BUILD_PROVIDER_STEP2_INTEGRATION_ENV_FLAG =
   'VITE_ID8_BUILD_PROVIDER_STEP2_INTEGRATION'
@@ -29,6 +31,9 @@ export interface BuildProviderShadowIntegrationDiagnostics {
 export interface AdaptBuildProviderSourceOpportunityInput {
   opportunity: BuildProviderSourceOpportunity
 }
+
+export type ProviderShadowPreviewSupportDiagnostics =
+  ProviderShadowPreviewDiagnostics
 
 function getProcessEnvValue(key: string): string | undefined {
   const processEnv = (globalThis as {
@@ -87,6 +92,113 @@ function dedupeVenuesById(venues: Venue[]): Venue[] {
     deduped.push(venue)
   })
   return deduped
+}
+
+function getSeededCanonicalVenueIdForProviderRecord(
+  providerRecordId: string | undefined,
+): string | null {
+  const normalizedProviderRecordId = providerRecordId?.trim()
+  if (!normalizedProviderRecordId) {
+    return null
+  }
+  return (
+    providerCanonicalVenueSeeds.find(
+      (entry) =>
+        entry.provider === 'google-places' &&
+        entry.providerRecordId === normalizedProviderRecordId,
+    )?.canonicalVenueId ?? null
+  )
+}
+
+export function getBuildProviderPreviewBaseVenueId(venue: Venue): string {
+  return (
+    getSeededCanonicalVenueIdForProviderRecord(venue.source.providerRecordId) ??
+    venue.id.trim()
+  )
+}
+
+function isSameProviderShadowPreviewVenue(left: Venue, right: Venue): boolean {
+  const leftBaseVenueId = getBuildProviderPreviewBaseVenueId(left)
+  const rightBaseVenueId = getBuildProviderPreviewBaseVenueId(right)
+  return Boolean(leftBaseVenueId && rightBaseVenueId && leftBaseVenueId === rightBaseVenueId)
+}
+
+function moveSelectedVenueFirst(venues: Venue[], selected: Venue | null): Venue[] {
+  if (!selected) {
+    return venues
+  }
+  const selectedBaseVenueId = getBuildProviderPreviewBaseVenueId(selected)
+  const selectedIndex = venues.findIndex(
+    (venue) =>
+      venue.id === selected.id ||
+      getBuildProviderPreviewBaseVenueId(venue) === selectedBaseVenueId,
+  )
+  if (selectedIndex <= 0) {
+    return venues
+  }
+  return [
+    venues[selectedIndex]!,
+    ...venues.slice(0, selectedIndex),
+    ...venues.slice(selectedIndex + 1),
+  ]
+}
+
+export function selectProviderShadowPreviewSupports(params: {
+  anchor: Venue
+  startsPool: Venue[]
+  windDownPool: Venue[]
+}): {
+  startsPool: Venue[]
+  windDownPool: Venue[]
+  diagnostics: ProviderShadowPreviewSupportDiagnostics
+} {
+  const selectedStart = params.startsPool[0] ?? null
+  const initialWindDown = params.windDownPool[0] ?? null
+  const duplicateVenueDetected = Boolean(
+    selectedStart &&
+      initialWindDown &&
+      isSameProviderShadowPreviewVenue(selectedStart, initialWindDown),
+  )
+  const distinctWindDown =
+    duplicateVenueDetected && selectedStart
+      ? params.windDownPool.find(
+          (venue) => !isSameProviderShadowPreviewVenue(selectedStart, venue),
+        ) ?? null
+      : initialWindDown
+  const selectedWindDown = distinctWindDown ?? initialWindDown
+  const selectedStartBaseVenueId = selectedStart
+    ? getBuildProviderPreviewBaseVenueId(selectedStart)
+    : null
+  const selectedWindDownBaseVenueId = selectedWindDown
+    ? getBuildProviderPreviewBaseVenueId(selectedWindDown)
+    : null
+  const duplicateVenueAvoided = Boolean(
+    duplicateVenueDetected &&
+      selectedStartBaseVenueId &&
+      selectedWindDownBaseVenueId &&
+      selectedStartBaseVenueId !== selectedWindDownBaseVenueId,
+  )
+  const duplicateVenueUnavoidable = Boolean(
+    duplicateVenueDetected && !duplicateVenueAvoided,
+  )
+
+  return {
+    startsPool: params.startsPool,
+    windDownPool: moveSelectedVenueFirst(params.windDownPool, selectedWindDown),
+    diagnostics: {
+      providerShadowPreviewDuplicateVenueDetected: duplicateVenueDetected,
+      providerShadowPreviewDuplicateVenueAvoided: duplicateVenueAvoided,
+      providerShadowPreviewDuplicateVenueUnavoidable: duplicateVenueUnavoidable,
+      providerShadowPreviewDistinctSupportAvailable: duplicateVenueAvoided,
+      providerShadowPreviewSelectedStartId: selectedStart?.id ?? null,
+      providerShadowPreviewSelectedAnchorId: params.anchor.id,
+      providerShadowPreviewSelectedWindDownId: selectedWindDown?.id ?? null,
+      providerShadowPreviewSelectedStartBaseVenueId: selectedStartBaseVenueId,
+      providerShadowPreviewSelectedAnchorBaseVenueId:
+        getBuildProviderPreviewBaseVenueId(params.anchor),
+      providerShadowPreviewSelectedWindDownBaseVenueId: selectedWindDownBaseVenueId,
+    },
+  }
 }
 
 function getPrimaryDistrictLabel(anchor: Venue): string {
@@ -326,7 +438,13 @@ export function adaptBuildProviderSourceOpportunityToVerifiedOpportunity(
       (venue) => venue.id !== anchor.id,
     ),
   )
-  const windDownPool = dedupeVenuesById(opportunity.roleCandidates.windDown)
+  const initialWindDownPool = dedupeVenuesById(opportunity.roleCandidates.windDown)
+  const previewSupports = selectProviderShadowPreviewSupports({
+    anchor,
+    startsPool,
+    windDownPool: initialWindDownPool,
+  })
+  const windDownPool = previewSupports.windDownPool
   if (startsPool.length === 0 || windDownPool.length === 0) {
     return null
   }
@@ -426,6 +544,7 @@ export function adaptBuildProviderSourceOpportunityToVerifiedOpportunity(
       whyTonightStrength >= 0.6
         ? 'Admitted live supply supports this nearby sequence tonight.'
         : undefined,
+    providerShadowPreviewDiagnostics: previewSupports.diagnostics,
   }
 }
 
