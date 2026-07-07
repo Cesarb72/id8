@@ -2,6 +2,8 @@ import type { ArcCandidate, ArcStop } from '../types/arc'
 import type { RoutePacingDiagnostics, TransitionExplainabilityDiagnostics } from '../types/diagnostics'
 import type {
   BuildLocationClass,
+  GreatStopCandidateFailureDetails,
+  GreatStopGateCandidateFailureDetail,
   GreatStopGateCandidateSummary,
   GreatStopGateCandidateIdentityDiagnostic,
   GreatStopCriterionResult,
@@ -20,6 +22,7 @@ import { roleProjection } from '../config/roleProjection'
 import { getArcStopBaseVenueId } from '../candidates/candidateIdentity'
 
 const DIAGNOSTIC_CANDIDATE_SUMMARY_LIMIT = 25
+const GREAT_STOP_FAILURE_DETAIL_LIMIT = 5
 
 interface PlaceRightPreset {
   travelTolerance: GreatStopTravelTolerance
@@ -673,6 +676,147 @@ function buildCandidateIdentityDiagnostic(params: {
   }
 }
 
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)]
+}
+
+function roundScore(value: number | undefined): number | undefined {
+  return typeof value === 'number' ? round(value) : undefined
+}
+
+function buildFailureDetail(params: {
+  candidate: ArcCandidate
+  rank: number
+  result: GreatStopGateResult
+}): GreatStopGateCandidateFailureDetail {
+  const { candidate, rank, result } = params
+  return {
+    rank,
+    candidateId: candidate.id,
+    signature: buildCandidateSignature(candidate),
+    routeNames: candidate.stops.map((stop) => stop.scoredVenue.venue.name),
+    stopIds: candidate.stops.map((stop) => stop.scoredVenue.venue.id),
+    baseVenueIds: candidate.stops.map((stop) => getArcStopBaseVenueId(stop)),
+    creditedRoles: candidate.stops.map((stop) => roleFor(stop)),
+    requiredAnchorPresent: result.requiredAnchor?.survived,
+    requiredAnchorRole: result.requiredAnchor?.role,
+    requiredAnchorRoleCorrect: result.requiredAnchor
+      ? result.requiredAnchor.survived &&
+        result.requiredAnchor.creditedRole === result.requiredAnchor.role
+      : undefined,
+    failedCriteria: [...result.failedCriteria],
+    failureReasons: uniqueStrings(result.reasons),
+    totalMovementEstimate: result.diagnostics.movement.totalEstimatedTransitionMinutes,
+    maxSingleTransitionEstimate: result.diagnostics.movement.maxSingleTransitionMinutes,
+    transitionLimitMinutes: result.diagnostics.movement.transitionLimitMinutes,
+    totalLimitMinutes: result.diagnostics.movement.totalLimitMinutes,
+    clusterPath: result.routeId
+      ? candidate.spatial.clusterAssignments.map((assignment) => assignment.clusterId)
+      : [],
+    clusterEscapeCount: result.diagnostics.clusterCoherence.clusterEscapeCount,
+    backtrackDetected: result.diagnostics.zigzagOrBacktrack.detected,
+    driveLikeMovementDetected: result.diagnostics.movement.driveLikeMovement,
+    momentFailureReasons: [...result.criteria.momentRight.reasons],
+    roleEnergyNote: candidate.scoreBreakdown.roleEnergyNote,
+    scoreSummary: {
+      totalScore: round(candidate.totalScore),
+      geographyScore: roundScore(candidate.scoreBreakdown.geographyScore),
+      roleFlowScore: roundScore(candidate.scoreBreakdown.roleFlowScore),
+      diversityScore: roundScore(candidate.scoreBreakdown.diversityScore),
+      windDownScore: roundScore(candidate.scoreBreakdown.windDownScore),
+      highlightMomentScore: roundScore(candidate.scoreBreakdown.highlightMomentScore),
+      momentStrengthScore: roundScore(candidate.scoreBreakdown.momentStrengthScore),
+      momentFlatPenalty: roundScore(candidate.scoreBreakdown.momentFlatPenalty),
+    },
+  }
+}
+
+function failureSeverity(entry: {
+  result: GreatStopGateResult
+}): number {
+  const movement = entry.result.diagnostics.movement
+  const cluster = entry.result.diagnostics.clusterCoherence
+  const movementOverage =
+    Math.max(0, movement.totalEstimatedTransitionMinutes - movement.totalLimitMinutes) +
+    Math.max(0, movement.maxSingleTransitionMinutes - movement.transitionLimitMinutes)
+  const clusterOverage = Math.max(0, cluster.clusterEscapeCount - cluster.maxClusterEscapes)
+  const backtrackPenalty = entry.result.diagnostics.zigzagOrBacktrack.detected ? 1 : 0
+  return (
+    entry.result.failedCriteria.length * 100 +
+    uniqueStrings(entry.result.reasons).length * 10 +
+    movementOverage +
+    clusterOverage * 3 +
+    backtrackPenalty
+  )
+}
+
+function buildCandidateFailureDetails(params: {
+  evaluated: Array<{
+    candidate: ArcCandidate
+    rank: number
+    result: GreatStopGateResult
+    skippedForRequiredAnchor: boolean
+  }>
+  passingCandidateCount: number
+}): GreatStopCandidateFailureDetails {
+  const anchorPreservingEntries = params.evaluated.filter(
+    (entry) => !entry.skippedForRequiredAnchor,
+  )
+  const anchorPreservingFailingEntries = anchorPreservingEntries.filter(
+    (entry) => entry.result.status === 'FAIL',
+  )
+  const sortedByNearestToPass = [...anchorPreservingFailingEntries].sort((left, right) => {
+    const severityDelta = failureSeverity(left) - failureSeverity(right)
+    return severityDelta !== 0 ? severityDelta : left.rank - right.rank
+  })
+  const repeatedFailureReasonCounts: Record<string, number> = {}
+  for (const entry of anchorPreservingFailingEntries) {
+    for (const reason of uniqueStrings(entry.result.reasons)) {
+      repeatedFailureReasonCounts[reason] = (repeatedFailureReasonCounts[reason] ?? 0) + 1
+    }
+  }
+  const topFailingEntries = anchorPreservingFailingEntries.slice(
+    0,
+    GREAT_STOP_FAILURE_DETAIL_LIMIT,
+  )
+
+  return {
+    evaluatedCandidateCount: params.evaluated.length,
+    passingCandidateCount: params.passingCandidateCount,
+    detailCandidateLimit: GREAT_STOP_FAILURE_DETAIL_LIMIT,
+    nearestToPassCandidate: sortedByNearestToPass[0]
+      ? buildFailureDetail(sortedByNearestToPass[0])
+      : undefined,
+    topFailingCandidates: topFailingEntries.map((entry) => buildFailureDetail(entry)),
+    candidatesFailingOnlyOneCriterionCount: anchorPreservingFailingEntries.filter(
+      (entry) => entry.result.failedCriteria.length === 1,
+    ).length,
+    candidatesFailingOnlyMovementCount: anchorPreservingFailingEntries.filter(
+      (entry) =>
+        entry.result.failedCriteria.length === 1 &&
+        entry.result.failedCriteria[0] === 'place_right',
+    ).length,
+    candidatesFailingOnlyMomentCount: anchorPreservingFailingEntries.filter(
+      (entry) =>
+        entry.result.failedCriteria.length === 1 &&
+        entry.result.failedCriteria[0] === 'moment_right',
+    ).length,
+    candidatesFailingBothPlaceAndMomentCount: anchorPreservingFailingEntries.filter(
+      (entry) =>
+        entry.result.failedCriteria.includes('place_right') &&
+        entry.result.failedCriteria.includes('moment_right'),
+    ).length,
+    repeatedFailureReasonCounts,
+    requiredAnchorPreservedCount: anchorPreservingEntries.length,
+    compactnessCandidateCount: anchorPreservingEntries.filter(
+      (entry) => entry.result.criteria.placeRight.passed,
+    ).length,
+    backtrackPatternCount: anchorPreservingEntries.filter(
+      (entry) => entry.result.diagnostics.zigzagOrBacktrack.detected,
+    ).length,
+  }
+}
+
 export function selectGreatStopGatePassingCandidate(params: {
   candidates: ArcCandidate[]
   intent: IntentProfile
@@ -734,6 +878,13 @@ export function selectGreatStopGatePassingCandidate(params: {
       0,
       fullEvaluatedCandidateCount - evaluatedCandidateIdentitySummaries.length,
     )
+    const greatStopCandidateFailureDetails =
+      selectionParams.status === 'FAIL'
+        ? buildCandidateFailureDetails({
+            evaluated,
+            passingCandidateCount,
+          })
+        : undefined
 
     return {
       status: selectionParams.status,
@@ -779,6 +930,7 @@ export function selectGreatStopGatePassingCandidate(params: {
             result: bestAnchorPreservingFailingEntry.result,
           })
         : undefined,
+      greatStopCandidateFailureDetails,
       structuralFailureReasons,
       passingCandidateCount,
       selectedGateResult: selectionParams.selectedGateResult,

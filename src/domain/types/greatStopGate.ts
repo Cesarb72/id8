@@ -108,6 +108,57 @@ export interface GreatStopGateCandidateSummary {
   reasons: string[]
 }
 
+export interface GreatStopGateCandidateFailureDetail {
+  rank: number
+  candidateId: string
+  signature: string
+  routeNames: string[]
+  stopIds: string[]
+  baseVenueIds: string[]
+  creditedRoles: UserStopRole[]
+  requiredAnchorPresent?: boolean
+  requiredAnchorRole?: UserStopRole
+  requiredAnchorRoleCorrect?: boolean
+  failedCriteria: GreatStopGateCriterion[]
+  failureReasons: string[]
+  totalMovementEstimate: number
+  maxSingleTransitionEstimate: number
+  transitionLimitMinutes: number
+  totalLimitMinutes: number
+  clusterPath: string[]
+  clusterEscapeCount: number
+  backtrackDetected: boolean
+  driveLikeMovementDetected: boolean
+  momentFailureReasons: string[]
+  roleEnergyNote?: string
+  scoreSummary: {
+    totalScore: number
+    geographyScore?: number
+    roleFlowScore?: number
+    diversityScore?: number
+    windDownScore?: number
+    highlightMomentScore?: number
+    momentStrengthScore?: number
+    momentFlatPenalty?: number
+  }
+}
+
+export interface GreatStopCandidateFailureDetails {
+  evaluatedCandidateCount: number
+  passingCandidateCount: number
+  detailCandidateLimit: number
+  nearestToPassCandidate?: GreatStopGateCandidateFailureDetail
+  topFailingCandidates: GreatStopGateCandidateFailureDetail[]
+  candidatesFailingOnlyOneCriterionCount: number
+  candidatesFailingOnlyMovementCount: number
+  candidatesFailingOnlyMomentCount: number
+  candidatesFailingBothPlaceAndMomentCount: number
+  repeatedFailureReasonCounts: Record<string, number>
+  requiredAnchorPreservedCount: number
+  compactnessCandidateCount?: number
+  backtrackPatternCount: number
+}
+
 export interface GreatStopGateCandidateStopIdentityDiagnostic {
   role: UserStopRole
   name: string
@@ -167,6 +218,7 @@ export interface GreatStopGateSelectionDiagnostics {
   failureReasons: string[]
   bestFailingCandidateSummary?: GreatStopGateCandidateSummary
   bestAnchorPreservingFailingCandidate?: GreatStopGateCandidateSummary
+  greatStopCandidateFailureDetails?: GreatStopCandidateFailureDetails
   structuralFailureReasons?: string[]
   passingCandidateCount?: number
   selectedGateResult?: GreatStopGateResult
