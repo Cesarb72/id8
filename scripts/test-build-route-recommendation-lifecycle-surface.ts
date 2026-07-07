@@ -137,6 +137,21 @@ assert(
 assert(authorityValid.reviewEligible, 'Authority-valid route should preserve Review eligibility.')
 assert(authorityValid.lockEligible, 'Authority-valid route should preserve Lock eligibility.')
 
+const candidatePreviewPrimaryActionText = candidatePreview.reviewEligible
+  ? 'Review this route'
+  : 'Continue building'
+const authorityValidPrimaryActionText = authorityValid.reviewEligible
+  ? 'Review this route'
+  : 'Continue building'
+assert(
+  candidatePreviewPrimaryActionText !== 'Review this route',
+  'Candidate preview must not expose Review this route as the primary action.',
+)
+assert(
+  authorityValidPrimaryActionText === 'Review this route',
+  'Review CTA must remain available when lifecycle reviewEligible is true.',
+)
+
 const runtimeRoute = buildRouteRecommendationLifecycleDiagnostics({
   routeSummarySource: 'committed',
   routeSummaryProvenance: 'generated_runtime_route',
@@ -157,9 +172,48 @@ assert(
   'Sandbox page must expose routeLifecycleDiagnostics in public Build diagnostics.',
 )
 assert(
+  sandboxSource.includes('generationHandoffDiagnostics: buildGenerationHandoffDiagnostics'),
+  'Sandbox page must expose Build generation handoff diagnostics in public Build diagnostics.',
+)
+for (const expectedGenerationDiagnostic of [
+  'generationAttempted',
+  'generationReturned',
+  'generationReturnedFalse',
+  'generationThrew',
+  'generationErrorKind',
+  'generationErrorMessage',
+  'buildContractDrivenBuildWaypointPlanInvoked',
+  'runGeneratePlanInvoked',
+  'greatStopGateReached',
+  'generatedContractEntryArtifactPresent',
+  'finalRoutePresent',
+  'selectedGenerationInputArtifactId',
+  'selectedGenerationInputSourceKind',
+  'buildPreGenerationSelectionReady',
+]) {
+  assert(
+    sandboxSource.includes(expectedGenerationDiagnostic),
+    `Sandbox page must expose generation handoff diagnostic ${expectedGenerationDiagnostic}.`,
+  )
+}
+assert(
+  sandboxSource.includes("generationErrorKind: 'storage_or_handoff_failed'"),
+  'Sandbox page must expose storage_or_handoff_failed when generated truth is not stored.',
+)
+assert(
   sandboxSource.includes('buildRouteLifecycleDiagnostics.userFacingLabel') &&
     routeLifecycleSource.includes('Candidate preview - not a recommendation yet'),
   'Sandbox page must render the lifecycle user-facing label supplied by the helper.',
+)
+assert(
+  sandboxSource.includes('!buildRouteLifecycleDiagnostics.reviewEligible') &&
+    sandboxSource.includes("'Continue building'") &&
+    sandboxSource.includes('publicBuildReviewGatingDiagnostics.primaryActionText'),
+  'Sandbox page must guard the public Build primary action through lifecycle review eligibility.',
+)
+assert(
+  sandboxSource.includes("? 'Review this route'"),
+  'Sandbox page must keep the Review CTA path available for reviewEligible generated truth.',
 )
 assert(
   sandboxSource.includes('data-id8-route-lifecycle-phase'),
@@ -188,8 +242,17 @@ const output = {
     candidatePreview.userFacingLabel !== 'Generated route summary',
   candidateRouteReviewEligible: candidatePreview.reviewEligible,
   candidateRouteLockEligible: candidatePreview.lockEligible,
+  candidatePreviewPrimaryActionText,
+  candidatePreviewReviewCtaSuppressed:
+    candidatePreviewPrimaryActionText !== 'Review this route',
+  authorityValidPrimaryActionText,
+  reviewCtaStillAvailableForReviewEligible:
+    authorityValidPrimaryActionText === 'Review this route',
   generatedRecommendationPathAvailable:
     generatedRecommendation.phase === 'generated_recommendation',
+  generationHandoffDiagnosticsExposed: sandboxSource.includes(
+    'generationHandoffDiagnostics: buildGenerationHandoffDiagnostics',
+  ),
   routeAuthorityUnchanged: routeAuthoritySource.includes(
     "reasons.push('provider_shadow_not_authority')",
   ),

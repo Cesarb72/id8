@@ -1065,6 +1065,27 @@ interface SelectedDirectionGeneratePlanTrace {
   requestedArtifactId: string | null
   activeDirectionId: string | null
   activeCandidateArtifactId: string | null
+  generationAttempted: boolean
+  generationReturned: boolean
+  generationReturnedFalse: boolean
+  generationThrew: boolean
+  generationErrorKind:
+    | 'missing_direction'
+    | 'missing_candidate'
+    | 'selected_direction_lineage'
+    | 'post_planner_contract'
+    | 'great_stop_gate'
+    | 'storage_or_handoff_failed'
+    | 'unknown'
+    | null
+  generationErrorMessage: string | null
+  buildContractDrivenBuildWaypointPlanInvoked: boolean
+  runGeneratePlanInvoked: boolean | null
+  greatStopGateReached: boolean
+  generatedContractEntryArtifactPresent: boolean
+  finalRoutePresent: boolean
+  selectedGenerationInputArtifactId: string | null
+  selectedGenerationInputSourceKind: 'provider_shadow' | 'build_static_pre_generation' | null
   requestMode: 'surprise' | 'curate' | 'build'
   caughtDriftError: boolean
   driftErrorMessage: string | null
@@ -14711,11 +14732,31 @@ export function SandboxConciergePage({
       } else if (!activeDirectionId) {
         activeDirectionId = activeCandidateRouteArtifact?.selection.directionId ?? null
       }
+      const selectedGenerationInputSourceKind =
+        isBuildWrapperActive && activeCandidateRouteArtifact
+          ? buildProviderGenerationCandidateArtifact &&
+            activeCandidateRouteArtifact.id === buildProviderGenerationCandidateArtifact.id
+            ? 'provider_shadow'
+            : 'build_static_pre_generation'
+          : null
       setSelectedDirectionGeneratePlanTrace({
         requestedDirectionId: normalizedDirectionOverride,
         requestedArtifactId: normalizedSelectedRouteArtifactIdOverride,
         activeDirectionId: activeDirectionId ?? null,
         activeCandidateArtifactId: activeCandidateRouteArtifact?.id ?? null,
+        generationAttempted: true,
+        generationReturned: false,
+        generationReturnedFalse: false,
+        generationThrew: false,
+        generationErrorKind: null,
+        generationErrorMessage: null,
+        buildContractDrivenBuildWaypointPlanInvoked: false,
+        runGeneratePlanInvoked: null,
+        greatStopGateReached: false,
+        generatedContractEntryArtifactPresent: false,
+        finalRoutePresent: false,
+        selectedGenerationInputArtifactId: activeCandidateRouteArtifact?.id ?? null,
+        selectedGenerationInputSourceKind,
         requestMode: isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build',
         caughtDriftError: false,
         driftErrorMessage: null,
@@ -14749,7 +14790,11 @@ export function SandboxConciergePage({
             }
           : current,
       )
-      const markGeneratePlanTraceFailure = (message: string) => {
+      const markGeneratePlanTraceFailure = (
+        message: string,
+        kind: SelectedDirectionGeneratePlanTrace['generationErrorKind'] = 'unknown',
+      ) => {
+        const compactMessage = compactDiagnosticMessage(message)
         setStep2RerollTrace((current) =>
           current
             ? {
@@ -14759,9 +14804,24 @@ export function SandboxConciergePage({
               }
             : current,
         )
+        setSelectedDirectionGeneratePlanTrace((current) =>
+          current
+            ? {
+                ...current,
+                generationReturned: true,
+                generationReturnedFalse: true,
+                generationErrorKind: kind,
+                generationErrorMessage: compactMessage,
+                rawDriftErrorMessageCompact: compactMessage,
+              }
+            : current,
+        )
       }
       if (!activeDirectionId) {
-        markGeneratePlanTraceFailure('Direction is unavailable before generation.')
+        markGeneratePlanTraceFailure(
+          'Direction is unavailable before generation.',
+          'missing_direction',
+        )
         return false
       }
       if (
@@ -14770,7 +14830,7 @@ export function SandboxConciergePage({
         !activeCandidateRouteArtifact
       ) {
         const message = 'Selected route option is unavailable. Re-select a route card and continue.'
-        markGeneratePlanTraceFailure(message)
+        markGeneratePlanTraceFailure(message, 'missing_candidate')
         setError(message)
         return false
       }
@@ -14790,7 +14850,7 @@ export function SandboxConciergePage({
         allDirectionCards.find((entry) => entry.id === activeDirectionId)
       if (!activeDirection) {
         const message = 'Direction is unavailable. Re-select a direction and try again.'
-        markGeneratePlanTraceFailure(message)
+        markGeneratePlanTraceFailure(message, 'missing_direction')
         setError(message)
         return false
       }
@@ -14806,14 +14866,14 @@ export function SandboxConciergePage({
       )
       if (!activeDirectionContract) {
         const message = 'Direction contract is unavailable. Re-select a direction and try again.'
-        markGeneratePlanTraceFailure(message)
+        markGeneratePlanTraceFailure(message, 'missing_direction')
         setError(message)
         return false
       }
       const activeDirectionContext = buildResolvedDirectionContext(activeDirectionContract)
       if (!activeDirectionContext) {
         const message = 'Direction context is unavailable. Re-select a direction and try again.'
-        markGeneratePlanTraceFailure(message)
+        markGeneratePlanTraceFailure(message, 'missing_direction')
         setError(message)
         return false
       }
@@ -15044,6 +15104,15 @@ export function SandboxConciergePage({
         let generatedRouteShapeContract: RouteShapeContract
 
         if (isBuildWrapperActive) {
+          setSelectedDirectionGeneratePlanTrace((current) =>
+            current
+              ? {
+                  ...current,
+                  buildContractDrivenBuildWaypointPlanInvoked: true,
+                  runGeneratePlanInvoked: true,
+                }
+              : current,
+          )
           const waypointPlan = await buildContractDrivenBuildWaypointPlan({
             conciergeIntent: generationConciergeIntent,
             canonicalInterpretationBundle: generationCanonicalInterpretationBundle,
@@ -15107,6 +15176,26 @@ export function SandboxConciergePage({
           preLineageExpectedDirectionId = waypointPlan.preLineage.expectedDirectionId
           preLineageActualDirectionId = waypointPlan.preLineage.actualDirectionId
           preLineagePassed = waypointPlan.preLineage.passed
+          setSelectedDirectionGeneratePlanTrace((current) =>
+            current
+              ? {
+                  ...current,
+                  generationReturned: true,
+                  generationReturnedFalse: false,
+                  generationThrew: false,
+                  generationErrorKind: null,
+                  generationErrorMessage: null,
+                  greatStopGateReached: Boolean(
+                    result.trace.greatStopGateResult ??
+                      result.trace.greatStopGateSelectionDiagnostics,
+                  ),
+                  generatedContractEntryArtifactPresent: Boolean(
+                    postParityContractEntryArtifact,
+                  ),
+                  finalRoutePresent: Boolean(nextFinalRoute),
+                }
+              : current,
+          )
         } else {
           const planBuildInput = projectConciergeIntentToIntentInput({
             conciergeIntent: generationConciergeIntent,
@@ -15295,6 +15384,22 @@ export function SandboxConciergePage({
             buildGenerationSemanticIdentityRef.current,
           )
         if (!rawSelectionEpochMatches && !buildGenerationSemanticIdentityStillMatches) {
+          setSelectedDirectionGeneratePlanTrace((current) =>
+            current
+              ? {
+                  ...current,
+                  generationReturned: true,
+                  generationReturnedFalse: true,
+                  generationErrorKind: 'storage_or_handoff_failed',
+                  generationErrorMessage:
+                    'Generated route was not stored because the selected Build generation identity changed before handoff.',
+                  generatedContractEntryArtifactPresent: Boolean(
+                    postParityContractEntryArtifact,
+                  ),
+                  finalRoutePresent: Boolean(nextFinalRoute),
+                }
+              : current,
+          )
           return false
         }
         setPlan({
@@ -15330,6 +15435,17 @@ export function SandboxConciergePage({
                 ...current,
                 activeDirectionId: activeDirectionContract.id,
                 activeCandidateArtifactId: activeCandidateRouteArtifact?.id ?? null,
+                generationReturned: true,
+                generationReturnedFalse: false,
+                generationThrew: false,
+                generationErrorKind: null,
+                generationErrorMessage: null,
+                generatedContractEntryArtifactPresent: Boolean(postParityContractEntryArtifact),
+                finalRoutePresent: Boolean(nextFinalRoute),
+                greatStopGateReached: Boolean(
+                  result.trace.greatStopGateResult ??
+                    result.trace.greatStopGateSelectionDiagnostics,
+                ),
                 caughtDriftError: false,
                 driftErrorMessage: null,
                 driftFailureDirectionId: null,
@@ -15376,9 +15492,26 @@ export function SandboxConciergePage({
               ? 'great_stop_gate'
             : rawMessage.toLowerCase().includes('direction context was not preserved')
               ? 'selected_direction_lineage'
-              : rawMessage.toLowerCase().includes('route drifted from selected direction contract')
+            : rawMessage.toLowerCase().includes('route drifted from selected direction contract')
                 ? 'unknown'
                 : null
+        setSelectedDirectionGeneratePlanTrace((current) =>
+          current
+            ? {
+                ...current,
+                generationReturned: true,
+                generationReturnedFalse: true,
+                generationThrew: true,
+                generationErrorKind: generatePlanFailureSource ?? 'unknown',
+                generationErrorMessage: compactRawMessage,
+                greatStopGateReached: Boolean(greatStopGateDiagnostics),
+                generatedContractEntryArtifactPresent: false,
+                finalRoutePresent: false,
+                generatePlanFailureSource,
+                rawDriftErrorMessageCompact: compactRawMessage,
+              }
+            : current,
+        )
         setStep2RerollTrace((current) =>
           current
             ? {
@@ -15425,6 +15558,43 @@ export function SandboxConciergePage({
             .includes('route drifted from selected direction contract')
         ) {
           setSelectedDirectionGeneratePlanTrace((current) => ({
+            ...(current ?? {
+              requestedDirectionId: normalizedDirectionOverride,
+              requestedArtifactId: normalizedSelectedRouteArtifactIdOverride,
+              activeDirectionId: activeDirectionId ?? null,
+              activeCandidateArtifactId: activeCandidateRouteArtifact?.id ?? null,
+              generationAttempted: true,
+              generationReturned: true,
+              generationReturnedFalse: true,
+              generationThrew: true,
+              generationErrorKind: generatePlanFailureSource ?? 'unknown',
+              generationErrorMessage: compactRawMessage,
+              buildContractDrivenBuildWaypointPlanInvoked: false,
+              runGeneratePlanInvoked: null,
+              greatStopGateReached: Boolean(greatStopGateDiagnostics),
+              generatedContractEntryArtifactPresent: false,
+              finalRoutePresent: false,
+              selectedGenerationInputArtifactId: activeCandidateRouteArtifact?.id ?? null,
+              selectedGenerationInputSourceKind: null,
+              requestMode: isSurpriseWrapperActive
+                ? 'surprise'
+                : isCurateWrapperActive
+                  ? 'curate'
+                  : 'build',
+              caughtDriftError: false,
+              driftErrorMessage: null,
+              driftFailureDirectionId: null,
+              generatePlanFailureSource: null,
+              preLineageExpectedDirectionId: null,
+              preLineageActualDirectionId: null,
+              preLineagePassed: null,
+              postPlannerFailedCheck: null,
+              postPlannerGenerationDriftReason: null,
+              postPlannerExpectedDirectionIdentity: null,
+              postPlannerObservedDirectionIdentity: null,
+              postPlannerDirectionAlignmentScore: null,
+              rawDriftErrorMessageCompact: null,
+            }),
             requestedDirectionId: current?.requestedDirectionId ?? normalizedDirectionOverride,
             requestedArtifactId:
               current?.requestedArtifactId ?? normalizedSelectedRouteArtifactIdOverride,
@@ -15434,6 +15604,12 @@ export function SandboxConciergePage({
             requestMode:
               current?.requestMode ??
               (isSurpriseWrapperActive ? 'surprise' : isCurateWrapperActive ? 'curate' : 'build'),
+            generationReturned: true,
+            generationReturnedFalse: true,
+            generationThrew: true,
+            generationErrorKind: generatePlanFailureSource ?? 'unknown',
+            generationErrorMessage: compactRawMessage,
+            greatStopGateReached: Boolean(greatStopGateDiagnostics),
             caughtDriftError: true,
             driftErrorMessage: rawMessage || null,
             driftFailureDirectionId: activeDirectionId,
@@ -21827,7 +22003,7 @@ export function SandboxConciergePage({
     : selectedCandidateRouteArtifact?.sourceOpportunityId === 'step2_static_build_paper_plane'
       ? 'build_static_pre_generation'
       : 'unknown'
-  const publicBuildReviewGatingDiagnostics = {
+  const publicBuildReviewGatingDiagnosticsBase = {
     buildSelectedCardTruthReady,
     buildReviewTruthEligible,
     buildPreGenerationSelectionReady,
@@ -21875,8 +22051,8 @@ export function SandboxConciergePage({
     routeSummaryProvenance: activePlanPreview?.provenance ?? null,
     renderedRouteSource: renderedCommittedRouteSummarySource,
     generatedContractEntryArtifactPresent:
-      publicBuildReviewGatingDiagnostics.generatedContractEntryArtifactPresent,
-    finalRoutePresent: publicBuildReviewGatingDiagnostics.finalRoutePresent,
+      publicBuildReviewGatingDiagnosticsBase.generatedContractEntryArtifactPresent,
+    finalRoutePresent: publicBuildReviewGatingDiagnosticsBase.finalRoutePresent,
     runtimeRouteArtifactPresent: false,
     greatStopStatus:
       plan?.generationTrace.greatStopGateResult?.status ??
@@ -21884,11 +22060,28 @@ export function SandboxConciergePage({
       null,
     greatStopFailureClassification:
       generationContractDebug?.greatStopGateFailureClassification ?? null,
-    routeAuthorityStatus: publicBuildReviewGatingDiagnostics.routeAuthorityStatus,
-    lockInputAvailable: publicBuildReviewGatingDiagnostics.lockInputAvailable,
-    reviewEligible: publicBuildReviewGatingDiagnostics.buildReviewTruthEligible,
-    lockEligible: publicBuildReviewGatingDiagnostics.lockInputAvailable,
+    routeAuthorityStatus: publicBuildReviewGatingDiagnosticsBase.routeAuthorityStatus,
+    lockInputAvailable: publicBuildReviewGatingDiagnosticsBase.lockInputAvailable,
+    reviewEligible: publicBuildReviewGatingDiagnosticsBase.buildReviewTruthEligible,
+    lockEligible: publicBuildReviewGatingDiagnosticsBase.lockInputAvailable,
   })
+  const publicBuildPrimaryActionText = !showPrimaryContinueAction
+    ? 'none'
+    : loading
+      ? 'Building full plan...'
+      : isPublicSurface && isBuildWrapperActive && !buildRouteLifecycleDiagnostics.reviewEligible
+        ? 'Continue building'
+        : isPublicSurface
+          ? 'Review this route'
+          : 'Continue with this plan'
+  const publicBuildReviewGatingDiagnostics = {
+    ...publicBuildReviewGatingDiagnosticsBase,
+    primaryActionText: publicBuildPrimaryActionText,
+    reviewShouldRender: Boolean(
+      showPrimaryContinueAction &&
+        (!isPublicSurface || !isBuildWrapperActive || buildRouteLifecycleDiagnostics.reviewEligible),
+    ),
+  }
   const previewBridgeLine =
     isPublicSurface && isBuildWrapperActive
       ? buildRouteLifecycleDiagnostics.userFacingLabel
@@ -21903,6 +22096,44 @@ export function SandboxConciergePage({
   const publicBuildQualityDiagnosticsVisible = Boolean(
     isPublicSurface && isBuildWrapperActive && showDebug,
   )
+  const buildGenerationHandoffDiagnostics = {
+    generationAttempted: selectedDirectionGeneratePlanTrace?.generationAttempted ?? false,
+    generationReturned: selectedDirectionGeneratePlanTrace?.generationReturned ?? false,
+    generationReturnedFalse:
+      selectedDirectionGeneratePlanTrace?.generationReturnedFalse ?? false,
+    generationThrew: selectedDirectionGeneratePlanTrace?.generationThrew ?? false,
+    generationErrorKind: selectedDirectionGeneratePlanTrace?.generationErrorKind ?? null,
+    generationErrorMessage: selectedDirectionGeneratePlanTrace?.generationErrorMessage ?? null,
+    buildContractDrivenBuildWaypointPlanInvoked:
+      selectedDirectionGeneratePlanTrace?.buildContractDrivenBuildWaypointPlanInvoked ??
+      false,
+    runGeneratePlanInvoked:
+      selectedDirectionGeneratePlanTrace?.runGeneratePlanInvoked ?? null,
+    greatStopGateReached:
+      selectedDirectionGeneratePlanTrace?.greatStopGateReached ??
+      Boolean(
+        plan?.generationTrace.greatStopGateResult ??
+          plan?.generationTrace.greatStopGateSelectionDiagnostics ??
+          generationContractDebug?.greatStopGateSelectionDiagnostics,
+      ),
+    generatedContractEntryArtifactPresent:
+      selectedDirectionGeneratePlanTrace?.generatedContractEntryArtifactPresent ??
+      Boolean(plan?.generatedContractEntryArtifact),
+    finalRoutePresent:
+      selectedDirectionGeneratePlanTrace?.finalRoutePresent ??
+      Boolean(routeAuthoritySnapshot.lockReadyCanonicalRouteTruthCandidate?.finalRoute),
+    selectedGenerationInputArtifactId:
+      selectedDirectionGeneratePlanTrace?.selectedGenerationInputArtifactId ??
+      publicBuildReviewGatingDiagnostics.selectedArtifactId,
+    selectedGenerationInputSourceKind:
+      selectedDirectionGeneratePlanTrace?.selectedGenerationInputSourceKind ??
+      (buildSelectedCandidateAdmissionDiagnostic?.source === 'provider_shadow'
+        ? 'provider_shadow'
+        : buildSelectedCandidateAdmissionDiagnostic?.source === 'static'
+          ? 'build_static_pre_generation'
+          : null),
+    buildPreGenerationSelectionReady,
+  }
   const buildQualityWindDownDiagnostics = tasteCurationDebug?.windDownCandidateQualityDiagnostics ?? []
   const buildQualityLincolnWindDownDiagnostic =
     buildQualityWindDownDiagnostics.find((entry) => entry.venueId === 'sj-lincoln-avenue-deli') ?? null
@@ -22010,6 +22241,7 @@ export function SandboxConciergePage({
     greatStopGateFailureClassification:
       generationContractDebug?.greatStopGateFailureClassification ?? null,
     routeLifecycleDiagnostics: buildRouteLifecycleDiagnostics,
+    generationHandoffDiagnostics: buildGenerationHandoffDiagnostics,
     movementEvidence: {
       nirvanaSoulToPaperPlane: buildQualityFormatTransition('sj-nirvana-soul', 'sj-paper-plane'),
       paperPlaneToLincolnAvenueDeli: buildQualityFormatTransition(
@@ -27270,11 +27502,7 @@ export function SandboxConciergePage({
                     onClick={handleBuildFullPlan}
                     disabled={!previewGenerateDirectionId || loading}
                   >
-                    {loading
-                      ? 'Building full plan...'
-                      : isPublicSurface
-                        ? 'Review this route'
-                        : 'Continue with this plan'}
+                    {publicBuildReviewGatingDiagnostics.primaryActionText}
                   </button>
                 )}
                 {showTryAnotherAction && (

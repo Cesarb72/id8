@@ -249,8 +249,8 @@ try {
   )
   const buildReviewDiagnosticsBlock = sourceSlice(
     sandboxSource,
-    'const publicBuildReviewGatingDiagnostics = {',
-    'const publicBuildQualityDiagnosticsVisible',
+    'const publicBuildReviewGatingDiagnosticsBase = {',
+    'const publicBuildPrimaryActionText',
   )
   assert(
     buildReviewDiagnosticsBlock.includes('postGenerationRouteTruthOwnsSurface') &&
@@ -258,6 +258,13 @@ try {
       buildReviewDiagnosticsBlock.includes('selectedRouteStaticPreGeneration') &&
       buildReviewDiagnosticsBlock.includes('!publicBuildGeneratedRouteTruthOwnsPostContinueSurface'),
     'Build Review diagnostics must show generated/final route ownership and prevent static pre-generation selection after finalRoute exists.',
+  )
+  assert(
+    sandboxSource.includes('const publicBuildReviewGatingDiagnostics = {') &&
+      sandboxSource.includes('...publicBuildReviewGatingDiagnosticsBase') &&
+      sandboxSource.includes('primaryActionText: publicBuildPrimaryActionText') &&
+      sandboxSource.includes('buildRouteLifecycleDiagnostics.reviewEligible'),
+    'Build Review diagnostics must derive final Review CTA visibility from route lifecycle eligibility.',
   )
   const buildProviderDiagnosticsBlock = sourceSlice(
     sandboxSource,
