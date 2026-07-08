@@ -39,6 +39,7 @@ import type { ArcCandidate, ArcScoreBreakdown, ArcStop } from '../types/arc'
 import type { CrewPolicy } from '../types/crewPolicies'
 import type { ExperienceLens } from '../types/experienceLens'
 import type { IntentProfile } from '../types/intent'
+import type { RouteShapeContract } from '../types/intent'
 import type { SpatialCoherenceAnalysis } from '../types/spatial'
 import type { InternalRole } from '../types/venue'
 import type {
@@ -78,6 +79,7 @@ const FAKE_COMPLETENESS_PENALTY = 0.08
 export interface ScoreArcAssemblyOptions {
   whenSpatialScoring?: WhenSpatialScoringMode
   whenSignalProfile?: WhenSignalProfile
+  routeShapeContract?: RouteShapeContract
 }
 
 interface WhenSpatialScorePressure {

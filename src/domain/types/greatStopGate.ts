@@ -272,6 +272,13 @@ export interface BuildCandidatePoolCompactnessDiagnostics {
   compactCandidatesPrunedBeforeTop40Count: number
   placeRightCandidatesPrunedBeforeTop40Count: number
   nearCompactCandidatesPrunedBeforeTop40Count: number
+  compactCandidatesPreservedIntoTop40Count?: number
+  placeRightCandidatesPreservedIntoTop40Count?: number
+  preservedCompactCandidateIds?: string[]
+  preservedCompactCandidateRoutes?: string[]
+  replacedCandidateIds?: string[]
+  replacedCandidateCount?: number
+  candidatePreservationReason?: string
   candidateShapeCounts: {
     threeStop: number
     fourStop: number

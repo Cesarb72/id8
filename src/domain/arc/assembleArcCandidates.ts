@@ -25,6 +25,7 @@ import type {
   ArcCandidate,
   AnchorArcTraceDiagnostics,
   ArcStop,
+  ArcTop40PreservationDiagnostics,
   AssembleArcCandidatesResult,
   ArcAssemblySurpriseDiagnostics,
   ScoredVenue,
@@ -739,14 +740,138 @@ function updateBestAnchorDiagnostic(
   return current
 }
 
-function preservePreferredArcCandidates(
+interface ArcTop40PreservationResult {
+  candidates: ArcCandidate[]
+  diagnostics?: ArcTop40PreservationDiagnostics
+}
+
+function routeForCandidate(candidate: ArcCandidate): string {
+  return candidate.stops.map((stop) => stop.scoredVenue.venue.name).join(' -> ')
+}
+
+function detectClusterBacktrack(candidate: ArcCandidate): boolean {
+  const clusters = candidate.spatial.clusterAssignments.map((assignment) => assignment.clusterId)
+  const seen = new Set<string>()
+  let previous: string | undefined
+  for (const cluster of clusters) {
+    if (cluster === previous) {
+      continue
+    }
+    if (seen.has(cluster)) {
+      return true
+    }
+    seen.add(cluster)
+    previous = cluster
+  }
+  return false
+}
+
+function isTightBuildCompactPreservationActive(
+  intent: IntentProfile,
+  scoringOptions?: ScoreArcAssemblyOptions,
+): boolean {
+  const routeShapeContract = scoringOptions?.routeShapeContract
+  return Boolean(
+    intent.mode === 'build' &&
+      intent.planningMode === 'user-led' &&
+      intent.anchor?.venueId &&
+      routeShapeContract?.movementProfile.radius === 'tight' &&
+      routeShapeContract.movementProfile.neighborhoodContinuity === 'strict' &&
+      routeShapeContract.mutationProfile.preservePriority.includes('movement'),
+  )
+}
+
+function isTightCompactAnchorCandidate(
+  candidate: ArcCandidate,
+  intent: IntentProfile,
+  scoringOptions?: ScoreArcAssemblyOptions,
+): boolean {
+  const routeShapeContract = scoringOptions?.routeShapeContract
+  const anchorVenueId = intent.anchor?.venueId
+  if (!routeShapeContract || !anchorVenueId) {
+    return false
+  }
+  const anchorRole = toInternalRole(intent.anchor?.role ?? 'highlight')
+  if (!candidateMatchesPreferredRole(candidate, anchorRole, anchorVenueId)) {
+    return false
+  }
+
+  const minutes = candidate.spatial.transitions.map((transition) =>
+    Math.max(0, transition.driveGap),
+  )
+  const transitionCount = Math.max(1, minutes.length)
+  const totalMovement = minutes.reduce((sum, value) => sum + value, 0)
+  const maxTransition = minutes.reduce((max, value) => Math.max(max, value), 0)
+  const maxTransitionLimit = Math.max(1, routeShapeContract.movementProfile.maxTransitionMinutes)
+  const totalMovementLimit = maxTransitionLimit * transitionCount * 0.86
+  const repeatedEscapeCount = candidate.spatial.repeatedClusterEscapeCount
+  const extraClusterEscapeCount = Math.max(0, candidate.spatial.clusterEscapeCount - 1)
+
+  return (
+    totalMovement <= totalMovementLimit &&
+    maxTransition <= maxTransitionLimit &&
+    repeatedEscapeCount === 0 &&
+    extraClusterEscapeCount === 0 &&
+    !detectClusterBacktrack(candidate) &&
+    candidate.spatial.longTransitionCount === 0
+  )
+}
+
+function compareTightCompactAnchorCandidates(
+  left: ArcCandidate,
+  right: ArcCandidate,
+): number {
+  const leftThreeStop = left.stops.length === 3 ? 1 : 0
+  const rightThreeStop = right.stops.length === 3 ? 1 : 0
+  if (rightThreeStop !== leftThreeStop) {
+    return rightThreeStop - leftThreeStop
+  }
+  const leftWildcard = left.hasWildcard ? 1 : 0
+  const rightWildcard = right.hasWildcard ? 1 : 0
+  if (leftWildcard !== rightWildcard) {
+    return leftWildcard - rightWildcard
+  }
+  const leftMovement = left.spatial.transitions.reduce(
+    (sum, transition) => sum + Math.max(0, transition.driveGap),
+    0,
+  )
+  const rightMovement = right.spatial.transitions.reduce(
+    (sum, transition) => sum + Math.max(0, transition.driveGap),
+    0,
+  )
+  if (leftMovement !== rightMovement) {
+    return leftMovement - rightMovement
+  }
+  const leftMaxTransition = left.spatial.transitions.reduce(
+    (max, transition) => Math.max(max, transition.driveGap),
+    0,
+  )
+  const rightMaxTransition = right.spatial.transitions.reduce(
+    (max, transition) => Math.max(max, transition.driveGap),
+    0,
+  )
+  if (leftMaxTransition !== rightMaxTransition) {
+    return leftMaxTransition - rightMaxTransition
+  }
+  if (left.spatial.clusterEscapeCount !== right.spatial.clusterEscapeCount) {
+    return left.spatial.clusterEscapeCount - right.spatial.clusterEscapeCount
+  }
+  const scoreDelta = right.totalScore - left.totalScore
+  if (scoreDelta !== 0) {
+    return scoreDelta
+  }
+  return left.id.localeCompare(right.id)
+}
+
+export function preservePreferredArcCandidates(
   rankedCandidates: ArcCandidate[],
   pools: RolePools,
   intent: IntentProfile,
   limit: number,
-): ArcCandidate[] {
+  scoringOptions?: ScoreArcAssemblyOptions,
+): ArcTop40PreservationResult {
   if (rankedCandidates.length <= limit) {
-    return rankedCandidates
+    return { candidates: rankedCandidates }
   }
 
   const preferredArcCandidates: ArcCandidate[] = []
@@ -795,26 +920,77 @@ function preservePreferredArcCandidates(
   const missingPreferredArcCandidates = preferredArcCandidates.filter(
     (candidate) => !topCandidateIds.has(candidate.id),
   )
+  const tightCompactCandidates = isTightBuildCompactPreservationActive(intent, scoringOptions)
+    ? rankedCandidates
+        .filter((candidate) => isTightCompactAnchorCandidate(candidate, intent, scoringOptions))
+        .sort(compareTightCompactAnchorCandidates)
+        .slice(0, 3)
+    : []
+  const tightCompactCandidateIds = new Set(
+    tightCompactCandidates.map((candidate) => candidate.id),
+  )
+  const missingTightCompactCandidates = tightCompactCandidates.filter(
+    (candidate) => !topCandidateIds.has(candidate.id),
+  )
 
-  if (missingPreferredArcCandidates.length === 0) {
-    return topCandidates
+  if (
+    missingPreferredArcCandidates.length === 0 &&
+    missingTightCompactCandidates.length === 0
+  ) {
+    return { candidates: topCandidates }
   }
 
-  const missingPreferredArcIds = new Set(
-    missingPreferredArcCandidates.map((candidate) => candidate.id),
+  const preservationCandidates = [
+    ...missingPreferredArcCandidates,
+    ...missingTightCompactCandidates.filter(
+      (candidate) => !missingPreferredArcCandidates.some((item) => item.id === candidate.id),
+    ),
+  ]
+  const missingPreservedArcIds = new Set(
+    preservationCandidates.map((candidate) => candidate.id),
   )
   const retainedTopCandidates = rankedCandidates
-    .filter((candidate) => !missingPreferredArcIds.has(candidate.id))
-    .slice(0, Math.max(0, limit - missingPreferredArcCandidates.length))
+    .filter((candidate) => !missingPreservedArcIds.has(candidate.id))
+    .slice(0, Math.max(0, limit - preservationCandidates.length))
 
-  const finalCandidates = [...retainedTopCandidates, ...missingPreferredArcCandidates]
+  const finalCandidates = [...retainedTopCandidates, ...preservationCandidates]
   const rankedIndex = new Map(
     rankedCandidates.map((candidate, index) => [candidate.id, index] as const),
   )
-
-  return finalCandidates.sort(
+  const sortedFinalCandidates = finalCandidates.sort(
     (left, right) => (rankedIndex.get(left.id) ?? 0) - (rankedIndex.get(right.id) ?? 0),
   )
+  const finalCandidateIds = new Set(sortedFinalCandidates.map((candidate) => candidate.id))
+  const replacedCandidateIds = topCandidates
+    .filter((candidate) => !finalCandidateIds.has(candidate.id))
+    .map((candidate) => candidate.id)
+  const preservedCompactCandidates = tightCompactCandidates.filter((candidate) =>
+    finalCandidateIds.has(candidate.id),
+  )
+
+  return {
+    candidates: sortedFinalCandidates,
+    diagnostics:
+      tightCompactCandidates.length > 0
+        ? {
+            compactCandidatesPreservedIntoTop40Count:
+              preservedCompactCandidates.length,
+            placeRightCandidatesPreservedIntoTop40Count:
+              preservedCompactCandidates.length,
+            preservedCompactCandidateIds: preservedCompactCandidates.map(
+              (candidate) => candidate.id,
+            ),
+            preservedCompactCandidateRoutes:
+              preservedCompactCandidates.map(routeForCandidate),
+            replacedCandidateIds,
+            replacedCandidateCount: replacedCandidateIds.length,
+            candidatePreservationReason:
+              preservedCompactCandidates.length > 0
+                ? 'preserved_due_to_tight_compact_anchor_candidate'
+                : undefined,
+          }
+        : undefined,
+  }
 }
 
 export function assembleArcCandidates(
@@ -1214,12 +1390,14 @@ export function assembleArcCandidates(
           : 0
       return rightTier - leftTier
   })
-  const prunedCandidates = preservePreferredArcCandidates(
+  const top40Preservation = preservePreferredArcCandidates(
     rankedCandidates,
     pools,
     intent,
     40,
+    scoringOptions,
   )
+  const prunedCandidates = top40Preservation.candidates
   const postPruneAnchorCandidates =
     anchorRole && anchorVenueId
       ? prunedCandidates.filter((candidate) =>
@@ -1260,6 +1438,7 @@ export function assembleArcCandidates(
   return {
     candidates: prunedCandidates,
     preTop40Candidates: rankedCandidates,
+    top40PreservationDiagnostics: top40Preservation.diagnostics,
     surpriseDiagnostics,
     anchorTrace,
   }

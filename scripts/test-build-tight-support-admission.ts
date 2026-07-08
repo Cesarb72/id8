@@ -557,6 +557,7 @@ const arcAssembly = assembleArcCandidates(
   crewPolicy,
   lens,
   poolsWithNearSupports,
+  { routeShapeContract },
 )
 const anchorNearCandidate = arcAssembly.preTop40Candidates?.find((candidate) => {
   const ids = candidate.stops.map((stop) => stop.scoredVenue.candidateIdentity.baseVenueId)

@@ -108,6 +108,7 @@ import type {
   ArcAssemblySurpriseDiagnostics,
   ArcCandidate,
   ArcStop,
+  ArcTop40PreservationDiagnostics,
   ScoredVenue,
 } from './types/arc'
 import type {
@@ -868,6 +869,7 @@ function buildBuildCandidatePoolCompactnessDiagnostics(params: {
   preTop40RankedEntries: WaypointRankedCandidate[]
   postTop40RankedEntries: WaypointRankedCandidate[]
   postTop40Candidates: ArcCandidate[]
+  top40PreservationDiagnostics?: ArcTop40PreservationDiagnostics
   rolePools: RolePools
   intent: IntentProfile
   locationClass?: BuildLocationClass
@@ -877,6 +879,7 @@ function buildBuildCandidatePoolCompactnessDiagnostics(params: {
     preTop40RankedEntries,
     postTop40RankedEntries,
     postTop40Candidates,
+    top40PreservationDiagnostics,
     rolePools,
     intent,
     locationClass,
@@ -998,6 +1001,18 @@ function buildBuildCandidatePoolCompactnessDiagnostics(params: {
     compactCandidatesPrunedBeforeTop40Count: preCompactPruned.length,
     placeRightCandidatesPrunedBeforeTop40Count: prePlaceRightPruned.length,
     nearCompactCandidatesPrunedBeforeTop40Count: preNearCompactPruned.length,
+    compactCandidatesPreservedIntoTop40Count:
+      top40PreservationDiagnostics?.compactCandidatesPreservedIntoTop40Count,
+    placeRightCandidatesPreservedIntoTop40Count:
+      top40PreservationDiagnostics?.placeRightCandidatesPreservedIntoTop40Count,
+    preservedCompactCandidateIds:
+      top40PreservationDiagnostics?.preservedCompactCandidateIds,
+    preservedCompactCandidateRoutes:
+      top40PreservationDiagnostics?.preservedCompactCandidateRoutes,
+    replacedCandidateIds: top40PreservationDiagnostics?.replacedCandidateIds,
+    replacedCandidateCount: top40PreservationDiagnostics?.replacedCandidateCount,
+    candidatePreservationReason:
+      top40PreservationDiagnostics?.candidatePreservationReason,
     candidateShapeCounts: {
       threeStop: preTop40RankedEntries.filter((entry) => entry.candidate.stops.length === 3)
         .length,
@@ -2799,6 +2814,7 @@ async function runGeneratePlanInternal(
   const arcScoringOptions: ScoreArcAssemblyOptions = {
     whenSpatialScoring: options.whenSpatialScoring ?? 'off',
     whenSignalProfile: options.whenSignalProfile,
+    routeShapeContract: options.routeShapeContract,
   }
   const arcAssembly = assembleArcCandidates(
     scoredVenues,
@@ -3181,6 +3197,7 @@ async function runGeneratePlanInternal(
           preTop40RankedEntries: preTop40Ranking.ranked,
           postTop40RankedEntries: ranking.ranked,
           postTop40Candidates: arcCandidates,
+          top40PreservationDiagnostics: arcAssembly.top40PreservationDiagnostics,
           rolePools,
           intent: planningIntent,
           locationClass: options.greatStopGateLocationClass,

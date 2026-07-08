@@ -58,6 +58,13 @@ const requiredTypeTokens = [
   'compactCandidatesPrunedBeforeTop40Count',
   'placeRightCandidatesPrunedBeforeTop40Count',
   'nearCompactCandidatesPrunedBeforeTop40Count',
+  'compactCandidatesPreservedIntoTop40Count',
+  'placeRightCandidatesPreservedIntoTop40Count',
+  'preservedCompactCandidateIds',
+  'preservedCompactCandidateRoutes',
+  'replacedCandidateIds',
+  'replacedCandidateCount',
+  'candidatePreservationReason',
   'rolePoolNearAnchorSupportVisibility',
   'compactnessTotalMovementLimit',
   'greatStopTotalMovementLimit',
@@ -82,9 +89,10 @@ assert(
 )
 assert(
   arcAssemblySource.includes('preservePreferredArcCandidates(') &&
+    arcAssemblySource.includes('preserved_due_to_tight_compact_anchor_candidate') &&
     arcAssemblySource.indexOf('preTop40Candidates: rankedCandidates') >
       arcAssemblySource.indexOf('preservePreferredArcCandidates('),
-  'Pre-top-40 diagnostics must be emitted after existing top-40 preservation without changing pruning.',
+  'Pre-top-40 diagnostics must be emitted after deterministic top-40 preservation.',
 )
 assert(
   runGeneratePlanSource.includes('buildBuildCandidatePoolCompactnessDiagnostics') &&
@@ -112,6 +120,7 @@ assert(
     sandboxSource.includes('buildCandidatePoolShapeCounts:') &&
     sandboxSource.includes('buildCandidatePoolRolePoolNearAnchor:') &&
     sandboxSource.includes('buildCandidatePoolLimitAlignment:') &&
+    sandboxSource.includes('buildCandidatePoolTop40Preservation:') &&
     sandboxSource.includes('buildCandidatePoolNearestPreTop40Compact:') &&
     sandboxSource.includes('buildCandidatePoolNearestPreTop40PlaceRight:') &&
     sandboxSource.includes('buildCandidatePoolBestPreTop40NearCompact:') &&
@@ -164,15 +173,19 @@ const output = {
   surpriseShapeCountsExposed: true,
   compactPlaceRightNearCompactCountsExposed: true,
   prunedBeforeTop40CountsExposed: true,
+  compactTop40PreservationExposed:
+    arcAssemblySource.includes('preserved_due_to_tight_compact_anchor_candidate') &&
+    runGeneratePlanSource.includes('compactCandidatesPreservedIntoTop40Count') &&
+    sandboxSource.includes('buildCandidatePoolTop40Preservation:'),
   nearestPreTop40RowsVisible: true,
   absenceCanBeExplicit: sandboxSource.includes("firstCompactPreTop40Rank ?? 'none'"),
   compactnessAndGreatStopLimitsVisible: true,
   limitMismatchVisible: true,
   candidateRowsCappedAt: 5,
   orderingBehaviorUnchanged: !waypointSource.includes('buildCandidatePoolCompactnessDiagnostics'),
-  top40PruningBehaviorUnchanged:
+  top40CapPreserved:
     arcAssemblySource.includes('preservePreferredArcCandidates(') &&
-    arcAssemblySource.includes('candidates: prunedCandidates'),
+    arcAssemblySource.includes('limit - preservationCandidates.length'),
   greatStopThresholdsUnchanged:
     readFileSync(join(repoRoot, 'src/domain/greatStop/buildGreatStopGateResult.ts'), 'utf8').includes(
       'maxComfortableTotalMovementMinutes: 24',

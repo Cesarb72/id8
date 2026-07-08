@@ -384,9 +384,20 @@ export interface AnchorArcTraceDiagnostics {
   bestPrunedAnchorArcScore?: number
 }
 
+export interface ArcTop40PreservationDiagnostics {
+  compactCandidatesPreservedIntoTop40Count: number
+  placeRightCandidatesPreservedIntoTop40Count: number
+  preservedCompactCandidateIds: string[]
+  preservedCompactCandidateRoutes: string[]
+  replacedCandidateIds: string[]
+  replacedCandidateCount: number
+  candidatePreservationReason?: string
+}
+
 export interface AssembleArcCandidatesResult {
   candidates: ArcCandidate[]
   preTop40Candidates?: ArcCandidate[]
+  top40PreservationDiagnostics?: ArcTop40PreservationDiagnostics
   surpriseDiagnostics: ArcAssemblySurpriseDiagnostics
   anchorTrace?: AnchorArcTraceDiagnostics
 }
