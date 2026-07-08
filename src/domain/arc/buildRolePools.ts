@@ -548,6 +548,121 @@ interface PreferredRoleAdmissionDecision {
   hoursRelaxationReason?: AnchorHoursRelaxationReason
 }
 
+interface TightSupportAdmissionTrace {
+  active: boolean
+  reason: string
+  requiredAnchorBaseVenueId?: string
+  requiredAnchorNeighborhood?: string
+  candidates: ScoredVenue[]
+  candidateCountBeforeAdmission: number
+  candidateCountAfterAdmission?: number
+  supportSupplyMissing: boolean
+}
+
+function uniqueScoredVenues(candidates: ScoredVenue[]): ScoredVenue[] {
+  return [
+    ...new Map(
+      candidates.map((candidate) => [
+        getScoredVenueCandidateId(candidate),
+        candidate,
+      ] as const),
+    ).values(),
+  ]
+}
+
+function isTightBuildSupportAdmissionActive(
+  intent: IntentProfile | undefined,
+  contractConstraints: ContractConstraints | undefined,
+): boolean {
+  return Boolean(
+    intent?.mode === 'build' &&
+      intent.planningMode === 'user-led' &&
+      intent.anchor?.venueId &&
+      contractConstraints &&
+      (contractConstraints.movementTolerance === 'contained' ||
+        contractConstraints.movementTolerance === 'compressed') &&
+      contractConstraints.requireContinuity,
+  )
+}
+
+function buildTightSupportAdmissionTrace(params: {
+  scoredVenues: ScoredVenue[]
+  role: InternalRole
+  lensRole: LensStopRole
+  crewPolicy: CrewPolicy
+  intent?: IntentProfile
+  contractConstraints?: ContractConstraints
+}): TightSupportAdmissionTrace {
+  const { scoredVenues, role, lensRole, crewPolicy, intent, contractConstraints } = params
+  const active =
+    (role === 'warmup' || role === 'cooldown') &&
+    isTightBuildSupportAdmissionActive(intent, contractConstraints)
+
+  if (!active) {
+    return {
+      active: false,
+      reason: 'not_tight_build_support_context',
+      candidates: [],
+      candidateCountBeforeAdmission: 0,
+      supportSupplyMissing: false,
+    }
+  }
+
+  const requiredAnchorBaseVenueId = intent?.anchor?.venueId
+  const anchorVenue = requiredAnchorBaseVenueId
+    ? scoredVenues.find(
+        (candidate) => getScoredVenueBaseVenueId(candidate) === requiredAnchorBaseVenueId,
+      )
+    : undefined
+  const requiredAnchorNeighborhood = anchorVenue?.venue.neighborhood
+  if (!requiredAnchorBaseVenueId || !requiredAnchorNeighborhood) {
+    return {
+      active: true,
+      reason: 'required_anchor_neighborhood_not_available',
+      requiredAnchorBaseVenueId,
+      requiredAnchorNeighborhood,
+      candidates: [],
+      candidateCountBeforeAdmission: 0,
+      supportSupplyMissing: true,
+    }
+  }
+
+  const candidates = scoredVenues.filter((candidate) => {
+    if (getScoredVenueBaseVenueId(candidate) === requiredAnchorBaseVenueId) {
+      return false
+    }
+    if (candidate.venue.neighborhood !== requiredAnchorNeighborhood) {
+      return false
+    }
+    return (
+      isBaseRoleCandidate(
+        candidate,
+        role,
+        lensRole,
+        crewPolicy,
+        roleThresholds[role] - 0.13,
+        0.24,
+        0.24,
+        0.28,
+        4,
+      ) && !isPreferredRoleSeverelyIncompatible(candidate, role)
+    )
+  })
+
+  return {
+    active: true,
+    reason:
+      candidates.length > 0
+        ? 'tight_build_same_neighborhood_support_available'
+        : 'support_supply_missing',
+    requiredAnchorBaseVenueId,
+    requiredAnchorNeighborhood,
+    candidates,
+    candidateCountBeforeAdmission: 0,
+    supportSupplyMissing: candidates.length === 0,
+  }
+}
+
 function isPreferredRoleCandidateFeasible(
   candidate: ScoredVenue,
   role: InternalRole,
@@ -2388,6 +2503,36 @@ function pickRoleCandidates(
       `${roleContract.label} excluded hard-incompatible easy-hang signals before arc assembly.`
   }
 
+  const tightSupportAdmissionTrace = buildTightSupportAdmissionTrace({
+    scoredVenues,
+    role,
+    lensRole,
+    crewPolicy,
+    intent,
+    contractConstraints,
+  })
+  const tightSupportCandidates = tightSupportAdmissionTrace.active
+    ? tightSupportAdmissionTrace.candidates.filter(
+        (candidate) =>
+          !(
+            isBuildFriendsEasyHangContext(intent, experienceContract) &&
+            isEasyHangHardIncompatibleCandidate(candidate)
+          ),
+      )
+    : []
+  const tightSupportCandidateIds = new Set(
+    tightSupportCandidates.map((candidate) => getScoredVenueCandidateId(candidate)),
+  )
+  const tightSupportCandidateCountBeforeAdmission = roleCandidates.filter((candidate) =>
+    tightSupportCandidateIds.has(getScoredVenueCandidateId(candidate)),
+  ).length
+  if (tightSupportCandidates.length > 0) {
+    roleCandidates = uniqueScoredVenues([...tightSupportCandidates, ...roleCandidates])
+    fallbackReason =
+      fallbackReason ??
+      `${roleContract.label} preserved same-neighborhood supports for tight Build movement.`
+  }
+
   const scopedPeakCandidateIds =
     role === 'peak'
       ? new Set(roleCandidates.map((candidate) => getScoredVenueCandidateId(candidate)))
@@ -2489,6 +2634,7 @@ function pickRoleCandidates(
         localSupplySufficient,
         strictNearbyFailed,
       }) +
+        (tightSupportCandidateIds.has(getScoredVenueCandidateId(candidate)) ? 0.75 : 0) +
         (contractPressureByCandidateId.get(getScoredVenueCandidateId(candidate))?.scoreAdjustment ?? 0) +
         (role === 'peak' && candidate.recoveredCentralMomentHighlight
           ? CENTRAL_MOMENT_RECOVERY_BOOST +
@@ -2534,6 +2680,11 @@ function pickRoleCandidates(
           intent,
         )
       : rankedWithPreference.slice(0, cooldownBoosted ? 16 : 14)
+  const tightSupportCandidateCountAfterAdmission = tightSupportAdmissionTrace.active
+    ? limitedRanked.filter((candidate) =>
+        tightSupportCandidateIds.has(getScoredVenueCandidateId(candidate)),
+      ).length
+    : undefined
 
   if (
     enforceContract &&
@@ -2598,6 +2749,21 @@ function pickRoleCandidates(
         role === 'peak' ? recoveredHighlightCandidatesCount : undefined,
       centralMomentRecoveryReason:
         role === 'peak' ? centralMomentRecoveryReason : undefined,
+      tightSupportAdmissionActive: tightSupportAdmissionTrace.active,
+      tightSupportAdmissionReason: tightSupportAdmissionTrace.reason,
+      requiredAnchorBaseVenueId: tightSupportAdmissionTrace.requiredAnchorBaseVenueId,
+      requiredAnchorNeighborhood: tightSupportAdmissionTrace.requiredAnchorNeighborhood,
+      nearAnchorSupportCandidateCountBeforeAdmission: tightSupportAdmissionTrace.active
+        ? tightSupportCandidateCountBeforeAdmission
+        : undefined,
+      nearAnchorSupportCandidateCountAfterAdmission:
+        tightSupportCandidateCountAfterAdmission,
+      nearAnchorSupportCandidateIds: tightSupportAdmissionTrace.active
+        ? tightSupportCandidates.map((candidate) => getScoredVenueBaseVenueId(candidate))
+        : undefined,
+      supportSupplyMissing: tightSupportAdmissionTrace.active
+        ? tightSupportCandidateCountAfterAdmission === 0
+        : undefined,
     },
   }
 }

@@ -281,10 +281,18 @@ export interface BuildCandidatePoolCompactnessDiagnostics {
   rolePoolNearAnchorSupportVisibility: {
     status: 'captured' | 'not_captured'
     reason?: string
+    tightSupportAdmissionActive?: boolean
+    requiredAnchorBaseVenueId?: string
+    requiredAnchorNeighborhood?: string
+    startNearAnchorCountBeforeAdmission?: number
+    startNearAnchorCountAfterAdmission?: number
+    windDownNearAnchorCountBeforeAdmission?: number
+    windDownNearAnchorCountAfterAdmission?: number
     startNearAnchorCount?: number
     windDownNearAnchorCount?: number
     sameClusterStartCount?: number
     sameClusterWindDownCount?: number
+    supportSupplyMissing?: boolean
   }
   compactnessTotalMovementLimit?: number
   greatStopTotalMovementLimit?: number

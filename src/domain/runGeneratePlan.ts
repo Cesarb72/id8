@@ -721,13 +721,35 @@ function buildRolePoolNearAnchorSupportVisibility(params: {
 
   const sameNeighborhood = (candidate: ScoredVenue) =>
     candidate.venue.neighborhood === anchorVenue.venue.neighborhood
+  const warmupStatus = rolePools.contractPoolStatus.warmup
+  const cooldownStatus = rolePools.contractPoolStatus.cooldown
+  const tightSupportAdmissionActive = Boolean(
+    warmupStatus.tightSupportAdmissionActive || cooldownStatus.tightSupportAdmissionActive,
+  )
 
   return {
     status: 'captured',
     reason:
       'same-neighborhood role-pool support is captured; cluster-level role-pool support is not available until route assembly.',
+    tightSupportAdmissionActive,
+    requiredAnchorBaseVenueId:
+      warmupStatus.requiredAnchorBaseVenueId ?? cooldownStatus.requiredAnchorBaseVenueId,
+    requiredAnchorNeighborhood:
+      warmupStatus.requiredAnchorNeighborhood ?? cooldownStatus.requiredAnchorNeighborhood,
+    startNearAnchorCountBeforeAdmission:
+      warmupStatus.nearAnchorSupportCandidateCountBeforeAdmission,
+    startNearAnchorCountAfterAdmission:
+      warmupStatus.nearAnchorSupportCandidateCountAfterAdmission,
+    windDownNearAnchorCountBeforeAdmission:
+      cooldownStatus.nearAnchorSupportCandidateCountBeforeAdmission,
+    windDownNearAnchorCountAfterAdmission:
+      cooldownStatus.nearAnchorSupportCandidateCountAfterAdmission,
     startNearAnchorCount: rolePools.warmup.filter(sameNeighborhood).length,
     windDownNearAnchorCount: rolePools.cooldown.filter(sameNeighborhood).length,
+    supportSupplyMissing:
+      tightSupportAdmissionActive &&
+      (warmupStatus.supportSupplyMissing === true ||
+        cooldownStatus.supportSupplyMissing === true),
   }
 }
 

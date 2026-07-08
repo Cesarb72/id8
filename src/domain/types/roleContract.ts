@@ -68,6 +68,14 @@ export interface RoleContractPoolStatus {
   recoveredCentralMomentHighlight?: boolean
   recoveredHighlightCandidatesCount?: number
   centralMomentRecoveryReason?: string
+  tightSupportAdmissionActive?: boolean
+  tightSupportAdmissionReason?: string
+  requiredAnchorBaseVenueId?: string
+  requiredAnchorNeighborhood?: string
+  nearAnchorSupportCandidateCountBeforeAdmission?: number
+  nearAnchorSupportCandidateCountAfterAdmission?: number
+  nearAnchorSupportCandidateIds?: string[]
+  supportSupplyMissing?: boolean
   selectedHighlightValidityLevel?: HighlightValidityLevel
   selectedHighlightValidForIntent?: boolean
   selectedHighlightIsFallback?: boolean
