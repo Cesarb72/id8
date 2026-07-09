@@ -42,7 +42,7 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 ### Gravity Well 2 — dissolve `src/engines/district/`
 | Move | Status | Notes |
 |---|---|---|
-| `buildDistrictOpportunityProfiles.ts` → Interpretation/District sub-engine | ☐ not started | Landing zone exists under Interpretation/District; consumers route through boundary; implementation move pending. |
+| `buildDistrictOpportunityProfiles.ts` → Interpretation/District sub-engine | complete | Implementation now lives under Interpretation/District Intelligence; consumers route through boundary. |
 | `computeTasteLite.ts` → Taste | ☐ not started | the TODO admits it |
 | `computeBearingsLite.ts` → Bearings | ☐ not started | |
 | `fetchPlaceEntities.ts` → Field | blocked / partial split | Whole-file move blocked by District admission, radius selection, and distance/popularity sorting. GW2-1A raw source loader extracted to Field; District orchestration/admission split still pending. |
@@ -81,6 +81,7 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 ### Interpretation (incl. Taste, District, Direction System)
 - [2026-07-08] [GW2-HOME-1 District Intelligence boundary] — expected no-behavior scaffold for structural District Intelligence under Interpretation/District → found existing district/ contains recommendation/explanation/anchor payload logic, so structural home was established under district/intelligence/. Impact: clean boundary scaffold. Action: added no-behavior re-export boundary; no implementation moved.
 - [2026-07-08] [GW2-HOME-2 District Intelligence boundary rewire] — expected no-behavior import rewire through the new District Intelligence boundary → found runtime and proof-script consumers entered through the legacy `engines/district` barrel, with one page also needing a type-only import from District types. Impact: clean boundary rewire. Action: rewired `buildDistrictOpportunityProfiles` consumers through `domain/interpretation/district/intelligence/`; no implementation moved.
+- [2026-07-08] [GW2-HOME-3 District structural implementation move] — expected behavior-preserving relocation of `buildDistrictOpportunityProfiles` into the District Intelligence home → found the implementation could move cleanly while keeping existing District helper files in place via relative imports; preflight confirmed `resolveDistrictAnchor`, explanation, and insider payload files are legitimate Interpretation/District work, while `recommendDistricts` remains mixed and `getDirectionLiveSignals` is ambiguous but non-blocking. Impact: clean move with future cleanup notes. Action: moved implementation into `domain/interpretation/district/intelligence/`; removed old engines/core implementation file; no helper files moved.
 
 ### Bearings
 *(append discoveries here)*
@@ -95,7 +96,7 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 *(append discoveries here)*
 
 ### Cross-cutting (contracts, gravity wells, seams)
-*(append discoveries here)*
+- [2026-07-08] [GW2-HOME-3 District folder preflight] — expected `district/intelligence/` naming to stay clear despite existing `district/` recommendation/explanation files → found the child boundary remains clean for structural District Intelligence, but `recommendDistricts` still mixes Taste-adjacent recommendation scoring with legacy Arc role-pool glue and `getDirectionLiveSignals` appears live-signal/Direction-adjacent rather than purely structural District. Impact: non-blocking future re-housing note. Action: proceeded with implementation move; leave mixed files for later scoped cleanup.
 
 ---
 
