@@ -1,4 +1,4 @@
-import { formRawPockets, buildRawPocketFromEntities } from '../../../../engines/district/clustering/formRawPockets'
+import { formRawPockets, buildRawPocketFromEntities } from './clustering/formRawPockets'
 import { buildDistrictDebugTrace } from '../../../../engines/district/debug/buildDistrictDebugTrace'
 import { fetchPlaceEntities } from '../../../../engines/district/entities/fetchPlaceEntities'
 import { inferPocketIdentity } from '../../../../engines/district/identity/inferPocketIdentity'
