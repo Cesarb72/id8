@@ -1,7 +1,7 @@
 import { formRawPockets, buildRawPocketFromEntities } from './clustering/formRawPockets'
 import { buildDistrictDebugTrace } from '../../../../engines/district/debug/buildDistrictDebugTrace'
 import { fetchPlaceEntities } from '../../../../engines/district/entities/fetchPlaceEntities'
-import { inferPocketIdentity } from '../../../../engines/district/identity/inferPocketIdentity'
+import { inferPocketIdentity } from './identity/inferPocketIdentity'
 import { resolveLocation } from '../../../../engines/district/location/resolveLocation'
 import { rankAndSelectPockets } from '../../../../engines/district/ranking/rankAndSelectPockets'
 import { refinePocketsWithSplitMerge } from '../../../../engines/district/refinement/refinePocketsWithSplitMerge'
