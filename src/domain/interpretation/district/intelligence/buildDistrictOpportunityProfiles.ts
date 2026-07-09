@@ -4,7 +4,7 @@ import { fetchPlaceEntities } from '../../../../engines/district/entities/fetchP
 import { inferPocketIdentity } from './identity/inferPocketIdentity'
 import { resolveLocation } from '../../../../engines/district/location/resolveLocation'
 import { rankAndSelectPockets } from '../../../../engines/district/ranking/rankAndSelectPockets'
-import { refinePocketsWithSplitMerge } from '../../../../engines/district/refinement/refinePocketsWithSplitMerge'
+import { refinePocketsWithSplitMerge } from './refinement/refinePocketsWithSplitMerge'
 import { assemblePocketProfiles } from '../../../../engines/district/scoring/assemblePocketProfiles'
 import {
   getDistrictPocketTruthTier,
