@@ -10,7 +10,116 @@ export interface DistrictTasteBridgeSourceVenueEvidence {
   primaryActivationType?: string
 }
 
+export interface DistrictStructuralEntityFact {
+  entityId: string
+  entityName: string
+  location: DistrictOpportunityProfile['centroid']
+  type: string
+  categories: string[]
+  tags?: string[]
+  signals?: {
+    popularity?: number
+    activity?: number
+    trust?: number
+    openNow?: boolean
+  }
+}
+
+export interface DistrictStructuralMicroPocketFact {
+  microPocketId: string
+  centroid: DistrictOpportunityProfile['centroid']
+  radiusM: number
+  entityIds: string[]
+  dominantCategories: string[]
+  dominantLanes: string[]
+  coherenceScore?: number
+}
+
+export interface DistrictStructuralAnchorFact {
+  entityId: string
+  entityName: string
+  score: number
+  reasons: string[]
+}
+
+// District -> Taste: structural facts only. Taste owns the meaning derived from them.
+export interface DistrictStructuralFacts {
+  identity: {
+    pocketId: string
+    label: string
+    identityKind: DistrictOpportunityProfile['meta']['identityKind']
+    sourcePocketId?: string
+  }
+  geometry: {
+    centroid: DistrictOpportunityProfile['centroid']
+    radiusM: number
+    metrics?: {
+      maxDistanceFromCentroidM?: number
+      avgDistanceFromCentroidM?: number
+      maxPairwiseDistanceM?: number
+      bboxWidthM?: number
+      bboxHeightM?: number
+      elongationRatio?: number
+      areaM2?: number
+      densityEntitiesPerKm2?: number
+    }
+  }
+  composition: {
+    entityCount: number
+    categories: string[]
+    categoryCounts?: Record<string, number>
+    typeCounts?: Record<string, number>
+  }
+  structuralSignals: {
+    density?: number
+    walkability?: number
+    categoryDiversity?: number
+    compactness?: number
+    viability?: number
+    classification?: DistrictOpportunityProfile['classification']
+  }
+  entities?: DistrictStructuralEntityFact[]
+  hyperlocal?: {
+    primaryMicroPocket?: DistrictStructuralMicroPocketFact
+    secondaryMicroPockets?: DistrictStructuralMicroPocketFact[]
+    primaryAnchor?: DistrictStructuralAnchorFact
+    secondaryAnchors?: DistrictStructuralAnchorFact[]
+    localSpecificityScore?: number
+    structuralEvidenceSignals?: string[]
+  }
+  lineage: {
+    origin: DistrictOpportunityProfile['meta']['origin']
+    truthTier: DistrictOpportunityProfile['meta']['truthTier']
+    clusteringSource: DistrictOpportunityProfile['meta']['clusteringSource']
+    fallbackReasonCode?: DistrictOpportunityProfile['meta']['fallbackReasonCode']
+    originNotes: string[]
+  }
+}
+
+// Taste -> District/downstream: lens meaning authored by Taste, not District.
+export interface TastePocketMeaning {
+  experientialTags: DistrictOpportunityProfile['tasteSignals']['experientialTags']
+  hospitalityMix: DistrictOpportunityProfile['tasteSignals']['hospitalityMix']
+  ambianceProfile: DistrictOpportunityProfile['tasteSignals']['ambianceProfile']
+  momentSeeds: DistrictOpportunityProfile['tasteSignals']['momentSeeds']
+  momentPotential: DistrictOpportunityProfile['tasteSignals']['momentPotential']
+  roleSupport?: TasteOpportunityAggregation['diagnostics']['roleCoverage']
+  dominantEnergy?: TasteOpportunityAggregation['summary']['dominantEnergy']
+  dominantSocialDensity?: TasteOpportunityAggregation['summary']['dominantSocialDensity']
+  highlightPotential?: TasteOpportunityAggregation['summary']['highlightPotential']
+  discoveryBalance?: TasteOpportunityAggregation['summary']['discoveryBalance']
+  dominantArchetypes?: string[]
+  dominantMomentIdentities?: string[]
+  topExperienceFamilies?: string[]
+  topActivationTypes?: string[]
+  rationale?: string[]
+}
+
 export interface DistrictTasteBridgeArtifact {
+  handoff?: {
+    structuralFacts?: DistrictStructuralFacts
+    tastePocketMeaning?: TastePocketMeaning
+  }
   identity: {
     zoneId: string
     zoneLabel: string
