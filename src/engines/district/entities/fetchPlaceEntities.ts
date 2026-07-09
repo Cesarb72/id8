@@ -1,5 +1,4 @@
-import { curatedVenues } from '../../../data/venues'
-import { fetchHybridPortableVenues } from '../../../domain/retrieval/hybridPortableAdapter'
+import { loadFieldSourceVenues } from '../../../domain/field/loadFieldSourceVenues'
 import { haversineDistanceM } from '../clustering/geoDistance'
 import type {
   FetchPlaceEntitiesInput,
@@ -14,11 +13,6 @@ const MAX_MAX_ENTITIES = 500
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
-}
-
-function normalizeCity(value: string | undefined): string {
-  const token = (value ?? '').trim().toLowerCase().split(',')[0] ?? ''
-  return token.replace(/\s+/g, ' ').trim()
 }
 
 function uniqueById(entities: PlaceEntity[]): PlaceEntity[] {
@@ -51,15 +45,16 @@ function countBlockedStatuses(
 export async function fetchPlaceEntities(
   input: FetchPlaceEntitiesInput,
 ): Promise<FetchPlaceEntitiesResult> {
-  // TODO(district-engine): Replace static seed adapter with provider-backed entity retrieval.
-  const cityHint = normalizeCity(input.resolvedLocation.meta.city)
-  const curatedCityVenues =
-    cityHint.length > 0
-      ? curatedVenues.filter((venue) => normalizeCity(venue.city) === cityHint)
-      : []
-  const hasCuratedCoverage = curatedCityVenues.length >= 10
-
-  let sourceVenues = curatedCityVenues
+  const fieldSources = await loadFieldSourceVenues({
+    city: input.resolvedLocation.meta.city,
+  })
+  const {
+    cityHint,
+    curatedCityVenues,
+    hasCuratedCoverage,
+    sourceVenues,
+    hybridDiagnostics,
+  } = fieldSources
   let retrieval: FetchPlaceEntitiesResult['retrieval'] = {
     mode: hasCuratedCoverage ? 'curated' : 'none',
     city: input.resolvedLocation.meta.city ?? cityHint,
@@ -91,36 +86,34 @@ export async function fetchPlaceEntities(
       : ['No curated coverage found for requested city.'],
   }
 
-  if (!hasCuratedCoverage && cityHint.length > 0) {
-    const hybrid = await fetchHybridPortableVenues(cityHint)
-    sourceVenues = hybrid.venues
+  if (hybridDiagnostics) {
     retrieval = {
-      mode: hybrid.diagnostics.mode,
-      city: hybrid.diagnostics.city,
+      mode: hybridDiagnostics.mode,
+      city: hybridDiagnostics.city,
       curatedCount: curatedCityVenues.length,
-      liveRawFetchedCount: hybrid.diagnostics.liveRawFetched,
-      liveFetchedCount: hybrid.diagnostics.liveRawFetched,
-      liveMappedCount: hybrid.diagnostics.liveMapped,
-      liveMappedDroppedCount: hybrid.diagnostics.liveMappedDropped,
-      liveMapDropReasons: hybrid.diagnostics.liveMapDropReasons,
-      liveNormalizedCount: hybrid.diagnostics.liveNormalized,
-      liveNormalizationDroppedCount: hybrid.diagnostics.liveNormalizationDropped,
-      liveNormalizationDropReasons: hybrid.diagnostics.liveNormalizationDropReasons,
-      liveAcceptedPreGeoCount: hybrid.diagnostics.liveAcceptedPreGeo,
-      liveAcceptedCount: hybrid.diagnostics.liveAccepted,
-      liveSuppressedCount: hybrid.diagnostics.liveSuppressed,
-      liveSuppressionReasons: hybrid.diagnostics.liveSuppressionReasons,
-      geoBucketCount: hybrid.diagnostics.geoBucketCount,
-      dominantAreaShare: hybrid.diagnostics.dominantAreaShare,
-      geoSpreadScore: hybrid.diagnostics.geoSpreadScore,
-      geoDiversityDownsampledCount: hybrid.diagnostics.geoDiversityDownsampledCount,
-      bootstrapCount: hybrid.diagnostics.bootstrapCount,
-      selectedCount: hybrid.diagnostics.selectedCount,
+      liveRawFetchedCount: hybridDiagnostics.liveRawFetched,
+      liveFetchedCount: hybridDiagnostics.liveRawFetched,
+      liveMappedCount: hybridDiagnostics.liveMapped,
+      liveMappedDroppedCount: hybridDiagnostics.liveMappedDropped,
+      liveMapDropReasons: hybridDiagnostics.liveMapDropReasons,
+      liveNormalizedCount: hybridDiagnostics.liveNormalized,
+      liveNormalizationDroppedCount: hybridDiagnostics.liveNormalizationDropped,
+      liveNormalizationDropReasons: hybridDiagnostics.liveNormalizationDropReasons,
+      liveAcceptedPreGeoCount: hybridDiagnostics.liveAcceptedPreGeo,
+      liveAcceptedCount: hybridDiagnostics.liveAccepted,
+      liveSuppressedCount: hybridDiagnostics.liveSuppressed,
+      liveSuppressionReasons: hybridDiagnostics.liveSuppressionReasons,
+      geoBucketCount: hybridDiagnostics.geoBucketCount,
+      dominantAreaShare: hybridDiagnostics.dominantAreaShare,
+      geoSpreadScore: hybridDiagnostics.geoSpreadScore,
+      geoDiversityDownsampledCount: hybridDiagnostics.geoDiversityDownsampledCount,
+      bootstrapCount: hybridDiagnostics.bootstrapCount,
+      selectedCount: hybridDiagnostics.selectedCount,
       admittedCount: 0,
       blockedCount: 0,
       blockedStatusCounts: {},
       blockedEntities: [],
-      notes: hybrid.diagnostics.notes,
+      notes: hybridDiagnostics.notes,
     }
   }
 

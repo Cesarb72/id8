@@ -45,7 +45,7 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 | `buildDistrictOpportunityProfiles.ts` → Interpretation/District sub-engine | ☐ not started | |
 | `computeTasteLite.ts` → Taste | ☐ not started | the TODO admits it |
 | `computeBearingsLite.ts` → Bearings | ☐ not started | |
-| `fetchPlaceEntities.ts` → Field | blocked | Entangled with District admission, radius selection, and distance/popularity sorting; needs C-suite scope decision before relocation. |
+| `fetchPlaceEntities.ts` → Field | blocked / partial split | Whole-file move blocked by District admission, radius selection, and distance/popularity sorting. GW2-1A raw source loader extracted to Field; District orchestration/admission split still pending. |
 | geo/pocket/viability → split (Field/Bearings/Interp) | ☐ not started | |
 | `engines/district/` fully dissolved | ☐ not started | the milestone marker for WELL 2 |
 
@@ -76,6 +76,7 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 
 ### Field
 - [2026-07-08] [GW2 fetchPlaceEntities → Field] — expected entity retrieval relocation from District to Field → found retrieval is mixed with District admission diagnostics, radius selection, and distance/popularity ordering. Impact: blocked. Action: no code move performed; needs C-suite decision on whether admission/selection helpers move with retrieval or stay behind a cleaner seam.
+- [2026-07-08] [GW2-1A Field raw source loader] — expected clean split of raw venue/source loading out of District orchestration → found curated city loading and hybrid portable source loading can move behind a Field helper without importing District internals. Impact: clean move. Action: added `loadFieldSourceVenues` in Field and rewired `fetchPlaceEntities.ts` to keep District admission, distance/radius selection, sorting, fallback selection, and result shaping in District.
 
 ### Interpretation (incl. Taste, District, Direction System)
 *(append discoveries here)*
