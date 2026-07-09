@@ -95,7 +95,8 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 - [2026-07-09] [GW2-TASTE-2C Taste-lite placeholder move] - expected behavior-preserving relocation of District Taste-lite placeholder -> moved/wrapped computeTasteLite behind Taste-owned helper `computeDistrictPocketTasteLite` at `src/domain/interpretation/taste/computeDistrictPocketTasteLite.ts`. Impact: Taste now owns the remaining Taste-like placeholder while legacy profile/app signal shapes remain compatibility. Action: keep DistrictTasteSignals and DistrictAppSignals.tasteSignals tracked-temporary until downstream consumers consume Taste-owned meaning directly.
 
 ### Bearings
-*(append discoveries here)*
+- [2026-07-09] [GW2-BEARINGS-2A District->Bearings contract scaffold] - expected first Bearings viability extraction slice -> C-suite approved fact/verdict boundary: District computes structural metrics; Bearings owns thresholds, policy, and admissibility verdicts. Impact: scaffolded BearingsPocketFacts as a narrow view over DistrictStructuralFacts and BearingsViabilityVerdict as the Bearings return contract, with no behavior changes. Action: keep ViablePocket, PocketViabilityClass, PocketViabilitySignals, and ApplyPocketViabilityRulesResult as temporary compatibility until applyPocketViabilityRules moves behind Bearings.
+  C-suite condition for GW2-BEARINGS-2B: when thresholds move into Bearings, inspect whether thresholds are hardcoded nightlife-specific values or parameterized config. If hardcoded, log as tracked-temporary: nightlife thresholds - parameterize at extraction.
 
 ### Waypoint
 *(append discoveries here)*
