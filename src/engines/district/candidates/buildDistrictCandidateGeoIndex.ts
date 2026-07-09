@@ -5,7 +5,7 @@ import { inferPocketIdentity } from '../identity/inferPocketIdentity'
 import { rankAndSelectPockets } from '../ranking/rankAndSelectPockets'
 import { refinePocketsWithSplitMerge } from '../refinement/refinePocketsWithSplitMerge'
 import { assemblePocketProfiles } from '../scoring/assemblePocketProfiles'
-import { applyPocketViabilityRules } from '../viability/applyPocketViabilityRules'
+import { applyDistrictPocketViabilityRules } from '../../../domain/bearings/applyDistrictPocketViabilityRules'
 import type {
   DistrictClusteringConfig,
   DistrictAdmittedPlaceEntity,
@@ -138,7 +138,7 @@ function buildAcceptedPocketLookup(
     fallbackReasonCode:
       clustering === PRIMARY_CLUSTERING ? undefined : 'recluster_no_primary_viable',
   })
-  return buildRawPocketLookup(applyPocketViabilityRules(rawPockets).accepted)
+  return buildRawPocketLookup(applyDistrictPocketViabilityRules(rawPockets).accepted)
 }
 
 function toFixedMeter(value: number): number {
@@ -241,7 +241,7 @@ function runDistrictPocketPipeline(entities: PlaceEntity[]): {
     clusteringSource: 'primary',
     stageNotes: ['Candidate-board District Intelligence primary DBSCAN pass.'],
   })
-  let viability = applyPocketViabilityRules(rawPockets)
+  let viability = applyDistrictPocketViabilityRules(rawPockets)
 
   if (viability.accepted.length === 0) {
     notes.push('district_intelligence_fallback_recluster_applied')
@@ -255,7 +255,7 @@ function runDistrictPocketPipeline(entities: PlaceEntity[]): {
     })
     if (fallbackRawPockets.length > 0) {
       rawPockets = fallbackRawPockets
-      viability = applyPocketViabilityRules(rawPockets)
+      viability = applyDistrictPocketViabilityRules(rawPockets)
     }
   }
 
@@ -273,7 +273,7 @@ function runDistrictPocketPipeline(entities: PlaceEntity[]): {
       },
     )
     rawPockets = [synthetic]
-    viability = applyPocketViabilityRules(rawPockets)
+    viability = applyDistrictPocketViabilityRules(rawPockets)
   }
 
   if (viability.accepted.length === 0) {

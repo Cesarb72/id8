@@ -18,7 +18,7 @@ import type {
   DistrictEngineContext,
   ViablePocket,
 } from '../../../../engines/district/types/districtTypes'
-import { applyPocketViabilityRules } from '../../../../engines/district/viability/applyPocketViabilityRules'
+import { applyDistrictPocketViabilityRules } from '../../../bearings/applyDistrictPocketViabilityRules'
 
 const PRIMARY_CLUSTERING: DistrictClusteringConfig = {
   epsM: 180,
@@ -251,7 +251,7 @@ export async function buildDistrictOpportunityProfiles(
     stageNotes: ['Primary DBSCAN clustering pass.'],
   })
   let rawPockets = primaryRawPockets
-  let viability = applyPocketViabilityRules(rawPockets)
+  let viability = applyDistrictPocketViabilityRules(rawPockets)
 
   let fallbackClustering:
     | (DistrictClusteringConfig & { clusters: number; applied: boolean })
@@ -268,7 +268,7 @@ export async function buildDistrictOpportunityProfiles(
       fallbackReasonCode: 'recluster_no_primary_viable',
       stageNotes: ['Fallback DBSCAN clustering pass with relaxed min points and radius.'],
     })
-    const fallbackViability = applyPocketViabilityRules(fallbackRaw)
+    const fallbackViability = applyDistrictPocketViabilityRules(fallbackRaw)
 
     fallbackClustering = {
       ...FALLBACK_CLUSTERING,
@@ -297,7 +297,7 @@ export async function buildDistrictOpportunityProfiles(
       },
     )
     rawPockets = [synthetic]
-    viability = applyPocketViabilityRules(rawPockets)
+    viability = applyDistrictPocketViabilityRules(rawPockets)
     fallbackClustering = {
       ...FALLBACK_CLUSTERING,
       clusters: rawPockets.length,
