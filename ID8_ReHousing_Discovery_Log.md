@@ -42,7 +42,7 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 ### Gravity Well 2 — dissolve `src/engines/district/`
 | Move | Status | Notes |
 |---|---|---|
-| `buildDistrictOpportunityProfiles.ts` → Interpretation/District sub-engine | ☐ not started | |
+| `buildDistrictOpportunityProfiles.ts` → Interpretation/District sub-engine | ☐ not started | Landing zone exists under Interpretation/District; implementation move pending. |
 | `computeTasteLite.ts` → Taste | ☐ not started | the TODO admits it |
 | `computeBearingsLite.ts` → Bearings | ☐ not started | |
 | `fetchPlaceEntities.ts` → Field | blocked / partial split | Whole-file move blocked by District admission, radius selection, and distance/popularity sorting. GW2-1A raw source loader extracted to Field; District orchestration/admission split still pending. |
@@ -79,7 +79,7 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 - [2026-07-08] [GW2-1A Field raw source loader] — expected clean split of raw venue/source loading out of District orchestration → found curated city loading and hybrid portable source loading can move behind a Field helper without importing District internals. Impact: clean move. Action: added `loadFieldSourceVenues` in Field and rewired `fetchPlaceEntities.ts` to keep District admission, distance/radius selection, sorting, fallback selection, and result shaping in District.
 
 ### Interpretation (incl. Taste, District, Direction System)
-*(append discoveries here)*
+- [2026-07-08] [GW2-HOME-1 District Intelligence boundary] — expected no-behavior scaffold for structural District Intelligence under Interpretation/District → found existing district/ contains recommendation/explanation/anchor payload logic, so structural home was established under district/intelligence/. Impact: clean boundary scaffold. Action: added no-behavior re-export boundary; no implementation moved.
 
 ### Bearings
 *(append discoveries here)*
