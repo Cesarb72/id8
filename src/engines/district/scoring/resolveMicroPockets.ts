@@ -1,5 +1,5 @@
-import { dbscan } from '../clustering/dbscan'
-import { centroidOf, haversineDistanceM } from '../../../domain/shared/geo/geoDistance'
+import { haversineDistanceM } from '../../../domain/shared/geo/geoDistance'
+import { resolveStructuralMicroPockets } from '../../../domain/interpretation/district/intelligence/hyperlocal/resolveStructuralMicroPockets'
 import type {
   DistrictMicroPocket,
   IdentifiedPocket,
@@ -18,33 +18,8 @@ function toFixed(value: number): number {
   return Number(value.toFixed(3))
 }
 
-function countByKey(values: string[]): Array<{ key: string; count: number }> {
-  const counts = new Map<string, number>()
-  for (const value of values) {
-    counts.set(value, (counts.get(value) ?? 0) + 1)
-  }
-  return [...counts.entries()]
-    .map(([key, count]) => ({ key, count }))
-    .sort((left, right) => {
-      if (right.count !== left.count) {
-        return right.count - left.count
-      }
-      return left.key.localeCompare(right.key)
-    })
-}
-
 function getPrimaryCategory(entity: PlaceEntity): string {
   return entity.categories[0] ?? entity.type
-}
-
-function getMicroRadiusM(entities: PlaceEntity[], centroid: { lat: number; lng: number }): number {
-  if (entities.length === 0) {
-    return 0
-  }
-  return entities.reduce((maxValue, entity) => {
-    const distance = haversineDistanceM(entity.location, centroid)
-    return distance > maxValue ? distance : maxValue
-  }, 0)
 }
 
 function computeAnchorCandidateIds(
@@ -103,36 +78,9 @@ function computeAnchorCandidateIds(
 }
 
 function buildMicroPocket(
-  pocketId: string,
-  entities: PlaceEntity[],
-  index: number,
+  structuralMicroPocket: ReturnType<typeof resolveStructuralMicroPockets>['structuralMicroPockets'][number],
 ): DistrictMicroPocket {
-  const centroid = centroidOf(entities.map((entity) => entity.location))
-  const radiusM = getMicroRadiusM(entities, centroid)
-  const categoryCounts = countByKey(entities.map((entity) => getPrimaryCategory(entity)))
-  const laneCounts = countByKey(entities.map((entity) => entity.type))
-  const dominantCategories = categoryCounts.slice(0, 3).map((entry) => entry.key)
-  const dominantLanes = laneCounts.slice(0, 3).map((entry) => entry.key)
-  const categoryDiversity = clamp(categoryCounts.length / 5, 0, 1)
-  const laneDiversity = clamp(laneCounts.length / 4, 0, 1)
-  const compactness = clamp(1 - radiusM / 260, 0, 1)
-  const categoryDominance =
-    entities.length > 0 ? categoryCounts[0].count / entities.length : 0
-  const laneDominance = entities.length > 0 ? laneCounts[0].count / entities.length : 0
-  const coherenceScore = clamp(
-    compactness * 0.34 +
-      (1 - categoryDominance) * 0.16 +
-      (1 - laneDominance) * 0.15 +
-      categoryDiversity * 0.18 +
-      laneDiversity * 0.17,
-    0,
-    1,
-  )
-  const densitySignal = clamp(
-    (entities.length / Math.max(1, Math.pow(Math.max(55, radiusM), 2))) * 4200,
-    0,
-    1,
-  )
+  const { entities } = structuralMicroPocket
   const experienceForwardCount = entities.filter(
     (entity) =>
       ['activity', 'event', 'program', 'hub'].includes(entity.type) ||
@@ -148,33 +96,31 @@ function buildMicroPocket(
     1,
   )
   const identityStrength = clamp(
-    coherenceScore * 0.3 +
-      categoryDiversity * 0.18 +
-      laneDiversity * 0.14 +
+    structuralMicroPocket.coherenceScore * 0.3 +
+      structuralMicroPocket.categoryDiversity * 0.18 +
+      structuralMicroPocket.laneDiversity * 0.14 +
       (experienceForwardSignal >= 0.55 ? 0.2 : 0.09) +
-      (categoryDiversity >= 0.6 && laneDiversity >= 0.5 ? 0.18 : 0.08),
+      (structuralMicroPocket.categoryDiversity >= 0.6 &&
+      structuralMicroPocket.laneDiversity >= 0.5
+        ? 0.18
+        : 0.08),
     0,
     1,
   )
   const activationStrength = clamp(
-    densitySignal * 0.42 +
-      categoryDiversity * 0.2 +
-      laneDiversity * 0.14 +
-      compactness * 0.12 +
+    structuralMicroPocket.densitySignal * 0.42 +
+      structuralMicroPocket.categoryDiversity * 0.2 +
+      structuralMicroPocket.laneDiversity * 0.14 +
+      structuralMicroPocket.compactness * 0.12 +
       experienceForwardSignal * 0.12,
-    0,
-    1,
-  )
-  const categoryMixAdaptability = clamp(
-    categoryCounts.filter((entry) => entry.count >= 1).length / 6,
     0,
     1,
   )
   const environmentalInfluencePotential = clamp(
     activationStrength * 0.48 +
-      categoryMixAdaptability * 0.24 +
-      categoryDiversity * 0.16 +
-      densitySignal * 0.12,
+      structuralMicroPocket.categoryMixAdaptability * 0.24 +
+      structuralMicroPocket.categoryDiversity * 0.16 +
+      structuralMicroPocket.densitySignal * 0.12,
     0,
     1,
   )
@@ -192,7 +138,7 @@ function buildMicroPocket(
   if (environmentalInfluencePotential >= 0.6) {
     reasonSignals.push('strong_environmental_influence')
   }
-  if (compactness >= 0.58) {
+  if (structuralMicroPocket.compactness >= 0.58) {
     reasonSignals.push('tight_walkable_micro_pocket')
   }
   if (reasonSignals.length === 0) {
@@ -200,22 +146,22 @@ function buildMicroPocket(
   }
 
   return {
-    id: `${pocketId}-micro-${index + 1}`,
-    centroid,
-    radiusM: toFixed(radiusM),
+    id: structuralMicroPocket.id,
+    centroid: structuralMicroPocket.centroid,
+    radiusM: toFixed(structuralMicroPocket.radiusM),
     entityIds: entities.map((entity) => entity.id),
-    dominantCategories,
-    dominantLanes,
-    coherenceScore: toFixed(coherenceScore),
+    dominantCategories: structuralMicroPocket.dominantCategories,
+    dominantLanes: structuralMicroPocket.dominantLanes,
+    coherenceScore: toFixed(structuralMicroPocket.coherenceScore),
     identityStrength: toFixed(identityStrength),
     activationStrength: toFixed(activationStrength),
     environmentalInfluencePotential: toFixed(environmentalInfluencePotential),
     anchorCandidateIds: computeAnchorCandidateIds(
       entities,
-      dominantCategories,
-      dominantLanes,
-      centroid,
-      radiusM,
+      structuralMicroPocket.dominantCategories,
+      structuralMicroPocket.dominantLanes,
+      structuralMicroPocket.centroid,
+      structuralMicroPocket.radiusM,
     ),
     reasonSignals,
   }
@@ -246,33 +192,12 @@ function rankMicroPockets(microPockets: DistrictMicroPocket[]): DistrictMicroPoc
 }
 
 export function resolveMicroPockets(pocket: IdentifiedPocket): ResolveMicroPocketsResult {
-  const entities = pocket.entities
-  if (entities.length <= 2) {
-    return {
-      microPockets: rankMicroPockets([buildMicroPocket(pocket.id, entities, 0)]),
-    }
-  }
-
-  const epsM = clamp(pocket.geometry.maxDistanceFromCentroidM * 0.42, 70, 180)
-  const minPoints = entities.length >= 9 ? 3 : 2
-  const clustering = dbscan({
-    points: entities,
-    epsM,
-    minPoints,
-    distance: (left, right) => haversineDistanceM(left.location, right.location),
-  })
-
-  const clustered = clustering.clusters
-    .map((cluster, index) => buildMicroPocket(pocket.id, cluster.points, index))
-    .filter((microPocket) => microPocket.entityIds.length > 0)
-
-  if (clustered.length === 0) {
-    return {
-      microPockets: rankMicroPockets([buildMicroPocket(pocket.id, entities, 0)]),
-    }
-  }
-
+  const structuralResolution = resolveStructuralMicroPockets(pocket)
   return {
-    microPockets: rankMicroPockets(clustered),
+    microPockets: rankMicroPockets(
+      structuralResolution.structuralMicroPockets.map((structuralMicroPocket) =>
+        buildMicroPocket(structuralMicroPocket),
+      ),
+    ),
   }
 }
