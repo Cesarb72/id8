@@ -3,7 +3,7 @@ import { computeDistrictScores } from './computeDistrictScores'
 import { computeFieldSignals } from './computeFieldSignals'
 import { resolveMicroPockets } from './resolveMicroPockets'
 import { scoreIdentityAnchors } from './scoreIdentityAnchors'
-import { computeTasteBridgeSignals } from './computeTasteBridgeSignals'
+import { computeDistrictPocketTasteMeaning } from '../../../domain/interpretation/taste/computeDistrictPocketTasteMeaning'
 import { computeTasteLite } from './computeTasteLite'
 import {
   getDistrictFallbackPenalty,
@@ -104,7 +104,7 @@ export function assemblePocketProfiles(
     const truthTier = getDistrictPocketTruthTier(pocket.origin)
     const fallbackPenaltyApplied = getDistrictFallbackPenalty(pocket.origin)
     const fieldSignals = computeFieldSignals(pocket)
-    const tasteSignals = computeTasteBridgeSignals(pocket)
+    const tasteSignals = computeDistrictPocketTasteMeaning(pocket)
     const score = computeDistrictScores(fieldSignals, pocket.viability.classification)
     const sortedCategories = Object.entries(pocket.categoryCounts)
       .sort((left, right) => {
