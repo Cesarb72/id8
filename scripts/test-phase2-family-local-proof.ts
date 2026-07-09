@@ -13,7 +13,7 @@ import { runGeneratePlan, type GeneratePlanResult } from '../src/domain/runGener
 import type { ConciergeIntent, ContractConstraints, PersonaMode, VibeAnchor } from '../src/domain/types/intent.ts'
 import type { Itinerary, UserStopRole } from '../src/domain/types/itinerary.ts'
 import type { RankedPocket } from '../src/engines/district/types/districtTypes.ts'
-import { buildDistrictOpportunityProfiles } from '../src/engines/district/index.ts'
+import { buildDistrictOpportunityProfiles } from '../src/domain/interpretation/district/intelligence/buildDistrictOpportunityProfiles.ts'
 
 type FamilyScenarioId = 'family_lively' | 'family_cultured'
 

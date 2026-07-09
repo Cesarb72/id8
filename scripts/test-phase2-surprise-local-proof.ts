@@ -32,7 +32,7 @@ import type {
   SelectedDirectionContext,
 } from '../src/domain/types/intent.ts'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
-import { buildDistrictOpportunityProfiles } from '../src/engines/district/index.ts'
+import { buildDistrictOpportunityProfiles } from '../src/domain/interpretation/district/intelligence/buildDistrictOpportunityProfiles.ts'
 
 type FetchCounters = {
   fetchCallCount: number

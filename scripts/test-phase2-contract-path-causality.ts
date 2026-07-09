@@ -33,7 +33,7 @@ import type {
 } from '../src/domain/types/intent.ts'
 import type { UserStopRole } from '../src/domain/types/itinerary.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
-import { buildDistrictOpportunityProfiles } from '../src/engines/district/index.ts'
+import { buildDistrictOpportunityProfiles } from '../src/domain/interpretation/district/intelligence/buildDistrictOpportunityProfiles.ts'
 import type { RankedPocket } from '../src/engines/district/types/districtTypes.ts'
 import {
   rankArcCandidatesFromContract,

@@ -231,10 +231,8 @@ import { CLOSED_PREVIEW_LIVE_ENVELOPE } from '../domain/retrieval/liveEnvelope'
 import { mapVenueToTasteInput } from '../domain/interpretation/taste/mapVenueToTasteInput'
 import { interpretVenueTaste } from '../domain/interpretation/taste/interpretVenueTaste'
 import { resolveVibeTasteProfile } from '../domain/taste/resolveVibeTasteProfile'
-import {
-  buildDistrictOpportunityProfiles,
-  type BuildDistrictOpportunityProfilesResult,
-} from '../engines/district'
+import { buildDistrictOpportunityProfiles } from '../domain/interpretation/district/intelligence/buildDistrictOpportunityProfiles'
+import type { BuildDistrictOpportunityProfilesResult } from '../engines/district/types/districtTypes'
 import {
   buildDistrictTasteBridgeArtifact,
   type DistrictTasteBridgeArtifact,

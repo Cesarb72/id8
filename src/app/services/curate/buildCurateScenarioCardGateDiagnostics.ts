@@ -6,7 +6,7 @@ import {
   enrichContractEntryArtifactWithDirectionBacking,
   partitionContractEntryArtifactsByDirectionBacking,
 } from '../sandbox/contractEntryArtifactNormalizer'
-import { buildDistrictOpportunityProfiles } from '../../../engines/district'
+import { buildDistrictOpportunityProfiles } from '../../../domain/interpretation/district/intelligence/buildDistrictOpportunityProfiles'
 import { buildContractEntryArtifactLineage } from '../../../domain/artifacts/contractEntryArtifact'
 import type { ContractEntryArtifact } from '../../../domain/artifacts/contractEntryArtifact'
 import { buildContractEntryArtifactFromVerifiedOpportunity } from '../../../domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity'

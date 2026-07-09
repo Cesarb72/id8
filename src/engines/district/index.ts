@@ -1,4 +1,4 @@
-export { buildDistrictOpportunityProfiles } from './core/buildDistrictOpportunityProfiles'
+export { buildDistrictOpportunityProfiles } from '../../domain/interpretation/district/intelligence/buildDistrictOpportunityProfiles'
 export type {
   BuildDistrictOpportunityProfilesInput,
   BuildDistrictOpportunityProfilesResult,

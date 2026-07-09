@@ -42,7 +42,7 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 ### Gravity Well 2 — dissolve `src/engines/district/`
 | Move | Status | Notes |
 |---|---|---|
-| `buildDistrictOpportunityProfiles.ts` → Interpretation/District sub-engine | ☐ not started | Landing zone exists under Interpretation/District; implementation move pending. |
+| `buildDistrictOpportunityProfiles.ts` → Interpretation/District sub-engine | ☐ not started | Landing zone exists under Interpretation/District; consumers route through boundary; implementation move pending. |
 | `computeTasteLite.ts` → Taste | ☐ not started | the TODO admits it |
 | `computeBearingsLite.ts` → Bearings | ☐ not started | |
 | `fetchPlaceEntities.ts` → Field | blocked / partial split | Whole-file move blocked by District admission, radius selection, and distance/popularity sorting. GW2-1A raw source loader extracted to Field; District orchestration/admission split still pending. |
@@ -80,6 +80,7 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 
 ### Interpretation (incl. Taste, District, Direction System)
 - [2026-07-08] [GW2-HOME-1 District Intelligence boundary] — expected no-behavior scaffold for structural District Intelligence under Interpretation/District → found existing district/ contains recommendation/explanation/anchor payload logic, so structural home was established under district/intelligence/. Impact: clean boundary scaffold. Action: added no-behavior re-export boundary; no implementation moved.
+- [2026-07-08] [GW2-HOME-2 District Intelligence boundary rewire] — expected no-behavior import rewire through the new District Intelligence boundary → found runtime and proof-script consumers entered through the legacy `engines/district` barrel, with one page also needing a type-only import from District types. Impact: clean boundary rewire. Action: rewired `buildDistrictOpportunityProfiles` consumers through `domain/interpretation/district/intelligence/`; no implementation moved.
 
 ### Bearings
 *(append discoveries here)*

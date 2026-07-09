@@ -7,7 +7,7 @@ import {
   type StopTypeCandidateBoard,
 } from '../src/domain/interpretation/discovery/stopTypeCandidateBoard.ts'
 import { CLOSED_PREVIEW_LIVE_ENVELOPE } from '../src/domain/retrieval/liveEnvelope.ts'
-import { buildDistrictOpportunityProfiles } from '../src/engines/district/index.ts'
+import { buildDistrictOpportunityProfiles } from '../src/domain/interpretation/district/intelligence/buildDistrictOpportunityProfiles.ts'
 
 const originalFetch = globalThis.fetch
 let fetchCallCount = 0
