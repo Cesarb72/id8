@@ -101,6 +101,9 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 ### Cross-cutting (contracts, gravity wells, seams)
 - [2026-07-08] [GW2-HOME-3 District folder preflight] — expected `district/intelligence/` naming to stay clear despite existing `district/` recommendation/explanation files → found the child boundary remains clean for structural District Intelligence, but `recommendDistricts` still mixes Taste-adjacent recommendation scoring with legacy Arc role-pool glue and `getDirectionLiveSignals` appears live-signal/Direction-adjacent rather than purely structural District. Impact: non-blocking future re-housing note. Action: proceeded with implementation move; leave mixed files for later scoped cleanup.
 
+- [2026-07-09] [GW2-LOC-1 resolveLocation ownership preflight] - expected maybe-moveable one-consumer location helper -> found temporary glue crossing raw input normalization, Field search scope, District spatial context, and future Bearings movement-origin semantics. Impact: boundary-setting move avoided. Action: C-suite approved Option A - leave in legacy location folder as tracked temporary glue; do not move or scaffold. Location-boundary design deferred into Bearings movement-origin / real-user-time MVP build. Ambiguities tracked: userLatLng origin-vs-center; searchRadiusM Field-vs-District-vs-Bearings; pseudo-centers production fallback-vs-dev scaffold.
+- [2026-07-09] [Gravity-well ownership mirage] - repeated pattern across fetchPlaceEntities, geoDistance, and resolveLocation: file path and direct consumers can misrepresent ownership inside a gravity well. Responsibility, not location or consumer count, determines the home. Action: continue read-only seam checks before moving boundary-setting files.
+
 ---
 
 ## OPEN QUESTIONS SURFACED DURING RE-HOUSING
