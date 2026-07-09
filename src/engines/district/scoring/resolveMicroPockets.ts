@@ -1,5 +1,5 @@
 import { dbscan } from '../clustering/dbscan'
-import { centroidOf, haversineDistanceM } from '../clustering/geoDistance'
+import { centroidOf, haversineDistanceM } from '../../../domain/shared/geo/geoDistance'
 import type {
   DistrictMicroPocket,
   IdentifiedPocket,

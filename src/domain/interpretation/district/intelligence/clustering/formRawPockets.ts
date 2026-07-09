@@ -3,19 +3,21 @@ import {
   centroidOf,
   computeBoundingBoxMetrics,
   haversineDistanceM,
-} from '../../../../../engines/district/clustering/geoDistance'
+} from '../../../../shared/geo/geoDistance'
 import {
   getDistrictPocketTruthTier,
   isFallbackPocketOrigin,
-} from '../../../../../engines/district/types/districtTypes'
+} from '../types'
 import type {
   DistrictClusteringConfig,
   PocketFallbackReasonCode,
   PocketClusteringSource,
   PocketOrigin,
+  RawPocketGeometryMetrics,
+} from '../types'
+import type {
   PlaceEntity,
   RawPocket,
-  RawPocketGeometryMetrics,
 } from '../../../../../engines/district/types/districtTypes'
 
 type FormRawPocketsInput = {

@@ -1,6 +1,30 @@
 import type { EngineSourceMode, VenueSourceOrigin } from '../../../domain/types/sourceMode'
 import type { QualityGateStatus } from '../../../domain/types/normalization'
 import type { DistrictTasteBridgeArtifact } from '../../../domain/interpretation/taste/districtTasteBridgeArtifact'
+export {
+  getDistrictPocketTruthTier,
+  isFallbackPocketOrigin,
+} from '../../../domain/interpretation/district/intelligence/types'
+export type {
+  DistrictClusteringConfig,
+  DistrictPocketTruthTier,
+  DistrictPoint,
+  PocketClusteringSource,
+  PocketFallbackReasonCode,
+  PocketIdentity,
+  PocketOrigin,
+  RawPocketGeometryMetrics,
+} from '../../../domain/interpretation/district/intelligence/types'
+import type {
+  DistrictClusteringConfig,
+  DistrictPocketTruthTier,
+  DistrictPoint,
+  PocketClusteringSource,
+  PocketFallbackReasonCode,
+  PocketIdentity,
+  PocketOrigin,
+  RawPocketGeometryMetrics,
+} from '../../../domain/interpretation/district/intelligence/types'
 
 export type DistrictAdmissionStatus =
   | 'admitted'
@@ -89,42 +113,6 @@ export type DistrictBlockedEntityDiagnostic = {
 
 export type DistrictEngineContext = {
   vertical?: 'generic' | 'hospitality' | 'community' | 'food_system' | 'events'
-}
-
-export type DistrictPoint = {
-  lat: number
-  lng: number
-}
-
-export type DistrictClusteringConfig = {
-  epsM: number
-  minPoints: number
-  maxRadiusCapM: number
-}
-
-export type PocketOrigin =
-  | 'primary'
-  | 'fallback_recluster'
-  | 'synthetic_fallback'
-  | 'promoted_reject'
-
-export type PocketClusteringSource = 'primary' | 'fallback' | 'synthetic'
-
-export type PocketFallbackReasonCode =
-  | 'recluster_no_primary_viable'
-  | 'synthetic_no_clusters'
-  | 'promoted_reject_non_empty_output'
-
-export type DistrictPocketTruthTier = 'primary' | 'degraded_fallback'
-
-export function isFallbackPocketOrigin(origin: PocketOrigin): boolean {
-  return origin !== 'primary'
-}
-
-export function getDistrictPocketTruthTier(
-  origin: PocketOrigin,
-): DistrictPocketTruthTier {
-  return isFallbackPocketOrigin(origin) ? 'degraded_fallback' : 'primary'
 }
 
 export function getDistrictFallbackPenalty(origin: PocketOrigin): number {
@@ -226,21 +214,6 @@ export type FetchPlaceEntitiesResult = {
   retrieval: DistrictEntityRetrievalDiagnostics
 }
 
-export type RawPocketGeometryMetrics = {
-  centroid: DistrictPoint
-  maxDistanceFromCentroidM: number
-  avgDistanceFromCentroidM: number
-  maxPairwiseDistanceM: number
-  bboxWidthM: number
-  bboxHeightM: number
-  elongationRatio: number
-  areaM2: number
-  effectiveAreaM2ForDensity: number
-  densityAreaFloorApplied: boolean
-  densityClamped: boolean
-  densityEntitiesPerKm2: number
-}
-
 export type RawPocket = {
   id: string
   origin: PocketOrigin
@@ -311,14 +284,6 @@ export type RefinedPocket = ViablePocket & {
     status: 'unchanged' | 'split' | 'merged'
     actions: PocketRefinementAction[]
   }
-}
-
-export type PocketIdentity = {
-  pocketLabel: string
-  kind: 'inferred' | 'known_neighborhood' | 'unknown'
-  confidence: number
-  signals: Record<string, number | string | boolean>
-  rationale: string[]
 }
 
 export type IdentifiedPocket = RefinedPocket & {

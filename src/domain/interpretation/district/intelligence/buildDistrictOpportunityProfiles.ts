@@ -9,12 +9,12 @@ import { assemblePocketProfiles } from '../../../../engines/district/scoring/ass
 import {
   getDistrictPocketTruthTier,
   isFallbackPocketOrigin,
-} from '../../../../engines/district/types/districtTypes'
+} from './types'
+import type { DistrictClusteringConfig } from './types'
 import type {
   ApplyPocketViabilityRulesResult,
   BuildDistrictOpportunityProfilesInput,
   BuildDistrictOpportunityProfilesResult,
-  DistrictClusteringConfig,
   DistrictEngineContext,
   ViablePocket,
 } from '../../../../engines/district/types/districtTypes'

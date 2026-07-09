@@ -7,7 +7,7 @@ import type {
 } from '../discovery/stopTypeCandidateBoard'
 import { getScenarioRequiredStopTypes } from '../discovery/stopTypeCandidateBoard'
 import type { VenueCategory } from '../../types/venue'
-import { haversineDistanceM } from '../../../engines/district/clustering/geoDistance'
+import { haversineDistanceM } from '../../shared/geo/geoDistance'
 import { computeSpatialCoherence } from '../../spatial/computeSpatialCoherence'
 import type { ArcStop } from '../../types/arc'
 import type { IntentProfile } from '../../types/intent'

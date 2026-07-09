@@ -1,5 +1,5 @@
 import { loadFieldSourceVenues } from '../../../domain/field/loadFieldSourceVenues'
-import { haversineDistanceM } from '../clustering/geoDistance'
+import { haversineDistanceM } from '../../../domain/shared/geo/geoDistance'
 import type {
   FetchPlaceEntitiesInput,
   FetchPlaceEntitiesResult,

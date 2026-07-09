@@ -1,7 +1,5 @@
-import type {
-  PocketIdentity,
-  RefinedPocket,
-} from '../../../../../engines/district/types/districtTypes'
+import type { RefinedPocket } from '../../../../../engines/district/types/districtTypes'
+import type { PocketIdentity } from '../types'
 import type { PocketIdentitySignalSnapshot } from './identitySignals'
 
 function toFixed(value: number): number {

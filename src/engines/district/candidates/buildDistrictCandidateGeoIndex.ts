@@ -1,5 +1,5 @@
 import { formRawPockets, buildRawPocketFromEntities } from '../clustering/formRawPockets'
-import { haversineDistanceM } from '../clustering/geoDistance'
+import { haversineDistanceM } from '../../../domain/shared/geo/geoDistance'
 import { admitDistrictEntities } from '../entities/admitDistrictEntities'
 import { inferPocketIdentity } from '../identity/inferPocketIdentity'
 import { rankAndSelectPockets } from '../ranking/rankAndSelectPockets'
