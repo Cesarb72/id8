@@ -4,7 +4,7 @@ import { computeFieldSignals } from './computeFieldSignals'
 import { resolveMicroPockets } from './resolveMicroPockets'
 import { scoreIdentityAnchors } from './scoreIdentityAnchors'
 import { computeDistrictPocketTasteMeaning } from '../../../domain/interpretation/taste/computeDistrictPocketTasteMeaning'
-import { computeTasteLite } from './computeTasteLite'
+import { computeDistrictPocketTasteLite } from '../../../domain/interpretation/taste/computeDistrictPocketTasteLite'
 import {
   getDistrictFallbackPenalty,
   getDistrictPocketTruthTier,
@@ -119,7 +119,7 @@ export function assemblePocketProfiles(
         ? undefined
         : {
             directionSignals: computeBearingsLite(pocket),
-            tasteSignals: computeTasteLite(pocket),
+            tasteSignals: computeDistrictPocketTasteLite(pocket),
           }
     const hyperlocal = buildHyperlocal(pocket)
 
