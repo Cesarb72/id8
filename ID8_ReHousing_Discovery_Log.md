@@ -31,7 +31,7 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 | Move | Status | Notes |
 |---|---|---|
 | `scoreArcAssembly.ts` moment-strength → Taste | ☐ not started | the Adega root |
-| `scoreArcAssembly.ts` meaning scoring → Taste | ☐ not started | |
+| `scoreArcAssembly.ts` meaning scoring → Taste | partial | Route-level meaning verdict helper wraps Arc persona/category/vibe compatibility fields; Great Stop Role/Intent stamps and role-pool social logic still held. |
 | `scoreArcAssembly.ts` movement → Bearings / pacing → Waypoint (split) | ☐ not started | |
 | `directionPlanning.ts` Direction System → Interpretation | ☐ not started | |
 | `directionPlanning.ts` route-shape → Waypoint seam | ☐ not started | |
@@ -104,6 +104,8 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
   Boundary holds: canonical identity remains `candidateIdentity.baseVenueId`; provider ids, display names, and rendered labels are not used for the Taste verdict; non-peak required anchors remain valid as supporting anchors; ArcScoreBreakdown compatibility fields and score formulas remain unchanged.
 - [2026-07-09] [GW1-TASTE-2A TasteRouteMeaningVerdict scaffold] - expected type-only scaffold for route-level persona/role meaning after post-Adega residue audit and friends/social trace -> defined broad Taste-owned route meaning verdict surface. Impact: Taste now has a named route-level meaning seam for romantic/family/friends-social/category/vibe/role/intent residue; behavior not wired yet. Action: proceed to 2B only after review/commit; preserve ArcScoreBreakdown compatibility.
   Boundary notes: friends/social is included in the same meaning surface; `TasteRouteMomentVerdict` remains separate and moment-specific; Role-Right / Intent-Right stamp readiness is future work and is not wired in this slice.
+- [2026-07-09] [GW1-TASTE-2B Route meaning helper] - expected behavior-preserving move/wrap of scoreArcAssembly persona-meaning residue behind Taste -> Taste now owns route-level romantic/family/friends-social/category/vibe meaning helper while Arc preserves compatibility fields. Impact: source ownership moves toward Taste; Great Stop Role/Intent stamps remain future work. Action: review/commit before touching buildRolePools, Direction, retrieval, or Great Stop stamps.
+  Boundary holds: friends/social folded residue is represented in the Taste route meaning verdict, but hard role-pool/easy-hang social logic in `buildRolePools.ts` remains held for a later slice; category/vibe compatibility values are preserved through ArcScoreBreakdown; movement/geography/local stretch/hours stay outside Taste; score combining stays in Arc until the Waypoint adapter; ArcScoreBreakdown field names and compatibility values are preserved.
 
 ### Bearings
 - [2026-07-09] [GW2-BEARINGS-2A District->Bearings contract scaffold] - expected first Bearings viability extraction slice -> C-suite approved fact/verdict boundary: District computes structural metrics; Bearings owns thresholds, policy, and admissibility verdicts. Impact: scaffolded BearingsPocketFacts as a narrow view over DistrictStructuralFacts and BearingsViabilityVerdict as the Bearings return contract, with no behavior changes. Action: keep ViablePocket, PocketViabilityClass, PocketViabilitySignals, and ApplyPocketViabilityRulesResult as temporary compatibility until applyPocketViabilityRules moves behind Bearings.

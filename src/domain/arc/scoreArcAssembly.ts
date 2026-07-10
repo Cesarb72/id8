@@ -10,6 +10,10 @@ import {
   type TasteRouteMomentStopEvidence,
 } from '../interpretation/taste/computeRouteMomentVerdict'
 import {
+  computeRouteMeaningVerdict,
+  type TasteRouteMeaningStopEvidenceInput,
+} from '../interpretation/taste/computeRouteMeaningVerdict'
+import {
   isCandidateWithinActiveDistanceWindow,
   isCandidateUsedByStretch,
   getStretchDistanceStatus,
@@ -177,6 +181,48 @@ function toRouteMomentSelectedAnchorEvidence(
   return {
     selectedAnchorBaseVenueId: intent.anchor.venueId,
     requiredRole: intent.anchor.role ?? 'highlight',
+  }
+}
+
+function toRouteMeaningStopRole(
+  role: ArcStop['role'],
+): TasteRouteMeaningStopEvidenceInput['role'] {
+  if (role === 'warmup') {
+    return 'start'
+  }
+  if (role === 'peak') {
+    return 'highlight'
+  }
+  if (role === 'wildcard') {
+    return 'surprise'
+  }
+  return 'windDown'
+}
+
+function getRouteMeaningVibeFitScore(stop: ArcStop): number {
+  if (stop.role === 'warmup') {
+    return stop.scoredVenue.vibeAuthority.byRole.start
+  }
+  if (stop.role === 'peak') {
+    return stop.scoredVenue.vibeAuthority.byRole.highlight
+  }
+  if (stop.role === 'wildcard') {
+    return stop.scoredVenue.vibeAuthority.byRole.surprise
+  }
+  return stop.scoredVenue.vibeAuthority.byRole.windDown
+}
+
+function toRouteMeaningStopEvidence(stop: ArcStop): TasteRouteMeaningStopEvidenceInput {
+  return {
+    role: toRouteMeaningStopRole(stop.role),
+    candidateVenueId: getArcStopBaseVenueId(stop),
+    experienceFamily: stop.scoredVenue.taste.signals.experienceFamily,
+    primaryExperienceArchetype: stop.scoredVenue.taste.signals.primaryExperienceArchetype,
+    category: stop.scoredVenue.venue.category as TasteRouteMeaningStopEvidenceInput['category'],
+    roleFitScore: getRoleFitScore(stop),
+    stopShapeFitScore: getStopShapeFitScore(stop),
+    contextSpecificityScore: stop.scoredVenue.contextSpecificity.byRole[stop.role],
+    vibeFitScore: getRouteMeaningVibeFitScore(stop),
   }
 }
 
@@ -3538,6 +3584,60 @@ export function scoreArcAssembly(
   const roleAwareCategoryLift = computeRoleAwareCategoryLift(stops, intent, lens)
   const surpriseDirectionAlignment = computeSurpriseDirectionAlignmentAdjustments(stops, intent)
   const surpriseHighlightCalibration = computeSurpriseHighlightCalibration(stops, intent)
+  const routeMeaning = computeRouteMeaningVerdict({
+    requestedPersona: intent.persona,
+    requestedPrimaryVibe: intent.primaryAnchor,
+    requestedSecondaryVibes: intent.secondaryAnchors,
+    stops: stops.map(toRouteMeaningStopEvidence),
+    compatibility: {
+      vibeCoherenceScore: vibeCoherence,
+      highlightVibeScore,
+      supportStopVibeScore: supportStopVibeFit.overall,
+      categoryDiversityScore: breakdown.diversityScore,
+      categoryDiversityBonus: categoryDiversityGuardrail.bonus,
+      categoryDiversityPenalty: categoryDiversityGuardrail.penalty,
+      repeatedCategoryCount: categoryDiversityGuardrail.repeatedCategoryCount,
+      categoryDiversityNotes: categoryDiversityGuardrail.notes,
+      roleAwareCategoryLift,
+      familyAlignmentBoost: highlightIntegrity.familyAlignmentBoost,
+      familyMismatchPenalty: highlightIntegrity.familyMismatchPenalty,
+      romanticContractScore: romanticPersonaContract.score,
+      romanticContractPenalty: romanticPersonaContract.penalty,
+      romanticContractSatisfied: romanticPersonaContract.satisfied,
+      romanticContractFeasible: romanticPersonaContract.feasible,
+      romanticHighlightCandidatesFeasible: romanticPersonaContract.feasibleCount,
+      romanticHighlightArbitrationResult: romanticPersonaContract.result,
+      familyCompetitionScore: familyCompetition.score,
+      familyCompetitionPenalty: familyCompetition.penalty,
+      familyCompetitionActive: familyCompetition.active,
+      familyCompetitionEligibleFamilies: familyCompetition.eligibleFamilies,
+      familyCompetitionLeadingFamily: familyCompetition.leadingFamily,
+      familyCompetitionTopSpread: familyCompetition.topSpread,
+      familyCompetitionThreshold: familyCompetition.threshold,
+      familyCompetitionWinnerMode: familyCompetition.winnerMode,
+      expressionWidth: expressionWidth.classification,
+      expressionWidthReason: expressionWidth.reason,
+      expressionWidthFamilyCount: expressionWidth.familyCount,
+      expressionWidthCompetitiveFamilyCount:
+        expressionWidth.competitiveFamilyCount,
+      expressionWidthIntensitySpread: expressionWidth.intensitySpread,
+      expressionWidthPeakPoolSize: expressionWidth.peakPoolSize,
+      expressionWidthFallbackReliance: expressionWidth.fallbackReliance,
+      expressionReleaseScore: expressionRelease.score,
+      expressionReleasePenalty: expressionRelease.penalty,
+      expressionReleaseEligible: expressionRelease.eligible,
+      expressionReleaseReason: expressionRelease.reason,
+      expressionReleaseEliteFamilies: expressionRelease.eliteFamilies,
+      expressionReleaseSelectedFamily: expressionRelease.selectedFamily,
+      activationMomentElevationScore: activationMomentElevation.score,
+      activationMomentElevationPenalty: activationMomentElevation.penalty,
+      activationMomentElevationEligible: activationMomentElevation.eligible,
+      activationMomentElevationApplied: activationMomentElevation.applied,
+      activationMomentElevationReason: activationMomentElevation.reason,
+      activationMomentElevationCandidateFamilies:
+        activationMomentElevation.candidateFamilies,
+    },
+  })
 
   const totalScoreRaw =
     breakdown.roleFlowScore * 0.34 +
@@ -3548,50 +3648,50 @@ export function scoreArcAssembly(
       pacing.pacingScore * 0.12 +
       pacing.transitionSmoothnessScore * 0.1 +
       pacing.outingLengthScore * 0.08 +
-      vibeCoherence * 0.1 +
-      highlightVibeScore * 0.12 +
+      routeMeaning.vibeCoherenceScore * 0.1 +
+      routeMeaning.highlightVibeScore * 0.12 +
       highlightMomentScore * 0.18 +
       momentPreservation.varianceScore * 0.12 +
       highlightValidityScore * 0.16 +
       arcContrastScore * 0.16 +
       highlightCenteringScore * 0.14 +
       discoveryContract.score * 0.4 +
-      supportStopVibeFit.overall * 0.14 +
+      routeMeaning.supportStopVibeScore * 0.14 +
       routeShapeBias.score * 0.08 +
       alignmentPreservation.alignmentPreservationScore * 0.32 +
       alignmentPreservation.themeSpreadScore * 0.08 +
       momentPreservation.score * 0.16 +
-      romanticPersonaContract.score +
-      familyCompetition.score +
-      expressionRelease.score +
-      activationMomentElevation.score +
+      routeMeaning.romanticContractScore +
+      routeMeaning.familyCompetitionScore +
+      routeMeaning.expressionReleaseScore +
+      routeMeaning.activationMomentElevationScore +
       localStretchPolicy.score +
       roleEnergyBalance.score * 0.1 +
       liveRolePromotionScore * 0.06 +
-      roleAwareCategoryLift * 0.12 +
+      routeMeaning.roleAwareCategoryLift * 0.12 +
       surpriseDirectionAlignment.score +
       surpriseHighlightCalibration.score +
       highlightIntegrity.dominanceBoost +
-      highlightIntegrity.familyAlignmentBoost +
-      categoryDiversityGuardrail.bonus +
+      routeMeaning.familyAlignmentBoost +
+      routeMeaning.categoryDiversityBonus +
       lensCoherence * 0.1 +
       contextSpecificityLift * 0.09 -
       highlightIntegrity.weakPenalty -
-      highlightIntegrity.familyMismatchPenalty -
+      routeMeaning.familyMismatchPenalty -
       highlightIntegrity.supportPenalty -
       fakeCompleteness.penalty -
       discoveryContract.penalty * 0.18 -
-      categoryDiversityGuardrail.penalty -
+      routeMeaning.categoryDiversityPenalty -
       pacing.awkwardPacingPenalty * 0.14 -
       dominancePenalty * 0.08 +
       contractCompliance * 0.12 -
       contractViolationPenalty * 0.16 -
       momentPreservation.flatPenalty -
       momentPreservation.penalty -
-      romanticPersonaContract.penalty -
-      familyCompetition.penalty -
-      expressionRelease.penalty -
-      activationMomentElevation.penalty -
+      routeMeaning.romanticContractPenalty -
+      routeMeaning.familyCompetitionPenalty -
+      routeMeaning.expressionReleasePenalty -
+      routeMeaning.activationMomentElevationPenalty -
       fallbackHighlightSuppression.penalty -
       localStretchPolicy.penalty -
       alignmentPreservation.themeSpreadPenalty -
@@ -3609,8 +3709,12 @@ export function scoreArcAssembly(
     spatial,
     scoreBreakdown: {
       ...breakdown,
-      vibeCoherenceScore: clamp01(vibeCoherence),
-      highlightVibeScore: clamp01(highlightVibeScore),
+      diversityScore: routeMeaning.categoryDiversityScore,
+      repeatedCategoryCount: routeMeaning.repeatedCategoryCount,
+      categoryDiversityPenalty: routeMeaning.categoryDiversityPenalty,
+      categoryDiversityNotes: routeMeaning.categoryDiversityNotes,
+      vibeCoherenceScore: clamp01(routeMeaning.vibeCoherenceScore),
+      highlightVibeScore: clamp01(routeMeaning.highlightVibeScore),
       highlightMomentScore: clamp01(highlightMomentScore),
       momentStrengthScore: clamp01(momentPreservation.score),
       momentVarianceScore: clamp01(momentPreservation.varianceScore),
@@ -3622,14 +3726,18 @@ export function scoreArcAssembly(
       romanticMomentPresent: romanticMomentContract.present,
       romanticMomentRole: romanticMomentContract.romanticMomentRole,
       strongestRomanticCandidateName: romanticMomentContract.strongestCandidateName,
-      romanticContractScore: clamp01(romanticPersonaContract.score),
-      romanticContractPenalty: clamp01(romanticPersonaContract.penalty),
-      romanticContractSatisfied: romanticPersonaContract.satisfied,
-      romanticContractFeasible: romanticPersonaContract.feasible,
-      romanticHighlightCandidatesFeasible: romanticPersonaContract.feasibleCount,
-      romanticHighlightArbitrationScore: clamp01(romanticPersonaContract.score),
-      romanticHighlightArbitrationPenalty: clamp01(romanticPersonaContract.penalty),
-      romanticHighlightArbitrationResult: romanticPersonaContract.result,
+      romanticContractScore: clamp01(routeMeaning.romanticContractScore),
+      romanticContractPenalty: clamp01(routeMeaning.romanticContractPenalty),
+      romanticContractSatisfied: routeMeaning.romanticContractSatisfied,
+      romanticContractFeasible: routeMeaning.romanticContractFeasible,
+      romanticHighlightCandidatesFeasible:
+        routeMeaning.romanticHighlightCandidatesFeasible,
+      romanticHighlightArbitrationScore: clamp01(routeMeaning.romanticContractScore),
+      romanticHighlightArbitrationPenalty: clamp01(
+        routeMeaning.romanticContractPenalty,
+      ),
+      romanticHighlightArbitrationResult:
+        routeMeaning.romanticHighlightArbitrationResult,
       localSupplySufficient: localStretchPolicy.localSupplySufficient,
       strictNearbyFailed: localStretchPolicy.strictNearbyFailed,
       stretchApplied: localStretchPolicy.stretchApplied,
@@ -3652,7 +3760,7 @@ export function scoreArcAssembly(
       arcContrastScore: clamp01(arcContrastScore),
       highlightCenteringScore: clamp01(highlightCenteringScore),
       discoveryContractScore: clamp01(discoveryContract.score),
-      supportStopVibeScore: clamp01(supportStopVibeFit.overall),
+      supportStopVibeScore: clamp01(routeMeaning.supportStopVibeScore),
       routeShapeBiasScore: clamp01(routeShapeBias.score),
       alignmentPreservationScore: clamp01(
         alignmentPreservation.alignmentPreservationScore,
@@ -3679,32 +3787,33 @@ export function scoreArcAssembly(
       fallbackHighlightReason: fallbackHighlightSuppression.reason,
       fallbackHighlightAlternativeName:
         fallbackHighlightSuppression.strongerAlternativeName,
-      familyCompetitionScore: clamp01(familyCompetition.score),
-      familyCompetitionPenalty: clamp01(familyCompetition.penalty),
-      familyCompetitionActive: familyCompetition.active,
-      familyCompetitionEligibleFamilies: familyCompetition.eligibleFamilies,
-      familyCompetitionLeadingFamily: familyCompetition.leadingFamily,
-      familyCompetitionTopSpread: familyCompetition.topSpread,
-      familyCompetitionThreshold: familyCompetition.threshold,
-      familyCompetitionWinnerMode: familyCompetition.winnerMode,
-      expressionWidth: expressionWidth.classification,
-      expressionWidthReason: expressionWidth.reason,
-      expressionWidthFamilyCount: expressionWidth.familyCount,
+      familyCompetitionScore: clamp01(routeMeaning.familyCompetitionScore),
+      familyCompetitionPenalty: clamp01(routeMeaning.familyCompetitionPenalty),
+      familyCompetitionActive: routeMeaning.familyCompetitionActive,
+      familyCompetitionEligibleFamilies:
+        routeMeaning.familyCompetitionEligibleFamilies,
+      familyCompetitionLeadingFamily: routeMeaning.familyCompetitionLeadingFamily,
+      familyCompetitionTopSpread: routeMeaning.familyCompetitionTopSpread,
+      familyCompetitionThreshold: routeMeaning.familyCompetitionThreshold,
+      familyCompetitionWinnerMode: routeMeaning.familyCompetitionWinnerMode,
+      expressionWidth: routeMeaning.expressionWidth,
+      expressionWidthReason: routeMeaning.expressionWidthReason,
+      expressionWidthFamilyCount: routeMeaning.expressionWidthFamilyCount,
       expressionWidthCompetitiveFamilyCount:
-        expressionWidth.competitiveFamilyCount,
-      expressionWidthIntensitySpread: expressionWidth.intensitySpread,
-      expressionWidthPeakPoolSize: expressionWidth.peakPoolSize,
-      expressionWidthFallbackReliance: expressionWidth.fallbackReliance,
-      expressionReleaseScore: clamp01(expressionRelease.score),
-      expressionReleasePenalty: clamp01(expressionRelease.penalty),
-      expressionReleaseEligible: expressionRelease.eligible,
-      expressionReleaseReason: expressionRelease.reason,
+        routeMeaning.expressionWidthCompetitiveFamilyCount,
+      expressionWidthIntensitySpread: routeMeaning.expressionWidthIntensitySpread,
+      expressionWidthPeakPoolSize: routeMeaning.expressionWidthPeakPoolSize,
+      expressionWidthFallbackReliance: routeMeaning.expressionWidthFallbackReliance,
+      expressionReleaseScore: clamp01(routeMeaning.expressionReleaseScore),
+      expressionReleasePenalty: clamp01(routeMeaning.expressionReleasePenalty),
+      expressionReleaseEligible: routeMeaning.expressionReleaseEligible,
+      expressionReleaseReason: routeMeaning.expressionReleaseReason,
       expressionReleaseEliteCandidateNames:
         expressionRelease.eliteCandidateNames,
       expressionReleaseEliteFamilies: expressionRelease.eliteFamilies,
       expressionReleaseSelectedCandidateName:
         expressionRelease.selectedCandidateName,
-      expressionReleaseSelectedFamily: expressionRelease.selectedFamily,
+      expressionReleaseSelectedFamily: routeMeaning.expressionReleaseSelectedFamily,
       expressionReleaseSelectionMode: expressionRelease.selectionMode,
       expressionReleaseDecision: expressionRelease.decision,
       eliteFieldDiversified: expressionRelease.diversified,
@@ -3727,15 +3836,22 @@ export function scoreArcAssembly(
       whenSpatialReason: whenSpatialPressure.reason,
       eliteFieldCandidateNames: expressionRelease.eliteCandidateNames,
       eliteFieldCandidateLanes: expressionRelease.eliteCandidateLanes,
-      activationMomentElevationScore: clamp01(activationMomentElevation.score),
-      activationMomentElevationPenalty: clamp01(activationMomentElevation.penalty),
-      activationMomentElevationEligible: activationMomentElevation.eligible,
-      activationMomentElevationApplied: activationMomentElevation.applied,
-      activationMomentElevationReason: activationMomentElevation.reason,
+      activationMomentElevationScore: clamp01(
+        routeMeaning.activationMomentElevationScore,
+      ),
+      activationMomentElevationPenalty: clamp01(
+        routeMeaning.activationMomentElevationPenalty,
+      ),
+      activationMomentElevationEligible:
+        routeMeaning.activationMomentElevationEligible,
+      activationMomentElevationApplied:
+        routeMeaning.activationMomentElevationApplied,
+      activationMomentElevationReason:
+        routeMeaning.activationMomentElevationReason,
       activationMomentElevationCandidateNames:
         activationMomentElevation.candidateNames,
       activationMomentElevationCandidateFamilies:
-        activationMomentElevation.candidateFamilies,
+        routeMeaning.activationMomentElevationCandidateFamilies,
       activationMomentElevationTopCandidateName:
         activationMomentElevation.topCandidateName,
       activationMomentElevationTopCandidatePotential:
