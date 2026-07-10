@@ -33,9 +33,15 @@ export interface TasteRouteMomentAvailableCandidateEvidence {
   momentPotential: TasteMomentPotential
 }
 
+export interface TasteRouteMomentSelectedAnchorEvidence {
+  selectedAnchorBaseVenueId: TasteRouteMomentVenueId
+  requiredRole: 'start' | 'highlight' | 'windDown'
+}
+
 export interface ComputeRouteMomentVerdictInput {
   stops: readonly TasteRouteMomentStopEvidence[]
   availableCandidates?: readonly TasteRouteMomentAvailableCandidateEvidence[]
+  selectedAnchor?: TasteRouteMomentSelectedAnchorEvidence
   tasteModeId?: string
 }
 
@@ -153,7 +159,33 @@ function getFlatArcRiskLevel(penalty: number): TasteRouteMomentFlatArcRiskLevel 
 
 function getAnchorAsPeakCandidacy(
   highlight: TasteRouteMomentStopEvidence | undefined,
+  stops: readonly TasteRouteMomentStopEvidence[],
+  selectedAnchor: TasteRouteMomentSelectedAnchorEvidence | undefined,
+  highlightMomentScore: number,
 ): TasteAnchorAsPeakCandidacy {
+  if (selectedAnchor) {
+    const selectedAnchorStop = stops.find(
+      (stop) => stop.candidateVenueId === selectedAnchor.selectedAnchorBaseVenueId,
+    )
+    if (!selectedAnchorStop) {
+      return 'unknown'
+    }
+    if (
+      selectedAnchor.requiredRole === 'highlight' &&
+      highlight?.candidateVenueId === selectedAnchor.selectedAnchorBaseVenueId
+    ) {
+      const peakSupportedByTaste =
+        highlight.momentIdentity.type === 'anchor' ||
+        highlight.momentIdentity.type === 'explore' ||
+        isHighMomentPotential(highlight.momentPotential) ||
+        highlight.momentIntensity.tier === 'signature' ||
+        highlight.momentIntensity.tier === 'exceptional' ||
+        highlightMomentScore >= 0.58
+      return peakSupportedByTaste ? 'intended_peak' : 'supporting_anchor'
+    }
+    return 'supporting_anchor'
+  }
+
   if (!highlight) {
     return 'unknown'
   }
@@ -278,7 +310,12 @@ export function computeRouteMomentVerdict(
         },
       ],
       peakCandidateVenueId: highlight?.candidateVenueId,
-      anchorAsPeakCandidacy: getAnchorAsPeakCandidacy(highlight),
+      anchorAsPeakCandidacy: getAnchorAsPeakCandidacy(
+        highlight,
+        stops,
+        input.selectedAnchor,
+        highlightMomentScore,
+      ),
       peakSuitability: {
         score: highlightMomentScore,
         tier: highlight?.momentIntensity.tier,

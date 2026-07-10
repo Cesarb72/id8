@@ -6,6 +6,7 @@ import { computeSupportStopVibeFit } from '../taste/computeSupportStopVibeFit'
 import {
   computeRouteMomentVerdict,
   type TasteRouteMomentAvailableCandidateEvidence,
+  type TasteRouteMomentSelectedAnchorEvidence,
   type TasteRouteMomentStopEvidence,
 } from '../interpretation/taste/computeRouteMomentVerdict'
 import {
@@ -163,6 +164,19 @@ function toRouteMomentAvailableCandidateEvidence(
     candidateVenueId: getScoredVenueBaseVenueId(candidate),
     momentIdentity: candidate.momentIdentity,
     momentPotential: candidate.taste.signals.momentPotential,
+  }
+}
+
+function toRouteMomentSelectedAnchorEvidence(
+  intent: IntentProfile,
+): TasteRouteMomentSelectedAnchorEvidence | undefined {
+  if (intent.mode !== 'build' || intent.planningMode !== 'user-led' || !intent.anchor?.venueId) {
+    return undefined
+  }
+
+  return {
+    selectedAnchorBaseVenueId: intent.anchor.venueId,
+    requiredRole: intent.anchor.role ?? 'highlight',
   }
 }
 
@@ -3463,6 +3477,7 @@ export function scoreArcAssembly(
     availableCandidates: getUniqueRolePoolCandidates(rolePools).map(
       toRouteMomentAvailableCandidateEvidence,
     ),
+    selectedAnchor: toRouteMomentSelectedAnchorEvidence(intent),
     tasteModeId: lens.tasteMode?.id,
   })
   const highlightMomentScore = routeMomentVerdict.highlightMomentScore
