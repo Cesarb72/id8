@@ -158,41 +158,49 @@ function getFlatArcRiskLevel(penalty: number): TasteRouteMomentFlatArcRiskLevel 
 }
 
 function getAnchorAsPeakCandidacy(
-  highlight: TasteRouteMomentStopEvidence | undefined,
-  stops: readonly TasteRouteMomentStopEvidence[],
-  selectedAnchor: TasteRouteMomentSelectedAnchorEvidence | undefined,
-  highlightMomentScore: number,
+  params: {
+    peakCandidateVenueId: TasteRouteMomentVenueId | undefined
+    selectedAnchor: TasteRouteMomentSelectedAnchorEvidence | undefined
+    selectedAnchorIsRoutePeak: boolean
+    peakSuitabilityTier: TasteMomentIntensity['tier'] | undefined
+    momentStrength: TasteRouteMomentVerdict['momentStrengthVerdict']['strength']
+    momentPreservationStatus: TasteRouteMomentPreservationStatus
+    strongMomentPresent: boolean
+    flatArcRiskLevel: TasteRouteMomentFlatArcRiskLevel
+  },
 ): TasteAnchorAsPeakCandidacy {
-  if (selectedAnchor) {
-    const selectedAnchorStop = stops.find(
-      (stop) => stop.candidateVenueId === selectedAnchor.selectedAnchorBaseVenueId,
-    )
-    if (!selectedAnchorStop) {
-      return 'unknown'
-    }
-    if (
-      selectedAnchor.requiredRole === 'highlight' &&
-      highlight?.candidateVenueId === selectedAnchor.selectedAnchorBaseVenueId
-    ) {
-      const peakSupportedByTaste =
-        highlight.momentIdentity.type === 'anchor' ||
-        highlight.momentIdentity.type === 'explore' ||
-        isHighMomentPotential(highlight.momentPotential) ||
-        highlight.momentIntensity.tier === 'signature' ||
-        highlight.momentIntensity.tier === 'exceptional' ||
-        highlightMomentScore >= 0.58
-      return peakSupportedByTaste ? 'intended_peak' : 'supporting_anchor'
-    }
+  const { selectedAnchor } = params
+  if (!selectedAnchor) {
+    return params.peakCandidateVenueId ? 'not_anchor' : 'unknown'
+  }
+
+  if (!params.peakCandidateVenueId) {
+    return 'unknown'
+  }
+
+  if (
+    selectedAnchor.requiredRole !== 'highlight' ||
+    selectedAnchor.selectedAnchorBaseVenueId !== params.peakCandidateVenueId ||
+    !params.selectedAnchorIsRoutePeak
+  ) {
     return 'supporting_anchor'
   }
 
-  if (!highlight) {
-    return 'unknown'
-  }
-  if (highlight.momentIdentity.type === 'anchor') {
+  const strongPeakTier =
+    params.peakSuitabilityTier === 'strong' ||
+    params.peakSuitabilityTier === 'signature' ||
+    params.peakSuitabilityTier === 'exceptional'
+  if (
+    strongPeakTier &&
+    params.momentStrength === 'strong' &&
+    params.momentPreservationStatus === 'preserved' &&
+    params.strongMomentPresent &&
+    params.flatArcRiskLevel === 'none'
+  ) {
     return 'intended_peak'
   }
-  return 'not_anchor'
+
+  return 'supporting_anchor'
 }
 
 export function computeRouteMomentVerdict(
@@ -286,6 +294,25 @@ export function computeRouteMomentVerdict(
             : 'Arc reads flat; most stops land on similar moment beats.'
   const highlightMomentScore = computeHighlightMomentScore(stops)
   const combinedFlatPenalty = flatPenalty + penalty
+  const peakCandidateVenueId = highlight?.candidateVenueId
+  const peakSuitabilityTier = highlight?.momentIntensity.tier
+  const momentStrength = strongMomentPresent ? 'strong' : highlightIdentity?.strength ?? 'unknown'
+  const momentPreservationStatus = getMomentPreservationStatus({
+    strongMomentPresent,
+    highIntensityHighlight,
+    flatPenalty,
+    penalty,
+  })
+  const flatArcRiskLevel = getFlatArcRiskLevel(combinedFlatPenalty)
+  const selectedAnchorIsRoutePeak = Boolean(
+    input.selectedAnchor &&
+      peakCandidateVenueId === input.selectedAnchor.selectedAnchorBaseVenueId &&
+      stops.some(
+        (stop) =>
+          stop.role === 'peak' &&
+          stop.candidateVenueId === input.selectedAnchor?.selectedAnchorBaseVenueId,
+      ),
+  )
 
   return {
     highlightMomentScore,
@@ -309,31 +336,30 @@ export function computeRouteMomentVerdict(
           reason: 'Taste-authored route-level moment preservation verdict',
         },
       ],
-      peakCandidateVenueId: highlight?.candidateVenueId,
-      anchorAsPeakCandidacy: getAnchorAsPeakCandidacy(
-        highlight,
-        stops,
-        input.selectedAnchor,
-        highlightMomentScore,
-      ),
+      peakCandidateVenueId,
+      anchorAsPeakCandidacy: getAnchorAsPeakCandidacy({
+        peakCandidateVenueId,
+        selectedAnchor: input.selectedAnchor,
+        selectedAnchorIsRoutePeak,
+        peakSuitabilityTier,
+        momentStrength,
+        momentPreservationStatus,
+        strongMomentPresent,
+        flatArcRiskLevel,
+      }),
       peakSuitability: {
         score: highlightMomentScore,
-        tier: highlight?.momentIntensity.tier,
+        tier: peakSuitabilityTier,
       },
       momentStrengthVerdict: {
-        strength: strongMomentPresent ? 'strong' : highlightIdentity?.strength ?? 'unknown',
+        strength: momentStrength,
         score,
         reason: qualityNote,
       },
-      momentPreservationStatus: getMomentPreservationStatus({
-        strongMomentPresent,
-        highIntensityHighlight,
-        flatPenalty,
-        penalty,
-      }),
+      momentPreservationStatus,
       strongMomentPresent,
       flatArcRisk: {
-        level: getFlatArcRiskLevel(combinedFlatPenalty),
+        level: flatArcRiskLevel,
         score: combinedFlatPenalty,
         varianceScore,
         penalty: combinedFlatPenalty,

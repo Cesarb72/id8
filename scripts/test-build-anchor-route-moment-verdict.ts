@@ -18,6 +18,7 @@ import {
 import type { ArcCandidate, ArcStop, ScoredVenue } from '../src/domain/types/arc.ts'
 import type { IntentInput } from '../src/domain/types/intent.ts'
 import type { InternalRole } from '../src/domain/types/venue.ts'
+import type { RoutePacingDiagnostics } from '../src/domain/types/diagnostics.ts'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -96,10 +97,13 @@ function uniqueScoredVenues(candidates: readonly ScoredVenue[]): ScoredVenue[] {
   ]
 }
 
-function toSelectedAnchorEvidence(): TasteRouteMomentSelectedAnchorEvidence {
+function toSelectedAnchorEvidence(
+  selectedAnchorBaseVenueId = SELECTED_ANCHOR_BASE_VENUE_ID,
+  requiredRole = REQUIRED_ROLE,
+): TasteRouteMomentSelectedAnchorEvidence {
   return {
-    selectedAnchorBaseVenueId: SELECTED_ANCHOR_BASE_VENUE_ID,
-    requiredRole: REQUIRED_ROLE,
+    selectedAnchorBaseVenueId,
+    requiredRole,
   }
 }
 
@@ -129,7 +133,10 @@ function summarizeStop(stop: ArcStop) {
   }
 }
 
-function readRouteShape(selectedArc: ArcCandidate): 'build_peak_taper' | 'flat' | 'inconclusive' {
+function readRouteShape(
+  selectedArc: ArcCandidate,
+  expectedPeakBaseVenueId: string,
+): 'build_peak_taper' | 'flat' | 'inconclusive' {
   const start = selectedArc.stops.find((stop) => stop.role === 'warmup')
   const peak = selectedArc.stops.find((stop) => stop.role === 'peak')
   const windDown = selectedArc.stops.find((stop) => stop.role === 'cooldown')
@@ -137,15 +144,15 @@ function readRouteShape(selectedArc: ArcCandidate): 'build_peak_taper' | 'flat' 
     return 'inconclusive'
   }
   if (
-    getArcStopBaseVenueId(peak) === SELECTED_ANCHOR_BASE_VENUE_ID &&
+    getArcStopBaseVenueId(peak) === expectedPeakBaseVenueId &&
     peak.scoredVenue.venue.energyLevel >= start.scoredVenue.venue.energyLevel &&
     windDown.scoredVenue.venue.energyLevel <= peak.scoredVenue.venue.energyLevel
   ) {
     return 'build_peak_taper'
   }
   if (
-    selectedArc.scoreBreakdown.roleEnergyNote?.toLowerCase().includes('flat') ||
-    selectedArc.scoreBreakdown.strongMomentPresent === false
+    selectedArc.scoreBreakdown.strongMomentPresent === false ||
+    (selectedArc.scoreBreakdown.momentFlatPenalty ?? 0) > 0
   ) {
     return 'flat'
   }
@@ -158,13 +165,13 @@ function classify(params: {
   anchorAsPeakCandidacy: string
   momentPreservationStatus: string
   strongMomentPresent: boolean
+  momentRightPassed: boolean
 }): 'ownership_and_behavior_realized' | 'ownership_moved_behavior_flat' | 'observer_incomplete' | 'mixed' {
   const tasteMarksIntendedPeak = params.anchorAsPeakCandidacy === 'intended_peak'
   const verdictStrongEnough =
     params.strongMomentPresent &&
-    (params.momentPreservationStatus === 'preserved' ||
-      params.momentPreservationStatus === 'partial')
-  if (tasteMarksIntendedPeak && params.anchorIsPeak && verdictStrongEnough) {
+    params.momentPreservationStatus === 'preserved'
+  if (tasteMarksIntendedPeak && params.anchorIsPeak && verdictStrongEnough && params.momentRightPassed) {
     return params.routeShapeRead === 'build_peak_taper'
       ? 'ownership_and_behavior_realized'
       : 'mixed'
@@ -173,6 +180,232 @@ function classify(params: {
     return 'mixed'
   }
   return 'ownership_moved_behavior_flat'
+}
+
+function summarizeVerdict(routeMoment: ReturnType<typeof computeRouteMomentVerdict>) {
+  return {
+    peakCandidateVenueId: routeMoment.verdict.peakCandidateVenueId,
+    anchorAsPeakCandidacy: routeMoment.verdict.anchorAsPeakCandidacy,
+    peakSuitability: routeMoment.verdict.peakSuitability,
+    momentStrengthVerdict: routeMoment.verdict.momentStrengthVerdict,
+    momentPreservationStatus: routeMoment.verdict.momentPreservationStatus,
+    strongMomentPresent: routeMoment.verdict.strongMomentPresent,
+    flatArcRisk: routeMoment.verdict.flatArcRisk,
+    momentQualityNote: routeMoment.verdict.momentQualityNote,
+  }
+}
+
+function summarizeMomentRight(greatStop: ReturnType<typeof buildGreatStopGateResult>) {
+  return {
+    status: greatStop.criteria.momentRight.passed ? 'PASS' : 'FAIL',
+    reasons: greatStop.criteria.momentRight.reasons,
+    diagnostics: greatStop.diagnostics.strongMoment,
+  }
+}
+
+function syntheticStop(
+  role: TasteRouteMomentStopEvidence['role'],
+  candidateVenueId: string,
+  params: {
+    displayName: string
+    energyLevel: number
+    momentIdentity: TasteRouteMomentStopEvidence['momentIdentity']
+    momentPotentialScore: number
+    momentIntensity: TasteRouteMomentStopEvidence['momentIntensity']
+    primaryExperienceArchetype: TasteRouteMomentStopEvidence['primaryExperienceArchetype']
+    anchorStrength?: number
+  },
+): TasteRouteMomentStopEvidence {
+  return {
+    role,
+    candidateVenueId,
+    momentIdentity: params.momentIdentity,
+    momentPotential: {
+      score: params.momentPotentialScore,
+      drivers: [],
+    },
+    momentIntensity: params.momentIntensity,
+    primaryExperienceArchetype: params.primaryExperienceArchetype,
+    anchorStrength: params.anchorStrength ?? 0.6,
+    roleFitScore: 1,
+    stopShapeFitScore: 0.8,
+    highlightValidity: 'valid',
+  }
+}
+
+function toSyntheticArcCandidate(
+  id: string,
+  stops: readonly TasteRouteMomentStopEvidence[],
+  routeMoment: ReturnType<typeof computeRouteMomentVerdict>,
+): ArcCandidate {
+  const arcStops = stops.map((stop, index) => ({
+    role: stop.role,
+    scoredVenue: {
+      candidateIdentity: {
+        kind: 'venue',
+        candidateId: stop.candidateVenueId,
+        baseVenueId: stop.candidateVenueId,
+        traceLabel: stop.candidateVenueId,
+      },
+      venue: {
+        id: stop.candidateVenueId,
+        name: stop.candidateVenueId,
+        energyLevel: index === 1 ? 3 : index === 0 ? 2 : 1,
+        source: {
+          providerRecordId: `synthetic:${stop.candidateVenueId}`,
+        },
+      },
+      momentIdentity: stop.momentIdentity,
+      taste: {
+        signals: {
+          momentPotential: stop.momentPotential,
+          momentIntensity: stop.momentIntensity,
+          primaryExperienceArchetype: stop.primaryExperienceArchetype,
+          anchorStrength: stop.anchorStrength,
+        },
+        modeAlignment: {
+          lane: stop.momentIdentity.type,
+          score: 0.8,
+        },
+      },
+      fitScore: 0.8,
+      lensCompatibility: 0.8,
+      contextSpecificity: {
+        overall: 0.8,
+      },
+      roleScores: {
+        warmup: stop.role === 'warmup' ? 1 : 0.4,
+        peak: stop.role === 'peak' ? 1 : 0.4,
+        wildcard: stop.role === 'wildcard' ? 1 : 0.4,
+        cooldown: stop.role === 'cooldown' ? 1 : 0.4,
+      },
+      stopShapeFit: {
+        start: stop.role === 'warmup' ? 0.8 : 0.4,
+        highlight: stop.role === 'peak' ? 0.8 : 0.4,
+        surprise: stop.role === 'wildcard' ? 0.8 : 0.4,
+        windDown: stop.role === 'cooldown' ? 0.8 : 0.4,
+      },
+      highlightValidity: {
+        validityLevel: stop.highlightValidity ?? 'valid',
+      },
+    },
+  })) as ArcStop[]
+
+  return {
+    id,
+    stops: arcStops,
+    totalScore: routeMoment.score,
+    scoreBreakdown: {
+      roleFlowScore: 1,
+      diversityScore: 1,
+      geographyScore: 1,
+      hiddenGemLift: 0,
+      windDownScore: 1,
+      highlightMomentScore: routeMoment.highlightMomentScore,
+      momentStrengthScore: routeMoment.score,
+      momentVarianceScore: routeMoment.varianceScore,
+      momentFlatPenalty: routeMoment.flatPenalty + routeMoment.penalty,
+      roleEnergyNote: 'legacy debug only',
+      strongMomentPresent: routeMoment.strongMomentPresent,
+      momentQualityNote: routeMoment.qualityNote,
+    },
+    pacing: {} as ArcCandidate['pacing'],
+    spatial: {
+      score: 1,
+      notes: [],
+      transitions: [],
+      clusterAssignments: arcStops.map((stop, index) => ({
+        venueId: getArcStopBaseVenueId(stop),
+        clusterId: `synthetic-${index}`,
+      })),
+      clusterEscapeCount: 0,
+      repeatedClusterEscapeCount: 0,
+      longTransitionCount: 0,
+    } as ArcCandidate['spatial'],
+    hasWildcard: false,
+  }
+}
+
+function syntheticPacing(): RoutePacingDiagnostics {
+  return {
+    transitions: [
+      {
+        fromRole: 'start',
+        toRole: 'highlight',
+        fromVenueId: 'synthetic-start',
+        toVenueId: 'synthetic-peak',
+        estimatedTravelMinutes: 4,
+        transitionBufferMinutes: 0,
+        estimatedTransitionMinutes: 4,
+        frictionScore: 0.2,
+        movementMode: 'walkable',
+        neighborhoodContinuity: 'same-neighborhood',
+        notes: [],
+      },
+      {
+        fromRole: 'highlight',
+        toRole: 'windDown',
+        fromVenueId: 'synthetic-peak',
+        toVenueId: 'synthetic-end',
+        estimatedTravelMinutes: 4,
+        transitionBufferMinutes: 0,
+        estimatedTransitionMinutes: 4,
+        frictionScore: 0.2,
+        movementMode: 'walkable',
+        neighborhoodContinuity: 'same-neighborhood',
+        notes: [],
+      },
+    ],
+    totalRouteFriction: 0.4,
+    estimatedStopMinutes: 90,
+    estimatedTransitionMinutes: 8,
+    estimatedTotalMinutes: 98,
+    estimatedTotalLabel: '98m',
+    routeFeelLabel: 'synthetic',
+    pacingPenaltyApplied: false,
+    pacingPenaltyReasons: [],
+    smoothProgressionRewardApplied: true,
+    smoothProgressionRewardReasons: ['synthetic smooth progression'],
+  }
+}
+
+function observeSyntheticCase(params: {
+  caseId: string
+  stops: readonly TasteRouteMomentStopEvidence[]
+  selectedAnchor?: TasteRouteMomentSelectedAnchorEvidence
+  expectedPeakBaseVenueId: string
+}) {
+  const routeMoment = computeRouteMomentVerdict({
+    stops: params.stops,
+    selectedAnchor: params.selectedAnchor,
+  })
+  const selectedArc = toSyntheticArcCandidate(params.caseId, params.stops, routeMoment)
+  const greatStop = buildGreatStopGateResult({
+    selectedArc,
+    intent: {
+      mode: 'build',
+      city: 'San Jose',
+      persona: 'friends',
+      distanceMode: 'nearby',
+      planningMode: 'user-led',
+      anchor: params.selectedAnchor
+        ? {
+            venueId: params.selectedAnchor.selectedAnchorBaseVenueId,
+            role: params.selectedAnchor.requiredRole,
+          }
+        : undefined,
+      refinementModes: [],
+    } as IntentInput,
+    routePacing: syntheticPacing(),
+    locationClass: 'L1 Dense',
+    locationClassSource: 'explicit',
+  })
+  return {
+    route: selectedArc.stops.map(summarizeStop),
+    routeShapeRead: readRouteShape(selectedArc, params.expectedPeakBaseVenueId),
+    tasteRouteMomentVerdict: summarizeVerdict(routeMoment),
+    greatStopMomentRight: summarizeMomentRight(greatStop),
+  }
 }
 
 try {
@@ -232,59 +465,139 @@ try {
     locationClass: 'L2 Mid',
     locationClassSource: 'explicit',
   })
-  const routeShapeRead = readRouteShape(selectedArc)
+  const routeShapeRead = readRouteShape(selectedArc, SELECTED_ANCHOR_BASE_VENUE_ID)
   const classification = classify({
     anchorIsPeak,
     routeShapeRead,
     anchorAsPeakCandidacy: routeMoment.verdict.anchorAsPeakCandidacy,
     momentPreservationStatus: routeMoment.verdict.momentPreservationStatus,
     strongMomentPresent: routeMoment.verdict.strongMomentPresent,
+    momentRightPassed: greatStop.criteria.momentRight.passed,
+  })
+  const flatRouteGuard = observeSyntheticCase({
+    caseId: 'flat_route_guard',
+    expectedPeakBaseVenueId: 'synthetic-flat-peak',
+    stops: [
+      syntheticStop('warmup', 'synthetic-flat-start', {
+        displayName: 'Flat Start',
+        energyLevel: 2,
+        momentIdentity: { type: 'linger', strength: 'light' },
+        momentPotentialScore: 0.18,
+        momentIntensity: { score: 0.24, tier: 'standard', drivers: [] },
+        primaryExperienceArchetype: 'dining',
+      }),
+      syntheticStop('peak', 'synthetic-flat-peak', {
+        displayName: 'Flat Peak',
+        energyLevel: 2,
+        momentIdentity: { type: 'linger', strength: 'light' },
+        momentPotentialScore: 0.2,
+        momentIntensity: { score: 0.28, tier: 'standard', drivers: [] },
+        primaryExperienceArchetype: 'drinks',
+      }),
+      syntheticStop('cooldown', 'synthetic-flat-end', {
+        displayName: 'Flat End',
+        energyLevel: 2,
+        momentIdentity: { type: 'linger', strength: 'light' },
+        momentPotentialScore: 0.18,
+        momentIntensity: { score: 0.22, tier: 'standard', drivers: [] },
+        primaryExperienceArchetype: 'sweet',
+      }),
+    ],
+  })
+  const strongPeakGeneralization = observeSyntheticCase({
+    caseId: 'strong_peak_generalization',
+    expectedPeakBaseVenueId: 'synthetic-jazz-cellar',
+    selectedAnchor: toSelectedAnchorEvidence('synthetic-jazz-cellar', 'highlight'),
+    stops: [
+      syntheticStop('warmup', 'synthetic-gallery-start', {
+        displayName: 'Gallery Start',
+        energyLevel: 2,
+        momentIdentity: { type: 'arrival', strength: 'light' },
+        momentPotentialScore: 0.28,
+        momentIntensity: { score: 0.36, tier: 'standard', drivers: [] },
+        primaryExperienceArchetype: 'culture',
+      }),
+      syntheticStop('peak', 'synthetic-jazz-cellar', {
+        displayName: 'Synthetic Jazz Cellar',
+        energyLevel: 3,
+        momentIdentity: { type: 'anchor', strength: 'strong' },
+        momentPotentialScore: 0.82,
+        momentIntensity: { score: 0.9, tier: 'exceptional', drivers: ['synthetic peak'] },
+        primaryExperienceArchetype: 'culture',
+        anchorStrength: 0.92,
+      }),
+      syntheticStop('cooldown', 'synthetic-dessert-end', {
+        displayName: 'Dessert End',
+        energyLevel: 1,
+        momentIdentity: { type: 'close', strength: 'light' },
+        momentPotentialScore: 0.3,
+        momentIntensity: { score: 0.38, tier: 'standard', drivers: [] },
+        primaryExperienceArchetype: 'sweet',
+      }),
+    ],
   })
 
   const observation = {
-    observer: 'build_anchor_route_moment_verdict',
-    anchorIdentity: {
-      selectedAnchorDisplayName: SELECTED_ANCHOR_DISPLAY_NAME,
-      selectedAnchorCanonicalBaseVenueId: SELECTED_ANCHOR_BASE_VENUE_ID,
-      providerRecordId: selectedAnchor.source.providerRecordId,
-      providerRecordIdProvenanceOnly: true,
-      requiredRole: REQUIRED_ROLE,
-      generatedRouteRole: anchorStop ? userRoleFor(anchorStop.role) : null,
+    observer: 'build_anchor_route_moment_verdict_three_route',
+    cases: {
+      adegaFix: {
+        anchorIdentity: {
+          selectedAnchorDisplayName: SELECTED_ANCHOR_DISPLAY_NAME,
+          selectedAnchorCanonicalBaseVenueId: SELECTED_ANCHOR_BASE_VENUE_ID,
+          providerRecordId: selectedAnchor.source.providerRecordId,
+          providerRecordIdProvenanceOnly: true,
+          requiredRole: REQUIRED_ROLE,
+          generatedRouteRole: anchorStop ? userRoleFor(anchorStop.role) : null,
+        },
+        routeShape: {
+          generatedRoute: routeStops,
+          selectedAnchorIsPeak: anchorIsPeak,
+          peakBaseVenueId: peakStop ? getArcStopBaseVenueId(peakStop) : null,
+          routeShapeRead,
+        },
+        tasteRouteMomentVerdict: summarizeVerdict(routeMoment),
+        routeMomentCompatibilityValues: {
+          highlightMomentScore: routeMoment.highlightMomentScore,
+          momentStrengthScore: routeMoment.score,
+          momentVarianceScore: routeMoment.varianceScore,
+          momentFlatPenalty: routeMoment.flatPenalty + routeMoment.penalty,
+          strongMomentPresent: routeMoment.strongMomentPresent,
+          momentQualityNote: routeMoment.qualityNote,
+          availableCount: routeMoment.availableCount,
+          presentCount: routeMoment.presentCount,
+          availableCandidateSource: 'runGeneratePlan.result.scoredVenues',
+        },
+        arcCompatibilityFields: {
+          highlightMomentScore: selectedArc.scoreBreakdown.highlightMomentScore,
+          momentStrengthScore: selectedArc.scoreBreakdown.momentStrengthScore,
+          momentVarianceScore: selectedArc.scoreBreakdown.momentVarianceScore,
+          momentFlatPenalty: selectedArc.scoreBreakdown.momentFlatPenalty,
+          strongMomentPresent: selectedArc.scoreBreakdown.strongMomentPresent,
+          momentQualityNote: selectedArc.scoreBreakdown.momentQualityNote,
+          missedPeakPenalty: selectedArc.scoreBreakdown.missedPeakPenalty,
+          missedPeakApplied: selectedArc.scoreBreakdown.missedPeakApplied,
+        },
+        greatStopMomentRight: summarizeMomentRight(greatStop),
+        classification,
+      },
+      flatRouteGuard: {
+        ...flatRouteGuard,
+        classification:
+          flatRouteGuard.greatStopMomentRight.status === 'FAIL' &&
+          flatRouteGuard.tasteRouteMomentVerdict.flatArcRisk.level !== 'none'
+            ? 'flat_guard_preserved'
+            : 'mixed',
+      },
+      strongPeakGeneralization: {
+        ...strongPeakGeneralization,
+        classification:
+          strongPeakGeneralization.tasteRouteMomentVerdict.anchorAsPeakCandidacy ===
+            'intended_peak' &&
+          strongPeakGeneralization.greatStopMomentRight.status === 'PASS'
+            ? 'strong_peak_generalized'
+            : 'mixed',
+      },
     },
-    routeShape: {
-      generatedRoute: routeStops,
-      selectedAnchorIsPeak: anchorIsPeak,
-      peakBaseVenueId: peakStop ? getArcStopBaseVenueId(peakStop) : null,
-      routeShapeRead,
-    },
-    tasteRouteMomentVerdict: routeMoment.verdict,
-    routeMomentCompatibilityValues: {
-      highlightMomentScore: routeMoment.highlightMomentScore,
-      momentStrengthScore: routeMoment.score,
-      momentVarianceScore: routeMoment.varianceScore,
-      momentFlatPenalty: routeMoment.flatPenalty + routeMoment.penalty,
-      strongMomentPresent: routeMoment.strongMomentPresent,
-      momentQualityNote: routeMoment.qualityNote,
-      availableCount: routeMoment.availableCount,
-      presentCount: routeMoment.presentCount,
-      availableCandidateSource: 'runGeneratePlan.result.scoredVenues',
-    },
-    arcCompatibilityFields: {
-      highlightMomentScore: selectedArc.scoreBreakdown.highlightMomentScore,
-      momentStrengthScore: selectedArc.scoreBreakdown.momentStrengthScore,
-      momentVarianceScore: selectedArc.scoreBreakdown.momentVarianceScore,
-      momentFlatPenalty: selectedArc.scoreBreakdown.momentFlatPenalty,
-      strongMomentPresent: selectedArc.scoreBreakdown.strongMomentPresent,
-      momentQualityNote: selectedArc.scoreBreakdown.momentQualityNote,
-      missedPeakPenalty: selectedArc.scoreBreakdown.missedPeakPenalty,
-      missedPeakApplied: selectedArc.scoreBreakdown.missedPeakApplied,
-    },
-    greatStopMomentRight: {
-      status: greatStop.criteria.momentRight.passed ? 'PASS' : 'FAIL',
-      reasons: greatStop.criteria.momentRight.reasons,
-      diagnostics: greatStop.diagnostics.strongMoment,
-    },
-    classification,
     providerNetworkCounts: {
       fetchCallCount,
       retrievalLiveFetchAttempted:
@@ -309,8 +622,37 @@ try {
     'Observer harness must expose peakCandidateVenueId.',
   )
   assert(
-    classification !== 'observer_incomplete',
-    'Observer harness must produce a complete classification.',
+    routeMoment.verdict.anchorAsPeakCandidacy === 'intended_peak',
+    'Adega selected Build highlight must be the intended peak when Taste verdict is strong and preserved.',
+  )
+  assert(
+    greatStop.criteria.momentRight.passed,
+    'Adega Moment-Right must pass when Taste verdict is strong, preserved, and flat risk is none.',
+  )
+  assert(
+    !greatStop.criteria.momentRight.reasons.includes('moment_right:dead_flat_arc'),
+    'Great Stop Moment-Right must not emit the old dead-flat reason from roleEnergyNote.',
+  )
+  assert(
+    flatRouteGuard.tasteRouteMomentVerdict.flatArcRisk.level !== 'none',
+    'Flat guard must be authored as flat risk by Taste.',
+  )
+  assert(
+    flatRouteGuard.greatStopMomentRight.status === 'FAIL',
+    'Flat guard must fail Moment-Right through the Taste-derived stamp.',
+  )
+  assert(
+    flatRouteGuard.greatStopMomentRight.reasons.includes('moment_right:taste_flat_arc_risk'),
+    'Flat guard must fail from Taste flat arc risk, not roleEnergyNote.',
+  )
+  assert(
+    strongPeakGeneralization.tasteRouteMomentVerdict.anchorAsPeakCandidacy ===
+      'intended_peak',
+    'Non-Adega strong selected peak must generalize as intended_peak.',
+  )
+  assert(
+    strongPeakGeneralization.greatStopMomentRight.status === 'PASS',
+    'Non-Adega strong peak must pass Moment-Right.',
   )
 } finally {
   globalThis.fetch = originalFetch

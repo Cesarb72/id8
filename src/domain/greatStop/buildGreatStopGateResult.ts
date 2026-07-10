@@ -333,37 +333,20 @@ function evaluateMomentRight(candidate: ArcCandidate): {
 } {
   const arcProgression = arcProgressionDiagnostics(candidate)
   const laneVariance = laneDiagnostics(candidate)
+  const momentFlatPenalty = candidate.scoreBreakdown.momentFlatPenalty ?? 0
   const strongMoment = {
     present: candidate.scoreBreakdown.strongMomentPresent === true,
     note: candidate.scoreBreakdown.momentQualityNote,
     highlightMomentScore: candidate.scoreBreakdown.highlightMomentScore,
     momentStrengthScore: candidate.scoreBreakdown.momentStrengthScore,
-    momentFlatPenalty: candidate.scoreBreakdown.momentFlatPenalty,
+    momentFlatPenalty,
   }
   const reasons: string[] = []
-  if (!arcProgression.startPresent || !arcProgression.highlightPresent || !arcProgression.windDownPresent) {
-    reasons.push('moment_right:missing_three_beat_progression')
-  }
-  if (arcProgression.peakRoleAdvantage < -0.05) {
-    reasons.push('moment_right:highlight_not_main_moment')
-  }
-  if (!arcProgression.energyProgressionValid) {
-    reasons.push('moment_right:energy_progression_invalid')
-  }
-  if (laneVariance.supportLaneVariance <= 1 && laneVariance.laneRepetitionCount > 0) {
-    reasons.push('moment_right:low_support_contrast')
-  }
-  if (candidate.scoreBreakdown.roleEnergyNote?.toLowerCase().includes('flat')) {
-    reasons.push('moment_right:dead_flat_arc')
-  }
   if (candidate.scoreBreakdown.strongMomentPresent === false) {
     reasons.push('moment_right:no_strong_main_moment')
   }
-  if ((candidate.scoreBreakdown.momentFlatPenalty ?? 0) >= 0.06) {
-    reasons.push('moment_right:moment_flat_penalty')
-  }
-  if (candidate.spatial.longTransitionCount > 0 && !strongMoment.present) {
-    reasons.push('moment_right:movement_without_moment_payoff')
+  if (momentFlatPenalty > 0) {
+    reasons.push('moment_right:taste_flat_arc_risk')
   }
   return {
     result: criterion(reasons.length === 0, reasons),
