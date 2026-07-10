@@ -104,7 +104,8 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 - [2026-07-09] [GW2-BEARINGS-2B threshold portability] - applyPocketViabilityRules moved behind Bearings-owned helper with behavior preserved. Current thresholds/weights are hardcoded concierge/nightlife MVP values, not portable Bearings policy. Impact: behavior-safe for ID.8 MVP, not extraction-final. Action: tracked-temporary - nightlife thresholds; parameterize at extraction.
 
 ### Waypoint
-*(append discoveries here)*
+- [2026-07-09] [WAYPOINT-COORD-2A coordination primitive scaffold] - expected scaffold-only boundary definition -> added domain-blind coordination primitive types with required source ownership on every input signal component. Impact: Waypoint coordination boundary is named without moving route ranking, pocket ranking, or arc scoring. Action: next slice may move pocket-ranking behind compatibility wrapper only after scaffold review/commit; arc adapter remains held until arc/ audit.
+  Source ownership requirement: coordination input signals must be authored by Taste, Bearings, District, Field, Direction, or Compat; Waypoint is intentionally excluded as an input signal author so it coordinates already-authored signals rather than creating meaning/feasibility/spatial truth.
 
 ### LCE
 *(append discoveries here)*
