@@ -4,6 +4,11 @@ import { computeRouteDuration } from '../taste/computeRouteDuration'
 import { computeRouteShapeBias } from '../taste/computeRouteShapeBias'
 import { computeSupportStopVibeFit } from '../taste/computeSupportStopVibeFit'
 import {
+  computeRouteMomentVerdict,
+  type TasteRouteMomentAvailableCandidateEvidence,
+  type TasteRouteMomentStopEvidence,
+} from '../interpretation/taste/computeRouteMomentVerdict'
+import {
   isCandidateWithinActiveDistanceWindow,
   isCandidateUsedByStretch,
   getStretchDistanceStatus,
@@ -18,7 +23,6 @@ import {
   getMomentIntensityTierBoost,
   isGenericHospitalityFallbackCandidate,
   isHighMomentPotential,
-  isStrongMomentIdentity,
 } from '../taste/experienceSignals'
 import { detectExperienceFamily, type ExperienceFamily } from '../directions/detectExperienceFamily'
 import {
@@ -109,6 +113,57 @@ function isHospitalityArchetype(archetype: ReturnType<typeof getPrimaryExperienc
 
 function getMomentIdentity(stop: ArcStop) {
   return stop.scoredVenue.momentIdentity
+}
+
+function getRoleFitScore(stop: ArcStop): number {
+  if (stop.role === 'warmup') {
+    return stop.scoredVenue.roleScores.warmup
+  }
+  if (stop.role === 'peak') {
+    return stop.scoredVenue.roleScores.peak
+  }
+  if (stop.role === 'wildcard') {
+    return stop.scoredVenue.roleScores.wildcard
+  }
+  return stop.scoredVenue.roleScores.cooldown
+}
+
+function getStopShapeFitScore(stop: ArcStop): number {
+  if (stop.role === 'warmup') {
+    return stop.scoredVenue.stopShapeFit.start
+  }
+  if (stop.role === 'peak') {
+    return stop.scoredVenue.stopShapeFit.highlight
+  }
+  if (stop.role === 'wildcard') {
+    return stop.scoredVenue.stopShapeFit.surprise
+  }
+  return stop.scoredVenue.stopShapeFit.windDown
+}
+
+function toRouteMomentStopEvidence(stop: ArcStop): TasteRouteMomentStopEvidence {
+  return {
+    role: stop.role,
+    candidateVenueId: getArcStopBaseVenueId(stop),
+    momentIdentity: stop.scoredVenue.momentIdentity,
+    momentPotential: stop.scoredVenue.taste.signals.momentPotential,
+    momentIntensity: stop.scoredVenue.taste.signals.momentIntensity,
+    primaryExperienceArchetype: stop.scoredVenue.taste.signals.primaryExperienceArchetype,
+    anchorStrength: stop.scoredVenue.taste.signals.anchorStrength,
+    roleFitScore: getRoleFitScore(stop),
+    stopShapeFitScore: getStopShapeFitScore(stop),
+    highlightValidity: stop.scoredVenue.highlightValidity.validityLevel,
+  }
+}
+
+function toRouteMomentAvailableCandidateEvidence(
+  candidate: ArcStop['scoredVenue'],
+): TasteRouteMomentAvailableCandidateEvidence {
+  return {
+    candidateVenueId: getScoredVenueBaseVenueId(candidate),
+    momentIdentity: candidate.momentIdentity,
+    momentPotential: candidate.taste.signals.momentPotential,
+  }
 }
 
 function clamp01(value: number): number {
@@ -1962,136 +2017,6 @@ function computeAlignmentPreservationContract(
   }
 }
 
-function computeMomentPreservationContract(
-  stops: ArcStop[],
-  lens: ExperienceLens,
-  rolePools?: RolePools,
-): {
-  score: number
-  penalty: number
-  varianceScore: number
-  flatPenalty: number
-  strongMomentPresent: boolean
-  qualityNote: string
-  presentCount: number
-  availableCount: number
-} {
-  const momentStops = stops.map((stop) => ({
-    stop,
-    identity: getMomentIdentity(stop),
-  }))
-  const presentHighMomentStops = momentStops.filter(({ stop }) =>
-    isHighMomentPotential(stop.scoredVenue.taste.signals.momentPotential),
-  )
-  const strongMomentStops = momentStops.filter(({ identity }) =>
-    isStrongMomentIdentity(identity),
-  )
-  const availableCandidates = rolePools
-    ? [
-        ...rolePools.warmup,
-        ...rolePools.peak,
-        ...rolePools.wildcard,
-        ...rolePools.cooldown,
-      ]
-    : []
-  const availableHighMomentCount = [
-    ...new Map(
-      availableCandidates.map((candidate) => [getScoredVenueCandidateId(candidate), candidate] as const),
-    ).values(),
-  ].filter((candidate) =>
-    isHighMomentPotential(candidate.taste.signals.momentPotential),
-  ).length
-  const availableStrongMomentCount = [
-    ...new Map(
-      availableCandidates.map((candidate) => [getScoredVenueCandidateId(candidate), candidate] as const),
-    ).values(),
-  ].filter((candidate) => isStrongMomentIdentity(candidate.momentIdentity)).length
-  const highlightHighMoment = stops.some(
-    (stop) =>
-      stop.role === 'peak' &&
-      isHighMomentPotential(stop.scoredVenue.taste.signals.momentPotential),
-  )
-  const uniqueMomentTypes = new Set(momentStops.map(({ identity }) => identity.type)).size
-  const varianceScore = clamp01(
-    uniqueMomentTypes >= 3
-      ? 1
-      : uniqueMomentTypes === 2
-        ? 0.66
-        : uniqueMomentTypes === 1 && momentStops.length > 0
-          ? 0.24
-          : 0,
-  )
-  const warmup = momentStops.find(({ stop }) => stop.role === 'warmup')?.identity
-  const highlight = momentStops.find(({ stop }) => stop.role === 'peak')?.identity
-  const cooldown = momentStops.find(({ stop }) => stop.role === 'cooldown')?.identity
-  const roleSequenceScore = clamp01(
-    (warmup && (warmup.type === 'arrival' || warmup.type === 'explore') ? 0.34 : 0) +
-      (highlight && (highlight.type === 'anchor' || highlight.type === 'explore') ? 0.4 : 0) +
-      (cooldown && (cooldown.type === 'linger' || cooldown.type === 'close') ? 0.34 : 0),
-  )
-  const highlightStrongMoment =
-    highlight &&
-    highlight.strength === 'strong' &&
-    (highlight.type === 'anchor' || highlight.type === 'explore')
-  const highlightIntensity = stops.find((stop) => stop.role === 'peak')?.scoredVenue.taste.signals.momentIntensity
-  const highIntensityHighlight =
-    highlightIntensity?.tier === 'signature' || highlightIntensity?.tier === 'exceptional'
-  const strongMomentPresent = strongMomentStops.length > 0
-  const allStopsSubStrong = momentStops.length > 0 && strongMomentStops.length === 0
-  const lowVarianceHospitalityArc =
-    uniqueMomentTypes <= 2 &&
-    stops.filter((stop) => isHospitalityArchetype(getPrimaryExperienceArchetype(stop))).length >= 2
-  const score = clamp01(
-    (strongMomentPresent
-      ? highlightStrongMoment || highIntensityHighlight
-        ? 0.72
-        : 0.56
-      : presentHighMomentStops.length > 0
-        ? 0.22
-        : 0) +
-      Math.min(0.16, strongMomentStops.length * 0.06) +
-      (highlightIntensity ? highlightIntensity.score * 0.12 : 0) +
-      varianceScore * 0.18 +
-      roleSequenceScore * 0.18 +
-      (highlightHighMoment ? 0.08 : 0),
-  )
-  const flatPenalty =
-    (allStopsSubStrong ? 0.07 : 0) +
-    (lowVarianceHospitalityArc ? 0.06 : uniqueMomentTypes <= 1 && momentStops.length > 0 ? 0.04 : 0)
-  const missedStrongMomentPenalty =
-    availableStrongMomentCount > 0 && !strongMomentPresent
-      ? lens.tasteMode?.id === 'activity-led' || lens.tasteMode?.id === 'scenic-outdoor'
-        ? 0.16
-        : 0.1
-      : 0
-  const penalty = clamp01(
-    missedStrongMomentPenalty +
-      (availableHighMomentCount > 0 && presentHighMomentStops.length === 0 ? 0.08 : 0) +
-      flatPenalty,
-  )
-  const qualityNote =
-    (highlightStrongMoment || highIntensityHighlight) && varianceScore >= 0.66
-      ? 'Clear main moment with distinct support beats.'
-      : (strongMomentPresent || highIntensityHighlight) && roleSequenceScore >= 0.66
-        ? 'Main moment is present and the arc resolves intentionally.'
-        : strongMomentPresent || highIntensityHighlight
-          ? 'A strong moment survived, but the rest of the arc is flatter.'
-          : varianceScore >= 0.66
-            ? 'Moment beats vary, but no strong main moment survived.'
-            : 'Arc reads flat; most stops land on similar moment beats.'
-
-  return {
-    score,
-    penalty,
-    varianceScore,
-    flatPenalty,
-    strongMomentPresent,
-    qualityNote,
-    presentCount: presentHighMomentStops.length,
-    availableCount: Math.max(availableHighMomentCount, availableStrongMomentCount),
-  }
-}
-
 function computeHiddenGemLift(stops: ArcStop[], intent: IntentProfile, lens: ExperienceLens): number {
   const baseline = stops.reduce((sum, stop) => sum + stop.scoredVenue.hiddenGemScore, 0) / stops.length
   const wildcardLift = stops.some((stop) => stop.role === 'wildcard')
@@ -2593,35 +2518,6 @@ function computeFakeCompletenessPenalty(stops: ArcStop[]): {
     penalty: applied ? FAKE_COMPLETENESS_PENALTY : 0,
     applied,
   }
-}
-
-function computeHighlightMomentScore(stops: ArcStop[]): number {
-  const highlight = stops.find((stop) => stop.role === 'peak')
-  if (!highlight) {
-    return 0
-  }
-
-  const signals = highlight.scoredVenue.taste.signals
-  const momentIdentity = getMomentIdentity(highlight)
-  const archetypeLift =
-    signals.primaryExperienceArchetype === 'scenic' ||
-    signals.primaryExperienceArchetype === 'outdoor' ||
-    signals.primaryExperienceArchetype === 'activity' ||
-    signals.primaryExperienceArchetype === 'culture'
-      ? 0.16
-      : signals.primaryExperienceArchetype === 'social'
-        ? 0.08
-        : 0.02
-
-  return clamp01(
-    signals.momentPotential.score * 0.76 +
-      signals.momentIntensity.score * 0.24 +
-      getMomentIntensityTierBoost(signals.momentIntensity) * 0.9 +
-      (isHighMomentPotential(signals.momentPotential) ? 0.14 : 0) +
-      (momentIdentity.strength === 'strong' ? 0.1 : momentIdentity.strength === 'medium' ? 0.04 : 0) +
-      (momentIdentity.type === 'anchor' || momentIdentity.type === 'explore' ? 0.08 : -0.04) +
-      archetypeLift,
-  )
 }
 
 function computeHighlightValidityScore(stops: ArcStop[]): number {
@@ -3562,7 +3458,14 @@ export function scoreArcAssembly(
   const vibeCoherence = computeVibeCoherence(stops)
   const highlightVibeScore = computeHighlightVibeScore(stops)
   const highlightValidityScore = computeHighlightValidityScore(stops)
-  const highlightMomentScore = computeHighlightMomentScore(stops)
+  const routeMomentVerdict = computeRouteMomentVerdict({
+    stops: stops.map(toRouteMomentStopEvidence),
+    availableCandidates: getUniqueRolePoolCandidates(rolePools).map(
+      toRouteMomentAvailableCandidateEvidence,
+    ),
+    tasteModeId: lens.tasteMode?.id,
+  })
+  const highlightMomentScore = routeMomentVerdict.highlightMomentScore
   const arcContrastScore = computeArcContrastScore(stops)
   const highlightCenteringScore = computeHighlightCenteringScore(stops)
   const discoveryContract = computeDiscoveryContract(stops, intent, rolePools)
@@ -3574,11 +3477,7 @@ export function scoreArcAssembly(
     lens,
     rolePools,
   )
-  const momentPreservation = computeMomentPreservationContract(
-    stops,
-    lens,
-    rolePools,
-  )
+  const momentPreservation = routeMomentVerdict
   const missedPeakPenalty = computeMissedPeakPenalty(stops, intent, rolePools)
   const romanticMomentContract = computeRomanticMomentContract(stops, intent, lens, rolePools)
   const romanticPersonaContract = computeRomanticPersonaContract(
