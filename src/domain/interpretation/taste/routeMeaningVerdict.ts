@@ -157,9 +157,23 @@ export interface TasteRouteMeaningFamilyVerdict {
   familyStrengths?: readonly TasteRouteMeaningStrength[]
 }
 
+export interface TasteRouteMeaningRolePoolEvidence {
+  role?: TasteRouteMeaningStopRole
+  candidateVenueId?: TasteRouteMeaningVenueId
+  roleSuitability?: Partial<Record<TasteRouteMeaningStopRole, TasteRouteMeaningScoreVerdict>>
+  easyHangCompatibility?: TasteRouteMeaningCompatibilityStatus
+  easyHangActive?: boolean
+  hardIncompatibleSignals?: readonly string[]
+  socialEvidence?: readonly TasteRouteMeaningSignalComponent[]
+  romanticEvidence?: readonly TasteRouteMeaningSignalComponent[]
+  familyEvidence?: readonly TasteRouteMeaningSignalComponent[]
+  categoryVibeEvidence?: readonly TasteRouteMeaningSignalComponent[]
+}
+
 export interface TasteRouteMeaningCompatibility {
   arcScoreBreakdown?: Record<string, TasteRouteMeaningComparableValue>
   rolePoolDiagnostics?: Record<string, TasteRouteMeaningComparableValue>
+  rolePoolEvidence?: readonly TasteRouteMeaningRolePoolEvidence[]
   greatStopRoleRightInputs?: Record<string, TasteRouteMeaningComparableValue>
   greatStopIntentRightInputs?: Record<string, TasteRouteMeaningComparableValue>
   debugSummaries?: readonly string[]

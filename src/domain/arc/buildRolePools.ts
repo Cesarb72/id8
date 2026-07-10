@@ -34,6 +34,13 @@ import {
   getMomentIntensityTierBoost,
 } from '../taste/experienceSignals'
 import type { TasteMomentIdentity } from '../interpretation/taste/types'
+import {
+  computeRolePoolCandidateMeaningEvidence,
+  computeRolePoolMeaningContextEvidence,
+  computeRolePoolMeaningEvidence,
+  type RolePoolMeaningCandidateInput,
+  type RolePoolMeaningContextInput,
+} from '../interpretation/taste/computeRolePoolMeaningEvidence'
 import type { InternalRole } from '../types/venue'
 import type { PreferredDiscoveryAdmissionRejectionReason } from '../types/roleContract'
 import {
@@ -89,24 +96,6 @@ const CENTRAL_MOMENT_FAMILY_MISMATCH_PENALTY = 0.04
 const starterScopedSoftHighlightStarterIds = new Set([
   'dessert-conversation',
   'coffee-books',
-])
-
-const easyHangCompatibleContextTokens = new Set([
-  'easy_hang',
-  'friends_cozy',
-  'easy_hang_night',
-])
-
-const easyHangHardIncompatibleSignals = new Set([
-  'activity',
-  'centerpiece',
-  'cocktails',
-  'jazz',
-  'late_night',
-  'live',
-  'live_music',
-  'museum',
-  'park',
 ])
 
 export function roleToLensStop(role: InternalRole): LensStopRole {
@@ -179,69 +168,68 @@ function contractMinCount(role: InternalRole, strictShapeEnabled: boolean): numb
   return strictShapeEnabled ? base + 1 : base
 }
 
-function normalizeSemanticToken(value: unknown): string {
-  return typeof value === 'string'
-    ? value
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '')
-    : ''
+function toRolePoolMeaningContext(
+  intent?: IntentProfile,
+  experienceContract?: ExperienceContract,
+): RolePoolMeaningContextInput {
+  return {
+    mode: intent?.mode,
+    persona: intent?.persona,
+    contractPersona: experienceContract?.persona,
+    contractVibe: experienceContract?.vibe,
+    selectedDirectionContext: intent?.selectedDirectionContext,
+  }
 }
 
-function buildSemanticTokenSet(values: unknown[]): Set<string> {
-  const tokens = new Set<string>()
-  for (const value of values) {
-    const normalized = normalizeSemanticToken(value)
-    if (!normalized) {
-      continue
-    }
-    tokens.add(normalized)
-    for (const part of normalized.split('_')) {
-      if (part) {
-        tokens.add(part)
-      }
-    }
+function toRolePoolMeaningCandidateEvidence(
+  candidate: ScoredVenue,
+): RolePoolMeaningCandidateInput {
+  const signals = candidate.taste.signals
+
+  return {
+    candidateVenueId: getScoredVenueBaseVenueId(candidate),
+    category: candidate.venue.category,
+    subcategory: candidate.venue.subcategory,
+    tags: candidate.venue.tags,
+    vibeTags: candidate.venue.vibeTags,
+    energy: signals.energy,
+    socialDensity: signals.socialDensity,
+    intimacy: signals.intimacy,
+    lingerFactor: signals.lingerFactor,
+    destinationFactor: signals.destinationFactor,
+    experientialFactor: signals.experientialFactor,
+    conversationFriendliness: signals.conversationFriendliness,
+    interactiveStrength: signals.interactiveStrength,
+    durationEstimate: signals.durationEstimate,
+    roleSuitability: signals.roleSuitability,
+    momentIntensityScore: signals.momentIntensity.score,
+    momentPotentialScore: signals.momentPotential.score,
+    anchorStrength: signals.anchorStrength,
+    primaryExperienceArchetype: signals.primaryExperienceArchetype,
   }
-  return tokens
 }
 
 function isBuildFriendsEasyHangContext(
   intent?: IntentProfile,
   experienceContract?: ExperienceContract,
 ): boolean {
-  if (intent?.mode !== 'build') {
-    return false
-  }
-  const persona = intent.persona ?? experienceContract?.persona
-  if (persona !== 'friends') {
-    return false
-  }
-
-  const contextTokens = buildSemanticTokenSet([
-    intent.selectedDirectionContext?.directionId,
-    intent.selectedDirectionContext?.label,
-    intent.selectedDirectionContext?.archetype,
-    intent.selectedDirectionContext?.identity,
-    intent.selectedDirectionContext?.cluster,
-  ])
-
-  return [...contextTokens].some((token) => easyHangCompatibleContextTokens.has(token))
+  return computeRolePoolMeaningContextEvidence(
+    toRolePoolMeaningContext(intent, experienceContract),
+  ).easyHang.active
 }
 
 function getEasyHangHardIncompatibleSignals(candidate: ScoredVenue): string[] {
-  const candidateSignals = buildSemanticTokenSet([
-    candidate.venue.category,
-    candidate.venue.subcategory,
-    ...candidate.venue.tags,
-    ...candidate.venue.vibeTags,
-  ])
-
-  return [...easyHangHardIncompatibleSignals].filter((signal) => candidateSignals.has(signal))
+  return [
+    ...computeRolePoolCandidateMeaningEvidence(
+      toRolePoolMeaningCandidateEvidence(candidate),
+    ).hardIncompatibleSignals,
+  ]
 }
 
 function isEasyHangHardIncompatibleCandidate(candidate: ScoredVenue): boolean {
-  return getEasyHangHardIncompatibleSignals(candidate).length > 0
+  return computeRolePoolCandidateMeaningEvidence(
+    toRolePoolMeaningCandidateEvidence(candidate),
+  ).hardIncompatible
 }
 
 function contractWeight(
@@ -378,6 +366,11 @@ export function computeRolePoolRankingBreakdown(
   intent?: IntentProfile,
 ): RolePoolRankingBreakdown {
   const lensRole = roleToLensStop(role)
+  const meaningEvidence = computeRolePoolMeaningEvidence({
+    role: lensRole,
+    context: toRolePoolMeaningContext(intent),
+    candidate: toRolePoolMeaningCandidateEvidence(candidate),
+  })
   const roleSpecificityWeight = role === 'peak' ? 0.24 : 0.18
   const roleDominanceWeight = role === 'peak' ? 0.24 : 0.18
   const liveLift = computeHybridLiveLift(candidate.venue)
@@ -436,10 +429,7 @@ export function computeRolePoolRankingBreakdown(
       ? candidate.taste.fallbackPenalty.appliedPenalty * 1.6
       : 0
   const passivePeakArchetype =
-    role === 'peak' &&
-    (candidate.taste.signals.primaryExperienceArchetype === 'dining' ||
-      candidate.taste.signals.primaryExperienceArchetype === 'drinks' ||
-      candidate.taste.signals.primaryExperienceArchetype === 'sweet')
+    role === 'peak' && meaningEvidence.candidate.isPassiveHospitalityPeak
   const modeSpecificPassiveHighlightPenalty =
     role === 'peak' &&
     (lens.tasteMode?.id === 'activity-led' || lens.tasteMode?.id === 'scenic-outdoor') &&
@@ -1978,33 +1968,26 @@ function computeContractRolePressure(params: {
     return { scoreAdjustment: 0, hardReject: false }
   }
 
-  const signals = candidate.taste.signals
-  const socialDensity = signals.socialDensity
-  const energy = signals.energy
-  const intimacy = signals.intimacy
-  const linger = signals.lingerFactor
-  const destination = signals.destinationFactor
-  const experiential = signals.experientialFactor
-  const windDownFit = signals.roleSuitability.windDown
-  const startFit = signals.roleSuitability.start
-  const highlightFit = signals.roleSuitability.highlight
-  const momentIntensity = signals.momentIntensity.score
+  const meaningEvidence = computeRolePoolMeaningEvidence({
+    role: roleToLensStop(role),
+    context: toRolePoolMeaningContext(intent, experienceContract),
+    candidate: toRolePoolMeaningCandidateEvidence(candidate),
+  })
+  const socialDensity = meaningEvidence.candidate.social.density
+  const energy = meaningEvidence.candidate.social.energy
+  const intimacy = candidate.taste.signals.intimacy
+  const linger = candidate.taste.signals.lingerFactor
+  const destination = candidate.taste.signals.destinationFactor
+  const experiential = candidate.taste.signals.experientialFactor
+  const windDownFit = meaningEvidence.candidate.roleSuitability.windDown ?? 0
+  const startFit = meaningEvidence.candidate.roleSuitability.start ?? 0
+  const highlightFit = meaningEvidence.candidate.roleSuitability.highlight ?? 0
+  const momentIntensity = candidate.taste.signals.momentIntensity.score
   const category = candidate.venue.category
   const driveMinutes = candidate.venue.driveMinutes
-  const tags = new Set(candidate.venue.tags.map((tag) => tag.toLowerCase()))
-  const nightlifeLike =
-    energy * 0.45 +
-    socialDensity * 0.4 +
-    ((category === 'bar' || category === 'live_music' || tags.has('late-night')) ? 0.15 : 0)
-  const calmness =
-    (1 - energy) * 0.35 +
-    (1 - socialDensity) * 0.2 +
-    intimacy * 0.2 +
-    linger * 0.15 +
-    signals.conversationFriendliness * 0.1
-  const quickStopLeaning =
-    signals.durationEstimate === 'quick' ||
-    (linger < 0.34 && destination < 0.52 && experiential < 0.56)
+  const nightlifeLike = meaningEvidence.candidate.nightlifeLike
+  const calmness = meaningEvidence.candidate.calmness
+  const quickStopLeaning = meaningEvidence.candidate.quickStopLeaning
 
   let scoreAdjustment = 0
   let hardReject = false
@@ -2012,7 +1995,7 @@ function computeContractRolePressure(params: {
   if (
     role !== 'wildcard' &&
     isBuildFriendsEasyHangContext(intent, experienceContract) &&
-    isEasyHangHardIncompatibleCandidate(candidate)
+    meaningEvidence.candidate.hardIncompatible
   ) {
     return {
       scoreAdjustment: -0.42,
@@ -2022,7 +2005,8 @@ function computeContractRolePressure(params: {
 
   if (role === 'warmup') {
     scoreAdjustment += (startFit - 0.5) * 0.18
-    scoreAdjustment += (signals.conversationFriendliness - 0.5) * 0.12
+    scoreAdjustment +=
+      (meaningEvidence.candidate.social.conversationFriendliness - 0.5) * 0.12
     if (contractConstraints.requireContinuity) {
       scoreAdjustment += (calmness - 0.5) * 0.12
     }
@@ -2053,8 +2037,7 @@ function computeContractRolePressure(params: {
       }
     }
     if (experienceContract.persona === 'friends' && experienceContract.vibe === 'lively') {
-      const basecampLike =
-        category === 'restaurant' || category === 'bar' || category === 'cafe' || category === 'activity'
+      const basecampLike = meaningEvidence.candidate.isFriendsLivelyBasecamp
       scoreAdjustment += basecampLike ? 0.08 : 0
     }
     if (experienceContract.persona === 'family') {
@@ -2069,8 +2052,8 @@ function computeContractRolePressure(params: {
     if (contractConstraints.highlightPressure === 'strong') {
       scoreAdjustment += (Math.max(destination, experiential) - 0.5) * 0.26
     } else if (contractConstraints.highlightPressure === 'distributed') {
-      scoreAdjustment += (signals.roleSuitability.highlight - 0.5) * 0.14
-      scoreAdjustment += (signals.socialDensity - 0.5) * 0.08
+      scoreAdjustment += (highlightFit - 0.5) * 0.14
+      scoreAdjustment += (socialDensity - 0.5) * 0.08
     } else {
       scoreAdjustment += (highlightFit - 0.5) * 0.12
     }
@@ -2086,7 +2069,7 @@ function computeContractRolePressure(params: {
     } else if (contractConstraints.peakCountModel === 'distributed') {
       scoreAdjustment += (socialDensity - 0.5) * 0.1
     } else {
-      scoreAdjustment += (signals.anchorStrength - 0.5) * 0.08
+      scoreAdjustment += (candidate.taste.signals.anchorStrength - 0.5) * 0.08
     }
 
     if (contractConstraints.requireEscalation) {
@@ -2120,7 +2103,7 @@ function computeContractRolePressure(params: {
       scoreAdjustment += (energy - 0.5) * 0.1
     } else if (experienceContract.persona === 'family') {
       scoreAdjustment += (calmness - 0.5) * 0.12
-      scoreAdjustment += (signals.interactiveStrength - 0.5) * 0.08
+      scoreAdjustment += (candidate.taste.signals.interactiveStrength - 0.5) * 0.08
       if (nightlifeLike > 0.88 && energy > 0.82) {
         hardReject = true
       }

@@ -604,6 +604,10 @@ assert(
 )
 
 const buildRolePoolsSource = readFileSync('src/domain/arc/buildRolePools.ts', 'utf8')
+const rolePoolTasteMeaningSource = readFileSync(
+  'src/domain/interpretation/taste/computeRolePoolMeaningEvidence.ts',
+  'utf8',
+)
 const routeAuthoritySource = readFileSync(
   'src/app/services/routeAuthority/routeAuthorityService.ts',
   'utf8',
@@ -626,6 +630,13 @@ assert(
     buildRolePoolsSource.includes("movementTolerance === 'contained'") &&
     buildRolePoolsSource.includes('contractConstraints.requireContinuity'),
   'Patch must be generic tight Build support admission logic.',
+)
+assert(
+  buildRolePoolsSource.includes('computeRolePoolMeaningEvidence') &&
+    rolePoolTasteMeaningSource.includes("source: 'taste'") &&
+    rolePoolTasteMeaningSource.includes('easyHangHardIncompatibleSignals') &&
+    rolePoolTasteMeaningSource.includes('computeRolePoolMeaningEvidence'),
+  'Role-pool meaning evidence must be Taste-authored while buildRolePools remains the consumer.',
 )
 assert(
   !buildRolePoolsSource.includes('Adega') &&
