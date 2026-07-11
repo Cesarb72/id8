@@ -21,6 +21,8 @@ import type { UserStopRole } from '../types/itinerary'
 import type { SpatialCoherenceAnalysis } from '../types/spatial'
 import { roleProjection } from '../config/roleProjection'
 import { getArcStopBaseVenueId } from '../candidates/candidateIdentity'
+import { computeRouteMeaningRoleRightVerdict } from '../interpretation/taste/computeRouteMeaningVerdict'
+import type { TasteRouteMeaningStopEvidenceInput } from '../interpretation/taste/computeRouteMeaningVerdict'
 
 const DIAGNOSTIC_CANDIDATE_SUMMARY_LIMIT = 25
 const GREAT_STOP_FAILURE_DETAIL_LIMIT = 5
@@ -145,23 +147,46 @@ function evaluateReal(candidate: ArcCandidate): GreatStopCriterionResult {
   )
 }
 
-function evaluateRoleRight(candidate: ArcCandidate): GreatStopCriterionResult {
-  const reasons: string[] = []
-  for (const stop of candidate.stops) {
-    const role = roleFor(stop)
-    const roleScore = stop.scoredVenue.roleScores[stop.role]
-    const shapeScore =
-      role === 'start'
-        ? stop.scoredVenue.stopShapeFit.start
-        : role === 'highlight'
-          ? stop.scoredVenue.stopShapeFit.highlight
-          : role === 'windDown'
-            ? stop.scoredVenue.stopShapeFit.windDown
-            : stop.scoredVenue.stopShapeFit.surprise
-    if (roleScore < 0.5) reasons.push(`role_right:low_role_fit:${role}`)
-    if (shapeScore < 0.34) reasons.push(`role_right:low_shape_fit:${role}`)
+function getStopShapeFitScore(stop: ArcStop): number | undefined {
+  const role = roleFor(stop)
+  if (role === 'start') {
+    return stop.scoredVenue.stopShapeFit.start
   }
-  return criterion(reasons.length === 0, reasons)
+  if (role === 'highlight') {
+    return stop.scoredVenue.stopShapeFit.highlight
+  }
+  if (role === 'windDown') {
+    return stop.scoredVenue.stopShapeFit.windDown
+  }
+  return stop.scoredVenue.stopShapeFit.surprise
+}
+
+function toRoleRightStopEvidence(stop: ArcStop): TasteRouteMeaningStopEvidenceInput {
+  return {
+    role: roleFor(stop),
+    candidateVenueId: getArcStopBaseVenueId(stop),
+    roleFitScore: stop.scoredVenue.roleScores[stop.role],
+    stopShapeFitScore: getStopShapeFitScore(stop),
+    contextSpecificityScore: stop.scoredVenue.contextSpecificity.overall,
+  }
+}
+
+function evaluateRoleRight(candidate: ArcCandidate): GreatStopCriterionResult {
+  const roleRightVerdict = computeRouteMeaningRoleRightVerdict(
+    candidate.stops.map(toRoleRightStopEvidence),
+  )
+  if (!roleRightVerdict.ready || roleRightVerdict.status === 'unknown') {
+    return criterion(false, ['role_right:taste_verdict_not_ready'])
+  }
+  if (roleRightVerdict.status === 'pass') {
+    return criterion(true, [])
+  }
+  return criterion(
+    false,
+    roleRightVerdict.reasons.length > 0
+      ? [...roleRightVerdict.reasons]
+      : ['role_right:taste_verdict_failed'],
+  )
 }
 
 function evaluateIntentRight(candidate: ArcCandidate): GreatStopCriterionResult {

@@ -331,7 +331,7 @@ function buildRoleRightFailureEvidence(params: {
   }
 }
 
-function computeRoleRightVerdict(
+export function computeRouteMeaningRoleRightVerdict(
   stops: readonly TasteRouteMeaningStopEvidenceInput[],
 ): TasteRouteMeaningRoleRightVerdict {
   const stopEvidence = stops.map((stop) => {
@@ -452,7 +452,7 @@ export function computeRouteMeaningVerdict(
   input: ComputeRouteMeaningVerdictInput,
 ): ComputeRouteMeaningVerdictResult {
   const compatibility = input.compatibility
-  const roleRightVerdict = computeRoleRightVerdict(input.stops)
+  const roleRightVerdict = computeRouteMeaningRoleRightVerdict(input.stops)
   const routeRoleFit = average(input.stops.map((stop) => stop.roleFitScore))
   const contextSpecificity = average(input.stops.map((stop) => stop.contextSpecificityScore))
   const lensCompatibility = average([
@@ -628,7 +628,7 @@ export function computeRouteMeaningVerdict(
         },
         debugSummaries: [
           'ArcScoreBreakdown compatibility fields preserved while Taste owns route meaning verdict.',
-          'Great Stop Role-Right compatibility inputs are Taste-authored but not consumed by Great Stop yet.',
+          'Great Stop Role-Right compatibility inputs are Taste-authored for stamp alignment.',
         ],
       },
     },

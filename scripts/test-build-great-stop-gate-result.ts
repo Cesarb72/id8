@@ -561,7 +561,28 @@ const roleRightBadSpec: GateCase = {
 }
 const tasteRoleRightGood = buildTasteRouteMeaningVerdict(roleRightGoodSpec)
 const tasteRoleRightBad = buildTasteRouteMeaningVerdict(roleRightBadSpec)
-const legacyRoleRightBad = runGate(roleRightBadSpec)
+const greatStopRoleRightGood = runGate(roleRightGoodSpec)
+const greatStopRoleRightBad = runGate(roleRightBadSpec)
+const roleRightGeneralizedBadBase = baselineGateSpec('romantic', 'L2 Mid')
+const roleRightGeneralizedBadSpec: GateCase = {
+  ...roleRightGeneralizedBadBase,
+  cell: 'Role-Right generalized bad role evidence',
+  stops: [
+    roleRightGeneralizedBadBase.stops[0],
+    {
+      ...roleRightGeneralizedBadBase.stops[1],
+      roleScore: 0.31,
+    },
+    {
+      ...roleRightGeneralizedBadBase.stops[2],
+      shapeScore: 0.2,
+    },
+  ],
+}
+const tasteRoleRightGeneralizedBad = buildTasteRouteMeaningVerdict(
+  roleRightGeneralizedBadSpec,
+)
+const greatStopRoleRightGeneralizedBad = runGate(roleRightGeneralizedBadSpec)
 
 assert(evergreen.status === 'PASS', `Evergreen-like route should pass, got ${evergreen.status}`)
 assert(evergreen.preset.source === 'explicit', 'Evergreen-like L3 route should use explicit L3 Sparse.')
@@ -592,6 +613,11 @@ assert(
   'Good-role route should not emit low-role or low-shape evidence.',
 )
 assert(
+  greatStopRoleRightGood.criteria.roleRight.passed === true &&
+    greatStopRoleRightGood.criteria.roleRight.reasons.length === 0,
+  'Great Stop Role-Right should pass from Taste verdict for a good-role route.',
+)
+assert(
   tasteRoleRightBad.roleVerdict.roleRightReady === true,
   'Taste Role-Right evidence should still be ready for a bad-role route.',
 )
@@ -616,20 +642,33 @@ assert(
   'Taste compatibility inputs should expose the Role-Right failure verdict for future Great Stop stamping.',
 )
 assert(
-  legacyRoleRightBad.failedCriteria.includes('role_right') &&
-    legacyRoleRightBad.reasons.includes('role_right:low_role_fit:start') &&
-    legacyRoleRightBad.reasons.includes('role_right:low_shape_fit:highlight'),
-  'Legacy Great Stop Role-Right should still fail from its existing evaluator in this slice.',
+  greatStopRoleRightBad.failedCriteria.includes('role_right') &&
+    greatStopRoleRightBad.criteria.roleRight.reasons.join('|') ===
+      tasteRoleRightBad.roleVerdict.roleRightVerdict.reasons.join('|'),
+  'Great Stop Role-Right should fail from Taste-authored reasons after the 2B rewire.',
+)
+assert(
+  tasteRoleRightGeneralizedBad.roleVerdict.roleRightVerdict?.status === 'fail',
+  'Generalized bad-role Taste verdict should fail.',
+)
+assert(
+  greatStopRoleRightGeneralizedBad.failedCriteria.includes('role_right') &&
+    greatStopRoleRightGeneralizedBad.criteria.roleRight.reasons.join('|') ===
+      tasteRoleRightGeneralizedBad.roleVerdict.roleRightVerdict.reasons.join('|'),
+  'A different bad-role route should fail Great Stop Role-Right from Taste evidence.',
 )
 
 const gateSource = readFileSync('src/domain/greatStop/buildGreatStopGateResult.ts', 'utf8')
 assert(!/provider_shadow|approved_payload|static_candidate|candidate_draft/.test(gateSource), 'Gate evaluator must not depend on non-authority source kinds.')
 assert(
   gateSource.includes('function evaluateRoleRight(candidate: ArcCandidate)') &&
-    gateSource.includes('stop.scoredVenue.roleScores[stop.role]') &&
-    gateSource.includes('stop.scoredVenue.stopShapeFit.start') &&
-    !gateSource.includes('roleRightVerdict'),
-  'Great Stop Role-Right authority must remain on the legacy evaluator until GW1-ROLEPOOLS-2B.',
+    gateSource.includes('computeRouteMeaningRoleRightVerdict') &&
+    gateSource.includes('roleRightVerdict.status') &&
+    !gateSource.includes('role_right:low_role_fit:') &&
+    !gateSource.includes('role_right:low_shape_fit:') &&
+    !gateSource.includes('roleScore < 0.5') &&
+    !gateSource.includes('shapeScore < 0.34'),
+  'Great Stop Role-Right must stamp from Taste verdict without local threshold re-derivation.',
 )
 const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf8')
 assert(
@@ -729,6 +768,8 @@ const output = {
       ready: tasteRoleRightGood.roleVerdict.roleRightReady,
       status: tasteRoleRightGood.roleVerdict.roleRightVerdict?.status,
       reasons: tasteRoleRightGood.roleVerdict.roleRightVerdict?.reasons,
+      greatStopRoleRightPassed: greatStopRoleRightGood.criteria.roleRight.passed,
+      greatStopReasons: greatStopRoleRightGood.criteria.roleRight.reasons,
     },
     badRoute: {
       ready: tasteRoleRightBad.roleVerdict.roleRightReady,
@@ -736,9 +777,18 @@ const output = {
       reasons: tasteRoleRightBad.roleVerdict.roleRightVerdict?.reasons,
       lowRoleEvidence: tasteRoleRightBad.roleVerdict.roleRightVerdict?.lowRoleEvidence,
       lowShapeEvidence: tasteRoleRightBad.roleVerdict.roleRightVerdict?.lowShapeEvidence,
-      legacyGreatStopStillFailsRoleRight: legacyRoleRightBad.failedCriteria.includes('role_right'),
+      greatStopRoleRightPassed: greatStopRoleRightBad.criteria.roleRight.passed,
+      greatStopReasons: greatStopRoleRightBad.criteria.roleRight.reasons,
     },
-    greatStopRoleRightAuthorityUnchanged: true,
+    generalizedBadRoute: {
+      ready: tasteRoleRightGeneralizedBad.roleVerdict.roleRightReady,
+      status: tasteRoleRightGeneralizedBad.roleVerdict.roleRightVerdict?.status,
+      reasons: tasteRoleRightGeneralizedBad.roleVerdict.roleRightVerdict?.reasons,
+      greatStopRoleRightPassed:
+        greatStopRoleRightGeneralizedBad.criteria.roleRight.passed,
+      greatStopReasons: greatStopRoleRightGeneralizedBad.criteria.roleRight.reasons,
+    },
+    greatStopRoleRightAuthority: 'taste_role_right_verdict',
   },
   routeAuthorityUnchanged: true,
   runtimeRouteArtifactShapeUnchanged: true,
