@@ -79,7 +79,32 @@ export interface TasteRouteMeaningRoleStopVerdict {
   roleFit: TasteRouteMeaningScoreVerdict
   shapeFit?: TasteRouteMeaningScoreVerdict
   lowRoleReasons?: readonly string[]
+  lowShapeReasons?: readonly string[]
+  roleRightReasons?: readonly string[]
   conflictEvidence?: readonly TasteRouteMeaningSignalComponent[]
+}
+
+export type TasteRouteMeaningRoleRightStatus = 'pass' | 'fail' | 'unknown'
+
+export interface TasteRouteMeaningRoleRightFailureEvidence {
+  role: TasteRouteMeaningStopRole
+  candidateVenueId: TasteRouteMeaningVenueId
+  reason: string
+  score?: number
+  threshold: number
+  evidenceType: 'low_role_fit' | 'low_shape_fit'
+  components?: readonly TasteRouteMeaningSignalComponent[]
+}
+
+export interface TasteRouteMeaningRoleRightVerdict {
+  status: TasteRouteMeaningRoleRightStatus
+  ready: boolean
+  reasons: readonly string[]
+  roleFitThreshold: number
+  shapeFitThreshold: number
+  lowRoleEvidence: readonly TasteRouteMeaningRoleRightFailureEvidence[]
+  lowShapeEvidence: readonly TasteRouteMeaningRoleRightFailureEvidence[]
+  stopEvidence: readonly TasteRouteMeaningRoleStopVerdict[]
 }
 
 export interface TasteRouteMeaningPersonaVerdict {
@@ -96,8 +121,10 @@ export interface TasteRouteMeaningRoleVerdict {
   stopRoleFit: readonly TasteRouteMeaningRoleStopVerdict[]
   roleSuitability: Partial<Record<TasteRouteMeaningStopRole, TasteRouteMeaningScoreVerdict>>
   lowRoleReasons?: readonly string[]
+  lowShapeReasons?: readonly string[]
   roleConflictEvidence?: readonly TasteRouteMeaningSignalComponent[]
   roleRightReady?: boolean
+  roleRightVerdict?: TasteRouteMeaningRoleRightVerdict
 }
 
 export interface TasteRouteMeaningIntentVerdict {

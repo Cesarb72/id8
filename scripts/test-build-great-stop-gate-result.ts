@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { buildGreatStopGateResult } from '../src/domain/greatStop/buildGreatStopGateResult'
+import { computeRouteMeaningVerdict } from '../src/domain/interpretation/taste/computeRouteMeaningVerdict'
 import type { ArcCandidate, ArcStop } from '../src/domain/types/arc'
 import type { RoutePacingDiagnostics } from '../src/domain/types/diagnostics'
 import type {
@@ -58,6 +59,12 @@ interface GateCase {
 }
 
 const roleShapeKey = {
+  warmup: 'start',
+  peak: 'highlight',
+  cooldown: 'windDown',
+} as const
+
+const tasteRoleKey = {
   warmup: 'start',
   peak: 'highlight',
   cooldown: 'windDown',
@@ -319,6 +326,64 @@ function runGate(spec: GateCase): GreatStopGateResult {
   })
 }
 
+function buildTasteRouteMeaningVerdict(spec: GateCase) {
+  return computeRouteMeaningVerdict({
+    requestedPersona: spec.persona,
+    stops: spec.stops.map((stop) => ({
+      role: tasteRoleKey[stop.role],
+      candidateVenueId: stop.venueId,
+      roleFitScore: stop.roleScore ?? 0.74,
+      stopShapeFitScore: stop.shapeScore ?? 0.74,
+      contextSpecificityScore: stop.contextSpecificity ?? 0.66,
+      vibeFitScore: 0.72,
+    })),
+    compatibility: {
+      vibeCoherenceScore: 0.72,
+      highlightVibeScore: 0.72,
+      supportStopVibeScore: 0.72,
+      categoryDiversityScore: 0.72,
+      categoryDiversityBonus: 0,
+      categoryDiversityPenalty: 0,
+      repeatedCategoryCount: 0,
+      categoryDiversityNotes: [],
+      roleAwareCategoryLift: 0,
+      familyAlignmentBoost: 0,
+      familyMismatchPenalty: 0,
+      romanticContractScore: 0.72,
+      romanticContractPenalty: 0,
+      romanticContractSatisfied: true,
+      romanticContractFeasible: true,
+      romanticHighlightCandidatesFeasible: 1,
+      romanticHighlightArbitrationResult: 'test',
+      familyCompetitionScore: 0.72,
+      familyCompetitionPenalty: 0,
+      familyCompetitionActive: false,
+      familyCompetitionEligibleFamilies: [],
+      familyCompetitionTopSpread: 0,
+      familyCompetitionThreshold: 0,
+      familyCompetitionWinnerMode: 'test',
+      expressionWidth: 'moderate',
+      expressionWidthReason: 'test',
+      expressionWidthFamilyCount: 1,
+      expressionWidthCompetitiveFamilyCount: 1,
+      expressionWidthIntensitySpread: 0,
+      expressionWidthPeakPoolSize: 1,
+      expressionWidthFallbackReliance: false,
+      expressionReleaseScore: 0.72,
+      expressionReleasePenalty: 0,
+      expressionReleaseEligible: true,
+      expressionReleaseReason: 'test',
+      expressionReleaseEliteFamilies: [],
+      activationMomentElevationScore: 0.72,
+      activationMomentElevationPenalty: 0,
+      activationMomentElevationEligible: true,
+      activationMomentElevationApplied: false,
+      activationMomentElevationReason: 'test',
+      activationMomentElevationCandidateFamilies: [],
+    },
+  }).verdict
+}
+
 function baselineGateSpec(
   persona: PersonaMode,
   locationClass: BuildLocationClass,
@@ -477,6 +542,27 @@ const l1FamilyPlace = runGate({
   longTransitionCount: 1,
 })
 
+const roleRightGoodSpec = baselineGateSpec('friends', 'L1 Dense')
+const roleRightBadBase = baselineGateSpec('friends', 'L1 Dense')
+const roleRightBadSpec: GateCase = {
+  ...roleRightBadBase,
+  cell: 'Role-Right bad role evidence',
+  stops: [
+    {
+      ...roleRightBadBase.stops[0],
+      roleScore: 0.42,
+    },
+    {
+      ...roleRightBadBase.stops[1],
+      shapeScore: 0.24,
+    },
+    roleRightBadBase.stops[2],
+  ],
+}
+const tasteRoleRightGood = buildTasteRouteMeaningVerdict(roleRightGoodSpec)
+const tasteRoleRightBad = buildTasteRouteMeaningVerdict(roleRightBadSpec)
+const legacyRoleRightBad = runGate(roleRightBadSpec)
+
 assert(evergreen.status === 'PASS', `Evergreen-like route should pass, got ${evergreen.status}`)
 assert(evergreen.preset.source === 'explicit', 'Evergreen-like L3 route should use explicit L3 Sparse.')
 assert(evergreen.requiredAnchor?.survived === true, 'Required anchor should survive in PASS route.')
@@ -492,9 +578,59 @@ assert(
   l1FamilyPlace.reasons.includes('place_right:drive_like_movement_discouraged'),
   'Family L1 preset should discourage drive-like movement.',
 )
+assert(
+  tasteRoleRightGood.roleVerdict.roleRightReady === true,
+  'Taste Role-Right evidence should be ready for a fully scored route.',
+)
+assert(
+  tasteRoleRightGood.roleVerdict.roleRightVerdict?.status === 'pass',
+  'Taste Role-Right evidence should pass for a good-role route.',
+)
+assert(
+  tasteRoleRightGood.roleVerdict.roleRightVerdict.lowRoleEvidence.length === 0 &&
+    tasteRoleRightGood.roleVerdict.roleRightVerdict.lowShapeEvidence.length === 0,
+  'Good-role route should not emit low-role or low-shape evidence.',
+)
+assert(
+  tasteRoleRightBad.roleVerdict.roleRightReady === true,
+  'Taste Role-Right evidence should still be ready for a bad-role route.',
+)
+assert(
+  tasteRoleRightBad.roleVerdict.roleRightVerdict?.status === 'fail',
+  'Taste Role-Right evidence should fail for bad role/shape fit.',
+)
+assert(
+  tasteRoleRightBad.roleVerdict.roleRightVerdict.reasons.includes(
+    'role_right:low_role_fit:start',
+  ),
+  'Taste Role-Right evidence should include low-role reason.',
+)
+assert(
+  tasteRoleRightBad.roleVerdict.roleRightVerdict.reasons.includes(
+    'role_right:low_shape_fit:highlight',
+  ),
+  'Taste Role-Right evidence should include low-shape reason.',
+)
+assert(
+  tasteRoleRightBad.compatibility?.greatStopRoleRightInputs?.roleRightVerdict === 'fail',
+  'Taste compatibility inputs should expose the Role-Right failure verdict for future Great Stop stamping.',
+)
+assert(
+  legacyRoleRightBad.failedCriteria.includes('role_right') &&
+    legacyRoleRightBad.reasons.includes('role_right:low_role_fit:start') &&
+    legacyRoleRightBad.reasons.includes('role_right:low_shape_fit:highlight'),
+  'Legacy Great Stop Role-Right should still fail from its existing evaluator in this slice.',
+)
 
 const gateSource = readFileSync('src/domain/greatStop/buildGreatStopGateResult.ts', 'utf8')
 assert(!/provider_shadow|approved_payload|static_candidate|candidate_draft/.test(gateSource), 'Gate evaluator must not depend on non-authority source kinds.')
+assert(
+  gateSource.includes('function evaluateRoleRight(candidate: ArcCandidate)') &&
+    gateSource.includes('stop.scoredVenue.roleScores[stop.role]') &&
+    gateSource.includes('stop.scoredVenue.stopShapeFit.start') &&
+    !gateSource.includes('roleRightVerdict'),
+  'Great Stop Role-Right authority must remain on the legacy evaluator until GW1-ROLEPOOLS-2B.',
+)
 const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf8')
 assert(
   runGeneratePlanSource.includes('greatStopGateResult: buildGreatStopGateResult({') &&
@@ -588,6 +724,22 @@ const output = {
   l3UsesExplicitL3Sparse: evergreen.preset.source === 'explicit' && evergreen.preset.locationClass === 'L3 Sparse',
   momentRightDomainAgnostic: true,
   waypointDomainGuardrailPassed: true,
+  tasteRoleRightEvidence: {
+    goodRoute: {
+      ready: tasteRoleRightGood.roleVerdict.roleRightReady,
+      status: tasteRoleRightGood.roleVerdict.roleRightVerdict?.status,
+      reasons: tasteRoleRightGood.roleVerdict.roleRightVerdict?.reasons,
+    },
+    badRoute: {
+      ready: tasteRoleRightBad.roleVerdict.roleRightReady,
+      status: tasteRoleRightBad.roleVerdict.roleRightVerdict?.status,
+      reasons: tasteRoleRightBad.roleVerdict.roleRightVerdict?.reasons,
+      lowRoleEvidence: tasteRoleRightBad.roleVerdict.roleRightVerdict?.lowRoleEvidence,
+      lowShapeEvidence: tasteRoleRightBad.roleVerdict.roleRightVerdict?.lowShapeEvidence,
+      legacyGreatStopStillFailsRoleRight: legacyRoleRightBad.failedCriteria.includes('role_right'),
+    },
+    greatStopRoleRightAuthorityUnchanged: true,
+  },
   routeAuthorityUnchanged: true,
   runtimeRouteArtifactShapeUnchanged: true,
   providerShadowRemainsNonAuthoritative: true,

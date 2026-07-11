@@ -7,6 +7,8 @@ import type {
 import type {
   TasteRouteMeaningCompatibilityStatus,
   TasteRouteMeaningFitStrength,
+  TasteRouteMeaningRoleRightFailureEvidence,
+  TasteRouteMeaningRoleRightVerdict,
   TasteRouteMeaningScoreVerdict,
   TasteRouteMeaningSignalComponent,
   TasteRouteMeaningStopEvidence,
@@ -86,6 +88,9 @@ export interface ComputeRouteMeaningVerdictResult
   extends RouteMeaningCompatibilityValues {
   verdict: TasteRouteMeaningVerdict
 }
+
+const ROLE_RIGHT_ROLE_FIT_THRESHOLD = 0.5
+const ROLE_RIGHT_SHAPE_FIT_THRESHOLD = 0.34
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
@@ -298,6 +303,119 @@ function getCompatibilityStatus(score: number | undefined): TasteRouteMeaningCom
   return 'conflict'
 }
 
+function buildRoleRightFailureEvidence(params: {
+  stop: TasteRouteMeaningStopEvidenceInput
+  evidenceType: TasteRouteMeaningRoleRightFailureEvidence['evidenceType']
+  score: number
+  threshold: number
+  reason: string
+}): TasteRouteMeaningRoleRightFailureEvidence {
+  const label =
+    params.evidenceType === 'low_role_fit' ? 'Role fit below Role-Right threshold' : 'Shape fit below Role-Right threshold'
+
+  return {
+    role: params.stop.role,
+    candidateVenueId: params.stop.candidateVenueId,
+    reason: params.reason,
+    score: clamp01(params.score),
+    threshold: params.threshold,
+    evidenceType: params.evidenceType,
+    components: [
+      toComponent(
+        params.evidenceType,
+        clamp01(params.score),
+        label,
+      ),
+      toComponent(`${params.evidenceType}_threshold`, params.threshold, 'Role-Right threshold'),
+    ],
+  }
+}
+
+function computeRoleRightVerdict(
+  stops: readonly TasteRouteMeaningStopEvidenceInput[],
+): TasteRouteMeaningRoleRightVerdict {
+  const stopEvidence = stops.map((stop) => {
+    const lowRoleReasons =
+      typeof stop.roleFitScore === 'number' &&
+      stop.roleFitScore < ROLE_RIGHT_ROLE_FIT_THRESHOLD
+        ? [`role_right:low_role_fit:${stop.role}`]
+        : []
+    const lowShapeReasons =
+      typeof stop.stopShapeFitScore === 'number' &&
+      stop.stopShapeFitScore < ROLE_RIGHT_SHAPE_FIT_THRESHOLD
+        ? [`role_right:low_shape_fit:${stop.role}`]
+        : []
+    const roleRightReasons = [...lowRoleReasons, ...lowShapeReasons]
+    const conflictEvidence = [
+      ...lowRoleReasons.map(() =>
+        toComponent('role_fit_score', clamp01(stop.roleFitScore ?? 0), 'Low role fit'),
+      ),
+      ...lowShapeReasons.map(() =>
+        toComponent('stop_shape_fit_score', clamp01(stop.stopShapeFitScore ?? 0), 'Low stop shape fit'),
+      ),
+    ]
+
+    return {
+      role: stop.role,
+      candidateVenueId: stop.candidateVenueId,
+      roleFit: toScoreVerdict(stop.roleFitScore, lowRoleReasons),
+      shapeFit: toScoreVerdict(stop.stopShapeFitScore, lowShapeReasons),
+      lowRoleReasons: lowRoleReasons.length > 0 ? lowRoleReasons : undefined,
+      lowShapeReasons: lowShapeReasons.length > 0 ? lowShapeReasons : undefined,
+      roleRightReasons: roleRightReasons.length > 0 ? roleRightReasons : undefined,
+      conflictEvidence: conflictEvidence.length > 0 ? conflictEvidence : undefined,
+    }
+  })
+  const lowRoleEvidence = stops.flatMap((stop) =>
+    typeof stop.roleFitScore === 'number' &&
+    stop.roleFitScore < ROLE_RIGHT_ROLE_FIT_THRESHOLD
+      ? [
+          buildRoleRightFailureEvidence({
+            stop,
+            evidenceType: 'low_role_fit',
+            score: stop.roleFitScore,
+            threshold: ROLE_RIGHT_ROLE_FIT_THRESHOLD,
+            reason: `role_right:low_role_fit:${stop.role}`,
+          }),
+        ]
+      : [],
+  )
+  const lowShapeEvidence = stops.flatMap((stop) =>
+    typeof stop.stopShapeFitScore === 'number' &&
+    stop.stopShapeFitScore < ROLE_RIGHT_SHAPE_FIT_THRESHOLD
+      ? [
+          buildRoleRightFailureEvidence({
+            stop,
+            evidenceType: 'low_shape_fit',
+            score: stop.stopShapeFitScore,
+            threshold: ROLE_RIGHT_SHAPE_FIT_THRESHOLD,
+            reason: `role_right:low_shape_fit:${stop.role}`,
+          }),
+        ]
+      : [],
+  )
+  const reasons = [
+    ...lowRoleEvidence.map((evidence) => evidence.reason),
+    ...lowShapeEvidence.map((evidence) => evidence.reason),
+  ]
+  const ready = stops.every(
+    (stop) =>
+      typeof stop.roleFitScore === 'number' &&
+      typeof stop.stopShapeFitScore === 'number',
+  )
+
+  return {
+    status: ready ? (reasons.length === 0 ? 'pass' : 'fail') : 'unknown',
+    ready,
+    reasons,
+    roleFitThreshold: ROLE_RIGHT_ROLE_FIT_THRESHOLD,
+    shapeFitThreshold: ROLE_RIGHT_SHAPE_FIT_THRESHOLD,
+    lowRoleEvidence,
+    lowShapeEvidence,
+    stopEvidence,
+  }
+}
+
 function toStopEvidence(
   stop: TasteRouteMeaningStopEvidenceInput,
 ): TasteRouteMeaningStopEvidence {
@@ -334,6 +452,7 @@ export function computeRouteMeaningVerdict(
   input: ComputeRouteMeaningVerdictInput,
 ): ComputeRouteMeaningVerdictResult {
   const compatibility = input.compatibility
+  const roleRightVerdict = computeRoleRightVerdict(input.stops)
   const routeRoleFit = average(input.stops.map((stop) => stop.roleFitScore))
   const contextSpecificity = average(input.stops.map((stop) => stop.contextSpecificityScore))
   const lensCompatibility = average([
@@ -397,14 +516,22 @@ export function computeRouteMeaningVerdict(
       },
       roleVerdict: {
         routeRoleFit: toScoreVerdict(routeRoleFit),
-        stopRoleFit: input.stops.map((stop) => ({
-          role: stop.role,
-          candidateVenueId: stop.candidateVenueId,
-          roleFit: toScoreVerdict(stop.roleFitScore),
-          shapeFit: toScoreVerdict(stop.stopShapeFitScore),
-        })),
+        stopRoleFit: roleRightVerdict.stopEvidence,
         roleSuitability: getRoleSuitability(input.stops),
-        roleRightReady: false,
+        lowRoleReasons:
+          roleRightVerdict.lowRoleEvidence.length > 0
+            ? roleRightVerdict.lowRoleEvidence.map((evidence) => evidence.reason)
+            : undefined,
+        lowShapeReasons:
+          roleRightVerdict.lowShapeEvidence.length > 0
+            ? roleRightVerdict.lowShapeEvidence.map((evidence) => evidence.reason)
+            : undefined,
+        roleConflictEvidence: [
+          ...roleRightVerdict.lowRoleEvidence.flatMap((evidence) => evidence.components ?? []),
+          ...roleRightVerdict.lowShapeEvidence.flatMap((evidence) => evidence.components ?? []),
+        ],
+        roleRightReady: roleRightVerdict.ready,
+        roleRightVerdict,
       },
       intentVerdict: {
         routeIntentFit: toScoreVerdict(
@@ -489,8 +616,19 @@ export function computeRouteMeaningVerdict(
           activationMomentElevationApplied: compatibility.activationMomentElevationApplied,
           activationMomentElevationReason: compatibility.activationMomentElevationReason,
         },
+        greatStopRoleRightInputs: {
+          roleRightReady: roleRightVerdict.ready,
+          roleRightVerdict: roleRightVerdict.status,
+          roleFitThreshold: roleRightVerdict.roleFitThreshold,
+          shapeFitThreshold: roleRightVerdict.shapeFitThreshold,
+          lowRoleFailureCount: roleRightVerdict.lowRoleEvidence.length,
+          lowShapeFailureCount: roleRightVerdict.lowShapeEvidence.length,
+          roleRightFailureCount: roleRightVerdict.reasons.length,
+          roleRightReasons: roleRightVerdict.reasons.join('|'),
+        },
         debugSummaries: [
           'ArcScoreBreakdown compatibility fields preserved while Taste owns route meaning verdict.',
+          'Great Stop Role-Right compatibility inputs are Taste-authored but not consumed by Great Stop yet.',
         ],
       },
     },
