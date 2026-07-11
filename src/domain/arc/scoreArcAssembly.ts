@@ -15,13 +15,12 @@ import {
 } from '../interpretation/taste/computeRouteMeaningVerdict'
 import { computeRouteQualityVerdict } from '../interpretation/taste/computeRouteQualityVerdict'
 import {
-  isCandidateWithinActiveDistanceWindow,
-  isCandidateUsedByStretch,
-  getStretchDistanceStatus,
-  isMeaningfulMomentStretchCandidate,
-  isOutsideStrictNearbyButWithinBoundedStretch,
-  isWithinStrictNearbyWindow,
-} from '../constraints/localStretchPolicy'
+  computeArcLocalStretchPolicy,
+  computeArcWhenSpatialScorePressure,
+  isPeakDistanceFeasible,
+  isPeakRouteTimeFeasible,
+} from '../bearings/evaluateArcRouteMovementFeasibility'
+import { isMeaningfulMomentStretchCandidate } from '../constraints/localStretchPolicy'
 import {
   assessGenericHospitalityFallbackPenalty,
   getArchetypeRepeatTolerance,
@@ -50,7 +49,6 @@ import type { CrewPolicy } from '../types/crewPolicies'
 import type { ExperienceLens } from '../types/experienceLens'
 import type { IntentProfile } from '../types/intent'
 import type { RouteShapeContract } from '../types/intent'
-import type { SpatialCoherenceAnalysis } from '../types/spatial'
 import type { InternalRole } from '../types/venue'
 import type {
   WhenSignalProfile,
@@ -88,23 +86,6 @@ export interface ScoreArcAssemblyOptions {
   whenSpatialScoring?: WhenSpatialScoringMode
   whenSignalProfile?: WhenSignalProfile
   routeShapeContract?: RouteShapeContract
-}
-
-interface WhenSpatialScorePressure {
-  mode: WhenSpatialScoringMode
-  movementPreference?: WhenSignalProfile['movementPreference']
-  scoreDelta: number
-  positiveSignal: number
-  negativeSignal: number
-  reason: string
-}
-
-const emptyWhenSpatialScorePressure: WhenSpatialScorePressure = {
-  mode: 'off',
-  scoreDelta: 0,
-  positiveSignal: 0,
-  negativeSignal: 0,
-  reason: 'when spatial scoring off',
 }
 
 function getPrimaryExperienceArchetype(stop: ArcStop) {
@@ -347,73 +328,6 @@ function normalizeArcTotalScore(value: number): number {
   return value / (1 + value - 0.88)
 }
 
-function computeWhenSpatialScorePressure(params: {
-  intent: IntentProfile
-  spatial: SpatialCoherenceAnalysis
-  options?: ScoreArcAssemblyOptions
-}): WhenSpatialScorePressure {
-  const mode = params.options?.whenSpatialScoring ?? 'off'
-  const whenSignalProfile = params.options?.whenSignalProfile
-  if (mode !== 'soft_curate_spatial' || params.intent.mode !== 'curate' || !whenSignalProfile) {
-    return emptyWhenSpatialScorePressure
-  }
-
-  const { spatial } = params
-  const transitionCount = Math.max(1, spatial.transitions.length)
-  const sameClusterRate = spatial.sameClusterTransitionCount / transitionCount
-  const clusterEscapeRate = spatial.clusterEscapeCount / transitionCount
-  const longTransitionRate = spatial.longTransitionCount / transitionCount
-  const movementPreference = whenSignalProfile.movementPreference
-
-  if (movementPreference === 'walkable') {
-    const positiveSignal = clamp01(
-      sameClusterRate * 0.46 +
-        (spatial.clustersVisited.length <= 1 ? 0.36 : 0) +
-        (spatial.clusterEscapeCount === 0 ? 0.18 : 0),
-    )
-    const negativeSignal = clamp01(
-      longTransitionRate * 0.48 +
-        spatial.repeatedClusterEscapeCount * 0.22 +
-        Math.max(0, spatial.clusterEscapeCount - 1) * 0.16,
-    )
-    return {
-      mode,
-      movementPreference,
-      scoreDelta: clamp((positiveSignal - negativeSignal) * 0.03, -0.03, 0.03),
-      positiveSignal: roundToThousandths(positiveSignal),
-      negativeSignal: roundToThousandths(negativeSignal),
-      reason:
-        positiveSignal >= negativeSignal
-          ? 'walkable preference favored tighter same-cluster route'
-          : 'walkable preference penalized long or repeated cluster movement',
-    }
-  }
-
-  const positiveSignal = clamp01(
-    (spatial.clusterEscapeCount > 0 ? 0.32 : 0) +
-      (spatial.clustersVisited.length > 1 ? 0.26 : 0) +
-      (spatial.jumpUsed ? 0.12 : 0) +
-      (spatial.clusterEscapeCount > 0 && spatial.longTransitionCount <= 1 ? 0.18 : 0),
-  )
-  const negativeSignal = clamp01(
-    Math.max(0, spatial.longTransitionCount - 1) * 0.3 +
-      Math.max(0, spatial.repeatedClusterEscapeCount - 1) * 0.22 +
-      (spatial.clusterEscapeCount === 0 ? 0.08 : 0) +
-      Math.max(0, clusterEscapeRate - 0.7) * 0.14,
-  )
-  return {
-    mode,
-    movementPreference,
-    scoreDelta: clamp((positiveSignal - negativeSignal) * 0.03, -0.03, 0.03),
-    positiveSignal: roundToThousandths(positiveSignal),
-    negativeSignal: roundToThousandths(negativeSignal),
-    reason:
-      positiveSignal >= negativeSignal
-        ? 'flexible preference favored justified cross-cluster breadth'
-        : 'flexible preference penalized excessive or repeated long movement',
-  }
-}
-
 export function isArcViable(input: {
   hasHighlight: boolean
   highlightIntensity: number
@@ -495,30 +409,13 @@ function getUniqueRolePoolCandidates(rolePools?: RolePools): ArcStop['scoredVenu
   ]
 }
 
-function isPeakHoursOk(candidate: ArcStop['scoredVenue']): boolean {
-  const source = candidate.venue.source
-  if (
-    source.businessStatus === 'temporarily-closed' ||
-    source.businessStatus === 'closed-permanently'
-  ) {
-    return false
-  }
-  if (
-    source.sourceOrigin === 'live' &&
-    source.timeConfidence >= 0.68 &&
-    source.likelyOpenForCurrentWindow === false
-  ) {
-    return false
-  }
-  return true
-}
-
-function isPeakDistanceOk(
+function isArcPeakDistanceFeasible(
   candidate: ArcStop['scoredVenue'],
   intent: IntentProfile,
 ): boolean {
-  return isCandidateWithinActiveDistanceWindow(candidate, intent, {
+  return isPeakDistanceFeasible(candidate, intent, {
     allowMeaningfulStretch: true,
+    isMeaningfulStretchCandidate: isMeaningfulMomentStretchCandidate,
   })
 }
 
@@ -565,8 +462,8 @@ function isFeasiblePeakMomentLeadCandidate(
     candidate.roleScores.peak >= 0.6 &&
     candidate.stopShapeFit.highlight >= 0.36 &&
     !hasPeakAnchorConflict(candidate, intent) &&
-    isPeakDistanceOk(candidate, intent) &&
-    isPeakHoursOk(candidate) &&
+    isArcPeakDistanceFeasible(candidate, intent) &&
+    isPeakRouteTimeFeasible(candidate) &&
     !hasPeakConstraintConflict(candidate)
   )
 }
@@ -611,7 +508,7 @@ function isFeasibleRomanticMomentCandidate(
   if (!assessRomanticPersonaHighlightQualification(candidate).qualifies) {
     return false
   }
-  if (!isPeakDistanceOk(candidate, intent) || !isPeakHoursOk(candidate)) {
+  if (!isArcPeakDistanceFeasible(candidate, intent) || !isPeakRouteTimeFeasible(candidate)) {
     return false
   }
 
@@ -639,8 +536,8 @@ function isFeasibleRomanticHighlightCandidate(
   return (
     satisfiesRomanticPersonaHighlightContract(candidate, lens) &&
     !hasPeakAnchorConflict(candidate, intent) &&
-    isPeakDistanceOk(candidate, intent) &&
-    isPeakHoursOk(candidate) &&
+    isArcPeakDistanceFeasible(candidate, intent) &&
+    isPeakRouteTimeFeasible(candidate) &&
     !hasPeakConstraintConflict(candidate) &&
     candidate.roleScores.peak >= 0.58 &&
     candidate.stopShapeFit.highlight >= 0.34
@@ -735,8 +632,8 @@ function isFeasibleFamilyCompetitionHighlightCandidate(
 ): boolean {
   if (
     hasPeakAnchorConflict(candidate, intent) ||
-    !isPeakDistanceOk(candidate, intent) ||
-    !isPeakHoursOk(candidate) ||
+    !isArcPeakDistanceFeasible(candidate, intent) ||
+    !isPeakRouteTimeFeasible(candidate) ||
     hasPeakConstraintConflict(candidate)
   ) {
     return false
@@ -2868,120 +2765,6 @@ function computeMeaningfulMomentStretchScore(candidate: ArcStop['scoredVenue']):
   )
 }
 
-function computeLocalStretchPolicy(
-  stops: ArcStop[],
-  intent: IntentProfile,
-  rolePools?: RolePools,
-): {
-  localSupplySufficient: boolean
-  strictNearbyFailed: boolean
-  stretchApplied: boolean
-  reason: string
-  candidateSetBasis: string
-  strictNearbyMeaningfulCount: number
-  boundedStretchMeaningfulCount: number
-  localSupplyDerivedFrom: string
-  strictNearbyFailedDerivedFrom: string
-  stretchedCandidateName?: string
-  stretchedCandidateDistanceStatus?: string
-  score: number
-  penalty: number
-} {
-  if (intent.distanceMode !== 'nearby') {
-    return {
-      localSupplySufficient: true,
-      strictNearbyFailed: false,
-      stretchApplied: false,
-      reason: 'not needed',
-      candidateSetBasis: 'not applicable outside nearby mode',
-      strictNearbyMeaningfulCount: 0,
-      boundedStretchMeaningfulCount: 0,
-      localSupplyDerivedFrom: 'nearby mode inactive',
-      strictNearbyFailedDerivedFrom: 'nearby mode inactive',
-      score: 0,
-      penalty: 0,
-    }
-  }
-
-  const pooledCandidates = getUniqueRolePoolCandidates(rolePools)
-  const uniqueCandidates =
-    pooledCandidates.length > 0
-      ? pooledCandidates
-      : [
-          ...new Map(
-            stops.map((stop) => [getArcStopCandidateId(stop), stop.scoredVenue] as const),
-          ).values(),
-        ]
-  const feasibleMeaningfulCandidates = uniqueCandidates.filter(
-    (candidate) =>
-      isPeakHoursOk(candidate) &&
-      !hasPeakConstraintConflict(candidate) &&
-      !hasPeakAnchorConflict(candidate, intent) &&
-      isCandidateWithinActiveDistanceWindow(candidate, intent, {
-        allowMeaningfulStretch: true,
-      }) &&
-      candidate.roleScores.peak >= 0.64 &&
-      candidate.stopShapeFit.highlight >= 0.4 &&
-      (candidate.momentIdentity.strength === 'strong' ||
-        isMeaningfulMomentStretchCandidate(candidate, intent)),
-  )
-  const localMeaningfulCandidates = feasibleMeaningfulCandidates.filter((candidate) =>
-    isWithinStrictNearbyWindow(candidate.venue.driveMinutes, intent.distanceMode),
-  )
-  const boundedMeaningfulCandidates = feasibleMeaningfulCandidates.filter((candidate) =>
-    isCandidateUsedByStretch(candidate, intent),
-  )
-  const bestLocalMeaningful = [...localMeaningfulCandidates].sort((left, right) => {
-    return (
-      computeMeaningfulMomentStretchScore(right) - computeMeaningfulMomentStretchScore(left) ||
-      right.fitScore - left.fitScore
-    )
-  })[0]
-  const bestBoundedMeaningful = [...boundedMeaningfulCandidates].sort((left, right) => {
-    return (
-      computeMeaningfulMomentStretchScore(right) - computeMeaningfulMomentStretchScore(left) ||
-      right.fitScore - left.fitScore
-    )
-  })[0]
-  const localSupplySufficient = Boolean(bestLocalMeaningful)
-  const strictNearbyFailed = !localSupplySufficient && Boolean(bestBoundedMeaningful)
-  const stretchedStop = stops.find(
-    (stop) =>
-      isOutsideStrictNearbyButWithinBoundedStretch(
-        stop.scoredVenue.venue.driveMinutes,
-        intent.distanceMode,
-      ) && isCandidateUsedByStretch(stop.scoredVenue, intent),
-  )
-  const stretchApplied = strictNearbyFailed && Boolean(stretchedStop)
-
-  return {
-    localSupplySufficient,
-    strictNearbyFailed,
-    stretchApplied,
-    reason: stretchApplied
-      ? 'stronger bounded candidate used'
-      : strictNearbyFailed
-        ? 'no local strong moment'
-        : 'not needed',
-    candidateSetBasis: 'arc scorer unique role-pool candidates after peak feasibility gate',
-    strictNearbyMeaningfulCount: localMeaningfulCandidates.length,
-    boundedStretchMeaningfulCount: boundedMeaningfulCandidates.length,
-    localSupplyDerivedFrom: localSupplySufficient
-      ? `strict nearby meaningful count = ${localMeaningfulCandidates.length}`
-      : 'strict nearby meaningful count = 0',
-    strictNearbyFailedDerivedFrom: strictNearbyFailed
-      ? `strict nearby meaningful count = 0, bounded stretch count = ${boundedMeaningfulCandidates.length}`
-      : boundedMeaningfulCandidates.length > 0
-        ? `strict nearby meaningful count = ${localMeaningfulCandidates.length}, bounded stretch count = ${boundedMeaningfulCandidates.length}`
-        : 'bounded stretch count = 0',
-    stretchedCandidateName: stretchedStop?.scoredVenue.venue.name,
-    stretchedCandidateDistanceStatus:
-      stretchedStop ? getStretchDistanceStatus(stretchedStop.scoredVenue, intent) : undefined,
-    score: stretchApplied ? 0.06 : 0,
-    penalty: strictNearbyFailed && bestBoundedMeaningful && !stretchApplied ? 0.04 : 0,
-  }
-}
-
 interface EffectiveContractEvaluation {
   score: number
   satisfied: boolean
@@ -3205,7 +2988,7 @@ export function scoreArcAssembly(
 ): Pick<ArcCandidate, 'totalScore' | 'scoreBreakdown' | 'pacing' | 'spatial'> {
   const pacing = computeRouteDuration(stops, intent)
   const spatial = computeSpatialCoherence(stops, intent)
-  const whenSpatialPressure = computeWhenSpatialScorePressure({
+  const whenSpatialPressure = computeArcWhenSpatialScorePressure({
     intent,
     spatial,
     options,
@@ -3306,7 +3089,15 @@ export function scoreArcAssembly(
     lens,
     rolePools,
   )
-  const localStretchPolicy = computeLocalStretchPolicy(stops, intent, rolePools)
+  const localStretchPolicy = computeArcLocalStretchPolicy({
+    stops,
+    intent,
+    rolePoolCandidates: getUniqueRolePoolCandidates(rolePools),
+    hasPeakConstraintConflict,
+    hasPeakAnchorConflict,
+    isMeaningfulStretchCandidate: isMeaningfulMomentStretchCandidate,
+    scoreMeaningfulMomentStretchCandidate: computeMeaningfulMomentStretchScore,
+  })
   const highlightIntegrity = computeHighlightIntegrityAdjustments(stops, intent)
   const liveRolePromotionScore = computeLiveRolePromotionScore(stops)
   const roleAwareCategoryLift = computeRoleAwareCategoryLift(stops, intent, lens)
