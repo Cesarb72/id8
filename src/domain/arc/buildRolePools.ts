@@ -35,11 +35,13 @@ import {
 } from '../taste/experienceSignals'
 import type { TasteMomentIdentity } from '../interpretation/taste/types'
 import {
-  computeRolePoolCandidateMeaningEvidence,
-  computeRolePoolMeaningContextEvidence,
-  computeRolePoolMeaningEvidence,
-  type RolePoolMeaningCandidateInput,
-  type RolePoolMeaningContextInput,
+  computeTasteRolePoolCandidateMeaning,
+  computeTasteRolePoolContextMeaning,
+  computeTasteRolePoolMeaningForCandidate,
+} from '../interpretation/taste/computeTasteRolePoolMeaningView'
+import type {
+  RolePoolMeaningCandidateInput,
+  RolePoolMeaningContextInput,
 } from '../interpretation/taste/computeRolePoolMeaningEvidence'
 import type { InternalRole } from '../types/venue'
 import type { PreferredDiscoveryAdmissionRejectionReason } from '../types/roleContract'
@@ -221,21 +223,21 @@ function isBuildFriendsEasyHangContext(
   intent?: IntentProfile,
   experienceContract?: ExperienceContract,
 ): boolean {
-  return computeRolePoolMeaningContextEvidence(
+  return computeTasteRolePoolContextMeaning(
     toRolePoolMeaningContext(intent, experienceContract),
   ).easyHang.active
 }
 
 function getEasyHangHardIncompatibleSignals(candidate: ScoredVenue): string[] {
   return [
-    ...computeRolePoolCandidateMeaningEvidence(
+    ...computeTasteRolePoolCandidateMeaning(
       toRolePoolMeaningCandidateEvidence(candidate),
     ).hardIncompatibleSignals,
   ]
 }
 
 function isEasyHangHardIncompatibleCandidate(candidate: ScoredVenue): boolean {
-  return computeRolePoolCandidateMeaningEvidence(
+  return computeTasteRolePoolCandidateMeaning(
     toRolePoolMeaningCandidateEvidence(candidate),
   ).hardIncompatible
 }
@@ -374,7 +376,7 @@ export function computeRolePoolRankingBreakdown(
   intent?: IntentProfile,
 ): RolePoolRankingBreakdown {
   const lensRole = roleToLensStop(role)
-  const meaningEvidence = computeRolePoolMeaningEvidence({
+  const meaningEvidence = computeTasteRolePoolMeaningForCandidate({
     role: lensRole,
     context: toRolePoolMeaningContext(intent),
     candidate: toRolePoolMeaningCandidateEvidence(candidate),
@@ -2083,7 +2085,7 @@ function computeContractRolePressure(params: {
     return { scoreAdjustment: 0, hardReject: false }
   }
 
-  const meaningEvidence = computeRolePoolMeaningEvidence({
+  const meaningEvidence = computeTasteRolePoolMeaningForCandidate({
     role: roleToLensStop(role),
     context: toRolePoolMeaningContext(intent, experienceContract),
     candidate: toRolePoolMeaningCandidateEvidence(candidate),
