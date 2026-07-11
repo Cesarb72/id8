@@ -75,6 +75,8 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 ## DISCOVERIES
 
 ### Field
+- [2026-07-09] [GW1-REAL-2A FieldRealVerdict scaffold] - expected type-only scaffold after Real evidence trace -> defined Field-owned Real verdict contract for already-retrieved record truth: identity usability, source/provenance validity, availability-from-record, staleness, suppression, and Great Stop compatibility values. Impact: Real now has a named Field-owned evidence seam; no runtime behavior wired yet. Action: proceed to 2B only after review/commit; provider valve remains closed and Bearings route-time temporal feasibility stays out of Field.
+  Boundary holds: canonical identity uses `candidateIdentity.baseVenueId`; provider id and display name are provenance/debug only; no live calls or live availability checks; no route-time open/closed feasibility; Great Stop rewire held.
 - [2026-07-08] [GW2 fetchPlaceEntities → Field] — expected entity retrieval relocation from District to Field → found retrieval is mixed with District admission diagnostics, radius selection, and distance/popularity ordering. Impact: blocked. Action: no code move performed; needs C-suite decision on whether admission/selection helpers move with retrieval or stay behind a cleaner seam.
 - [2026-07-08] [GW2-1A Field raw source loader] — expected clean split of raw venue/source loading out of District orchestration → found curated city loading and hybrid portable source loading can move behind a Field helper without importing District internals. Impact: clean move. Action: added `loadFieldSourceVenues` in Field and rewired `fetchPlaceEntities.ts` to keep District admission, distance/radius selection, sorting, fallback selection, and result shaping in District.
 
