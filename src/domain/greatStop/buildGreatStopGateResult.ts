@@ -18,7 +18,7 @@ import type {
 } from '../types/greatStopGate'
 import type { DistanceMode, IntentProfile, PersonaMode } from '../types/intent'
 import type { UserStopRole } from '../types/itinerary'
-import type { SpatialCoherenceAnalysis } from '../types/spatial'
+import type { BearingsPlaceRightVerdict } from '../bearings/routePlaceRightContract'
 import { roleProjection } from '../config/roleProjection'
 import { getArcStopBaseVenueId } from '../candidates/candidateIdentity'
 import { computeRouteMeaningRoleRightVerdict } from '../interpretation/taste/computeRouteMeaningVerdict'
@@ -204,41 +204,10 @@ function evaluateIntentRight(candidate: ArcCandidate): GreatStopCriterionResult 
   return criterion(reasons.length === 0, reasons)
 }
 
-function totalTransitionMinutes(routePacing: RoutePacingDiagnostics): number {
-  return routePacing.transitions.reduce(
-    (sum, transition) => sum + transition.estimatedTransitionMinutes,
-    0,
-  )
-}
-
-function maxSingleTransitionMinutes(routePacing: RoutePacingDiagnostics): number {
-  return routePacing.transitions.reduce(
-    (max, transition) => Math.max(max, transition.estimatedTransitionMinutes),
-    0,
-  )
-}
-
-function detectZigzagOrBacktrack(spatial: SpatialCoherenceAnalysis): {
-  detected: boolean
-  reason?: string
-} {
-  if (spatial.repeatedClusterEscapeCount > 0) {
-    return { detected: true, reason: 'place_right:repeated_cluster_escape' }
-  }
-  const clusters = spatial.clusterAssignments.map((assignment) => assignment.clusterId)
-  for (let index = 2; index < clusters.length; index += 1) {
-    if (clusters[index] === clusters[index - 2] && clusters[index] !== clusters[index - 1]) {
-      return { detected: true, reason: 'place_right:backtrack_cluster_pattern' }
-    }
-  }
-  return { detected: false }
-}
-
-function evaluatePlaceRight(params: {
+function evaluatePlaceRightFromBearings(params: {
   persona: PersonaMode
   locationClass: BuildLocationClass
-  spatial: SpatialCoherenceAnalysis
-  routePacing: RoutePacingDiagnostics
+  verdict?: BearingsPlaceRightVerdict
 }): {
   result: GreatStopCriterionResult
   diagnostics: Pick<
@@ -248,58 +217,70 @@ function evaluatePlaceRight(params: {
   preset: PlaceRightPreset
 } {
   const preset = PLACE_RIGHT_PRESETS[params.persona][params.locationClass]
-  const totalEstimatedTransitionMinutes = totalTransitionMinutes(params.routePacing)
-  const maxTransition = maxSingleTransitionMinutes(params.routePacing)
-  const driveLikeMovement =
-    params.spatial.longTransitionCount > 0 ||
-    params.routePacing.transitions.some((transition) => transition.movementMode !== 'walkable')
-  const zigzagOrBacktrack = detectZigzagOrBacktrack(params.spatial)
-  const reasons: string[] = []
-
-  if (totalEstimatedTransitionMinutes > preset.maxComfortableTotalMovementMinutes) {
-    reasons.push('place_right:total_movement_over_preset')
+  const verdict = params.verdict
+  const reasons =
+    verdict?.compatibility.greatStopPlaceRightReasonCodes ??
+    verdict?.reasons ??
+    ['place_right:bearings_verdict_missing']
+  const ready = verdict?.placeRightReady === true && verdict.status !== 'unknown'
+  const passed = ready && verdict.status === 'pass'
+  const failureReasons = passed
+    ? []
+    : reasons.length > 0
+      ? reasons
+      : ready
+        ? ['place_right:bearings_verdict_failed']
+        : verdict
+          ? ['place_right:bearings_verdict_not_ready']
+          : ['place_right:bearings_verdict_missing']
+  const routeReasonCodes = verdict?.routeEvidence.reasonCodes ?? verdict?.reasons ?? []
+  const districtNotes =
+    verdict?.provenance.notes?.filter((note) => note.startsWith('consumed-district-')) ?? []
+  const transitionMinutes = verdict?.distanceBurden.notes ?? []
+  const parseDiagnosticNumber = (prefix: string): number => {
+    const value = Number(
+      transitionMinutes.find((note) => note.startsWith(prefix))?.replace(prefix, '') ?? 0,
+    )
+    return Number.isFinite(value) ? value : 0
   }
-  if (maxTransition > preset.maxSingleTransitionMinutes) {
-    reasons.push('place_right:single_transition_over_preset')
-  }
-  if (params.spatial.clusterEscapeCount > preset.maxClusterEscapes) {
-    reasons.push('place_right:cluster_escapes_over_preset')
-  }
-  if (zigzagOrBacktrack.detected && zigzagOrBacktrack.reason) {
-    reasons.push(zigzagOrBacktrack.reason)
-  }
-  if (driveLikeMovement && preset.driveLikeMovement === 'discouraged') {
-    reasons.push('place_right:drive_like_movement_discouraged')
-  }
-  if (
-    driveLikeMovement &&
-    preset.driveLikeMovement === 'limited' &&
-    (params.spatial.longTransitionCount > 1 || maxTransition > preset.maxSingleTransitionMinutes)
-  ) {
-    reasons.push('place_right:drive_like_movement_over_limited_preset')
-  }
+  const totalEstimatedTransitionMinutes = parseDiagnosticNumber('total:')
+  const maxTransition = parseDiagnosticNumber('max:')
+  const driveLikeMovement = verdict?.distanceBurden.burden === 'high'
+  const backtrackDetected = routeReasonCodes.includes('place_right:backtrack_structure')
+  const clusterEscapeDetected = routeReasonCodes.includes('place_right:cluster_escape_structure')
 
   return {
-    result: criterion(reasons.length === 0, reasons),
+    result: criterion(passed, failureReasons),
     preset,
     diagnostics: {
       movement: {
         totalEstimatedTransitionMinutes,
         maxSingleTransitionMinutes: maxTransition,
-        transitionCount: params.routePacing.transitions.length,
+        transitionCount: verdict?.distanceBurden.reasonCodes.length ?? 0,
         driveLikeMovement,
         transitionLimitMinutes: preset.maxSingleTransitionMinutes,
         totalLimitMinutes: preset.maxComfortableTotalMovementMinutes,
       },
       clusterCoherence: {
-        clusterEscapeCount: params.spatial.clusterEscapeCount,
-        repeatedClusterEscapeCount: params.spatial.repeatedClusterEscapeCount,
-        longTransitionCount: params.spatial.longTransitionCount,
+        clusterEscapeCount: clusterEscapeDetected ? preset.maxClusterEscapes + 1 : 0,
+        repeatedClusterEscapeCount: backtrackDetected ? 1 : 0,
+        longTransitionCount:
+          routeReasonCodes.includes('place_right:low_route_compactness') || driveLikeMovement
+            ? 1
+            : 0,
         maxClusterEscapes: preset.maxClusterEscapes,
-        spatialScore: params.spatial.score,
-        notes: [...params.spatial.notes],
+        spatialScore: passed ? 1 : 0,
+        notes: [
+          'source:bearings_place_right_verdict',
+          `bearings_status:${verdict?.status ?? 'missing'}`,
+          ...districtNotes,
+          ...routeReasonCodes,
+        ],
       },
-      zigzagOrBacktrack,
+      zigzagOrBacktrack: {
+        detected: backtrackDetected,
+        ...(backtrackDetected ? { reason: 'place_right:backtrack_structure' } : {}),
+      },
     },
   }
 }
@@ -469,6 +450,7 @@ export function buildGreatStopGateResult(params: {
   selectedArc: ArcCandidate
   intent: IntentProfile
   routePacing: RoutePacingDiagnostics
+  placeRightVerdict?: BearingsPlaceRightVerdict
   locationClass?: BuildLocationClass
   locationClassSource?: GreatStopGatePresetSource
 }): GreatStopGateResult {
@@ -478,11 +460,10 @@ export function buildGreatStopGateResult(params: {
   const locationClassSource: GreatStopGatePresetSource = params.locationClass
     ? params.locationClassSource ?? 'explicit'
     : 'inferred_from_distance_mode'
-  const placeRight = evaluatePlaceRight({
+  const placeRight = evaluatePlaceRightFromBearings({
     persona,
     locationClass,
-    spatial: selectedArc.spatial,
-    routePacing: params.routePacing,
+    verdict: params.placeRightVerdict,
   })
   const momentRight = evaluateMomentRight(selectedArc)
   const requiredAnchorRole = intent.anchor?.role
@@ -831,6 +812,7 @@ export function selectGreatStopGatePassingCandidate(params: {
   intent: IntentProfile
   locationClass?: BuildLocationClass
   locationClassSource?: GreatStopGatePresetSource
+  placeRightVerdictForCandidate?: (candidate: ArcCandidate) => BearingsPlaceRightVerdict
   stage: GreatStopGateSelectionStage
   rolePoolIdentityDiagnostics?: GreatStopGateRolePoolIdentityDiagnostics
   compactnessRankingDiagnostics?: GreatStopCompactnessRankingDiagnostics
@@ -954,6 +936,7 @@ export function selectGreatStopGatePassingCandidate(params: {
       selectedArc: candidate,
       intent: params.intent,
       routePacing: buildGreatStopRoutePacingDiagnostics(candidate),
+      placeRightVerdict: params.placeRightVerdictForCandidate?.(candidate),
       locationClass: params.locationClass,
       locationClassSource: params.locationClassSource,
     })

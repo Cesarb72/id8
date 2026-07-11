@@ -12,6 +12,7 @@ import type {
 const BEARINGS_ROUTE_PLACE_RIGHT_VERSION = 'gw1-bearings-3'
 const MIN_ACCEPTABLE_COMPACTNESS = 0.55
 const MAX_ACCEPTABLE_CLUSTER_ESCAPES = 1
+const MAX_FLEXIBLE_CLUSTER_ESCAPES = 2
 
 function unique(values: string[]): string[] {
   return [...new Set(values)]
@@ -94,6 +95,13 @@ export function evaluateRoutePlaceRightEvidence(
   const districtFacts = input.districtFacts
   const districtFactsPresent = districtFacts.provenance.source === 'district'
   const structuralMissing = districtFacts.structuralConfidence.status === 'missing'
+  const requiresRouteContinuity =
+    input.movementContract.requireContinuity === true ||
+    input.movementContract.tolerance === 'contained'
+  const maxClusterEscapes =
+    input.movementContract.tolerance === 'flexible'
+      ? MAX_FLEXIBLE_CLUSTER_ESCAPES
+      : MAX_ACCEPTABLE_CLUSTER_ESCAPES
   const structuralReasonCodes = [
     ...(districtFactsPresent ? [] : ['place_right:district_provenance_missing']),
     ...(structuralMissing ? ['place_right:district_structural_facts_missing'] : []),
@@ -101,12 +109,13 @@ export function evaluateRoutePlaceRightEvidence(
     districtFacts.compactness.compactnessScore < MIN_ACCEPTABLE_COMPACTNESS
       ? ['place_right:low_route_compactness']
       : []),
-    ...(districtFacts.sameNeighborhood.allStopsSameNeighborhood === false ||
-    (districtFacts.sameNeighborhood.mismatchedStopBaseVenueIds?.length ?? 0) > 0 ||
-    districtFacts.sameNeighborhood.neighborhoods.length > 1
+    ...(requiresRouteContinuity &&
+    (districtFacts.sameNeighborhood.allStopsSameNeighborhood === false ||
+      (districtFacts.sameNeighborhood.mismatchedStopBaseVenueIds?.length ?? 0) > 0 ||
+      districtFacts.sameNeighborhood.neighborhoods.length > 1)
       ? ['place_right:scattered_neighborhoods']
       : []),
-    ...((districtFacts.clusterCoherence.clusterEscapeCount ?? 0) > MAX_ACCEPTABLE_CLUSTER_ESCAPES
+    ...((districtFacts.clusterCoherence.clusterEscapeCount ?? 0) > maxClusterEscapes
       ? ['place_right:cluster_escape_structure']
       : []),
     ...((districtFacts.clusterCoherence.repeatedClusterEscapeCount ?? 0) > 0 ||
@@ -116,7 +125,8 @@ export function evaluateRoutePlaceRightEvidence(
   ]
 
   const supportReasonCodes = [
-    ...(districtFacts.supportProximity.some((fact) => fact.sameNeighborhood === false)
+    ...(requiresRouteContinuity &&
+    districtFacts.supportProximity.some((fact) => fact.sameNeighborhood === false)
       ? ['place_right:poor_support_proximity']
       : []),
     ...input.supportSupplyFacts.flatMap((fact) =>

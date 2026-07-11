@@ -1,5 +1,6 @@
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
 import { sanJoseVenues } from '../src/data/venues.ts'
+import { buildRoutePlaceRightVerdictForArcCandidate } from '../src/domain/bearings/buildRoutePlaceRightVerdictForArcCandidate.ts'
 import {
   computeRouteMomentVerdict,
   type TasteRouteMomentAvailableCandidateEvidence,
@@ -380,23 +381,31 @@ function observeSyntheticCase(params: {
     selectedAnchor: params.selectedAnchor,
   })
   const selectedArc = toSyntheticArcCandidate(params.caseId, params.stops, routeMoment)
+  const intent = {
+    mode: 'build',
+    city: 'San Jose',
+    persona: 'friends',
+    distanceMode: 'nearby',
+    planningMode: 'user-led',
+    anchor: params.selectedAnchor
+      ? {
+          venueId: params.selectedAnchor.selectedAnchorBaseVenueId,
+          role: params.selectedAnchor.requiredRole,
+        }
+      : undefined,
+    refinementModes: [],
+  } as IntentInput
+  const routePacing = syntheticPacing()
   const greatStop = buildGreatStopGateResult({
     selectedArc,
-    intent: {
-      mode: 'build',
-      city: 'San Jose',
-      persona: 'friends',
-      distanceMode: 'nearby',
-      planningMode: 'user-led',
-      anchor: params.selectedAnchor
-        ? {
-            venueId: params.selectedAnchor.selectedAnchorBaseVenueId,
-            role: params.selectedAnchor.requiredRole,
-          }
-        : undefined,
-      refinementModes: [],
-    } as IntentInput,
-    routePacing: syntheticPacing(),
+    intent,
+    routePacing,
+    placeRightVerdict: buildRoutePlaceRightVerdictForArcCandidate({
+      candidate: selectedArc,
+      intent,
+      routePacing,
+      locationClass: 'L1 Dense',
+    }),
     locationClass: 'L1 Dense',
     locationClassSource: 'explicit',
   })
@@ -458,10 +467,17 @@ try {
     selectedAnchor: toSelectedAnchorEvidence(),
     tasteModeId: result.lens.tasteMode?.id,
   })
+  const routePacing = buildGreatStopRoutePacingDiagnostics(selectedArc)
   const greatStop = buildGreatStopGateResult({
     selectedArc,
     intent: result.intentProfile,
-    routePacing: buildGreatStopRoutePacingDiagnostics(selectedArc),
+    routePacing,
+    placeRightVerdict: buildRoutePlaceRightVerdictForArcCandidate({
+      candidate: selectedArc,
+      intent: result.intentProfile,
+      routePacing,
+      locationClass: 'L2 Mid',
+    }),
     locationClass: 'L2 Mid',
     locationClassSource: 'explicit',
   })

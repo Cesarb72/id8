@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { buildRoutePlaceRightVerdictForArcCandidate } from '../src/domain/bearings/buildRoutePlaceRightVerdictForArcCandidate'
 import { buildGreatStopGateResult } from '../src/domain/greatStop/buildGreatStopGateResult'
 import { computeRouteMeaningVerdict } from '../src/domain/interpretation/taste/computeRouteMeaningVerdict'
 import type { ArcCandidate, ArcStop } from '../src/domain/types/arc'
@@ -318,10 +319,19 @@ function buildIntent(spec: GateCase): IntentProfile {
 }
 
 function runGate(spec: GateCase): GreatStopGateResult {
+  const selectedArc = buildCandidate(spec)
+  const intent = buildIntent(spec)
+  const routePacing = buildPacing(spec)
   return buildGreatStopGateResult({
-    selectedArc: buildCandidate(spec),
-    intent: buildIntent(spec),
-    routePacing: buildPacing(spec),
+    selectedArc,
+    intent,
+    routePacing,
+    placeRightVerdict: buildRoutePlaceRightVerdictForArcCandidate({
+      candidate: selectedArc,
+      intent,
+      routePacing,
+      locationClass: spec.locationClass,
+    }),
     locationClass: spec.locationClass,
   })
 }
@@ -596,8 +606,9 @@ assert(happyHollowOld.status === 'FAIL', 'Happy Hollow-like old route should be 
 assert(!JSON.stringify(happyHollowOld).includes('THIN_STRICT'), 'Great Stop Gate artifact must not emit THIN_STRICT.')
 assert(l1FamilyPlace.status === 'FAIL', 'Family L1 preset should enforce tighter place constraints.')
 assert(
-  l1FamilyPlace.reasons.includes('place_right:drive_like_movement_discouraged'),
-  'Family L1 preset should discourage drive-like movement.',
+  l1FamilyPlace.reasons.includes('place_right:scattered_neighborhoods') ||
+    l1FamilyPlace.reasons.includes('place_right:poor_support_proximity'),
+  'Family L1 Place-Right should fail from Bearings-authored structural place evidence.',
 )
 assert(
   tasteRoleRightGood.roleVerdict.roleRightReady === true,
@@ -661,6 +672,15 @@ assert(
 const gateSource = readFileSync('src/domain/greatStop/buildGreatStopGateResult.ts', 'utf8')
 assert(!/provider_shadow|approved_payload|static_candidate|candidate_draft/.test(gateSource), 'Gate evaluator must not depend on non-authority source kinds.')
 assert(
+  gateSource.includes('function evaluatePlaceRightFromBearings') &&
+    gateSource.includes('BearingsPlaceRightVerdict') &&
+    gateSource.includes('params.placeRightVerdict') &&
+    !gateSource.includes('function evaluatePlaceRight(params') &&
+    !gateSource.includes('place_right:drive_like_movement_discouraged') &&
+    !gateSource.includes('place_right:total_movement_over_preset'),
+  'Great Stop Place-Right must stamp from Bearings verdict without local spatial/preset authority.',
+)
+assert(
   gateSource.includes('function evaluateRoleRight(candidate: ArcCandidate)') &&
     gateSource.includes('computeRouteMeaningRoleRightVerdict') &&
     gateSource.includes('roleRightVerdict.status') &&
@@ -674,10 +694,11 @@ const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf
 assert(
   runGeneratePlanSource.includes('greatStopGateResult: buildGreatStopGateResult({') &&
     runGeneratePlanSource.includes('selectedArc,') &&
-    runGeneratePlanSource.includes('routePacing:') &&
+    runGeneratePlanSource.includes('routePacing: selectedArcPlaceRight.routePacing') &&
+    runGeneratePlanSource.includes('placeRightVerdict: selectedArcPlaceRight.placeRightVerdict') &&
     runGeneratePlanSource.includes('locationClass: options.greatStopGateLocationClass') &&
     runGeneratePlanSource.includes("locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined"),
-  'runGeneratePlan must emit Great Stop Gate from selected generated arc, route pacing, and explicit location class when provided.',
+  'runGeneratePlan must emit Great Stop Gate from selected generated arc, Bearings Place-Right verdict, route pacing, and explicit location class when provided.',
 )
 const diagnosticsSource = readFileSync('src/domain/types/diagnostics.ts', 'utf8')
 assert(diagnosticsSource.includes('greatStopGateResult?: GreatStopGateResult'), 'Generation diagnostics must expose Great Stop Gate result.')
@@ -757,7 +778,9 @@ const output = {
     explicitPresetMatrix: presetMatrix,
     familyL1TravelTolerance: l1FamilyPlace.preset.travelTolerance,
     evergreenL3TravelTolerance: evergreen.preset.travelTolerance,
-    familyL1DriveLikeReason: l1FamilyPlace.reasons.includes('place_right:drive_like_movement_discouraged'),
+    familyL1BearingsPlaceReasons: l1FamilyPlace.reasons.filter((reason) =>
+      reason.startsWith('place_right:'),
+    ),
   },
   adegaUsesExplicitL2Mid: adegaOld.preset.source === 'explicit' && adegaOld.preset.locationClass === 'L2 Mid',
   l3UsesExplicitL3Sparse: evergreen.preset.source === 'explicit' && evergreen.preset.locationClass === 'L3 Sparse',

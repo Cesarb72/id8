@@ -97,6 +97,7 @@ import {
   buildStrategyAdmissibleWorlds,
   type StrategyAdmissibleWorld,
 } from './bearings/buildStrategyAdmissibleWorlds'
+import { buildRoutePlaceRightVerdictForArcCandidate } from './bearings/buildRoutePlaceRightVerdictForArcCandidate'
 import { createId } from '../lib/ids'
 import { starterPacks } from '../data/starterPacks'
 import { buildContractEntryArtifactFromGeneration } from './artifacts/buildContractEntryArtifactFromGeneration'
@@ -551,6 +552,23 @@ function buildCompactnessCandidateDetail(params: {
   }
 }
 
+function buildPlaceRightVerdictForCandidate(params: {
+  candidate: ArcCandidate
+  intent: IntentProfile
+  locationClass?: BuildLocationClass
+}) {
+  const routePacing = buildGreatStopRoutePacingDiagnostics(params.candidate)
+  return {
+    routePacing,
+    placeRightVerdict: buildRoutePlaceRightVerdictForArcCandidate({
+      candidate: params.candidate,
+      intent: params.intent,
+      routePacing,
+      locationClass: params.locationClass,
+    }),
+  }
+}
+
 function buildGreatStopCompactnessRankingDiagnostics(params: {
   rankedEntries: WaypointRankedCandidate[]
   candidatePool: ArcCandidate[]
@@ -592,13 +610,21 @@ function buildGreatStopCompactnessRankingDiagnostics(params: {
           .map((entry, index) => ({
             entry,
             rank: index + 1,
-            gateResult: buildGreatStopGateResult({
-              selectedArc: entry.candidate,
-              intent,
-              routePacing: buildGreatStopRoutePacingDiagnostics(entry.candidate),
-              locationClass,
-              locationClassSource,
-            }),
+            gateResult: (() => {
+              const placeRight = buildPlaceRightVerdictForCandidate({
+                candidate: entry.candidate,
+                intent,
+                locationClass,
+              })
+              return buildGreatStopGateResult({
+                selectedArc: entry.candidate,
+                intent,
+                routePacing: placeRight.routePacing,
+                placeRightVerdict: placeRight.placeRightVerdict,
+                locationClass,
+                locationClassSource,
+              })
+            })(),
           }))
           .filter(({ gateResult }) => gateResult.criteria.placeRight.passed)
       : []
@@ -898,13 +924,21 @@ function buildBuildCandidatePoolCompactnessDiagnostics(params: {
   const evaluated = preTop40RankedEntries.map((entry, index) => {
     const gateResult =
       locationClass && locationClassSource
-        ? buildGreatStopGateResult({
-            selectedArc: entry.candidate,
-            intent,
-            routePacing: buildGreatStopRoutePacingDiagnostics(entry.candidate),
-            locationClass,
-            locationClassSource,
-          })
+        ? (() => {
+            const placeRight = buildPlaceRightVerdictForCandidate({
+              candidate: entry.candidate,
+              intent,
+              locationClass,
+            })
+            return buildGreatStopGateResult({
+              selectedArc: entry.candidate,
+              intent,
+              routePacing: placeRight.routePacing,
+              placeRightVerdict: placeRight.placeRightVerdict,
+              locationClass,
+              locationClassSource,
+            })
+          })()
         : undefined
     return {
       entry,
@@ -3221,6 +3255,12 @@ async function runGeneratePlanInternal(
           intent: planningIntent,
           locationClass: options.greatStopGateLocationClass,
           locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
+          placeRightVerdictForCandidate: (candidate) =>
+            buildPlaceRightVerdictForCandidate({
+              candidate,
+              intent: planningIntent,
+              locationClass: options.greatStopGateLocationClass,
+            }).placeRightVerdict,
           stage: 'pre_selection_gate',
           rolePoolIdentityDiagnostics: buildGreatStopRolePoolIdentityDiagnostics(
             rolePools,
@@ -4225,6 +4265,11 @@ async function runGeneratePlanInternal(
       ...rolePoolVenueIdsByRole.windDown,
     ]),
   ]
+  const selectedArcPlaceRight = buildPlaceRightVerdictForCandidate({
+    candidate: selectedArc,
+    intent: planningIntent,
+    locationClass: options.greatStopGateLocationClass,
+  })
 
   const diagnostics: GenerationDiagnostics = {
     totalVenueCount: retrieval.totalVenueCount,
@@ -4388,7 +4433,8 @@ async function runGeneratePlanInternal(
       intent: planningIntent,
       locationClass: options.greatStopGateLocationClass,
       locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
-      routePacing: buildGreatStopRoutePacingDiagnostics(selectedArc),
+      routePacing: selectedArcPlaceRight.routePacing,
+      placeRightVerdict: selectedArcPlaceRight.placeRightVerdict,
     }),
     strictShapeEnabled,
     boundaryDiagnostics,
