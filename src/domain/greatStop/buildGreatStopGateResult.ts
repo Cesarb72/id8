@@ -21,7 +21,10 @@ import type { UserStopRole } from '../types/itinerary'
 import type { BearingsPlaceRightVerdict } from '../bearings/routePlaceRightContract'
 import { roleProjection } from '../config/roleProjection'
 import { getArcStopBaseVenueId } from '../candidates/candidateIdentity'
-import { computeRouteMeaningRoleRightVerdict } from '../interpretation/taste/computeRouteMeaningVerdict'
+import {
+  computeRouteMeaningIntentRightVerdict,
+  computeRouteMeaningRoleRightVerdict,
+} from '../interpretation/taste/computeRouteMeaningVerdict'
 import type { TasteRouteMeaningStopEvidenceInput } from '../interpretation/taste/computeRouteMeaningVerdict'
 
 const DIAGNOSTIC_CANDIDATE_SUMMARY_LIMIT = 25
@@ -171,6 +174,16 @@ function toRoleRightStopEvidence(stop: ArcStop): TasteRouteMeaningStopEvidenceIn
   }
 }
 
+function toIntentRightStopEvidence(stop: ArcStop): TasteRouteMeaningStopEvidenceInput {
+  return {
+    role: roleFor(stop),
+    candidateVenueId: getArcStopBaseVenueId(stop),
+    routeFitScore: stop.scoredVenue.fitScore,
+    lensCompatibilityScore: stop.scoredVenue.lensCompatibility,
+    contextSpecificityScore: stop.scoredVenue.contextSpecificity.overall,
+  }
+}
+
 function evaluateRoleRight(candidate: ArcCandidate): GreatStopCriterionResult {
   const roleRightVerdict = computeRouteMeaningRoleRightVerdict(
     candidate.stops.map(toRoleRightStopEvidence),
@@ -190,18 +203,21 @@ function evaluateRoleRight(candidate: ArcCandidate): GreatStopCriterionResult {
 }
 
 function evaluateIntentRight(candidate: ArcCandidate): GreatStopCriterionResult {
-  const reasons: string[] = []
-  for (const stop of candidate.stops) {
-    const role = roleFor(stop)
-    if (stop.scoredVenue.fitScore < 0.42) reasons.push(`intent_right:low_fit:${role}`)
-    if (stop.scoredVenue.lensCompatibility < 0.38) {
-      reasons.push(`intent_right:low_lens_compatibility:${role}`)
-    }
-    if (stop.scoredVenue.contextSpecificity.overall < 0.3) {
-      reasons.push(`intent_right:low_context_specificity:${role}`)
-    }
+  const intentRightVerdict = computeRouteMeaningIntentRightVerdict(
+    candidate.stops.map(toIntentRightStopEvidence),
+  )
+  if (!intentRightVerdict.ready || intentRightVerdict.status === 'unknown') {
+    return criterion(false, ['intent_right:taste_verdict_not_ready'])
   }
-  return criterion(reasons.length === 0, reasons)
+  if (intentRightVerdict.status === 'pass') {
+    return criterion(true, [])
+  }
+  return criterion(
+    false,
+    intentRightVerdict.reasons.length > 0
+      ? [...intentRightVerdict.reasons]
+      : ['intent_right:taste_verdict_failed'],
+  )
 }
 
 function evaluatePlaceRightFromBearings(params: {

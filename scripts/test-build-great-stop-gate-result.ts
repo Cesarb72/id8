@@ -617,7 +617,31 @@ const intentRightBadSpec: GateCase = {
 }
 const tasteIntentRightGood = buildTasteRouteMeaningVerdict(intentRightGoodSpec)
 const tasteIntentRightBad = buildTasteRouteMeaningVerdict(intentRightBadSpec)
+const greatStopIntentRightGood = runGate(intentRightGoodSpec)
 const greatStopIntentRightBad = runGate(intentRightBadSpec)
+const intentRightGeneralizedBadBase = baselineGateSpec('romantic', 'L2 Mid')
+const intentRightGeneralizedBadSpec: GateCase = {
+  ...intentRightGeneralizedBadBase,
+  cell: 'Intent-Right generalized bad evidence',
+  stops: [
+    {
+      ...intentRightGeneralizedBadBase.stops[0],
+      contextSpecificity: 0.18,
+    },
+    {
+      ...intentRightGeneralizedBadBase.stops[1],
+      fitScore: 0.2,
+    },
+    {
+      ...intentRightGeneralizedBadBase.stops[2],
+      lensCompatibility: 0.19,
+    },
+  ],
+}
+const tasteIntentRightGeneralizedBad = buildTasteRouteMeaningVerdict(
+  intentRightGeneralizedBadSpec,
+)
+const greatStopIntentRightGeneralizedBad = runGate(intentRightGeneralizedBadSpec)
 
 assert(evergreen.status === 'PASS', `Evergreen-like route should pass, got ${evergreen.status}`)
 assert(evergreen.preset.source === 'explicit', 'Evergreen-like L3 route should use explicit L3 Sparse.')
@@ -710,6 +734,11 @@ assert(
   'Taste compatibility inputs should expose the Intent-Right pass verdict for future Great Stop stamping.',
 )
 assert(
+  greatStopIntentRightGood.criteria.intentRight.passed === true &&
+    greatStopIntentRightGood.criteria.intentRight.reasons.length === 0,
+  'Great Stop Intent-Right should pass from Taste verdict for a good route.',
+)
+assert(
   tasteIntentRightBad.intentVerdict.intentRightReady === true,
   'Taste Intent-Right evidence should still be ready for a bad route.',
 )
@@ -742,14 +771,19 @@ assert(
 )
 assert(
   greatStopIntentRightBad.failedCriteria.includes('intent_right') &&
-    greatStopIntentRightBad.criteria.intentRight.reasons.includes('intent_right:low_fit:start') &&
-    greatStopIntentRightBad.criteria.intentRight.reasons.includes(
-      'intent_right:low_lens_compatibility:highlight',
-    ) &&
-    greatStopIntentRightBad.criteria.intentRight.reasons.includes(
-      'intent_right:low_context_specificity:windDown',
-    ),
-  'Great Stop Intent-Right should still fail through the legacy Arc role path in this 2A slice.',
+    greatStopIntentRightBad.criteria.intentRight.reasons.join('|') ===
+      tasteIntentRightBad.intentVerdict.intentRightVerdict.reasons.join('|'),
+  'Great Stop Intent-Right should fail from Taste-authored reasons after the 2B rewire.',
+)
+assert(
+  tasteIntentRightGeneralizedBad.intentVerdict.intentRightVerdict?.status === 'fail',
+  'Generalized bad Intent-Right Taste verdict should fail.',
+)
+assert(
+  greatStopIntentRightGeneralizedBad.failedCriteria.includes('intent_right') &&
+    greatStopIntentRightGeneralizedBad.criteria.intentRight.reasons.join('|') ===
+      tasteIntentRightGeneralizedBad.intentVerdict.intentRightVerdict.reasons.join('|'),
+  'A different bad Intent-Right route should fail Great Stop Intent-Right from Taste evidence.',
 )
 
 const gateSource = readFileSync('src/domain/greatStop/buildGreatStopGateResult.ts', 'utf8')
@@ -775,11 +809,15 @@ assert(
 )
 assert(
   gateSource.includes('function evaluateIntentRight(candidate: ArcCandidate)') &&
-    gateSource.includes('stop.scoredVenue.fitScore < 0.42') &&
-    gateSource.includes('stop.scoredVenue.lensCompatibility < 0.38') &&
-    gateSource.includes('stop.scoredVenue.contextSpecificity.overall < 0.3') &&
-    !gateSource.includes('computeRouteMeaningIntentRightVerdict'),
-  'Great Stop Intent-Right authority must remain on the legacy evaluator until 2B.',
+    gateSource.includes('computeRouteMeaningIntentRightVerdict') &&
+    gateSource.includes('intentRightVerdict.status') &&
+    !gateSource.includes('stop.scoredVenue.fitScore < 0.42') &&
+    !gateSource.includes('stop.scoredVenue.lensCompatibility < 0.38') &&
+    !gateSource.includes('stop.scoredVenue.contextSpecificity.overall < 0.3') &&
+    !gateSource.includes('intent_right:low_fit:${role}') &&
+    !gateSource.includes('intent_right:low_lens_compatibility:${role}') &&
+    !gateSource.includes('intent_right:low_context_specificity:${role}'),
+  'Great Stop Intent-Right must stamp from Taste verdict without local threshold re-derivation.',
 )
 const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf8')
 assert(
@@ -910,6 +948,8 @@ const output = {
       status: tasteIntentRightGood.intentVerdict.intentRightVerdict?.status,
       reasons: tasteIntentRightGood.intentVerdict.intentRightVerdict?.reasons,
       compatibilityInputs: tasteIntentRightGood.compatibility?.greatStopIntentRightInputs,
+      greatStopIntentRightPassed: greatStopIntentRightGood.criteria.intentRight.passed,
+      greatStopReasons: greatStopIntentRightGood.criteria.intentRight.reasons,
     },
     badRoute: {
       ready: tasteIntentRightBad.intentVerdict.intentRightReady,
@@ -921,10 +961,18 @@ const output = {
       lowContextSpecificityEvidence:
         tasteIntentRightBad.intentVerdict.intentRightVerdict?.lowContextSpecificityEvidence,
       compatibilityInputs: tasteIntentRightBad.compatibility?.greatStopIntentRightInputs,
-      legacyGreatStopIntentRightPassed: greatStopIntentRightBad.criteria.intentRight.passed,
-      legacyGreatStopReasons: greatStopIntentRightBad.criteria.intentRight.reasons,
+      greatStopIntentRightPassed: greatStopIntentRightBad.criteria.intentRight.passed,
+      greatStopReasons: greatStopIntentRightBad.criteria.intentRight.reasons,
     },
-    greatStopIntentRightAuthority: 'legacy_evaluate_intent_right_until_2b',
+    generalizedBadRoute: {
+      ready: tasteIntentRightGeneralizedBad.intentVerdict.intentRightReady,
+      status: tasteIntentRightGeneralizedBad.intentVerdict.intentRightVerdict?.status,
+      reasons: tasteIntentRightGeneralizedBad.intentVerdict.intentRightVerdict?.reasons,
+      greatStopIntentRightPassed:
+        greatStopIntentRightGeneralizedBad.criteria.intentRight.passed,
+      greatStopReasons: greatStopIntentRightGeneralizedBad.criteria.intentRight.reasons,
+    },
+    greatStopIntentRightAuthority: 'taste_intent_right_verdict',
   },
   routeAuthorityUnchanged: true,
   runtimeRouteArtifactShapeUnchanged: true,
