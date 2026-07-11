@@ -96,10 +96,19 @@ export interface RolePoolMeaningCandidateEvidence {
   romantic: {
     cozyCompatible: boolean
     livelyCompatible: boolean
+    intimacy: number
+    linger: number
+    destination: number
+    experiential: number
+    momentIntensity: number
   }
   family: {
     boundedEnergyCompatible: boolean
     nightlifeConflict: boolean
+    calmness: number
+    energy: number
+    socialDensity: number
+    interactiveStrength: number
   }
 }
 
@@ -276,10 +285,19 @@ export function computeRolePoolCandidateMeaningEvidence(
     romantic: {
       cozyCompatible: input.intimacy >= 0.5 || input.lingerFactor >= 0.5,
       livelyCompatible: input.momentIntensityScore >= 0.56 && input.energy >= 0.42,
+      intimacy: input.intimacy,
+      linger: input.lingerFactor,
+      destination: input.destinationFactor,
+      experiential: input.experientialFactor,
+      momentIntensity: input.momentIntensityScore,
     },
     family: {
       boundedEnergyCompatible: input.energy <= 0.82 && nightlifeLike <= 0.88,
       nightlifeConflict: nightlifeLike > 0.88,
+      calmness,
+      energy: input.energy,
+      socialDensity: input.socialDensity,
+      interactiveStrength: input.interactiveStrength,
     },
   }
 }
@@ -351,10 +369,19 @@ export function computeRolePoolMeaningEvidence(input: {
       romanticEvidence: [
         toComponent('romantic_cozy_compatible', candidate.romantic.cozyCompatible),
         toComponent('romantic_lively_compatible', candidate.romantic.livelyCompatible),
+        toComponent('romantic_intimacy', candidate.romantic.intimacy),
+        toComponent('romantic_linger', candidate.romantic.linger),
+        toComponent('romantic_destination', candidate.romantic.destination),
+        toComponent('romantic_experiential', candidate.romantic.experiential),
+        toComponent('romantic_moment_intensity', candidate.romantic.momentIntensity),
       ],
       familyEvidence: [
         toComponent('bounded_energy_compatible', candidate.family.boundedEnergyCompatible),
         toComponent('nightlife_conflict', candidate.family.nightlifeConflict),
+        toComponent('family_calmness', candidate.family.calmness),
+        toComponent('family_energy', candidate.family.energy),
+        toComponent('family_social_density', candidate.family.socialDensity),
+        toComponent('family_interactive_strength', candidate.family.interactiveStrength),
       ],
       categoryVibeEvidence: [
         toComponent('category', input.candidate.category),

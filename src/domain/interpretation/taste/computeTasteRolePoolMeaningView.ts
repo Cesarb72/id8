@@ -57,6 +57,44 @@ function buildEasyHangMeaning(
   }
 }
 
+function buildRomanticRoleMeaning(
+  evidence: RolePoolMeaningEvidence,
+): TasteRolePoolCandidateMeaningEvidence<'romantic_role_meaning'> {
+  return {
+    source: 'taste',
+    kind: 'romantic_role_meaning',
+    candidateVenueId: evidence.candidate.candidateVenueId,
+    role: evidence.role,
+    compatibility:
+      evidence.candidate.romantic.cozyCompatible ||
+      evidence.candidate.romantic.livelyCompatible
+        ? 'compatible'
+        : 'partial',
+    components: evidence.rolePoolEvidence.romanticEvidence,
+    candidateEvidence: evidence.candidate,
+    rolePoolEvidence: evidence.rolePoolEvidence,
+  }
+}
+
+function buildFamilyRoleMeaning(
+  evidence: RolePoolMeaningEvidence,
+): TasteRolePoolCandidateMeaningEvidence<'family_role_meaning'> {
+  return {
+    source: 'taste',
+    kind: 'family_role_meaning',
+    candidateVenueId: evidence.candidate.candidateVenueId,
+    role: evidence.role,
+    compatibility: evidence.candidate.family.nightlifeConflict
+      ? 'conflict'
+      : evidence.candidate.family.boundedEnergyCompatible
+        ? 'compatible'
+        : 'partial',
+    components: evidence.rolePoolEvidence.familyEvidence,
+    candidateEvidence: evidence.candidate,
+    rolePoolEvidence: evidence.rolePoolEvidence,
+  }
+}
+
 function groupByRole(
   candidates: readonly TasteRolePoolCandidateMeaningEvidence[],
 ): TasteRolePoolMeaningView['rolePools'] {
@@ -86,6 +124,8 @@ export function computeTasteRolePoolMeaningView(
   const candidates = foundation.flatMap((evidence) => [
     buildRoleSuitabilityMeaning(evidence),
     buildEasyHangMeaning(evidence),
+    buildRomanticRoleMeaning(evidence),
+    buildFamilyRoleMeaning(evidence),
   ])
 
   return {

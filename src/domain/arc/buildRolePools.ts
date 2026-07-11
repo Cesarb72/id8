@@ -2091,16 +2091,15 @@ function computeContractRolePressure(params: {
     candidate: toRolePoolMeaningCandidateEvidence(candidate),
   })
   const socialDensity = meaningEvidence.candidate.social.density
-  const energy = meaningEvidence.candidate.social.energy
-  const intimacy = candidate.taste.signals.intimacy
-  const linger = candidate.taste.signals.lingerFactor
-  const destination = candidate.taste.signals.destinationFactor
-  const experiential = candidate.taste.signals.experientialFactor
+  const energy = meaningEvidence.candidate.family.energy
+  const intimacy = meaningEvidence.candidate.romantic.intimacy
+  const linger = meaningEvidence.candidate.romantic.linger
+  const destination = meaningEvidence.candidate.romantic.destination
+  const experiential = meaningEvidence.candidate.romantic.experiential
   const windDownFit = meaningEvidence.candidate.roleSuitability.windDown ?? 0
   const startFit = meaningEvidence.candidate.roleSuitability.start ?? 0
   const highlightFit = meaningEvidence.candidate.roleSuitability.highlight ?? 0
-  const momentIntensity = candidate.taste.signals.momentIntensity.score
-  const category = candidate.venue.category
+  const momentIntensity = meaningEvidence.candidate.romantic.momentIntensity
   const driveMinutes = candidate.venue.driveMinutes
   const nightlifeLike = meaningEvidence.candidate.nightlifeLike
   const calmness = meaningEvidence.candidate.calmness
@@ -2220,7 +2219,7 @@ function computeContractRolePressure(params: {
       scoreAdjustment += (energy - 0.5) * 0.1
     } else if (experienceContract.persona === 'family') {
       scoreAdjustment += (calmness - 0.5) * 0.12
-      scoreAdjustment += (candidate.taste.signals.interactiveStrength - 0.5) * 0.08
+      scoreAdjustment += (meaningEvidence.candidate.family.interactiveStrength - 0.5) * 0.08
       if (nightlifeLike > 0.88 && energy > 0.82) {
         hardReject = true
       }
