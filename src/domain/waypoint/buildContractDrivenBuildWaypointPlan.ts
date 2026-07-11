@@ -12,6 +12,7 @@ import {
   buildGreatStopGateResult,
   buildGreatStopRoutePacingDiagnostics,
 } from '../greatStop/buildGreatStopGateResult'
+import { computeFieldRealVerdictForArcCandidate } from '../field/computeFieldRealVerdict'
 import type {
   DirectionContractValidationResult,
   DirectionIdentityMode,
@@ -530,6 +531,7 @@ export async function buildContractDrivenBuildWaypointPlan(
           selectedArc: parity.anchoredPlan.selectedArc,
           intent: result.intentProfile,
           routePacing: buildGreatStopRoutePacingDiagnostics(parity.anchoredPlan.selectedArc),
+          fieldRealVerdict: computeFieldRealVerdictForArcCandidate(parity.anchoredPlan.selectedArc),
           locationClass: input.greatStopGateLocationClass,
           locationClassSource: 'explicit',
         })

@@ -1,6 +1,7 @@
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
 import { sanJoseVenues } from '../src/data/venues.ts'
 import { buildRoutePlaceRightVerdictForArcCandidate } from '../src/domain/bearings/buildRoutePlaceRightVerdictForArcCandidate.ts'
+import { computeFieldRealVerdictForArcCandidate } from '../src/domain/field/computeFieldRealVerdict.ts'
 import {
   computeRouteMomentVerdict,
   type TasteRouteMomentAvailableCandidateEvidence,
@@ -253,7 +254,30 @@ function toSyntheticArcCandidate(
         name: stop.candidateVenueId,
         energyLevel: index === 1 ? 3 : index === 0 ? 2 : 1,
         source: {
+          normalizedFromRawType: 'seed',
+          sourceOrigin: 'curated',
+          curatedSubtype: 'manual-custom',
           providerRecordId: `synthetic:${stop.candidateVenueId}`,
+          sourceConfidence: 0.95,
+          completenessScore: 0.95,
+          qualityScore: 0.95,
+          openNow: true,
+          hoursKnown: true,
+          likelyOpenForCurrentWindow: true,
+          businessStatus: 'operational',
+          timeConfidence: 0.95,
+          hoursPressureLevel: 'strong-open',
+          hoursPressureNotes: [],
+          hoursDemotionApplied: false,
+          hoursSuppressionApplied: false,
+          sourceTypes: ['test'],
+          missingFields: [],
+          inferredFields: [],
+          qualityGateStatus: 'approved',
+          qualityGateNotes: [],
+          approvalBlockers: [],
+          demotionReasons: [],
+          suppressionReasons: [],
         },
       },
       momentIdentity: stop.momentIdentity,
@@ -406,6 +430,7 @@ function observeSyntheticCase(params: {
       routePacing,
       locationClass: 'L1 Dense',
     }),
+    fieldRealVerdict: computeFieldRealVerdictForArcCandidate(selectedArc),
     locationClass: 'L1 Dense',
     locationClassSource: 'explicit',
   })
@@ -478,6 +503,7 @@ try {
       routePacing,
       locationClass: 'L2 Mid',
     }),
+    fieldRealVerdict: computeFieldRealVerdictForArcCandidate(selectedArc),
     locationClass: 'L2 Mid',
     locationClassSource: 'explicit',
   })

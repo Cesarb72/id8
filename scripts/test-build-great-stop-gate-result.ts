@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { buildRoutePlaceRightVerdictForArcCandidate } from '../src/domain/bearings/buildRoutePlaceRightVerdictForArcCandidate'
+import { computeFieldRealVerdictForArcCandidate } from '../src/domain/field/computeFieldRealVerdict'
 import { buildGreatStopGateResult } from '../src/domain/greatStop/buildGreatStopGateResult'
 import { computeRouteMeaningVerdict } from '../src/domain/interpretation/taste/computeRouteMeaningVerdict'
 import type { ArcCandidate, ArcStop } from '../src/domain/types/arc'
@@ -125,7 +126,31 @@ function scoredStop(spec: StopSpec): ArcStop {
         durationProfile: {} as never,
         settings: {} as never,
         signature: {} as never,
-        source: {} as never,
+        source: {
+          normalizedFromRawType: 'seed',
+          sourceOrigin: 'curated',
+          curatedSubtype: 'manual-custom',
+          sourceConfidence: 0.95,
+          completenessScore: 0.95,
+          qualityScore: 0.95,
+          openNow: true,
+          hoursKnown: true,
+          likelyOpenForCurrentWindow: true,
+          businessStatus: 'operational',
+          timeConfidence: 0.95,
+          hoursPressureLevel: 'strong-open',
+          hoursPressureNotes: [],
+          hoursDemotionApplied: false,
+          hoursSuppressionApplied: false,
+          sourceTypes: ['test'],
+          missingFields: [],
+          inferredFields: [],
+          qualityGateStatus: 'approved',
+          qualityGateNotes: [],
+          approvalBlockers: [],
+          demotionReasons: [],
+          suppressionReasons: [],
+        },
       },
       candidateIdentity: {
         candidateId: spec.venueId,
@@ -332,6 +357,7 @@ function runGate(spec: GateCase): GreatStopGateResult {
       routePacing,
       locationClass: spec.locationClass,
     }),
+    fieldRealVerdict: computeFieldRealVerdictForArcCandidate(selectedArc),
     locationClass: spec.locationClass,
   })
 }
@@ -787,7 +813,21 @@ assert(
 )
 
 const gateSource = readFileSync('src/domain/greatStop/buildGreatStopGateResult.ts', 'utf8')
+const legacyRealReason = 'real:unusable_' + 'stop'
+const legacyVenueIdTrim = ['venue', 'id', 'trim()'].join('.')
+const legacyVenueNameTrim = ['venue', 'name', 'trim()'].join('.')
+const legacyVenueActiveCheck = ['venue', 'is' + 'Active !== false'].join('.')
 assert(!/provider_shadow|approved_payload|static_candidate|candidate_draft/.test(gateSource), 'Gate evaluator must not depend on non-authority source kinds.')
+assert(
+  gateSource.includes('function evaluateRealFromField(verdict?: FieldRealVerdict)') &&
+    gateSource.includes('params.fieldRealVerdict') &&
+    !gateSource.includes('function stopIdentityUsable') &&
+    !gateSource.includes(legacyRealReason) &&
+    !gateSource.includes(legacyVenueIdTrim) &&
+    !gateSource.includes(legacyVenueNameTrim) &&
+    !gateSource.includes(legacyVenueActiveCheck),
+  'Great Stop Real must stamp from Field verdict without local venue metadata re-derivation.',
+)
 assert(
   gateSource.includes('function evaluatePlaceRightFromBearings') &&
     gateSource.includes('BearingsPlaceRightVerdict') &&
@@ -825,9 +865,10 @@ assert(
     runGeneratePlanSource.includes('selectedArc,') &&
     runGeneratePlanSource.includes('routePacing: selectedArcPlaceRight.routePacing') &&
     runGeneratePlanSource.includes('placeRightVerdict: selectedArcPlaceRight.placeRightVerdict') &&
+    runGeneratePlanSource.includes('fieldRealVerdict: computeFieldRealVerdictForArcCandidate(selectedArc)') &&
     runGeneratePlanSource.includes('locationClass: options.greatStopGateLocationClass') &&
     runGeneratePlanSource.includes("locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined"),
-  'runGeneratePlan must emit Great Stop Gate from selected generated arc, Bearings Place-Right verdict, route pacing, and explicit location class when provided.',
+  'runGeneratePlan must emit Great Stop Gate from selected generated arc, Bearings Place-Right verdict, Field Real verdict, route pacing, and explicit location class when provided.',
 )
 const diagnosticsSource = readFileSync('src/domain/types/diagnostics.ts', 'utf8')
 assert(diagnosticsSource.includes('greatStopGateResult?: GreatStopGateResult'), 'Generation diagnostics must expose Great Stop Gate result.')

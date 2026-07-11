@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { evaluateRoutePlaceRightEvidence } from '../src/domain/bearings/evaluateRoutePlaceRightEvidence'
+import { computeFieldRealVerdictForArcCandidate } from '../src/domain/field/computeFieldRealVerdict'
 import { buildGreatStopGateResult } from '../src/domain/greatStop/buildGreatStopGateResult'
 import type { ArcCandidate, ArcStop } from '../src/domain/types/arc'
 import type { RoutePacingDiagnostics } from '../src/domain/types/diagnostics'
@@ -184,7 +185,31 @@ function stop(baseVenueId: string, role: ArcStop['role'], name: string): ArcStop
         priceLevel: 2,
         isActive: true,
         energyLevel: role === 'peak' ? 0.9 : 0.5,
-        source: { provider: 'fixture', providerRecordId: baseVenueId },
+        source: {
+          normalizedFromRawType: 'seed',
+          sourceOrigin: 'curated',
+          curatedSubtype: 'manual-custom',
+          sourceConfidence: 0.95,
+          completenessScore: 0.95,
+          qualityScore: 0.95,
+          openNow: true,
+          hoursKnown: true,
+          likelyOpenForCurrentWindow: true,
+          businessStatus: 'operational',
+          timeConfidence: 0.95,
+          hoursPressureLevel: 'strong-open',
+          hoursPressureNotes: [],
+          hoursDemotionApplied: false,
+          hoursSuppressionApplied: false,
+          sourceTypes: ['test'],
+          missingFields: [],
+          inferredFields: [],
+          qualityGateStatus: 'approved',
+          qualityGateNotes: [],
+          approvalBlockers: [],
+          demotionReasons: [],
+          suppressionReasons: [],
+        },
       },
       candidateIdentity: {
         candidateId: baseVenueId,
@@ -335,6 +360,7 @@ function gateFor(verdict: BearingsRouteFeasibilityVerdict) {
     intent,
     routePacing: routePacing(),
     placeRightVerdict: verdict,
+    fieldRealVerdict: computeFieldRealVerdictForArcCandidate(candidate),
     locationClass: 'L1 Dense',
     locationClassSource: 'explicit',
   })

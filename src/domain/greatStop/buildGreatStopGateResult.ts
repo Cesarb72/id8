@@ -19,6 +19,7 @@ import type {
 import type { DistanceMode, IntentProfile, PersonaMode } from '../types/intent'
 import type { UserStopRole } from '../types/itinerary'
 import type { BearingsPlaceRightVerdict } from '../bearings/routePlaceRightContract'
+import type { FieldRealVerdict } from '../field/fieldRealVerdict'
 import { roleProjection } from '../config/roleProjection'
 import { getArcStopBaseVenueId } from '../candidates/candidateIdentity'
 import {
@@ -137,16 +138,29 @@ function getRoleStop(candidate: ArcCandidate, role: ArcStop['role']): ArcStop | 
   return candidate.stops.find((stop) => stop.role === role)
 }
 
-function stopIdentityUsable(stop: ArcStop): boolean {
-  const venue = stop.scoredVenue.venue
-  return Boolean(venue.id.trim() && venue.name.trim() && venue.isActive !== false)
-}
+function evaluateRealFromField(verdict?: FieldRealVerdict): GreatStopCriterionResult {
+  if (!verdict) {
+    return criterion(false, ['real:field_verdict_missing'])
+  }
 
-function evaluateReal(candidate: ArcCandidate): GreatStopCriterionResult {
-  const unusableStops = candidate.stops.filter((stop) => !stopIdentityUsable(stop))
+  if (!verdict.realReady || verdict.status === 'unknown') {
+    return criterion(
+      false,
+      verdict.failureReasons.length > 0
+        ? [...verdict.failureReasons]
+        : ['real:field_verdict_not_ready'],
+    )
+  }
+
+  if (verdict.status === 'pass') {
+    return criterion(true, [])
+  }
+
   return criterion(
-    unusableStops.length === 0,
-    unusableStops.map((stop) => `real:unusable_stop:${roleFor(stop)}`),
+    false,
+    verdict.failureReasons.length > 0
+      ? [...verdict.failureReasons]
+      : ['real:field_verdict_failed'],
   )
 }
 
@@ -467,6 +481,7 @@ export function buildGreatStopGateResult(params: {
   intent: IntentProfile
   routePacing: RoutePacingDiagnostics
   placeRightVerdict?: BearingsPlaceRightVerdict
+  fieldRealVerdict?: FieldRealVerdict
   locationClass?: BuildLocationClass
   locationClassSource?: GreatStopGatePresetSource
 }): GreatStopGateResult {
@@ -506,7 +521,7 @@ export function buildGreatStopGateResult(params: {
           creditedRole,
         }
       : undefined
-  const real = evaluateReal(selectedArc)
+  const real = evaluateRealFromField(params.fieldRealVerdict)
   const roleRight = evaluateRoleRight(selectedArc)
   const intentRight = evaluateIntentRight(selectedArc)
   const criteria = {
@@ -829,6 +844,7 @@ export function selectGreatStopGatePassingCandidate(params: {
   locationClass?: BuildLocationClass
   locationClassSource?: GreatStopGatePresetSource
   placeRightVerdictForCandidate?: (candidate: ArcCandidate) => BearingsPlaceRightVerdict
+  fieldRealVerdictForCandidate?: (candidate: ArcCandidate) => FieldRealVerdict
   stage: GreatStopGateSelectionStage
   rolePoolIdentityDiagnostics?: GreatStopGateRolePoolIdentityDiagnostics
   compactnessRankingDiagnostics?: GreatStopCompactnessRankingDiagnostics
@@ -953,6 +969,7 @@ export function selectGreatStopGatePassingCandidate(params: {
       intent: params.intent,
       routePacing: buildGreatStopRoutePacingDiagnostics(candidate),
       placeRightVerdict: params.placeRightVerdictForCandidate?.(candidate),
+      fieldRealVerdict: params.fieldRealVerdictForCandidate?.(candidate),
       locationClass: params.locationClass,
       locationClassSource: params.locationClassSource,
     })

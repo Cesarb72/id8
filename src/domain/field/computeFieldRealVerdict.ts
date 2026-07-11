@@ -1,4 +1,4 @@
-import type { ScoredVenueCandidateIdentity } from '../types/arc'
+import type { ArcCandidate, ScoredVenueCandidateIdentity } from '../types/arc'
 import type { VenueSourceMetadata } from '../types/normalization'
 import type { Venue } from '../types/venue'
 import type {
@@ -322,4 +322,16 @@ export function computeFieldRealVerdict(stops: FieldRealStopInput[]): FieldRealV
       },
     },
   }
+}
+
+export function computeFieldRealVerdictForArcCandidate(
+  candidate: ArcCandidate,
+): FieldRealVerdict {
+  return computeFieldRealVerdict(
+    candidate.stops.map((stop) => ({
+      role: stop.role,
+      venue: stop.scoredVenue.venue,
+      candidateIdentity: stop.scoredVenue.candidateIdentity,
+    })),
+  )
 }

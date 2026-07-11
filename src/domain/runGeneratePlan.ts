@@ -38,6 +38,7 @@ import { roleProjection } from './config/roleProjection'
 import { buildBoundaryTruthNotes } from './debug/buildBoundaryTruthNotes'
 import { computePairMatrix } from './debug/computeCandidateOverlap'
 import { buildStopReasons } from './explainability/buildStopReasons'
+import { computeFieldRealVerdictForArcCandidate } from './field/computeFieldRealVerdict'
 import {
   buildGreatStopGateResult,
   buildGreatStopRoutePacingDiagnostics,
@@ -621,6 +622,7 @@ function buildGreatStopCompactnessRankingDiagnostics(params: {
                 intent,
                 routePacing: placeRight.routePacing,
                 placeRightVerdict: placeRight.placeRightVerdict,
+                fieldRealVerdict: computeFieldRealVerdictForArcCandidate(entry.candidate),
                 locationClass,
                 locationClassSource,
               })
@@ -935,6 +937,7 @@ function buildBuildCandidatePoolCompactnessDiagnostics(params: {
               intent,
               routePacing: placeRight.routePacing,
               placeRightVerdict: placeRight.placeRightVerdict,
+              fieldRealVerdict: computeFieldRealVerdictForArcCandidate(entry.candidate),
               locationClass,
               locationClassSource,
             })
@@ -3261,6 +3264,7 @@ async function runGeneratePlanInternal(
               intent: planningIntent,
               locationClass: options.greatStopGateLocationClass,
             }).placeRightVerdict,
+          fieldRealVerdictForCandidate: computeFieldRealVerdictForArcCandidate,
           stage: 'pre_selection_gate',
           rolePoolIdentityDiagnostics: buildGreatStopRolePoolIdentityDiagnostics(
             rolePools,
@@ -4435,6 +4439,7 @@ async function runGeneratePlanInternal(
       locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
       routePacing: selectedArcPlaceRight.routePacing,
       placeRightVerdict: selectedArcPlaceRight.placeRightVerdict,
+      fieldRealVerdict: computeFieldRealVerdictForArcCandidate(selectedArc),
     }),
     strictShapeEnabled,
     boundaryDiagnostics,
