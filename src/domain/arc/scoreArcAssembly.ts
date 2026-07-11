@@ -13,6 +13,7 @@ import {
   computeRouteMeaningVerdict,
   type TasteRouteMeaningStopEvidenceInput,
 } from '../interpretation/taste/computeRouteMeaningVerdict'
+import { computeRouteQualityVerdict } from '../interpretation/taste/computeRouteQualityVerdict'
 import {
   isCandidateWithinActiveDistanceWindow,
   isCandidateUsedByStretch,
@@ -83,8 +84,6 @@ const FAMILY_MISMATCH_PENALTY = 0.05
 const BAD_BUILD_PENALTY = 0.05
 const FAMILY_ALIGNMENT_CONFIDENCE_MIN = 0.58
 const ARC_VIABILITY_HIGHLIGHT_THRESHOLD = 0.6
-const FAKE_COMPLETENESS_PENALTY = 0.08
-
 export interface ScoreArcAssemblyOptions {
   whenSpatialScoring?: WhenSpatialScoringMode
   whenSignalProfile?: WhenSignalProfile
@@ -2133,30 +2132,6 @@ function computeWindDownScore(stops: ArcStop[], lens: ExperienceLens): number {
   )
 }
 
-function computeVibeCoherence(stops: ArcStop[]): number {
-  const values = stops.map((stop) => {
-    if (stop.role === 'warmup') {
-      return stop.scoredVenue.vibeAuthority.byRole.start
-    }
-    if (stop.role === 'peak') {
-      return stop.scoredVenue.vibeAuthority.byRole.highlight
-    }
-    if (stop.role === 'wildcard') {
-      return stop.scoredVenue.vibeAuthority.byRole.surprise
-    }
-    return stop.scoredVenue.vibeAuthority.byRole.windDown
-  })
-  return clamp01(values.reduce((sum, value) => sum + value, 0) / values.length)
-}
-
-function computeHighlightVibeScore(stops: ArcStop[]): number {
-  const highlight = stops.find((stop) => stop.role === 'peak')
-  if (!highlight) {
-    return 0
-  }
-  return clamp01(highlight.scoredVenue.vibeAuthority.byRole.highlight)
-}
-
 function toAmbianceBand(value: number): 'low' | 'medium' | 'high' {
   if (value >= 0.66) {
     return 'high'
@@ -2540,48 +2515,6 @@ function computeSurpriseHighlightCalibration(
   }
 }
 
-function computeFakeCompletenessPenalty(stops: ArcStop[]): {
-  penalty: number
-  applied: boolean
-} {
-  const warmup = stops.find((stop) => stop.role === 'warmup')
-  const highlight = stops.find((stop) => stop.role === 'peak')
-  const cooldown = stops.find((stop) => stop.role === 'cooldown')
-  if (!warmup || !highlight || !cooldown) {
-    return {
-      penalty: 0,
-      applied: false,
-    }
-  }
-
-  const highlightIntensity = highlight.scoredVenue.taste.signals.momentIntensity.score
-  const warmupIntensity = warmup.scoredVenue.taste.signals.momentIntensity.score
-  const cooldownIntensity = cooldown.scoredVenue.taste.signals.momentIntensity.score
-  const warmupWeakDuplicate =
-    warmup.scoredVenue.venue.category === highlight.scoredVenue.venue.category &&
-    warmup.scoredVenue.taste.signals.primaryExperienceArchetype ===
-      highlight.scoredVenue.taste.signals.primaryExperienceArchetype &&
-    Math.abs(warmupIntensity - highlightIntensity) <= 0.1 &&
-    warmupIntensity <= 0.58
-  const cooldownWeakDuplicate =
-    cooldown.scoredVenue.venue.category === highlight.scoredVenue.venue.category &&
-    cooldown.scoredVenue.taste.signals.primaryExperienceArchetype ===
-      highlight.scoredVenue.taste.signals.primaryExperienceArchetype &&
-    Math.abs(cooldownIntensity - highlightIntensity) <= 0.1 &&
-    cooldownIntensity <= 0.58
-  const weakEscalation = highlightIntensity - warmupIntensity < 0.06
-  const weakTaper = highlightIntensity - cooldownIntensity < 0.05
-
-  const applied =
-    (warmupWeakDuplicate && weakEscalation) ||
-    (cooldownWeakDuplicate && weakTaper) ||
-    cooldownIntensity > highlightIntensity
-  return {
-    penalty: applied ? FAKE_COMPLETENESS_PENALTY : 0,
-    applied,
-  }
-}
-
 function computeHighlightValidityScore(stops: ArcStop[]): number {
   const highlight = stops.find((stop) => stop.role === 'peak')
   if (!highlight) {
@@ -2594,112 +2527,6 @@ function computeHighlightValidityScore(stops: ArcStop[]): number {
     return 0.55
   }
   return 0.12
-}
-
-function computeArcContrastScore(stops: ArcStop[]): number {
-  const warmup = stops.find((stop) => stop.role === 'warmup')
-  const highlight = stops.find((stop) => stop.role === 'peak')
-  const cooldown = stops.find((stop) => stop.role === 'cooldown')
-  if (!warmup || !highlight || !cooldown) {
-    return 0
-  }
-
-  const startPeakCategoryContrast =
-    warmup.scoredVenue.venue.category === highlight.scoredVenue.venue.category ? 0.34 : 1
-  const peakCooldownCategoryContrast =
-    highlight.scoredVenue.venue.category === cooldown.scoredVenue.venue.category ? 0.3 : 1
-  const startPeakArchetypeContrast =
-    getPrimaryExperienceArchetype(warmup) === getPrimaryExperienceArchetype(highlight)
-      ? 0.28
-      : 1
-  const peakCooldownArchetypeContrast =
-    getPrimaryExperienceArchetype(highlight) === getPrimaryExperienceArchetype(cooldown)
-      ? 0.26
-      : 1
-  const startPeakEnergyContrast = clamp01(
-    (highlight.scoredVenue.venue.energyLevel - warmup.scoredVenue.venue.energyLevel + 1) / 4,
-  )
-  const peakCooldownEnergyContrast = clamp01(
-    (highlight.scoredVenue.venue.energyLevel - cooldown.scoredVenue.venue.energyLevel + 1) / 4,
-  )
-  const startPeakAnchorSeparation = clamp01(
-    0.5 +
-      (highlight.scoredVenue.taste.signals.anchorStrength -
-        warmup.scoredVenue.taste.signals.anchorStrength) *
-        1.2,
-  )
-  const peakCooldownAnchorSeparation = clamp01(
-    0.5 +
-      (highlight.scoredVenue.taste.signals.anchorStrength -
-        cooldown.scoredVenue.taste.signals.anchorStrength) *
-        1.1,
-  )
-  const flattenedStartPenalty =
-    warmup.scoredVenue.venue.category === highlight.scoredVenue.venue.category &&
-    getPrimaryExperienceArchetype(warmup) === getPrimaryExperienceArchetype(highlight) &&
-    Math.abs(
-      warmup.scoredVenue.venue.energyLevel - highlight.scoredVenue.venue.energyLevel,
-    ) <= 1
-      ? 0.14
-      : 0
-  const flattenedEndPenalty =
-    highlight.scoredVenue.venue.category === cooldown.scoredVenue.venue.category &&
-    getPrimaryExperienceArchetype(highlight) === getPrimaryExperienceArchetype(cooldown) &&
-    Math.abs(
-      highlight.scoredVenue.venue.energyLevel - cooldown.scoredVenue.venue.energyLevel,
-    ) <= 1
-      ? 0.16
-      : 0
-
-  return clamp01(
-    startPeakCategoryContrast * 0.12 +
-      peakCooldownCategoryContrast * 0.12 +
-      startPeakArchetypeContrast * 0.12 +
-      peakCooldownArchetypeContrast * 0.12 +
-      startPeakEnergyContrast * 0.16 +
-      peakCooldownEnergyContrast * 0.18 +
-      startPeakAnchorSeparation * 0.09 +
-      peakCooldownAnchorSeparation * 0.09 +
-      0.08 -
-      flattenedStartPenalty -
-      flattenedEndPenalty,
-  )
-}
-
-function computeHighlightCenteringScore(stops: ArcStop[]): number {
-  const warmup = stops.find((stop) => stop.role === 'warmup')
-  const highlight = stops.find((stop) => stop.role === 'peak')
-  const cooldown = stops.find((stop) => stop.role === 'cooldown')
-  if (!warmup || !highlight || !cooldown) {
-    return 0
-  }
-
-  const supportAnchorAverage =
-    (warmup.scoredVenue.taste.signals.anchorStrength +
-      cooldown.scoredVenue.taste.signals.anchorStrength) /
-    2
-  const supportRoleAverage =
-    (warmup.scoredVenue.roleScores.warmup + cooldown.scoredVenue.roleScores.cooldown) / 2
-  const offPeakStrongMoment = stops.some(
-    (stop) => stop.role !== 'peak' && getMomentIdentity(stop).strength === 'strong',
-  )
-  const highlightMomentPenalty =
-    highlight.scoredVenue.momentIdentity.strength !== 'strong' && offPeakStrongMoment
-      ? 0.22
-      : highlight.scoredVenue.momentIdentity.type !== 'anchor' &&
-          highlight.scoredVenue.momentIdentity.type !== 'explore'
-        ? 0.1
-        : 0
-
-  return clamp01(
-    0.5 +
-      (highlight.scoredVenue.taste.signals.anchorStrength - supportAnchorAverage) * 0.7 +
-      (highlight.scoredVenue.roleScores.peak - supportRoleAverage) * 0.22 +
-      highlight.scoredVenue.taste.signals.momentPotential.score * 0.12 +
-      highlight.scoredVenue.taste.signals.categorySpecificity * 0.1 +
-      highlight.scoredVenue.taste.signals.personalityStrength * 0.1 -
-      highlightMomentPenalty,
-  )
 }
 
 function computeMissedPeakPenalty(
@@ -3155,99 +2982,6 @@ function computeLocalStretchPolicy(
   }
 }
 
-function computeRoleEnergyBalance(stops: ArcStop[]): {
-  score: number
-  penalty: number
-  note: string
-} {
-  const warmup = stops.find((stop) => stop.role === 'warmup')
-  const highlight = stops.find((stop) => stop.role === 'peak')
-  const cooldown = stops.find((stop) => stop.role === 'cooldown')
-  if (!warmup || !highlight || !cooldown) {
-    return { score: 0, penalty: 0, note: 'flat arc detected' }
-  }
-
-  const startMoment = getMomentIdentity(warmup)
-  const highlightMoment = getMomentIdentity(highlight)
-  const windDownMoment = getMomentIdentity(cooldown)
-  const distinctEnds =
-    getPrimaryExperienceArchetype(warmup) !== getPrimaryExperienceArchetype(cooldown)
-  const startEntry =
-    (startMoment.type === 'arrival' || startMoment.type === 'explore') &&
-    startMoment.strength !== 'strong'
-  const highlightPeak =
-    highlightMoment.strength === 'strong' &&
-    (highlightMoment.type === 'anchor' || highlightMoment.type === 'explore')
-  const windDownResolution =
-    windDownMoment.type === 'close' ||
-    (windDownMoment.type === 'linger' && windDownMoment.strength !== 'strong')
-  const energyRampPreserved =
-    highlightPeak &&
-    startMoment.strength !== 'strong' &&
-    windDownMoment.strength !== 'strong'
-  const softStartFallback =
-    (startMoment.type === 'close' || startMoment.type === 'linger') &&
-    startMoment.strength !== 'strong'
-  const flatLightArc =
-    startMoment.strength !== 'strong' &&
-    highlightMoment.strength !== 'strong' &&
-    windDownMoment.strength !== 'strong'
-  const invertedStrongArc =
-    startMoment.strength === 'strong' &&
-    highlightMoment.strength === 'strong' &&
-    windDownMoment.strength === 'strong'
-
-  return {
-    score: clamp01(
-      (distinctEnds ? 0.08 : 0) +
-        (energyRampPreserved ? 0.12 : 0) +
-        (startEntry ? 0.05 : 0) +
-        (windDownResolution ? 0.05 : 0),
-    ),
-    penalty: clamp01(
-      (flatLightArc ? 0.05 : 0) +
-        (invertedStrongArc ? 0.07 : 0) +
-        (softStartFallback ? 0.035 : 0) +
-        (!windDownResolution ? 0.025 : 0) +
-        (!windDownResolution && windDownMoment.strength === 'strong' ? 0.03 : 0),
-    ),
-    note: energyRampPreserved
-      ? 'ramp-up preserved'
-      : softStartFallback
-        ? 'soft start fallback'
-        : 'flat arc detected',
-  }
-}
-
-function computeLensCoherence(stops: ArcStop[]): number {
-  const values = stops.map((stop) => {
-    if (stop.role === 'warmup') {
-      return stop.scoredVenue.stopShapeFit.start
-    }
-    if (stop.role === 'peak') {
-      return stop.scoredVenue.stopShapeFit.highlight
-    }
-    if (stop.role === 'wildcard') {
-      return stop.scoredVenue.stopShapeFit.surprise
-    }
-    return stop.scoredVenue.stopShapeFit.windDown
-  })
-  return clamp01(values.reduce((sum, value) => sum + value, 0) / values.length)
-}
-
-function computeContextSpecificityLift(stops: ArcStop[]): number {
-  const values = stops.map((stop) => stop.scoredVenue.contextSpecificity.byRole[stop.role])
-  return clamp01(values.reduce((sum, value) => sum + value, 0) / values.length)
-}
-
-function computeDominancePenalty(stops: ArcStop[]): number {
-  const values = stops.map((stop) => {
-    const base = stop.scoredVenue.dominanceControl.byRole[stop.role]
-    return stop.role === 'peak' ? base * 1.35 : stop.role === 'wildcard' ? base * 1.15 : base
-  })
-  return clamp01(values.reduce((sum, value) => sum + value, 0) / values.length)
-}
-
 interface EffectiveContractEvaluation {
   score: number
   satisfied: boolean
@@ -3502,9 +3236,7 @@ export function scoreArcAssembly(
   const recoveredCentralMomentHighlight = Boolean(
     finalHighlight?.recoveredCentralMomentHighlight,
   )
-  const lensCoherence = computeLensCoherence(stops)
-  const contextSpecificityLift = computeContextSpecificityLift(stops)
-  const dominancePenalty = computeDominancePenalty(stops)
+  const routeQuality = computeRouteQualityVerdict(stops)
   const effectiveContractEvaluations = resolveEffectiveContractEvaluations(
     stops,
     intent,
@@ -3517,8 +3249,6 @@ export function scoreArcAssembly(
   const contractOverrideRoles = effectiveContractEvaluations
     .filter(({ evaluation }) => evaluation.overrideApplied)
     .map(({ stop }) => stop.role)
-  const vibeCoherence = computeVibeCoherence(stops)
-  const highlightVibeScore = computeHighlightVibeScore(stops)
   const highlightValidityScore = computeHighlightValidityScore(stops)
   const routeMomentVerdict = computeRouteMomentVerdict({
     stops: stops.map(toRouteMomentStopEvidence),
@@ -3529,8 +3259,6 @@ export function scoreArcAssembly(
     tasteModeId: lens.tasteMode?.id,
   })
   const highlightMomentScore = routeMomentVerdict.highlightMomentScore
-  const arcContrastScore = computeArcContrastScore(stops)
-  const highlightCenteringScore = computeHighlightCenteringScore(stops)
   const discoveryContract = computeDiscoveryContract(stops, intent, rolePools)
   const supportStopVibeFit = computeSupportStopVibeFit(stops, intent)
   const routeShapeBias = computeRouteShapeBias(stops, intent, lens)
@@ -3579,9 +3307,7 @@ export function scoreArcAssembly(
     rolePools,
   )
   const localStretchPolicy = computeLocalStretchPolicy(stops, intent, rolePools)
-  const roleEnergyBalance = computeRoleEnergyBalance(stops)
   const highlightIntegrity = computeHighlightIntegrityAdjustments(stops, intent)
-  const fakeCompleteness = computeFakeCompletenessPenalty(stops)
   const liveRolePromotionScore = computeLiveRolePromotionScore(stops)
   const roleAwareCategoryLift = computeRoleAwareCategoryLift(stops, intent, lens)
   const surpriseDirectionAlignment = computeSurpriseDirectionAlignmentAdjustments(stops, intent)
@@ -3592,9 +3318,19 @@ export function scoreArcAssembly(
     requestedSecondaryVibes: intent.secondaryAnchors,
     stops: stops.map(toRouteMeaningStopEvidence),
     compatibility: {
-      vibeCoherenceScore: vibeCoherence,
-      highlightVibeScore,
+      vibeCoherenceScore: routeQuality.vibeCoherenceScore,
+      highlightVibeScore: routeQuality.highlightVibeScore,
       supportStopVibeScore: supportStopVibeFit.overall,
+      arcContrastScore: routeQuality.arcContrastScore,
+      highlightCenteringScore: routeQuality.highlightCenteringScore,
+      roleEnergyScore: routeQuality.roleEnergyScore,
+      roleEnergyPenalty: routeQuality.roleEnergyPenalty,
+      roleEnergyNote: routeQuality.roleEnergyNote,
+      lensCoherenceScore: routeQuality.lensCoherenceScore,
+      contextSpecificityLift: routeQuality.contextSpecificityLift,
+      dominancePenalty: routeQuality.dominancePenalty,
+      fakeCompletenessPenalty: routeQuality.fakeCompletenessPenalty,
+      fakeCompletenessApplied: routeQuality.fakeCompletenessApplied,
       categoryDiversityScore: breakdown.diversityScore,
       categoryDiversityBonus: categoryDiversityGuardrail.bonus,
       categoryDiversityPenalty: categoryDiversityGuardrail.penalty,
@@ -3655,8 +3391,8 @@ export function scoreArcAssembly(
       highlightMomentScore * 0.18 +
       momentPreservation.varianceScore * 0.12 +
       highlightValidityScore * 0.16 +
-      arcContrastScore * 0.16 +
-      highlightCenteringScore * 0.14 +
+      routeMeaning.arcContrastScore * 0.16 +
+      routeMeaning.highlightCenteringScore * 0.14 +
       discoveryContract.score * 0.4 +
       routeMeaning.supportStopVibeScore * 0.14 +
       routeShapeBias.score * 0.08 +
@@ -3668,7 +3404,7 @@ export function scoreArcAssembly(
       routeMeaning.expressionReleaseScore +
       routeMeaning.activationMomentElevationScore +
       localStretchPolicy.score +
-      roleEnergyBalance.score * 0.1 +
+      routeMeaning.roleEnergyScore * 0.1 +
       liveRolePromotionScore * 0.06 +
       routeMeaning.roleAwareCategoryLift * 0.12 +
       surpriseDirectionAlignment.score +
@@ -3676,16 +3412,16 @@ export function scoreArcAssembly(
       highlightIntegrity.dominanceBoost +
       routeMeaning.familyAlignmentBoost +
       routeMeaning.categoryDiversityBonus +
-      lensCoherence * 0.1 +
-      contextSpecificityLift * 0.09 -
+      routeMeaning.lensCoherenceScore * 0.1 +
+      routeMeaning.contextSpecificityLift * 0.09 -
       highlightIntegrity.weakPenalty -
       routeMeaning.familyMismatchPenalty -
       highlightIntegrity.supportPenalty -
-      fakeCompleteness.penalty -
+      routeMeaning.fakeCompletenessPenalty -
       discoveryContract.penalty * 0.18 -
       routeMeaning.categoryDiversityPenalty -
       pacing.awkwardPacingPenalty * 0.14 -
-      dominancePenalty * 0.08 +
+      routeMeaning.dominancePenalty * 0.08 +
       contractCompliance * 0.12 -
       contractViolationPenalty * 0.16 -
       momentPreservation.flatPenalty -
@@ -3699,7 +3435,7 @@ export function scoreArcAssembly(
       alignmentPreservation.themeSpreadPenalty -
       surpriseDirectionAlignment.penalty -
       surpriseHighlightCalibration.penalty -
-      roleEnergyBalance.penalty -
+      routeMeaning.roleEnergyPenalty -
       missedPeakPenalty.penalty -
       alignmentPreservation.penalty +
       whenSpatialPressure.scoreDelta
@@ -3753,14 +3489,14 @@ export function scoreArcAssembly(
       stretchedCandidateDistanceStatus: localStretchPolicy.stretchedCandidateDistanceStatus,
       missedPeakPenalty: clamp01(missedPeakPenalty.penalty),
       missedPeakApplied: missedPeakPenalty.applied,
-      roleEnergyScore: clamp01(roleEnergyBalance.score),
-      roleEnergyPenalty: clamp01(roleEnergyBalance.penalty),
-      roleEnergyNote: roleEnergyBalance.note,
+      roleEnergyScore: clamp01(routeMeaning.roleEnergyScore),
+      roleEnergyPenalty: clamp01(routeMeaning.roleEnergyPenalty),
+      roleEnergyNote: routeMeaning.roleEnergyNote,
       strongMomentPresent: momentPreservation.strongMomentPresent,
       momentQualityNote: momentPreservation.qualityNote,
       highlightValidityScore: clamp01(highlightValidityScore),
-      arcContrastScore: clamp01(arcContrastScore),
-      highlightCenteringScore: clamp01(highlightCenteringScore),
+      arcContrastScore: clamp01(routeMeaning.arcContrastScore),
+      highlightCenteringScore: clamp01(routeMeaning.highlightCenteringScore),
       discoveryContractScore: clamp01(discoveryContract.score),
       supportStopVibeScore: clamp01(routeMeaning.supportStopVibeScore),
       routeShapeBiasScore: clamp01(routeShapeBias.score),
@@ -3860,10 +3596,10 @@ export function scoreArcAssembly(
         activationMomentElevation.topCandidatePotential,
       activationMomentElevationWinnerElevated:
         activationMomentElevation.winnerElevated,
-      fakeCompletenessPenalty: clamp01(fakeCompleteness.penalty),
+      fakeCompletenessPenalty: clamp01(routeMeaning.fakeCompletenessPenalty),
       usedPartialArc: stops.length < 3,
       droppedWeakSupport: stops.length === 2,
-      fakeCompletenessAvoided: fakeCompleteness.applied,
+      fakeCompletenessAvoided: routeMeaning.fakeCompletenessApplied,
       recoveredCentralMomentHighlight,
       usedRecoveredCentralMomentHighlight: recoveredCentralMomentHighlight,
       centralMomentRecoveryReason: finalHighlight?.centralMomentRecoveryReason,

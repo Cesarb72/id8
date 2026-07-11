@@ -37,6 +37,16 @@ export interface RouteMeaningCompatibilityValues {
   vibeCoherenceScore: number
   highlightVibeScore: number
   supportStopVibeScore: number
+  arcContrastScore: number
+  highlightCenteringScore: number
+  roleEnergyScore: number
+  roleEnergyPenalty: number
+  roleEnergyNote: string
+  lensCoherenceScore: number
+  contextSpecificityLift: number
+  dominancePenalty: number
+  fakeCompletenessPenalty: number
+  fakeCompletenessApplied: boolean
   categoryDiversityScore: number
   categoryDiversityBonus: number
   categoryDiversityPenalty: number
@@ -789,6 +799,16 @@ export function computeRouteMeaningVerdict(
           vibeCoherenceScore: compatibility.vibeCoherenceScore,
           highlightVibeScore: compatibility.highlightVibeScore,
           supportStopVibeScore: compatibility.supportStopVibeScore,
+          arcContrastScore: compatibility.arcContrastScore,
+          highlightCenteringScore: compatibility.highlightCenteringScore,
+          roleEnergyScore: compatibility.roleEnergyScore,
+          roleEnergyPenalty: compatibility.roleEnergyPenalty,
+          roleEnergyNote: compatibility.roleEnergyNote,
+          lensCoherenceScore: compatibility.lensCoherenceScore,
+          contextSpecificityLift: compatibility.contextSpecificityLift,
+          dominancePenalty: compatibility.dominancePenalty,
+          fakeCompletenessPenalty: compatibility.fakeCompletenessPenalty,
+          fakeCompletenessApplied: compatibility.fakeCompletenessApplied,
           categoryDiversityScore: compatibility.categoryDiversityScore,
           categoryDiversityBonus: compatibility.categoryDiversityBonus,
           categoryDiversityPenalty: compatibility.categoryDiversityPenalty,
