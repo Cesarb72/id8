@@ -7,6 +7,8 @@ import type {
 import type {
   TasteRouteMeaningCompatibilityStatus,
   TasteRouteMeaningFitStrength,
+  TasteRouteMeaningIntentRightFailureEvidence,
+  TasteRouteMeaningIntentRightVerdict,
   TasteRouteMeaningRoleRightFailureEvidence,
   TasteRouteMeaningRoleRightVerdict,
   TasteRouteMeaningScoreVerdict,
@@ -23,6 +25,8 @@ export interface TasteRouteMeaningStopEvidenceInput {
   experienceFamily?: TasteExperienceFamily
   primaryExperienceArchetype?: TasteExperienceArchetype
   category?: TasteVenueCategory
+  routeFitScore?: number
+  lensCompatibilityScore?: number
   roleFitScore?: number
   stopShapeFitScore?: number
   contextSpecificityScore?: number
@@ -91,6 +95,9 @@ export interface ComputeRouteMeaningVerdictResult
 
 const ROLE_RIGHT_ROLE_FIT_THRESHOLD = 0.5
 const ROLE_RIGHT_SHAPE_FIT_THRESHOLD = 0.34
+const INTENT_RIGHT_ROUTE_FIT_THRESHOLD = 0.42
+const INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD = 0.38
+const INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD = 0.3
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
@@ -416,6 +423,175 @@ export function computeRouteMeaningRoleRightVerdict(
   }
 }
 
+function buildIntentRightFailureEvidence(params: {
+  stop: TasteRouteMeaningStopEvidenceInput
+  evidenceType: TasteRouteMeaningIntentRightFailureEvidence['evidenceType']
+  score: number
+  threshold: number
+  reason: string
+}): TasteRouteMeaningIntentRightFailureEvidence {
+  const label =
+    params.evidenceType === 'low_fit'
+      ? 'Route fit below Intent-Right threshold'
+      : params.evidenceType === 'low_lens_compatibility'
+        ? 'Lens compatibility below Intent-Right threshold'
+        : 'Context specificity below Intent-Right threshold'
+
+  return {
+    role: params.stop.role,
+    candidateVenueId: params.stop.candidateVenueId,
+    reason: params.reason,
+    score: clamp01(params.score),
+    threshold: params.threshold,
+    evidenceType: params.evidenceType,
+    components: [
+      toComponent(
+        params.evidenceType,
+        clamp01(params.score),
+        label,
+      ),
+      toComponent(
+        `${params.evidenceType}_threshold`,
+        params.threshold,
+        'Intent-Right threshold',
+      ),
+    ],
+  }
+}
+
+export function computeRouteMeaningIntentRightVerdict(
+  stops: readonly TasteRouteMeaningStopEvidenceInput[],
+): TasteRouteMeaningIntentRightVerdict {
+  const stopEvidence = stops.map((stop) => {
+    const lowFitReasons =
+      typeof stop.routeFitScore === 'number' &&
+      stop.routeFitScore < INTENT_RIGHT_ROUTE_FIT_THRESHOLD
+        ? [`intent_right:low_fit:${stop.role}`]
+        : []
+    const lowLensCompatibilityReasons =
+      typeof stop.lensCompatibilityScore === 'number' &&
+      stop.lensCompatibilityScore < INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD
+        ? [`intent_right:low_lens_compatibility:${stop.role}`]
+        : []
+    const lowContextSpecificityReasons =
+      typeof stop.contextSpecificityScore === 'number' &&
+      stop.contextSpecificityScore < INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD
+        ? [`intent_right:low_context_specificity:${stop.role}`]
+        : []
+    const intentRightReasons = [
+      ...lowFitReasons,
+      ...lowLensCompatibilityReasons,
+      ...lowContextSpecificityReasons,
+    ]
+    const conflictEvidence = [
+      ...lowFitReasons.map(() =>
+        toComponent('route_fit_score', clamp01(stop.routeFitScore ?? 0), 'Low route fit'),
+      ),
+      ...lowLensCompatibilityReasons.map(() =>
+        toComponent(
+          'lens_compatibility_score',
+          clamp01(stop.lensCompatibilityScore ?? 0),
+          'Low lens compatibility',
+        ),
+      ),
+      ...lowContextSpecificityReasons.map(() =>
+        toComponent(
+          'context_specificity_score',
+          clamp01(stop.contextSpecificityScore ?? 0),
+          'Low context specificity',
+        ),
+      ),
+    ]
+
+    return {
+      role: stop.role,
+      candidateVenueId: stop.candidateVenueId,
+      routeFit: toScoreVerdict(stop.routeFitScore, lowFitReasons),
+      lensCompatibility: toScoreVerdict(
+        stop.lensCompatibilityScore,
+        lowLensCompatibilityReasons,
+      ),
+      contextSpecificity: toScoreVerdict(
+        stop.contextSpecificityScore,
+        lowContextSpecificityReasons,
+      ),
+      lowFitReasons: lowFitReasons.length > 0 ? lowFitReasons : undefined,
+      lowLensCompatibilityReasons:
+        lowLensCompatibilityReasons.length > 0 ? lowLensCompatibilityReasons : undefined,
+      lowContextSpecificityReasons:
+        lowContextSpecificityReasons.length > 0 ? lowContextSpecificityReasons : undefined,
+      intentRightReasons: intentRightReasons.length > 0 ? intentRightReasons : undefined,
+      conflictEvidence: conflictEvidence.length > 0 ? conflictEvidence : undefined,
+    }
+  })
+  const lowFitEvidence = stops.flatMap((stop) =>
+    typeof stop.routeFitScore === 'number' &&
+    stop.routeFitScore < INTENT_RIGHT_ROUTE_FIT_THRESHOLD
+      ? [
+          buildIntentRightFailureEvidence({
+            stop,
+            evidenceType: 'low_fit',
+            score: stop.routeFitScore,
+            threshold: INTENT_RIGHT_ROUTE_FIT_THRESHOLD,
+            reason: `intent_right:low_fit:${stop.role}`,
+          }),
+        ]
+      : [],
+  )
+  const lowLensCompatibilityEvidence = stops.flatMap((stop) =>
+    typeof stop.lensCompatibilityScore === 'number' &&
+    stop.lensCompatibilityScore < INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD
+      ? [
+          buildIntentRightFailureEvidence({
+            stop,
+            evidenceType: 'low_lens_compatibility',
+            score: stop.lensCompatibilityScore,
+            threshold: INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD,
+            reason: `intent_right:low_lens_compatibility:${stop.role}`,
+          }),
+        ]
+      : [],
+  )
+  const lowContextSpecificityEvidence = stops.flatMap((stop) =>
+    typeof stop.contextSpecificityScore === 'number' &&
+    stop.contextSpecificityScore < INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD
+      ? [
+          buildIntentRightFailureEvidence({
+            stop,
+            evidenceType: 'low_context_specificity',
+            score: stop.contextSpecificityScore,
+            threshold: INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD,
+            reason: `intent_right:low_context_specificity:${stop.role}`,
+          }),
+        ]
+      : [],
+  )
+  const reasons = [
+    ...lowFitEvidence.map((evidence) => evidence.reason),
+    ...lowLensCompatibilityEvidence.map((evidence) => evidence.reason),
+    ...lowContextSpecificityEvidence.map((evidence) => evidence.reason),
+  ]
+  const ready = stops.every(
+    (stop) =>
+      typeof stop.routeFitScore === 'number' &&
+      typeof stop.lensCompatibilityScore === 'number' &&
+      typeof stop.contextSpecificityScore === 'number',
+  )
+
+  return {
+    status: ready ? (reasons.length === 0 ? 'pass' : 'fail') : 'unknown',
+    ready,
+    reasons,
+    routeFitThreshold: INTENT_RIGHT_ROUTE_FIT_THRESHOLD,
+    lensCompatibilityThreshold: INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD,
+    contextSpecificityThreshold: INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD,
+    lowFitEvidence,
+    lowLensCompatibilityEvidence,
+    lowContextSpecificityEvidence,
+    stopEvidence,
+  }
+}
+
 function toStopEvidence(
   stop: TasteRouteMeaningStopEvidenceInput,
 ): TasteRouteMeaningStopEvidence {
@@ -441,6 +617,18 @@ function toStopEvidence(
             ),
           ]
         : []),
+      ...(typeof stop.routeFitScore === 'number'
+        ? [toComponent('route_fit_score', clamp01(stop.routeFitScore), 'Route fit')]
+        : []),
+      ...(typeof stop.lensCompatibilityScore === 'number'
+        ? [
+            toComponent(
+              'lens_compatibility_score',
+              clamp01(stop.lensCompatibilityScore),
+              'Lens compatibility',
+            ),
+          ]
+        : []),
       ...(typeof stop.vibeFitScore === 'number'
         ? [toComponent('vibe_fit_score', clamp01(stop.vibeFitScore), 'Vibe fit')]
         : []),
@@ -453,7 +641,9 @@ export function computeRouteMeaningVerdict(
 ): ComputeRouteMeaningVerdictResult {
   const compatibility = input.compatibility
   const roleRightVerdict = computeRouteMeaningRoleRightVerdict(input.stops)
+  const intentRightVerdict = computeRouteMeaningIntentRightVerdict(input.stops)
   const routeRoleFit = average(input.stops.map((stop) => stop.roleFitScore))
+  const routeFit = average(input.stops.map((stop) => stop.routeFitScore))
   const contextSpecificity = average(input.stops.map((stop) => stop.contextSpecificityScore))
   const lensCompatibility = average([
     compatibility.vibeCoherenceScore,
@@ -535,11 +725,34 @@ export function computeRouteMeaningVerdict(
       },
       intentVerdict: {
         routeIntentFit: toScoreVerdict(
-          average([routeRoleFit, contextSpecificity, lensCompatibility]),
+          average([routeFit ?? routeRoleFit, contextSpecificity, lensCompatibility]),
         ),
         lensCompatibility: toScoreVerdict(lensCompatibility),
         contextSpecificity: toScoreVerdict(contextSpecificity),
-        intentRightReady: false,
+        stopIntentFit: intentRightVerdict.stopEvidence,
+        lowFitReasons:
+          intentRightVerdict.lowFitEvidence.length > 0
+            ? intentRightVerdict.lowFitEvidence.map((evidence) => evidence.reason)
+            : undefined,
+        lowLensCompatibilityReasons:
+          intentRightVerdict.lowLensCompatibilityEvidence.length > 0
+            ? intentRightVerdict.lowLensCompatibilityEvidence.map((evidence) => evidence.reason)
+            : undefined,
+        lowContextSpecificityReasons:
+          intentRightVerdict.lowContextSpecificityEvidence.length > 0
+            ? intentRightVerdict.lowContextSpecificityEvidence.map((evidence) => evidence.reason)
+            : undefined,
+        intentConflictEvidence: [
+          ...intentRightVerdict.lowFitEvidence.flatMap((evidence) => evidence.components ?? []),
+          ...intentRightVerdict.lowLensCompatibilityEvidence.flatMap(
+            (evidence) => evidence.components ?? [],
+          ),
+          ...intentRightVerdict.lowContextSpecificityEvidence.flatMap(
+            (evidence) => evidence.components ?? [],
+          ),
+        ],
+        intentRightReady: intentRightVerdict.ready,
+        intentRightVerdict,
       },
       vibeVerdict: {
         requestedPrimaryVibe: input.requestedPrimaryVibe,
@@ -626,9 +839,24 @@ export function computeRouteMeaningVerdict(
           roleRightFailureCount: roleRightVerdict.reasons.length,
           roleRightReasons: roleRightVerdict.reasons.join('|'),
         },
+        greatStopIntentRightInputs: {
+          intentRightReady: intentRightVerdict.ready,
+          intentRightVerdict: intentRightVerdict.status,
+          routeFitThreshold: intentRightVerdict.routeFitThreshold,
+          lensCompatibilityThreshold: intentRightVerdict.lensCompatibilityThreshold,
+          contextSpecificityThreshold: intentRightVerdict.contextSpecificityThreshold,
+          lowFitFailureCount: intentRightVerdict.lowFitEvidence.length,
+          lowLensCompatibilityFailureCount:
+            intentRightVerdict.lowLensCompatibilityEvidence.length,
+          lowContextSpecificityFailureCount:
+            intentRightVerdict.lowContextSpecificityEvidence.length,
+          intentRightFailureCount: intentRightVerdict.reasons.length,
+          intentRightReasons: intentRightVerdict.reasons.join('|'),
+        },
         debugSummaries: [
           'ArcScoreBreakdown compatibility fields preserved while Taste owns route meaning verdict.',
           'Great Stop Role-Right compatibility inputs are Taste-authored for stamp alignment.',
+          'Great Stop Intent-Right compatibility inputs are Taste-authored for future stamp alignment.',
         ],
       },
     },

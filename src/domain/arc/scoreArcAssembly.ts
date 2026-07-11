@@ -219,6 +219,8 @@ function toRouteMeaningStopEvidence(stop: ArcStop): TasteRouteMeaningStopEvidenc
     experienceFamily: stop.scoredVenue.taste.signals.experienceFamily,
     primaryExperienceArchetype: stop.scoredVenue.taste.signals.primaryExperienceArchetype,
     category: stop.scoredVenue.venue.category as TasteRouteMeaningStopEvidenceInput['category'],
+    routeFitScore: stop.scoredVenue.fitScore,
+    lensCompatibilityScore: stop.scoredVenue.lensCompatibility,
     roleFitScore: getRoleFitScore(stop),
     stopShapeFitScore: getStopShapeFitScore(stop),
     contextSpecificityScore: stop.scoredVenue.contextSpecificity.byRole[stop.role],

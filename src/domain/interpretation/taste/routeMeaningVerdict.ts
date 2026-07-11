@@ -107,6 +107,49 @@ export interface TasteRouteMeaningRoleRightVerdict {
   stopEvidence: readonly TasteRouteMeaningRoleStopVerdict[]
 }
 
+export type TasteRouteMeaningIntentRightStatus = 'pass' | 'fail' | 'unknown'
+
+export type TasteRouteMeaningIntentRightFailureEvidenceType =
+  | 'low_fit'
+  | 'low_lens_compatibility'
+  | 'low_context_specificity'
+
+export interface TasteRouteMeaningIntentRightFailureEvidence {
+  role: TasteRouteMeaningStopRole
+  candidateVenueId: TasteRouteMeaningVenueId
+  reason: string
+  score?: number
+  threshold: number
+  evidenceType: TasteRouteMeaningIntentRightFailureEvidenceType
+  components?: readonly TasteRouteMeaningSignalComponent[]
+}
+
+export interface TasteRouteMeaningIntentStopVerdict {
+  role: TasteRouteMeaningStopRole
+  candidateVenueId: TasteRouteMeaningVenueId
+  routeFit?: TasteRouteMeaningScoreVerdict
+  lensCompatibility?: TasteRouteMeaningScoreVerdict
+  contextSpecificity?: TasteRouteMeaningScoreVerdict
+  lowFitReasons?: readonly string[]
+  lowLensCompatibilityReasons?: readonly string[]
+  lowContextSpecificityReasons?: readonly string[]
+  intentRightReasons?: readonly string[]
+  conflictEvidence?: readonly TasteRouteMeaningSignalComponent[]
+}
+
+export interface TasteRouteMeaningIntentRightVerdict {
+  status: TasteRouteMeaningIntentRightStatus
+  ready: boolean
+  reasons: readonly string[]
+  routeFitThreshold: number
+  lensCompatibilityThreshold: number
+  contextSpecificityThreshold: number
+  lowFitEvidence: readonly TasteRouteMeaningIntentRightFailureEvidence[]
+  lowLensCompatibilityEvidence: readonly TasteRouteMeaningIntentRightFailureEvidence[]
+  lowContextSpecificityEvidence: readonly TasteRouteMeaningIntentRightFailureEvidence[]
+  stopEvidence: readonly TasteRouteMeaningIntentStopVerdict[]
+}
+
 export interface TasteRouteMeaningPersonaVerdict {
   requestedPersona?: PersonaMode
   dominantPersona?: PersonaMode | 'mixed' | 'unknown'
@@ -133,7 +176,13 @@ export interface TasteRouteMeaningIntentVerdict {
   contextSpecificity?: TasteRouteMeaningScoreVerdict
   occasionFit?: TasteRouteMeaningScoreVerdict
   objectiveFit?: TasteRouteMeaningScoreVerdict
+  stopIntentFit?: readonly TasteRouteMeaningIntentStopVerdict[]
+  lowFitReasons?: readonly string[]
+  lowLensCompatibilityReasons?: readonly string[]
+  lowContextSpecificityReasons?: readonly string[]
+  intentConflictEvidence?: readonly TasteRouteMeaningSignalComponent[]
   intentRightReady?: boolean
+  intentRightVerdict?: TasteRouteMeaningIntentRightVerdict
 }
 
 export interface TasteRouteMeaningVibeVerdict {
