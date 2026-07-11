@@ -95,6 +95,20 @@ function buildFamilyRoleMeaning(
   }
 }
 
+function buildCategoryArchetypeMeaning(
+  evidence: RolePoolMeaningEvidence,
+): TasteRolePoolCandidateMeaningEvidence<'category_archetype_meaning'> {
+  return {
+    source: 'taste',
+    kind: 'category_archetype_meaning',
+    candidateVenueId: evidence.candidate.candidateVenueId,
+    role: evidence.role,
+    components: evidence.rolePoolEvidence.categoryVibeEvidence,
+    candidateEvidence: evidence.candidate,
+    rolePoolEvidence: evidence.rolePoolEvidence,
+  }
+}
+
 function groupByRole(
   candidates: readonly TasteRolePoolCandidateMeaningEvidence[],
 ): TasteRolePoolMeaningView['rolePools'] {
@@ -126,6 +140,7 @@ export function computeTasteRolePoolMeaningView(
     buildEasyHangMeaning(evidence),
     buildRomanticRoleMeaning(evidence),
     buildFamilyRoleMeaning(evidence),
+    buildCategoryArchetypeMeaning(evidence),
   ])
 
   return {

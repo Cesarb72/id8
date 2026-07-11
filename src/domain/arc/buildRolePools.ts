@@ -242,6 +242,12 @@ function isEasyHangHardIncompatibleCandidate(candidate: ScoredVenue): boolean {
   ).hardIncompatible
 }
 
+function getCategoryArchetypeMeaning(candidate: ScoredVenue) {
+  return computeTasteRolePoolCandidateMeaning(
+    toRolePoolMeaningCandidateEvidence(candidate),
+  ).categoryArchetype
+}
+
 function contractWeight(
   role: InternalRole,
   strength: RoleContractStrength,
@@ -439,7 +445,7 @@ export function computeRolePoolRankingBreakdown(
       ? candidate.taste.fallbackPenalty.appliedPenalty * 1.6
       : 0
   const passivePeakArchetype =
-    role === 'peak' && meaningEvidence.candidate.isPassiveHospitalityPeak
+    role === 'peak' && meaningEvidence.candidate.categoryArchetype.isPassiveHospitalityPeak
   const modeSpecificPassiveHighlightPenalty =
     role === 'peak' &&
     (lens.tasteMode?.id === 'activity-led' || lens.tasteMode?.id === 'scenic-outdoor') &&
@@ -884,16 +890,7 @@ function isFeasibleRomanticMomentPoolCandidate(
 }
 
 function isGenericHospitalityHighlightCandidate(candidate: ScoredVenue): boolean {
-  const archetype = candidate.taste.signals.primaryExperienceArchetype
-  return (
-    archetype === 'dining' ||
-    archetype === 'drinks' ||
-    archetype === 'sweet' ||
-    candidate.venue.category === 'restaurant' ||
-    candidate.venue.category === 'cafe' ||
-    candidate.venue.category === 'dessert' ||
-    candidate.venue.category === 'bar'
-  )
+  return getCategoryArchetypeMeaning(candidate).isGenericHospitalityHighlight
 }
 
 function isFeasibleRomanticHighlightPoolCandidate(
@@ -927,14 +924,9 @@ function getRomanticHighlightSupportSelectionBias(
       Math.abs(romanticHighlight.venue.driveMinutes - candidate.venue.driveMinutes),
     ),
   )
-  const archetype = candidate.taste.signals.primaryExperienceArchetype
-  const softSupportArchetype =
-    archetype === 'drinks' ||
-    archetype === 'sweet' ||
-    archetype === 'culture' ||
-    archetype === 'social' ||
-    candidate.venue.category === 'cafe' ||
-    candidate.venue.category === 'dessert'
+  const categoryArchetype = getCategoryArchetypeMeaning(candidate)
+  const archetype = categoryArchetype.primaryExperienceArchetype
+  const softSupportArchetype = categoryArchetype.isSoftRomanticSupportArchetype
 
   if (candidate.venue.energyLevel > maximumPeakEnergy) {
     return -0.18
@@ -954,8 +946,7 @@ function getExperienceFamily(candidate: ScoredVenue): string {
 }
 
 function isPassivePeakArchetype(candidate: ScoredVenue): boolean {
-  const archetype = candidate.taste.signals.primaryExperienceArchetype
-  return archetype === 'dining' || archetype === 'drinks' || archetype === 'sweet'
+  return getCategoryArchetypeMeaning(candidate).isPassiveHospitalityPeak
 }
 
 function getPeakChallengeNeighborhood(candidate: ScoredVenue): string {
@@ -966,7 +957,7 @@ function getPeakChallengeSignature(candidate: ScoredVenue): string {
   return [
     getExperienceFamily(candidate),
     candidate.taste.modeAlignment.lane,
-    candidate.taste.signals.primaryExperienceArchetype,
+    getCategoryArchetypeMeaning(candidate).primaryExperienceArchetype,
     candidate.momentIdentity.type,
     getPeakChallengeNeighborhood(candidate),
   ].join('|')
@@ -984,8 +975,8 @@ function computePeakChallengeDiversity(
     score += 0.9
   }
   if (
-    candidate.taste.signals.primaryExperienceArchetype !==
-    leader.taste.signals.primaryExperienceArchetype
+    getCategoryArchetypeMeaning(candidate).primaryExperienceArchetype !==
+    getCategoryArchetypeMeaning(leader).primaryExperienceArchetype
   ) {
     score += 0.85
   }
@@ -1487,7 +1478,7 @@ function getPeakStrongMomentSelectionBias(
   hasFeasibleStrongPeakMoment: boolean,
 ): number {
   if (isFeasibleStrongPeakMomentCandidate(candidate, intent)) {
-    const archetype = candidate.taste.signals.primaryExperienceArchetype
+    const archetype = getCategoryArchetypeMeaning(candidate).primaryExperienceArchetype
     const cozyRomanticMode =
       intent?.persona === 'romantic' && intent.primaryAnchor === 'cozy'
     const experientialArchetypeBoost =
@@ -1521,9 +1512,9 @@ function getPeakStrongMomentSelectionBias(
     return 0
   }
 
-  const archetype = candidate.taste.signals.primaryExperienceArchetype
-  const passiveHospitalityFallback =
-    archetype === 'dining' || archetype === 'drinks' || archetype === 'sweet'
+  const categoryArchetype = getCategoryArchetypeMeaning(candidate)
+  const archetype = categoryArchetype.primaryExperienceArchetype
+  const passiveHospitalityFallback = categoryArchetype.isPassiveHospitalityPeak
   const weakMomentPenalty =
     candidate.momentIdentity.strength === 'medium'
       ? candidate.momentIdentity.type === 'anchor' ||
@@ -1558,7 +1549,7 @@ function getRomanticMomentSelectionBias(
     return 0
   }
 
-  const archetype = candidate.taste.signals.primaryExperienceArchetype
+  const archetype = getCategoryArchetypeMeaning(candidate).primaryExperienceArchetype
   const candidateIsRomantic =
     role === 'peak'
       ? isFeasibleRomanticHighlightPoolCandidate(candidate, lens, intent)
@@ -1640,8 +1631,11 @@ function getRomanticMomentSelectionBias(
     return 0
   }
 
+  const categoryArchetype = getCategoryArchetypeMeaning(candidate)
   const cocktailBarPenalty =
-    candidate.venue.category === 'bar' || candidate.venue.tags.includes('cocktails') ? 0.05 : 0
+    categoryArchetype.category === 'bar' || categoryArchetype.tags.includes('cocktails')
+      ? 0.05
+      : 0
   const lowMomentPenalty =
     candidate.taste.signals.momentPotential.score < 0.64
       ? 0.05
@@ -1706,7 +1700,8 @@ function getWarmupEnergySelectionBias(
   }
 
   const momentIdentity = candidate.momentIdentity
-  const archetype = candidate.taste.signals.primaryExperienceArchetype
+  const categoryArchetype = getCategoryArchetypeMeaning(candidate)
+  const archetype = categoryArchetype.primaryExperienceArchetype
   const softClosingMoment =
     (momentIdentity.type === 'close' || momentIdentity.type === 'linger') &&
     momentIdentity.strength !== 'strong'
@@ -1722,7 +1717,7 @@ function getWarmupEnergySelectionBias(
       momentIdentity.type === 'explore' ||
       momentIdentity.type === 'transition')
   const casualActivity =
-    (candidate.venue.category === 'activity' || archetype === 'activity') &&
+    (categoryArchetype.category === 'activity' || archetype === 'activity') &&
     candidate.venue.energyLevel <= 3
 
   return (
@@ -1766,7 +1761,8 @@ function getPeakMomentPriority(
     return 0
   }
 
-  const archetype = candidate.taste.signals.primaryExperienceArchetype
+  const categoryArchetype = getCategoryArchetypeMeaning(candidate)
+  const archetype = categoryArchetype.primaryExperienceArchetype
   const experientialArchetypeBoost =
     archetype === 'activity' || archetype === 'scenic'
       ? 0.24
@@ -1775,10 +1771,9 @@ function getPeakMomentPriority(
         : archetype === 'social'
           ? 0.12
           : 0
-  const passiveHospitalityPenalty =
-    archetype === 'dining' || archetype === 'drinks' || archetype === 'sweet'
-      ? 0.18
-      : 0
+  const passiveHospitalityPenalty = categoryArchetype.isPassiveHospitalityPeak
+    ? 0.18
+    : 0
 
   return (
     candidate.taste.signals.momentPotential.score * 0.58 +

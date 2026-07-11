@@ -87,6 +87,16 @@ export interface RolePoolMeaningCandidateEvidence {
   isPassiveHospitalityPeak: boolean
   isFriendsLivelyBasecamp: boolean
   isEasyHangBasecampCategory: boolean
+  categoryArchetype: {
+    category: TasteVenueCategory | string
+    subcategory?: string
+    tags: readonly string[]
+    vibeTags: readonly string[]
+    primaryExperienceArchetype?: TasteExperienceArchetype
+    isPassiveHospitalityPeak: boolean
+    isGenericHospitalityHighlight: boolean
+    isSoftRomanticSupportArchetype: boolean
+  }
   roleSuitability: Partial<Record<TasteRole, number>>
   social: {
     density: number
@@ -264,6 +274,19 @@ export function computeRolePoolCandidateMeaningEvidence(
     input.primaryExperienceArchetype === 'dining' ||
     input.primaryExperienceArchetype === 'drinks' ||
     input.primaryExperienceArchetype === 'sweet'
+  const isGenericHospitalityHighlight =
+    isPassiveHospitalityPeak ||
+    input.category === 'restaurant' ||
+    input.category === 'cafe' ||
+    input.category === 'dessert' ||
+    input.category === 'bar'
+  const isSoftRomanticSupportArchetype =
+    input.primaryExperienceArchetype === 'drinks' ||
+    input.primaryExperienceArchetype === 'sweet' ||
+    input.primaryExperienceArchetype === 'culture' ||
+    input.primaryExperienceArchetype === 'social' ||
+    input.category === 'cafe' ||
+    input.category === 'dessert'
 
   return {
     source: 'taste',
@@ -276,6 +299,16 @@ export function computeRolePoolCandidateMeaningEvidence(
     isPassiveHospitalityPeak,
     isFriendsLivelyBasecamp: isEasyHangBasecampCategory,
     isEasyHangBasecampCategory,
+    categoryArchetype: {
+      category: input.category,
+      subcategory: input.subcategory,
+      tags: input.tags,
+      vibeTags: input.vibeTags,
+      primaryExperienceArchetype: input.primaryExperienceArchetype,
+      isPassiveHospitalityPeak,
+      isGenericHospitalityHighlight,
+      isSoftRomanticSupportArchetype,
+    },
     roleSuitability: input.roleSuitability,
     social: {
       density: input.socialDensity,
@@ -385,7 +418,26 @@ export function computeRolePoolMeaningEvidence(input: {
       ],
       categoryVibeEvidence: [
         toComponent('category', input.candidate.category),
+        ...(input.candidate.subcategory
+          ? [toComponent('subcategory', input.candidate.subcategory)]
+          : []),
+        ...(input.candidate.primaryExperienceArchetype
+          ? [
+              toComponent(
+                'primary_experience_archetype',
+                input.candidate.primaryExperienceArchetype,
+              ),
+            ]
+          : []),
         toComponent('passive_hospitality_peak', candidate.isPassiveHospitalityPeak),
+        toComponent(
+          'generic_hospitality_highlight',
+          candidate.categoryArchetype.isGenericHospitalityHighlight,
+        ),
+        toComponent(
+          'soft_romantic_support_archetype',
+          candidate.categoryArchetype.isSoftRomanticSupportArchetype,
+        ),
       ],
     },
   }
