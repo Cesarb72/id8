@@ -47,6 +47,14 @@ import {
   getScoredVenueBaseVenueId,
   getScoredVenueCandidateId,
 } from '../candidates/candidateIdentity'
+import {
+  evaluateRouteSupportFeasibility,
+  type RouteSupportFeasibilityVerdict,
+} from '../bearings/evaluateRouteSupportFeasibility'
+import type {
+  BearingsRouteStopRole,
+  DistrictRoutePlaceFacts,
+} from '../bearings/routePlaceRightContract'
 
 export interface RolePools {
   warmup: ScoredVenue[]
@@ -547,6 +555,7 @@ interface TightSupportAdmissionTrace {
   candidateCountBeforeAdmission: number
   candidateCountAfterAdmission?: number
   supportSupplyMissing: boolean
+  bearingsVerdict?: RouteSupportFeasibilityVerdict
 }
 
 function uniqueScoredVenues(candidates: ScoredVenue[]): ScoredVenue[] {
@@ -573,6 +582,100 @@ function isTightBuildSupportAdmissionActive(
         contractConstraints.movementTolerance === 'compressed') &&
       contractConstraints.requireContinuity,
   )
+}
+
+function buildTightSupportDistrictRoutePlaceFacts(params: {
+  requiredAnchorBaseVenueId?: string
+  requiredAnchorNeighborhood?: string
+  role: InternalRole
+  supportCandidates: ScoredVenue[]
+}): DistrictRoutePlaceFacts {
+  const {
+    requiredAnchorBaseVenueId,
+    requiredAnchorNeighborhood,
+    role,
+    supportCandidates,
+  } = params
+  const sameNeighborhoodSupportBaseVenueIds =
+    requiredAnchorBaseVenueId && requiredAnchorNeighborhood
+      ? supportCandidates
+          .filter((candidate) => candidate.venue.neighborhood === requiredAnchorNeighborhood)
+          .map((candidate) => getScoredVenueBaseVenueId(candidate))
+      : []
+  const missingFactReasons = [
+    ...(requiredAnchorBaseVenueId ? [] : ['required_anchor_base_venue_id_missing']),
+    ...(requiredAnchorNeighborhood ? [] : ['required_anchor_neighborhood_missing']),
+    'route_compactness_not_required_for_support_admission',
+    'cluster_coherence_not_required_for_support_admission',
+  ]
+
+  return {
+    stopBaseVenueIds: [
+      ...(requiredAnchorBaseVenueId ? [requiredAnchorBaseVenueId] : []),
+      ...supportCandidates.map((candidate) => getScoredVenueBaseVenueId(candidate)),
+    ],
+    requiredStopBaseVenueIds: requiredAnchorBaseVenueId ? [requiredAnchorBaseVenueId] : [],
+    sameNeighborhood: {
+      allStopsSameNeighborhood:
+        Boolean(requiredAnchorNeighborhood) &&
+        supportCandidates.every(
+          (candidate) => candidate.venue.neighborhood === requiredAnchorNeighborhood,
+        ),
+      neighborhoods: requiredAnchorNeighborhood ? [requiredAnchorNeighborhood] : [],
+      mismatchedStopBaseVenueIds:
+        requiredAnchorNeighborhood
+          ? supportCandidates
+              .filter((candidate) => candidate.venue.neighborhood !== requiredAnchorNeighborhood)
+              .map((candidate) => getScoredVenueBaseVenueId(candidate))
+          : undefined,
+      confidence: requiredAnchorNeighborhood ? 1 : 0,
+      missingFactReasons: requiredAnchorNeighborhood ? [] : ['required_anchor_neighborhood_missing'],
+    },
+    clusterCoherence: {
+      clusterIds: [],
+      confidence: 0,
+      missingFactReasons: ['cluster_coherence_not_required_for_support_admission'],
+    },
+    compactness: {
+      confidence: 0,
+      missingFactReasons: ['route_compactness_not_required_for_support_admission'],
+    },
+    supportProximity:
+      requiredAnchorBaseVenueId && requiredAnchorNeighborhood
+        ? supportCandidates.map((candidate) => ({
+            supportBaseVenueId: getScoredVenueBaseVenueId(candidate),
+            supportRole: role as BearingsRouteStopRole,
+            anchorBaseVenueId: requiredAnchorBaseVenueId,
+            sameNeighborhood: candidate.venue.neighborhood === requiredAnchorNeighborhood,
+            confidence: 1,
+          }))
+        : [],
+    anchorSupportRelationships:
+      requiredAnchorBaseVenueId && requiredAnchorNeighborhood
+        ? [
+            {
+              anchorBaseVenueId: requiredAnchorBaseVenueId,
+              supportBaseVenueIds: sameNeighborhoodSupportBaseVenueIds,
+              sameNeighborhoodSupportCount: sameNeighborhoodSupportBaseVenueIds.length,
+              confidence: 1,
+            },
+          ]
+        : [],
+    structuralConfidence: {
+      status: requiredAnchorBaseVenueId && requiredAnchorNeighborhood ? 'partial' : 'missing',
+      missingFactReasons,
+      notes: [
+        'Compatibility projection from existing candidate District neighborhood facts for tight support admission.',
+      ],
+    },
+    provenance: {
+      source: 'district',
+      version: 'gw1-bearings-2-compatibility-projection',
+      notes: [
+        'Projected in buildRolePools until a route-level District place-facts producer exists.',
+      ],
+    },
+  }
 }
 
 function buildTightSupportAdmissionTrace(params: {
@@ -605,23 +708,8 @@ function buildTightSupportAdmissionTrace(params: {
       )
     : undefined
   const requiredAnchorNeighborhood = anchorVenue?.venue.neighborhood
-  if (!requiredAnchorBaseVenueId || !requiredAnchorNeighborhood) {
-    return {
-      active: true,
-      reason: 'required_anchor_neighborhood_not_available',
-      requiredAnchorBaseVenueId,
-      requiredAnchorNeighborhood,
-      candidates: [],
-      candidateCountBeforeAdmission: 0,
-      supportSupplyMissing: true,
-    }
-  }
-
-  const candidates = scoredVenues.filter((candidate) => {
+  const roleEligibleSupportCandidates = scoredVenues.filter((candidate) => {
     if (getScoredVenueBaseVenueId(candidate) === requiredAnchorBaseVenueId) {
-      return false
-    }
-    if (candidate.venue.neighborhood !== requiredAnchorNeighborhood) {
       return false
     }
     return (
@@ -638,18 +726,45 @@ function buildTightSupportAdmissionTrace(params: {
       ) && !isPreferredRoleSeverelyIncompatible(candidate, role)
     )
   })
+  const districtFacts = buildTightSupportDistrictRoutePlaceFacts({
+    requiredAnchorBaseVenueId,
+    requiredAnchorNeighborhood,
+    role,
+    supportCandidates: roleEligibleSupportCandidates,
+  })
+  const bearingsVerdict = evaluateRouteSupportFeasibility({
+    districtFacts,
+    role: role as BearingsRouteStopRole,
+    requiredAnchorBaseVenueId,
+  })
+
+  if (!requiredAnchorBaseVenueId || !requiredAnchorNeighborhood) {
+    return {
+      active: true,
+      reason: bearingsVerdict.reason,
+      requiredAnchorBaseVenueId,
+      requiredAnchorNeighborhood,
+      candidates: [],
+      candidateCountBeforeAdmission: 0,
+      supportSupplyMissing: bearingsVerdict.supportSupplyMissing,
+      bearingsVerdict,
+    }
+  }
+
+  const admissibleSupportBaseVenueIds = new Set(bearingsVerdict.admissibleSupportBaseVenueIds)
+  const candidates = roleEligibleSupportCandidates.filter((candidate) =>
+    admissibleSupportBaseVenueIds.has(getScoredVenueBaseVenueId(candidate)),
+  )
 
   return {
     active: true,
-    reason:
-      candidates.length > 0
-        ? 'tight_build_same_neighborhood_support_available'
-        : 'support_supply_missing',
+    reason: bearingsVerdict.reason,
     requiredAnchorBaseVenueId,
     requiredAnchorNeighborhood,
     candidates,
     candidateCountBeforeAdmission: 0,
-    supportSupplyMissing: candidates.length === 0,
+    supportSupplyMissing: bearingsVerdict.supportSupplyMissing,
+    bearingsVerdict,
   }
 }
 

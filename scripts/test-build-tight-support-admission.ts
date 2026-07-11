@@ -604,6 +604,14 @@ assert(
 )
 
 const buildRolePoolsSource = readFileSync('src/domain/arc/buildRolePools.ts', 'utf8')
+const routeSupportFeasibilitySource = readFileSync(
+  'src/domain/bearings/evaluateRouteSupportFeasibility.ts',
+  'utf8',
+)
+const routePlaceRightContractSource = readFileSync(
+  'src/domain/bearings/routePlaceRightContract.ts',
+  'utf8',
+)
 const rolePoolTasteMeaningSource = readFileSync(
   'src/domain/interpretation/taste/computeRolePoolMeaningEvidence.ts',
   'utf8',
@@ -630,6 +638,34 @@ assert(
     buildRolePoolsSource.includes("movementTolerance === 'contained'") &&
     buildRolePoolsSource.includes('contractConstraints.requireContinuity'),
   'Patch must be generic tight Build support admission logic.',
+)
+assert(
+  buildRolePoolsSource.includes('evaluateRouteSupportFeasibility') &&
+    buildRolePoolsSource.includes('DistrictRoutePlaceFacts') &&
+    buildRolePoolsSource.includes("source: 'district'") &&
+    buildRolePoolsSource.includes('gw1-bearings-2-compatibility-projection'),
+  'Tight support admission must consume a DistrictRoutePlaceFacts input before Bearings judges support feasibility.',
+)
+assert(
+  routeSupportFeasibilitySource.includes('districtFacts.supportProximity') &&
+    routeSupportFeasibilitySource.includes('districtFacts.anchorSupportRelationships') &&
+    routeSupportFeasibilitySource.includes('districtFacts.structuralConfidence') &&
+    routeSupportFeasibilitySource.includes('districtFacts.compactness') &&
+    routeSupportFeasibilitySource.includes('districtFacts.clusterCoherence') &&
+    routeSupportFeasibilitySource.includes("source: 'bearings'") &&
+    routeSupportFeasibilitySource.includes('consumedDistrictProvenance'),
+  'Bearings support helper must judge from District structural facts and emit Bearings provenance.',
+)
+assert(
+  !routeSupportFeasibilitySource.includes('venue.neighborhood') &&
+    !routeSupportFeasibilitySource.includes('ScoredVenue') &&
+    !routeSupportFeasibilitySource.includes('getScoredVenueBaseVenueId'),
+  'Bearings support helper must not recompute same-neighborhood/proximity from raw candidates.',
+)
+assert(
+  routePlaceRightContractSource.includes('export interface DistrictRoutePlaceFacts') &&
+    routePlaceRightContractSource.includes('export interface BearingsRouteFeasibilityVerdict'),
+  'Route Place-Right contract must keep District facts and Bearings verdicts distinct.',
 )
 assert(
   buildRolePoolsSource.includes('computeRolePoolMeaningEvidence') &&
@@ -682,6 +718,13 @@ const output = {
     poolsWithoutNearSupports.contractPoolStatus.warmup.supportSupplyMissing === true &&
     poolsWithoutNearSupports.contractPoolStatus.cooldown.supportSupplyMissing === true,
   compactAnchorPreservingCandidateAssembled: Boolean(anchorNearCandidate),
+  districtFactsConsumedByBearings:
+    buildRolePoolsSource.includes('DistrictRoutePlaceFacts') &&
+    routeSupportFeasibilitySource.includes('districtFacts.supportProximity'),
+  bearingsSupportVerdictProvenance:
+    routeSupportFeasibilitySource.includes("source: 'bearings'") &&
+    routeSupportFeasibilitySource.includes('consumedDistrictProvenance'),
+  bearingsRecomputesDistrictFacts: false,
   providerCallEnvelopeChanged: false,
   greatStopThresholdsUnchanged: true,
   routeAuthorityUnchanged: true,
