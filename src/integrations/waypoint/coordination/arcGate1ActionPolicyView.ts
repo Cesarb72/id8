@@ -201,6 +201,7 @@ export type ArcGate1ActionRefusalReason =
   | 'fallback:would_mask_missing_meaning'
   | 'fallback:would_mask_failed_feasibility'
   | 'surprise:promotion_owner_signal_failed'
+  | 'surprise:promotion_score_not_competitive'
   | 'surprise:demotion_would_hide_required_failure'
   | 'family_preservation:owner_signal_failed'
   | 'family_preservation:cap_refused_infeasible_candidate'

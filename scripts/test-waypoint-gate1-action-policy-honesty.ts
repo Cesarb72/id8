@@ -1,15 +1,14 @@
 import type {
   ArcGate1ActionCandidate,
   ArcGate1ActionDecision,
-  ArcGate1ActionDecisionKind,
   ArcGate1ActionKind,
-  ArcGate1ActionRefusalReason,
   ArcGate1BearingsActionSignal,
   ArcGate1CompatibilityPayload,
   ArcGate1FieldActionSignal,
   ArcGate1TasteActionSignal,
   OwnerProvenancedGate1ActionSignal,
 } from '../src/integrations/waypoint/coordination/arcGate1ActionPolicyView'
+import { coordinateArcGate1ActionPolicy } from '../src/integrations/waypoint/coordination/coordinateArcGate1ActionPolicy'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -143,113 +142,16 @@ function gate1Candidate<TAction extends ArcGate1ActionKind>(params: {
   } as ArcGate1ActionCandidate<TAction, TestPayload>
 }
 
-function signalPassed(signal: OwnerProvenancedGate1ActionSignal): boolean {
-  return signal.value === true || signal.value === 1
-}
-
-function allSignalsPassed(
-  signals: readonly OwnerProvenancedGate1ActionSignal[],
-): boolean {
-  return signals.every(signalPassed)
-}
-
-function hasFailedSignal(
-  candidate: ArcGate1ActionCandidate<ArcGate1ActionKind, TestPayload>,
-  source: OwnerProvenancedGate1ActionSignal['source'],
-  key?: string,
-): boolean {
-  return candidate.ownerSignals.some(
-    (signal) =>
-      signal.source === source &&
-      (!key || signal.key === key) &&
-      !signalPassed(signal),
-  )
-}
-
 function decideCandidate(
   candidate: ArcGate1ActionCandidate<ArcGate1ActionKind, TestPayload>,
 ): ArcGate1ActionDecision {
-  const passed = allSignalsPassed(candidate.ownerSignals)
-
-  if (candidate.action === 'preservation') {
-    if (passed) {
-      return buildDecision(candidate, 'preserve')
-    }
-    return buildDecision(candidate, 'refuse_preservation', [
-      hasFailedSignal(candidate, 'bearings', 'place_right_feasibility')
-        ? 'preservation:would_mask_failed_place_right'
-        : 'preservation:owner_signal_failed',
-    ])
-  }
-
-  if (candidate.action === 'fallback') {
-    if (passed && candidate.ownerSignals.some((signal) => signal.source === 'field')) {
-      return buildDecision(candidate, 'fallback')
-    }
-    return buildDecision(candidate, 'refuse_fallback', [
-      hasFailedSignal(candidate, 'taste')
-        ? 'fallback:would_mask_missing_meaning'
-        : hasFailedSignal(candidate, 'bearings')
-          ? 'fallback:would_mask_failed_feasibility'
-          : 'fallback:no_owner_valid_candidate',
-    ])
-  }
-
-  if (candidate.action === 'surprise_promotion') {
-    if (passed) {
-      return buildDecision(candidate, 'promote')
-    }
-    return buildDecision(candidate, 'no_promotion', [
-      'surprise:promotion_owner_signal_failed',
-    ])
-  }
-
-  if (candidate.action === 'surprise_demotion') {
-    if (candidate.payload?.demotionWouldHideRequiredFailure) {
-      return buildDecision(candidate, 'demote', [
-        'surprise:demotion_would_hide_required_failure',
-      ])
-    }
-    return buildDecision(candidate, 'demote')
-  }
-
-  if (candidate.action === 'family_preservation') {
-    if (passed) {
-      return buildDecision(candidate, 'preserve')
-    }
-    return buildDecision(candidate, 'refuse_preservation', [
-      hasFailedSignal(candidate, 'bearings')
-        ? 'family_preservation:cap_refused_infeasible_candidate'
-        : 'family_preservation:owner_signal_failed',
-    ])
-  }
-
-  if (candidate.action === 'preferred_role_admission') {
-    return passed
-      ? buildDecision(candidate, 'admit')
-      : buildDecision(candidate, 'refuse_admission', [
-          'preservation:owner_signal_failed',
-        ])
-  }
-
-  return passed
-    ? buildDecision(candidate, 'preserve')
-    : buildDecision(candidate, 'no_action', ['preservation:owner_signal_failed'])
-}
-
-function buildDecision(
-  candidate: ArcGate1ActionCandidate<ArcGate1ActionKind, TestPayload>,
-  decision: ArcGate1ActionDecisionKind,
-  reasons?: readonly ArcGate1ActionRefusalReason[],
-): ArcGate1ActionDecision {
-  return {
-    source: 'waypoint',
-    candidateId: candidate.id,
-    decision,
-    reasons,
-    ownerSignals: candidate.ownerSignals,
-    compatibility: candidate.compatibility,
-  }
+  const view = coordinateArcGate1ActionPolicy<TestPayload>({
+    candidates: [candidate],
+    compatibility: compatibilityPayload,
+  })
+  const decision = view.decisions[0]
+  assert(decision, `Expected Waypoint decision for ${candidate.id}`)
+  return decision
 }
 
 function assertNoWaypointAuthoredOwnerSignals(
@@ -385,7 +287,7 @@ const unsafeSurpriseDemotion = decideCandidate(
     id: 'unsafe-surprise-demotion',
     action: 'surprise_demotion',
     taste: [tasteSignal('surprise_worthiness', true)],
-    bearings: [bearingsSignal('route_feasibility', true)],
+    bearings: [bearingsSignal('route_feasibility', false, 'bearings:route_failed')],
     field: fieldSignal('real_record', true),
     payload: {
       label: 'unsafe-surprise-demotion',
@@ -484,7 +386,8 @@ assert(
   'Safe surprise demotion can coordinate a demotion action.',
 )
 assert(
-  unsafeSurpriseDemotion.reasons?.includes(
+  unsafeSurpriseDemotion.decision === 'no_action' &&
+    unsafeSurpriseDemotion.reasons?.includes(
     'surprise:demotion_would_hide_required_failure',
   ),
   'Surprise demotion must not hide a required failure.',

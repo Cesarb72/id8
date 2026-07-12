@@ -1,15 +1,9 @@
 import { createId } from '../../lib/ids'
 import {
-  isRomanticPersonaContractActive,
-  satisfiesRomanticPersonaHighlightContract,
-} from '../contracts/romanticPersonaContract'
-import {
   getArcStopBaseVenueId,
   getArcStopCandidateId,
-  getScoredVenueBaseVenueId,
   getScoredVenueCandidateId,
 } from '../candidates/candidateIdentity'
-import { isCandidateWithinActiveDistanceWindow } from '../constraints/localStretchPolicy'
 import { buildRolePools, type RolePools } from './buildRolePools'
 import {
   getInvalidArcCombinationReasons,
@@ -27,6 +21,11 @@ import {
   projectArcCandidateAssembly,
   rankArcCandidatesForAssembly,
 } from '../../integrations/waypoint/coordination/coordinateArcCandidateAssembly'
+import {
+  coordinateArcGate1SurprisePromotion,
+  type ArcGate1SurprisePromotionOption,
+} from '../../integrations/waypoint/coordination/coordinateArcGate1ActionPolicy'
+import { projectGate1ActionCandidate } from './projectGate1OwnerSignals'
 import type {
   ArcCandidate,
   AnchorArcTraceDiagnostics,
@@ -235,6 +234,12 @@ interface SurprisePromotionAssessment {
   demotedHighlightDisposition?: SurpriseInjectionMetadata['demotedHighlightDisposition']
 }
 
+interface SurprisePromotionPayload {
+  promotedStops: ArcStop[]
+  promotedScore: ReturnType<typeof scoreArcAssembly>
+  demotedHighlightDisposition: SurpriseInjectionMetadata['demotedHighlightDisposition']
+}
+
 function buildDiagnosticArcId(stops: ArcStop[]): string {
   return stops.map((stop) => `${stop.role}:${getArcStopCandidateId(stop)}`).join('|')
 }
@@ -322,157 +327,6 @@ function getSurpriseCandidateTier(
   return isNearStrong ? 'nearStrong' : null
 }
 
-function computeHighlightPromotionAlignmentScore(candidate: ScoredVenue): number {
-  const validityWeight =
-    candidate.highlightValidity.validityLevel === 'valid'
-      ? 1
-      : candidate.highlightValidity.validityLevel === 'fallback'
-        ? 0.78
-        : 0.34
-  return (
-    candidate.roleScores.peak * 0.42 +
-    candidate.stopShapeFit.highlight * 0.16 +
-    candidate.taste.signals.momentPotential.score * 0.22 +
-    candidate.taste.signals.anchorStrength * 0.12 +
-    (candidate.momentIdentity.strength === 'strong'
-      ? 0.1
-      : candidate.momentIdentity.strength === 'medium'
-        ? 0.04
-        : 0) +
-    (candidate.momentIdentity.type === 'anchor' ||
-    candidate.momentIdentity.type === 'explore'
-      ? 0.08
-      : 0)
-  ) * validityWeight
-}
-
-function isGenericHospitalityFallbackHighlight(candidate: ScoredVenue): boolean {
-  const archetype = candidate.taste.signals.primaryExperienceArchetype
-  return (
-    (archetype === 'dining' || archetype === 'drinks' || archetype === 'sweet') &&
-    candidate.momentIdentity.strength !== 'strong'
-  )
-}
-
-function getRomanticPromotionAdvantage(
-  wildcard: ScoredVenue,
-  currentHighlight: ScoredVenue,
-  lens: ExperienceLens,
-): number {
-  if (
-    !isRomanticPersonaContractActive(lens) ||
-    !satisfiesRomanticPersonaHighlightContract(wildcard, lens)
-  ) {
-    return 0
-  }
-
-  let advantage = 0.04
-  if (
-    wildcard.momentIdentity.type === 'anchor' ||
-    wildcard.momentIdentity.type === 'explore'
-  ) {
-    advantage += 0.02
-  }
-  if (isGenericHospitalityFallbackHighlight(currentHighlight)) {
-    advantage += 0.04
-  }
-  if (satisfiesRomanticPersonaHighlightContract(currentHighlight, lens)) {
-    advantage -= 0.05
-  }
-
-  return Math.max(0, advantage)
-}
-
-function isHighlightPromotionHoursOk(candidate: ScoredVenue): boolean {
-  const source = candidate.venue.source
-  if (
-    source.businessStatus === 'temporarily-closed' ||
-    source.businessStatus === 'closed-permanently'
-  ) {
-    return false
-  }
-  if (
-    source.sourceOrigin === 'live' &&
-    source.timeConfidence >= 0.68 &&
-    source.likelyOpenForCurrentWindow === false
-  ) {
-    return false
-  }
-  return true
-}
-
-function getHighlightPromotionBlockReason(
-  candidate: ScoredVenue,
-  intent: IntentProfile,
-): SurprisePromotionOutcome | undefined {
-  if (
-    intent.planningMode === 'user-led' &&
-    intent.anchor?.venueId &&
-    (intent.anchor.role ?? 'highlight') === 'highlight' &&
-    intent.anchor.venueId !== getScoredVenueBaseVenueId(candidate)
-  ) {
-    return 'held_constraint'
-  }
-  if (
-    !isCandidateWithinActiveDistanceWindow(candidate, intent, {
-      allowMeaningfulStretch: true,
-    }) ||
-    !isHighlightPromotionHoursOk(candidate)
-  ) {
-    return 'held_constraint'
-  }
-
-  const hardContractConflict =
-    candidate.roleContract.peak.strength === 'hard' && !candidate.roleContract.peak.satisfied
-  if (
-    candidate.highlightValidity.validityLevel === 'invalid' ||
-    candidate.highlightValidity.personaVetoes.length > 0 ||
-    candidate.highlightValidity.contextVetoes.length > 0 ||
-    candidate.highlightValidity.violations.length > 0 ||
-    hardContractConflict
-  ) {
-    return 'held_role_invalid'
-  }
-
-  if (candidate.roleScores.peak < 0.58 || candidate.stopShapeFit.highlight < 0.34) {
-    return 'held_role_invalid'
-  }
-
-  return undefined
-}
-
-function shouldKeepDemotedHighlightAsSurprise(
-  baseStops: ArcStop[],
-  promotedHighlight: ScoredVenue,
-): boolean {
-  const demotedHighlight = baseStops[1]?.scoredVenue
-  if (!demotedHighlight) {
-    return false
-  }
-  if (
-    demotedHighlight.roleScores.wildcard < 0.55 ||
-    demotedHighlight.stopShapeFit.surprise < 0.4
-  ) {
-    return false
-  }
-
-  const demotedArchetype = demotedHighlight.taste.signals.primaryExperienceArchetype
-  const promotedArchetype = promotedHighlight.taste.signals.primaryExperienceArchetype
-  const repeatedWithPromoted =
-    demotedHighlight.venue.category === promotedHighlight.venue.category &&
-    demotedArchetype === promotedArchetype
-  const repeatedWithSupport = [baseStops[0], baseStops[2]].some(
-    (stop) =>
-      stop.scoredVenue.venue.category === demotedHighlight.venue.category &&
-      stop.scoredVenue.taste.signals.primaryExperienceArchetype === demotedArchetype,
-  )
-
-  return !(
-    (repeatedWithPromoted || repeatedWithSupport) &&
-    demotedHighlight.taste.signals.momentPotential.score < 0.68
-  )
-}
-
 function buildPromotedSurpriseStops(
   baseStops: ArcStop[],
   promotedHighlight: ScoredVenue,
@@ -501,39 +355,18 @@ function evaluateSurprisePromotion(params: {
   crewPolicy: CrewPolicy
   lens: ExperienceLens
   pools: RolePools
+  heldWildcardComparableScore: number
   scoringOptions?: ScoreArcAssemblyOptions
 }): SurprisePromotionAssessment {
   const currentHighlight = params.baseStops[1]?.scoredVenue
   if (!currentHighlight) {
     return {}
   }
-  if (params.wildcard.momentIdentity.strength !== 'strong') {
-    return { outcome: 'held_role_invalid' }
-  }
-
-  const blockReason = getHighlightPromotionBlockReason(params.wildcard, params.intent)
-  if (blockReason) {
-    return { outcome: blockReason }
-  }
-
-  const romanticPromotionAdvantage = getRomanticPromotionAdvantage(
-    params.wildcard,
-    currentHighlight,
-    params.lens,
-  )
-  if (
-    computeHighlightPromotionAlignmentScore(params.wildcard) + romanticPromotionAdvantage <=
-    computeHighlightPromotionAlignmentScore(currentHighlight) + 0.03
-  ) {
-    return { outcome: 'held_role_invalid' }
-  }
 
   const dispositions: Array<SurpriseInjectionMetadata['demotedHighlightDisposition']> =
-    shouldKeepDemotedHighlightAsSurprise(params.baseStops, params.wildcard)
-      ? ['surprise', 'removed']
-      : ['removed']
-  const promotedCandidates = dispositions
-    .map((demotedHighlightDisposition) => {
+    ['surprise', 'removed']
+  const promotionOptions = dispositions
+    .map((demotedHighlightDisposition): ArcGate1SurprisePromotionOption<SurprisePromotionPayload> | null => {
       const promotedStops = buildPromotedSurpriseStops(
         params.baseStops,
         params.wildcard,
@@ -558,27 +391,79 @@ function evaluateSurprisePromotion(params: {
         params.pools,
         params.scoringOptions,
       )
+      const promotedRouteCandidate = projectArcCandidateAssembly({
+        id: buildDiagnosticArcId(promotedStops),
+        stops: promotedStops,
+        totalScore: promotedScore.totalScore,
+        scoreBreakdown: promotedScore.scoreBreakdown,
+        pacing: promotedScore.pacing,
+        spatial: promotedScore.spatial,
+        hasWildcard: promotedStops.some((stop) => stop.role === 'wildcard'),
+      })
+      const promotionCandidate = projectGate1ActionCandidate({
+        action: 'surprise_promotion',
+        candidate: params.wildcard,
+        role: 'peak',
+        intent: params.intent,
+        routeCandidate: promotedRouteCandidate,
+        routeContext: 'surprise_route',
+        deterministicTieBreakKey: getScoredVenueCandidateId(params.wildcard),
+      })
+      const demotionCandidate =
+        demotedHighlightDisposition === 'surprise'
+          ? projectGate1ActionCandidate({
+              action: 'surprise_demotion',
+              candidate: currentHighlight,
+              role: 'wildcard',
+              intent: params.intent,
+              routeCandidate: promotedRouteCandidate,
+              routeContext: 'surprise_route',
+              deterministicTieBreakKey: getScoredVenueCandidateId(currentHighlight),
+            })
+          : undefined
+
       return {
-        promotedStops,
-        promotedScore,
-        demotedHighlightDisposition,
+        promotionCandidate,
+        demotionCandidate,
+        payload: {
+          promotedStops,
+          promotedScore,
+          demotedHighlightDisposition,
+        },
+        promotedScore: promotedScore.totalScore,
+        heldComparableScore: params.heldWildcardComparableScore,
+        scoreTolerance: 0.002,
+        deterministicTieBreakKey: [
+          getScoredVenueCandidateId(params.wildcard),
+          demotedHighlightDisposition,
+        ].join('|'),
       }
     })
     .filter(
       (
         candidate,
-      ): candidate is {
-        promotedStops: ArcStop[]
-        promotedScore: ReturnType<typeof scoreArcAssembly>
-        demotedHighlightDisposition: SurpriseInjectionMetadata['demotedHighlightDisposition']
-      } => Boolean(candidate),
+      ): candidate is ArcGate1SurprisePromotionOption<SurprisePromotionPayload> =>
+        Boolean(candidate),
     )
-    .sort((left, right) => right.promotedScore.totalScore - left.promotedScore.totalScore)
 
-  const bestPromotion = promotedCandidates[0]
-  if (!bestPromotion) {
+  if (promotionOptions.length === 0) {
     return { outcome: 'held_constraint' }
   }
+  const coordination = coordinateArcGate1SurprisePromotion({
+    options: promotionOptions,
+  })
+  if (!coordination.selectedOption) {
+    const reason = coordination.decision.reasons?.[0]
+    return {
+      outcome:
+        reason === 'surprise:promotion_score_not_competitive'
+          ? 'held_score'
+          : reason === 'surprise:demotion_would_hide_required_failure'
+            ? 'held_constraint'
+            : 'held_role_invalid',
+    }
+  }
+  const bestPromotion = coordination.selectedOption.payload
 
   return {
     promotedStops: bestPromotion.promotedStops,
@@ -1121,24 +1006,9 @@ export function assembleArcCandidates(
             ? 'strong'
             : 'nearStrong'
           const wildcardStops = buildArcWildcardStops(baseStops, wildcard)
-          const promotionAssessment = evaluateSurprisePromotion({
-            baseStops,
-            wildcard,
-            intent,
-            crewPolicy,
-            lens,
-            pools,
-            scoringOptions,
-          })
           const wildcardIncludesAnchor =
             anchorRole && anchorVenueId
               ? stopsMatchRole(wildcardStops, anchorRole, anchorVenueId)
-              : false
-          const promotedIncludesAnchor =
-            anchorRole &&
-            anchorVenueId &&
-            promotionAssessment.promotedStops
-              ? stopsMatchRole(promotionAssessment.promotedStops, anchorRole, anchorVenueId)
               : false
           if (wildcardIncludesAnchor) {
             preValidationAnchorArcCount += 1
@@ -1254,15 +1124,26 @@ export function assembleArcCandidates(
             }
           }
 
-          const promotedSurpriseWins =
-            Boolean(promotionAssessment.promotedStops && promotionAssessment.promotedScore) &&
-            promotionAssessment.promotedScore!.totalScore >=
-              heldWildcardComparableScore - 0.002
+          const promotionAssessment = evaluateSurprisePromotion({
+            baseStops,
+            wildcard,
+            intent,
+            crewPolicy,
+            lens,
+            pools,
+            heldWildcardComparableScore,
+            scoringOptions,
+          })
+          const promotedIncludesAnchor =
+            anchorRole &&
+            anchorVenueId &&
+            promotionAssessment.promotedStops
+              ? stopsMatchRole(promotionAssessment.promotedStops, anchorRole, anchorVenueId)
+              : false
 
           if (
             promotionAssessment.promotedStops &&
-            promotionAssessment.promotedScore &&
-            promotedSurpriseWins
+            promotionAssessment.promotedScore
           ) {
             surpriseDiagnostics.generatedSurpriseArcCount += 1
             const promotedCandidate = projectArcCandidateAssembly({
