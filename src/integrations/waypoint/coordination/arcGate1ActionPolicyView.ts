@@ -169,10 +169,9 @@ export type ArcGate1ActionEligibility<
   | 'romantic_fallback'
   | 'hard_contract_pressure'
   | 'rescue'
+  | 'fallback'
   ? ArcGate1TasteBearingFieldEligibility
-  : TAction extends 'fallback'
-    ? ArcGate1TasteBearingsEligibility
-    : never
+  : never
 
 export interface ArcGate1ActionCandidate<
   TAction extends ArcGate1ActionKind = ArcGate1ActionKind,
@@ -200,6 +199,7 @@ export type ArcGate1ActionRefusalReason =
   | 'fallback:no_owner_valid_candidate'
   | 'fallback:would_mask_missing_meaning'
   | 'fallback:would_mask_failed_feasibility'
+  | 'fallback:would_mask_missing_real'
   | 'surprise:promotion_owner_signal_failed'
   | 'surprise:promotion_score_not_competitive'
   | 'surprise:demotion_would_hide_required_failure'
@@ -214,11 +214,14 @@ export type ArcGate1ActionDecisionKind =
   | 'demote'
   | 'fallback'
   | 'refuse_fallback'
+  | 'rescue'
+  | 'refuse_rescue'
   | 'admit'
   | 'refuse_admission'
   | 'no_action'
   | 'no_preservation'
   | 'no_fallback'
+  | 'no_rescue'
   | 'no_promotion'
 
 export interface ArcGate1ActionDecision {
@@ -236,7 +239,7 @@ export interface ArcGate1ActionPolicyView<TPayload = ScoredVenue> {
   refusalReasons: readonly ArcGate1ActionRefusalReason[]
   noActionDecision?: Extract<
     ArcGate1ActionDecisionKind,
-    'no_action' | 'no_preservation' | 'no_fallback' | 'no_promotion'
+    'no_action' | 'no_preservation' | 'no_fallback' | 'no_rescue' | 'no_promotion'
   >
   compatibility?: ArcGate1CompatibilityPayload
 }

@@ -9,6 +9,7 @@ import type {
   OwnerProvenancedGate1ActionSignal,
 } from '../src/integrations/waypoint/coordination/arcGate1ActionPolicyView'
 import {
+  coordinateArcGate1FallbackRescue,
   coordinateArcGate1ActionPolicy,
   coordinateArcGate1Preservation,
 } from '../src/integrations/waypoint/coordination/coordinateArcGate1ActionPolicy'
@@ -120,6 +121,8 @@ function gate1Candidate<TAction extends ArcGate1ActionKind>(params: {
       routeContext:
         params.action === 'fallback'
           ? 'partial_fallback_route'
+          : params.action === 'rescue'
+            ? 'recovery_pool'
           : params.action === 'preferred_role_admission'
             ? 'role_pool'
             : 'preservation_pool',
@@ -311,6 +314,41 @@ const invalidFallbackMissingReal = decideCandidate(
   }),
 )
 
+const noEligibleFallback = coordinateArcGate1FallbackRescue<TestPayload>({
+  candidates: [
+    gate1Candidate({
+      id: 'no-eligible-fallback-missing-meaning',
+      action: 'fallback',
+      taste: [tasteSignal('peak_support', false, 'taste:missing_meaning')],
+      bearings: [bearingsSignal('route_feasibility', true)],
+      field: fieldSignal('real_record', true),
+    }),
+    gate1Candidate({
+      id: 'no-eligible-fallback-failed-feasibility',
+      action: 'fallback',
+      taste: [tasteSignal('peak_support', true)],
+      bearings: [bearingsSignal('route_feasibility', false, 'bearings:failed')],
+      field: fieldSignal('real_record', true),
+    }),
+  ],
+})
+
+const previouslyMaskedRescue = coordinateArcGate1FallbackRescue<TestPayload>({
+  emptyDecision: 'no_rescue',
+  candidates: [
+    gate1Candidate({
+      id: 'previously-masked-rescue',
+      action: 'rescue',
+      taste: [tasteSignal('peak_support', true), tasteSignal('intent_support', true)],
+      bearings: [bearingsSignal('route_feasibility', false, 'bearings:failed')],
+      field: fieldSignal('real_record', true),
+      payload: {
+        label: 'legacy rescue would have kept this route alive',
+      },
+    }),
+  ],
+})
+
 const validSurprisePromotion = decideCandidate(
   gate1Candidate({
     id: 'valid-surprise-promotion',
@@ -406,6 +444,8 @@ const decisions = [
   invalidFallbackMissingMeaning,
   invalidFallbackFailedFeasibility,
   invalidFallbackMissingReal,
+  ...noEligibleFallback.decisions,
+  ...previouslyMaskedRescue.decisions,
   validSurprisePromotion,
   invalidSurprisePromotion,
   safeSurpriseDemotion,
@@ -470,8 +510,27 @@ assert(
 )
 assert(
   invalidFallbackMissingReal.decision === 'refuse_fallback' &&
-    invalidFallbackMissingReal.reasons?.includes('fallback:no_owner_valid_candidate'),
+    invalidFallbackMissingReal.reasons?.includes('fallback:would_mask_missing_real'),
   'Fallback must not emit without Field Real owner signal.',
+)
+assert(
+  noEligibleFallback.noFallbackDecision?.decision === 'no_fallback' &&
+    noEligibleFallback.noFallbackDecision.reasons?.includes(
+      'fallback:would_mask_missing_meaning',
+    ) &&
+    noEligibleFallback.noFallbackDecision.reasons?.includes(
+      'fallback:would_mask_failed_feasibility',
+    ) &&
+    noEligibleFallback.selectedCandidates.length === 0,
+  'No eligible fallback should emit explicit no-fallback and manufacture no route.',
+)
+assert(
+  previouslyMaskedRescue.noFallbackDecision?.decision === 'no_rescue' &&
+    previouslyMaskedRescue.noFallbackDecision.reasons?.includes(
+      'fallback:would_mask_failed_feasibility',
+    ) &&
+    previouslyMaskedRescue.selectedCandidates.length === 0,
+  'Previously masked rescue must refuse and keep the route from surviving.',
 )
 assert(
   validSurprisePromotion.decision === 'promote',
@@ -546,13 +605,24 @@ const output = {
       explicitFallback: true,
       routeRemainsHonest: true,
     },
-    invalidFallback: {
+    fallbackRescue: {
+      eligibleFallbackDecision: validFallback.decision,
       missingMeaningDecision: invalidFallbackMissingMeaning.decision,
       missingMeaningReasons: invalidFallbackMissingMeaning.reasons,
       failedFeasibilityDecision: invalidFallbackFailedFeasibility.decision,
       failedFeasibilityReasons: invalidFallbackFailedFeasibility.reasons,
       missingRealDecision: invalidFallbackMissingReal.decision,
       missingRealReasons: invalidFallbackMissingReal.reasons,
+      noEligibleFallbackDecision: noEligibleFallback.noFallbackDecision?.decision,
+      noEligibleFallbackReasons: noEligibleFallback.noFallbackDecision?.reasons,
+      noEligibleFallbackManufacturesRoute:
+        noEligibleFallback.selectedCandidates.length > 0,
+      previouslyMaskedRescueDecision:
+        previouslyMaskedRescue.noFallbackDecision?.decision,
+      previouslyMaskedRescueReasons:
+        previouslyMaskedRescue.noFallbackDecision?.reasons,
+      previouslyMaskedRescueSurvives:
+        previouslyMaskedRescue.selectedCandidates.length > 0,
       fallbackMasksFailedOwnerCriteria: false,
     },
     surprisePromotionDemotion: {

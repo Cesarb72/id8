@@ -38,6 +38,37 @@ function hasFailedSignal(
   )
 }
 
+function hasPassedSignal(
+  candidate: ArcGate1ActionCandidate,
+  source: OwnerProvenancedGate1ActionSignal['source'],
+  key?: string,
+): boolean {
+  return candidate.ownerSignals.some(
+    (signal) =>
+      signal.source === source &&
+      (!key || signal.key === key) &&
+      signalPassed(signal),
+  )
+}
+
+function fallbackRefusalReason(
+  candidate: ArcGate1ActionCandidate,
+): ArcGate1ActionRefusalReason {
+  if (hasFailedSignal(candidate, 'taste')) {
+    return 'fallback:would_mask_missing_meaning'
+  }
+  if (hasFailedSignal(candidate, 'bearings')) {
+    return 'fallback:would_mask_failed_feasibility'
+  }
+  if (
+    hasFailedSignal(candidate, 'field') ||
+    !hasPassedSignal(candidate, 'field', 'real_record')
+  ) {
+    return 'fallback:would_mask_missing_real'
+  }
+  return 'fallback:no_owner_valid_candidate'
+}
+
 function buildDecision(
   candidate: ArcGate1ActionCandidate,
   decision: ArcGate1ActionDecisionKind,
@@ -50,6 +81,58 @@ function buildDecision(
     reasons,
     ownerSignals: candidate.ownerSignals,
     compatibility: candidate.compatibility,
+  }
+}
+
+export interface CoordinateArcGate1FallbackRescueInput<TPayload = unknown> {
+  candidates: readonly ArcGate1ActionCandidate<'fallback' | 'rescue', TPayload>[]
+  emptyDecision?: 'no_fallback' | 'no_rescue'
+}
+
+export interface CoordinateArcGate1FallbackRescueResult<TPayload = unknown> {
+  decisions: readonly ArcGate1ActionDecision[]
+  selectedCandidates: readonly ArcGate1ActionCandidate<'fallback' | 'rescue', TPayload>[]
+  refusalReasons: readonly ArcGate1ActionRefusalReason[]
+  noFallbackDecision?: ArcGate1ActionDecision
+}
+
+export function coordinateArcGate1FallbackRescue<TPayload = unknown>(
+  input: CoordinateArcGate1FallbackRescueInput<TPayload>,
+): CoordinateArcGate1FallbackRescueResult<TPayload> {
+  const decisions = input.candidates.map((candidate) =>
+    coordinateArcGate1ActionCandidate(candidate),
+  )
+  const selectedCandidateIds = new Set(
+    decisions
+      .filter(
+        (decision) =>
+          decision.decision === 'fallback' || decision.decision === 'rescue',
+      )
+      .map((decision) => decision.candidateId)
+      .filter((candidateId): candidateId is string => Boolean(candidateId)),
+  )
+  const selectedCandidates = input.candidates.filter((candidate) =>
+    selectedCandidateIds.has(candidate.id),
+  )
+  const refusalReasons = decisions.flatMap((decision) => decision.reasons ?? [])
+  const emptyDecision = input.emptyDecision ?? 'no_fallback'
+
+  return {
+    decisions,
+    selectedCandidates,
+    refusalReasons,
+    ...(selectedCandidates.length === 0
+      ? {
+          noFallbackDecision: {
+            source: 'waypoint',
+            decision: emptyDecision,
+            reasons: refusalReasons.length
+              ? refusalReasons
+              : ['fallback:no_owner_valid_candidate'],
+            ownerSignals: decisions.flatMap((decision) => decision.ownerSignals),
+          },
+        }
+      : {}),
   }
 }
 
@@ -67,6 +150,7 @@ export function coordinateArcGate1ActionPolicy<TPayload = unknown>(
       decision.decision === 'no_action' ||
       decision.decision === 'no_preservation' ||
       decision.decision === 'no_fallback' ||
+      decision.decision === 'no_rescue' ||
       decision.decision === 'no_promotion',
   )?.decision as ArcGate1ActionPolicyView<TPayload>['noActionDecision']
 
@@ -94,16 +178,20 @@ export function coordinateArcGate1ActionCandidate(
         ])
   }
 
-  if (candidate.action === 'fallback') {
-    return passed && candidate.ownerSignals.some((signal) => signal.source === 'field')
-      ? buildDecision(candidate, 'fallback')
-      : buildDecision(candidate, 'refuse_fallback', [
-          hasFailedSignal(candidate, 'taste')
-            ? 'fallback:would_mask_missing_meaning'
-            : hasFailedSignal(candidate, 'bearings')
-              ? 'fallback:would_mask_failed_feasibility'
-              : 'fallback:no_owner_valid_candidate',
-        ])
+  if (candidate.action === 'fallback' || candidate.action === 'rescue') {
+    const ownerTruthPassed =
+      passed && hasPassedSignal(candidate, 'field', 'real_record')
+    if (ownerTruthPassed) {
+      return buildDecision(
+        candidate,
+        candidate.action === 'rescue' ? 'rescue' : 'fallback',
+      )
+    }
+    return buildDecision(
+      candidate,
+      candidate.action === 'rescue' ? 'refuse_rescue' : 'refuse_fallback',
+      [fallbackRefusalReason(candidate)],
+    )
   }
 
   if (candidate.action === 'surprise_promotion') {

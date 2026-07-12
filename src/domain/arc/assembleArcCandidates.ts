@@ -22,6 +22,7 @@ import {
   rankArcCandidatesForAssembly,
 } from '../../integrations/waypoint/coordination/coordinateArcCandidateAssembly'
 import {
+  coordinateArcGate1FallbackRescue,
   coordinateArcGate1SurprisePromotion,
   coordinateArcGate1Preservation,
   type ArcGate1SurprisePromotionOption,
@@ -227,6 +228,12 @@ function roundToHundredths(value: number): number {
 type SurprisePromotionOutcome = NonNullable<
   SurpriseInjectionMetadata['promotionOutcome']
 >
+
+interface FallbackCandidateRecord {
+  candidate: ArcCandidate
+  role: InternalRole
+  stop: ArcStop
+}
 
 interface SurprisePromotionAssessment {
   promotedStops?: ArcStop[]
@@ -745,6 +752,29 @@ function compareTightCompactAnchorCandidates(
 
 function findStopForRole(candidate: ArcCandidate, role: InternalRole): ArcStop | undefined {
   return candidate.stops.find((stop) => stop.role === role)
+}
+
+function findFallbackStop(candidate: ArcCandidate): { role: InternalRole; stop: ArcStop } | undefined {
+  const peakStop = findStopForRole(candidate, 'peak')
+  if (peakStop) {
+    return { role: 'peak', stop: peakStop }
+  }
+  const firstStop = candidate.stops[0]
+  return firstStop ? { role: firstStop.role, stop: firstStop } : undefined
+}
+
+function buildFallbackCandidateRecord(
+  candidate: ArcCandidate,
+): FallbackCandidateRecord | undefined {
+  const fallbackStop = findFallbackStop(candidate)
+  if (!fallbackStop) {
+    return undefined
+  }
+  return {
+    candidate,
+    role: fallbackStop.role,
+    stop: fallbackStop.stop,
+  }
 }
 
 function findPreservationStop(
@@ -1326,7 +1356,31 @@ export function assembleArcCandidates(
       lens,
       scoringOptions,
     )
-    candidates.push(...partialFallbackCandidates)
+    const fallbackCandidateRecords = partialFallbackCandidates
+      .map(buildFallbackCandidateRecord)
+      .filter((record): record is FallbackCandidateRecord => Boolean(record))
+    const fallbackDecisions = coordinateArcGate1FallbackRescue({
+      candidates: fallbackCandidateRecords.map((record) =>
+        projectGate1ActionCandidate({
+          id: record.candidate.id,
+          action: 'fallback',
+          candidate: record.stop.scoredVenue,
+          role: record.role,
+          intent,
+          routeCandidate: record.candidate,
+          routeContext: 'partial_fallback_route',
+          deterministicTieBreakKey: `fallback:${record.candidate.id}`,
+        }),
+      ),
+    })
+    const selectedFallbackCandidateIds = new Set(
+      fallbackDecisions.selectedCandidates.map((candidate) => candidate.id),
+    )
+    candidates.push(
+      ...fallbackCandidateRecords
+        .filter((record) => selectedFallbackCandidateIds.has(record.candidate.id))
+        .map((record) => record.candidate),
+    )
   }
 
   const rankedCandidates = rankArcCandidatesForAssembly(candidates)
