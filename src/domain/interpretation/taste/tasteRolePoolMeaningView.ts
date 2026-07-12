@@ -94,6 +94,9 @@ type AssertTasteRolePoolMeaningEvidenceKind<
 export type TasteRolePoolMeaningPeakWorthinessAccepted =
   AssertTasteRolePoolMeaningEvidenceKind<'peak_worthiness'>
 
+export type TasteRolePoolMeaningCentralMomentQualityAccepted =
+  AssertTasteRolePoolMeaningEvidenceKind<'central_moment_quality'>
+
 // @ts-expect-error Taste carries peak worthiness, not peak arbitration.
 export type TasteRolePoolMeaningRejectsArbitration =
   AssertTasteRolePoolMeaningEvidenceKind<'peak_arbitration'>

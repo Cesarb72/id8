@@ -109,6 +109,49 @@ function buildCategoryArchetypeMeaning(
   }
 }
 
+function buildPeakWorthinessMeaning(
+  evidence: RolePoolMeaningEvidence,
+): TasteRolePoolCandidateMeaningEvidence<'peak_worthiness'> {
+  const peakWorthiness = evidence.candidate.peakWorthiness
+
+  return {
+    source: 'taste',
+    kind: 'peak_worthiness',
+    candidateVenueId: evidence.candidate.candidateVenueId,
+    role: evidence.role,
+    score: peakWorthiness.score,
+    strength: peakWorthiness.candidatePeakSuitability,
+    reasons: peakWorthiness.reasons,
+    components: peakWorthiness.components,
+    candidateEvidence: evidence.candidate,
+    rolePoolEvidence: evidence.rolePoolEvidence,
+  }
+}
+
+function buildCentralMomentQualityMeaning(
+  evidence: RolePoolMeaningEvidence,
+): TasteRolePoolCandidateMeaningEvidence<'central_moment_quality'> {
+  const centralMomentQuality = evidence.candidate.centralMomentQuality
+
+  return {
+    source: 'taste',
+    kind: 'central_moment_quality',
+    candidateVenueId: evidence.candidate.candidateVenueId,
+    role: evidence.role,
+    score: centralMomentQuality.score,
+    compatibility:
+      centralMomentQuality.status === 'central_moment'
+        ? 'compatible'
+        : centralMomentQuality.status === 'possible_central_moment'
+          ? 'partial'
+          : 'conflict',
+    reasons: centralMomentQuality.reasons,
+    components: centralMomentQuality.components,
+    candidateEvidence: evidence.candidate,
+    rolePoolEvidence: evidence.rolePoolEvidence,
+  }
+}
+
 function buildExpressionActivationMeaning(
   evidence: RolePoolMeaningEvidence,
 ): TasteRolePoolCandidateMeaningEvidence<'expression_activation_meaning'> {
@@ -210,6 +253,8 @@ export function computeTasteRolePoolMeaningView(
     buildRomanticRoleMeaning(evidence),
     buildFamilyRoleMeaning(evidence),
     buildCategoryArchetypeMeaning(evidence),
+    buildPeakWorthinessMeaning(evidence),
+    buildCentralMomentQualityMeaning(evidence),
     buildExpressionActivationMeaning(evidence),
   ])
 

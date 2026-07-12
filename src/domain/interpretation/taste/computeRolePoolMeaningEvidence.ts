@@ -43,6 +43,19 @@ export interface RolePoolMeaningContextInput {
   selectedDirectionContext?: SelectedDirectionContext
 }
 
+export type RolePoolPeakWorthinessStatus =
+  | 'peak_worthy'
+  | 'near_peak'
+  | 'weak_peak'
+  | 'passive_peak'
+  | 'not_peak'
+
+export type RolePoolCentralMomentQualityStatus =
+  | 'central_moment'
+  | 'possible_central_moment'
+  | 'weak_central_moment'
+  | 'not_central_moment'
+
 export interface RolePoolMeaningCandidateInput {
   candidateVenueId?: TasteRouteMeaningVenueId
   category: TasteVenueCategory | string
@@ -130,6 +143,25 @@ export interface RolePoolMeaningCandidateEvidence {
     activationQuality: number
     expressionQuality: number
   }
+  peakWorthiness: {
+    source: 'taste'
+    score: number
+    status: RolePoolPeakWorthinessStatus
+    candidatePeakSuitability: TasteRouteMeaningFitStrength
+    weakPeak: boolean
+    passivePeak: boolean
+    reasons: readonly string[]
+    components: readonly TasteRouteMeaningSignalComponent<number | string | boolean>[]
+  }
+  centralMomentQuality: {
+    source: 'taste'
+    score: number
+    status: RolePoolCentralMomentQualityStatus
+    weakPeak: boolean
+    passivePeak: boolean
+    reasons: readonly string[]
+    components: readonly TasteRouteMeaningSignalComponent<number | string | boolean>[]
+  }
 }
 
 export interface RolePoolMeaningEvidence {
@@ -210,6 +242,43 @@ function toComponent(
     label,
     value,
   }
+}
+
+function scoreToPeakWorthinessStatus(params: {
+  score: number
+  weakPeak: boolean
+  passivePeak: boolean
+}): RolePoolPeakWorthinessStatus {
+  if (params.weakPeak) {
+    return 'weak_peak'
+  }
+  if (params.passivePeak) {
+    return 'passive_peak'
+  }
+  if (params.score >= 0.7) {
+    return 'peak_worthy'
+  }
+  if (params.score >= 0.56) {
+    return 'near_peak'
+  }
+  return 'not_peak'
+}
+
+function scoreToCentralMomentQualityStatus(params: {
+  score: number
+  weakPeak: boolean
+  passivePeak: boolean
+}): RolePoolCentralMomentQualityStatus {
+  if (params.weakPeak || params.passivePeak) {
+    return 'weak_central_moment'
+  }
+  if (params.score >= 0.64) {
+    return 'central_moment'
+  }
+  if (params.score >= 0.52) {
+    return 'possible_central_moment'
+  }
+  return 'not_central_moment'
 }
 
 export function computeRolePoolMeaningContextEvidence(
@@ -312,6 +381,71 @@ export function computeRolePoolCandidateMeaningEvidence(
       input.momentPotentialScore * 0.12 +
       input.anchorStrength * 0.08,
   )
+  const highlightRoleSuitability = input.roleSuitability.highlight ?? 0
+  const peakWorthinessScore = clamp01(
+    input.momentPotentialScore * 0.32 +
+      input.momentIntensityScore * 0.28 +
+      input.anchorStrength * 0.18 +
+      highlightRoleSuitability * 0.14 +
+      input.experientialFactor * 0.08,
+  )
+  const centralMomentQualityScore = clamp01(
+    input.momentIntensityScore * 0.34 +
+      input.momentPotentialScore * 0.24 +
+      input.anchorStrength * 0.16 +
+      input.experientialFactor * 0.14 +
+      input.destinationFactor * 0.08 +
+      highlightRoleSuitability * 0.04,
+  )
+  const passivePeak =
+    isPassiveHospitalityPeak &&
+    input.momentPotentialScore < 0.66 &&
+    input.anchorStrength < 0.58
+  const weakPeak =
+    input.momentPotentialScore < 0.56 &&
+    input.momentIntensityScore < 0.58 &&
+    input.anchorStrength < 0.54
+  const peakWorthinessStatus = scoreToPeakWorthinessStatus({
+    score: peakWorthinessScore,
+    weakPeak,
+    passivePeak,
+  })
+  const centralMomentQualityStatus = scoreToCentralMomentQualityStatus({
+    score: centralMomentQualityScore,
+    weakPeak,
+    passivePeak,
+  })
+  const weakPassiveReasons = [
+    ...(weakPeak ? ['weak_peak_evidence'] : []),
+    ...(passivePeak ? ['passive_peak_evidence'] : []),
+  ]
+  const peakWorthinessComponents = [
+    toComponent('moment_potential', input.momentPotentialScore, 'Moment potential'),
+    toComponent('moment_intensity', input.momentIntensityScore, 'Moment intensity'),
+    toComponent('anchor_strength', input.anchorStrength, 'Anchor strength'),
+    toComponent(
+      'highlight_role_suitability',
+      highlightRoleSuitability,
+      'Highlight role suitability',
+    ),
+    toComponent('experiential_factor', input.experientialFactor, 'Experiential factor'),
+    toComponent('weak_peak', weakPeak, 'Weak peak evidence'),
+    toComponent('passive_peak', passivePeak, 'Passive peak evidence'),
+  ]
+  const centralMomentQualityComponents = [
+    toComponent('moment_intensity', input.momentIntensityScore, 'Moment intensity'),
+    toComponent('moment_potential', input.momentPotentialScore, 'Moment potential'),
+    toComponent('anchor_strength', input.anchorStrength, 'Anchor strength'),
+    toComponent('experiential_factor', input.experientialFactor, 'Experiential factor'),
+    toComponent('destination_factor', input.destinationFactor, 'Destination factor'),
+    toComponent(
+      'highlight_role_suitability',
+      highlightRoleSuitability,
+      'Highlight role suitability',
+    ),
+    toComponent('weak_peak', weakPeak, 'Weak peak evidence'),
+    toComponent('passive_peak', passivePeak, 'Passive peak evidence'),
+  ]
 
   return {
     source: 'taste',
@@ -366,6 +500,31 @@ export function computeRolePoolCandidateMeaningEvidence(
       anchorStrength: input.anchorStrength,
       activationQuality,
       expressionQuality,
+    },
+    peakWorthiness: {
+      source: 'taste',
+      score: peakWorthinessScore,
+      status: peakWorthinessStatus,
+      candidatePeakSuitability: scoreToFitStrength(peakWorthinessScore),
+      weakPeak,
+      passivePeak,
+      reasons:
+        weakPassiveReasons.length > 0
+          ? weakPassiveReasons
+          : [`peak_worthiness:${peakWorthinessStatus}`],
+      components: peakWorthinessComponents,
+    },
+    centralMomentQuality: {
+      source: 'taste',
+      score: centralMomentQualityScore,
+      status: centralMomentQualityStatus,
+      weakPeak,
+      passivePeak,
+      reasons:
+        weakPassiveReasons.length > 0
+          ? weakPassiveReasons
+          : [`central_moment_quality:${centralMomentQualityStatus}`],
+      components: centralMomentQualityComponents,
     },
   }
 }
