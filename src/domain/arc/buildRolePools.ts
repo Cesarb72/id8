@@ -1499,6 +1499,25 @@ function computeRoleSelectionScore(params: {
   )
 }
 
+function coordinateFamilyPreservationCandidate(
+  candidate: ScoredVenue,
+  intent?: IntentProfile,
+): boolean {
+  const decision = coordinateArcGate1ActionCandidate(
+    projectGate1ActionCandidate({
+      id: `family-preservation:${getScoredVenueCandidateId(candidate)}`,
+      action: 'family_preservation',
+      candidate,
+      role: 'peak',
+      intent,
+      routeContext: 'preservation_pool',
+      deterministicTieBreakKey: `family-preservation:${getScoredVenueCandidateId(candidate)}`,
+    }),
+  )
+
+  return decision.decision === 'preserve'
+}
+
 function selectPeakCandidatesWithFamilyPreservation(
   rankedCandidates: ScoredVenue[],
   selectionScoreByCandidateId: Map<string, number>,
@@ -1558,7 +1577,8 @@ function selectPeakCandidatesWithFamilyPreservation(
         getPeakMomentIntensityScore(candidate) >= 0.68 &&
         getPeakMomentPotentialScore(candidate) >= 0.56 &&
         candidate.roleScores.peak >= roleThresholds.peak - 0.03 &&
-        candidate.stopShapeFit.highlight >= 0.34
+        candidate.stopShapeFit.highlight >= 0.34 &&
+        coordinateFamilyPreservationCandidate(candidate, intent)
       )
     })
     .sort((left, right) => {
@@ -2478,6 +2498,38 @@ function computeContractRolePressure(params: {
   }
 }
 
+function coordinateContractRolePressure(params: {
+  candidate: ScoredVenue
+  role: InternalRole
+  intent?: IntentProfile
+  contractConstraints?: ContractConstraints
+  experienceContract?: ExperienceContract
+}): ReturnType<typeof computeContractRolePressure> {
+  const pressure = computeContractRolePressure(params)
+  if (pressure.scoreAdjustment === 0 && !pressure.hardReject) {
+    return pressure
+  }
+
+  const decision = coordinateArcGate1ActionCandidate(
+    projectGate1ActionCandidate({
+      id: `contract-pressure:${params.role}:${getScoredVenueCandidateId(params.candidate)}`,
+      action: 'hard_contract_pressure',
+      candidate: params.candidate,
+      role: params.role,
+      intent: params.intent,
+      routeContext: 'role_pool',
+      deterministicTieBreakKey: `contract-pressure:${params.role}:${getScoredVenueCandidateId(params.candidate)}`,
+    }),
+  )
+
+  return decision.decision === 'apply_contract_pressure'
+    ? pressure
+    : {
+        scoreAdjustment: 0,
+        hardReject: false,
+      }
+}
+
 function pickRoleCandidates(
   scoredVenues: ScoredVenue[],
   role: InternalRole,
@@ -2898,7 +2950,7 @@ function pickRoleCandidates(
   >(
     scoredRoleCandidates.map((candidate) => [
       getScoredVenueCandidateId(candidate),
-      computeContractRolePressure({
+      coordinateContractRolePressure({
         candidate,
         role,
         contractConstraints,

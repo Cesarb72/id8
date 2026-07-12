@@ -109,6 +109,87 @@ function preferredRoleAdmissionRefusalReason(
   return 'preferred_role:owner_signal_failed'
 }
 
+function familyPreservationPassed(candidate: ArcGate1ActionCandidate): boolean {
+  return (
+    hasPassedSignal(candidate, 'taste', 'family_fit') &&
+    hasPassedSignal(candidate, 'taste', 'peak_support') &&
+    hasPassedSignal(candidate, 'taste', 'role_support') &&
+    hasPassedSignal(candidate, 'taste', 'intent_support') &&
+    hasPassedSignal(candidate, 'bearings', 'route_feasibility') &&
+    hasPassedSignal(candidate, 'bearings', 'admission_survival') &&
+    hasPassedSignal(candidate, 'bearings', 'constraint_survival') &&
+    hasPassedSignal(candidate, 'field', 'real_record')
+  )
+}
+
+function familyPreservationRefusalReasons(
+  candidate: ArcGate1ActionCandidate,
+): readonly ArcGate1ActionRefusalReason[] {
+  if (
+    hasFailedSignal(candidate, 'taste', 'family_fit') ||
+    hasFailedSignal(candidate, 'taste', 'peak_support') ||
+    hasFailedSignal(candidate, 'taste', 'role_support') ||
+    hasFailedSignal(candidate, 'taste', 'intent_support')
+  ) {
+    return ['family_preservation:would_mask_missing_meaning']
+  }
+  if (
+    hasFailedSignal(candidate, 'bearings', 'route_feasibility') ||
+    hasFailedSignal(candidate, 'bearings', 'admission_survival') ||
+    hasFailedSignal(candidate, 'bearings', 'constraint_survival') ||
+    !hasPassedSignal(candidate, 'bearings', 'admission_survival') ||
+    !hasPassedSignal(candidate, 'bearings', 'constraint_survival')
+  ) {
+    return [
+      'family_preservation:cap_refused_infeasible_candidate',
+      'family_preservation:would_mask_failed_feasibility',
+    ]
+  }
+  if (
+    hasFailedSignal(candidate, 'field') ||
+    !hasPassedSignal(candidate, 'field', 'real_record')
+  ) {
+    return ['family_preservation:would_mask_missing_real']
+  }
+  return ['family_preservation:owner_signal_failed']
+}
+
+function contractPressurePassed(candidate: ArcGate1ActionCandidate): boolean {
+  return (
+    hasPassedSignal(candidate, 'taste', 'role_support') &&
+    hasPassedSignal(candidate, 'taste', 'intent_support') &&
+    hasPassedSignal(candidate, 'bearings', 'admission_survival') &&
+    hasPassedSignal(candidate, 'bearings', 'constraint_survival') &&
+    hasPassedSignal(candidate, 'field', 'real_record')
+  )
+}
+
+function contractPressureRefusalReason(
+  candidate: ArcGate1ActionCandidate,
+): ArcGate1ActionRefusalReason {
+  if (
+    hasFailedSignal(candidate, 'taste', 'role_support') ||
+    hasFailedSignal(candidate, 'taste', 'intent_support')
+  ) {
+    return 'contract_pressure:would_mask_missing_meaning'
+  }
+  if (
+    hasFailedSignal(candidate, 'bearings', 'admission_survival') ||
+    hasFailedSignal(candidate, 'bearings', 'constraint_survival') ||
+    !hasPassedSignal(candidate, 'bearings', 'admission_survival') ||
+    !hasPassedSignal(candidate, 'bearings', 'constraint_survival')
+  ) {
+    return 'contract_pressure:would_mask_failed_constraint'
+  }
+  if (
+    hasFailedSignal(candidate, 'field') ||
+    !hasPassedSignal(candidate, 'field', 'real_record')
+  ) {
+    return 'contract_pressure:would_mask_missing_real'
+  }
+  return 'contract_pressure:owner_signal_failed'
+}
+
 function buildDecision(
   candidate: ArcGate1ActionCandidate,
   decision: ArcGate1ActionDecisionKind,
@@ -251,13 +332,13 @@ export function coordinateArcGate1ActionCandidate(
   }
 
   if (candidate.action === 'family_preservation') {
-    return passed
+    return familyPreservationPassed(candidate)
       ? buildDecision(candidate, 'preserve')
-      : buildDecision(candidate, 'refuse_preservation', [
-          hasFailedSignal(candidate, 'bearings')
-            ? 'family_preservation:cap_refused_infeasible_candidate'
-            : 'family_preservation:owner_signal_failed',
-        ])
+      : buildDecision(
+          candidate,
+          'refuse_preservation',
+          familyPreservationRefusalReasons(candidate),
+        )
   }
 
   if (candidate.action === 'preferred_role_admission') {
@@ -265,6 +346,14 @@ export function coordinateArcGate1ActionCandidate(
       ? buildDecision(candidate, 'admit')
       : buildDecision(candidate, 'refuse_admission', [
           preferredRoleAdmissionRefusalReason(candidate),
+        ])
+  }
+
+  if (candidate.action === 'hard_contract_pressure') {
+    return contractPressurePassed(candidate)
+      ? buildDecision(candidate, 'apply_contract_pressure')
+      : buildDecision(candidate, 'refuse_contract_pressure', [
+          contractPressureRefusalReason(candidate),
         ])
   }
 

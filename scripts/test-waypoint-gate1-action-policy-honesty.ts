@@ -488,21 +488,152 @@ const validFamilyPreservationCap = decideCandidate(
   gate1Candidate({
     id: 'valid-family-preservation',
     action: 'family_preservation',
-    taste: [tasteSignal('family_fit', true), tasteSignal('peak_support', true)],
-    bearings: [bearingsSignal('admission_survival', true)],
+    taste: [
+      tasteSignal('family_fit', true),
+      tasteSignal('peak_support', true),
+      tasteSignal('role_support', true),
+      tasteSignal('intent_support', true),
+    ],
+    bearings: [
+      bearingsSignal('route_feasibility', true),
+      bearingsSignal('admission_survival', true),
+      bearingsSignal('constraint_survival', true),
+    ],
     field: fieldSignal('real_record', true),
   }),
 )
 
-const invalidFamilyPreservationCap = decideCandidate(
+const invalidFamilyPreservationMissingMeaning = decideCandidate(
   gate1Candidate({
-    id: 'invalid-family-preservation',
+    id: 'invalid-family-preservation-missing-meaning',
     action: 'family_preservation',
-    taste: [tasteSignal('family_fit', true)],
+    taste: [
+      tasteSignal('family_fit', false, 'taste:family_missing'),
+      tasteSignal('peak_support', true),
+      tasteSignal('role_support', true),
+      tasteSignal('intent_support', true),
+    ],
     bearings: [
-      bearingsSignal('admission_survival', false, 'bearings:infeasible_family'),
+      bearingsSignal('route_feasibility', true),
+      bearingsSignal('admission_survival', true),
+      bearingsSignal('constraint_survival', true),
     ],
     field: fieldSignal('real_record', true),
+  }),
+)
+
+const invalidFamilyPreservationFailedFeasibility = decideCandidate(
+  gate1Candidate({
+    id: 'invalid-family-preservation-failed-feasibility',
+    action: 'family_preservation',
+    taste: [
+      tasteSignal('family_fit', true),
+      tasteSignal('peak_support', true),
+      tasteSignal('role_support', true),
+      tasteSignal('intent_support', true),
+    ],
+    bearings: [
+      bearingsSignal('route_feasibility', true),
+      bearingsSignal('admission_survival', false, 'bearings:infeasible_family'),
+      bearingsSignal('constraint_survival', true),
+    ],
+    field: fieldSignal('real_record', true),
+  }),
+)
+
+const invalidFamilyPreservationMissingReal = decideCandidate(
+  gate1Candidate({
+    id: 'invalid-family-preservation-missing-real',
+    action: 'family_preservation',
+    taste: [
+      tasteSignal('family_fit', true),
+      tasteSignal('peak_support', true),
+      tasteSignal('role_support', true),
+      tasteSignal('intent_support', true),
+    ],
+    bearings: [
+      bearingsSignal('route_feasibility', true),
+      bearingsSignal('admission_survival', true),
+      bearingsSignal('constraint_survival', true),
+    ],
+    field: fieldSignal('real_record', false, 'real:missing_record_truth'),
+  }),
+)
+
+const previouslyMaskedFamilyPreservation = decideCandidate(
+  gate1Candidate({
+    id: 'previously-masked-family-preservation',
+    action: 'family_preservation',
+    taste: [
+      tasteSignal('family_fit', true),
+      tasteSignal('peak_support', true),
+      tasteSignal('role_support', true),
+      tasteSignal('intent_support', true),
+    ],
+    bearings: [
+      bearingsSignal('route_feasibility', true),
+      bearingsSignal('admission_survival', false, 'bearings:infeasible_family'),
+      bearingsSignal('constraint_survival', true),
+    ],
+    field: fieldSignal('real_record', true),
+    payload: {
+      label: 'legacy family preservation would have forced this weak cap',
+    },
+  }),
+)
+
+const eligibleContractPressure = decideCandidate(
+  gate1Candidate({
+    id: 'eligible-contract-pressure',
+    action: 'hard_contract_pressure',
+    taste: [tasteSignal('role_support', true), tasteSignal('intent_support', true)],
+    bearings: [
+      bearingsSignal('admission_survival', true),
+      bearingsSignal('constraint_survival', true),
+    ],
+    field: fieldSignal('real_record', true),
+  }),
+)
+
+const invalidContractPressureMissingMeaning = decideCandidate(
+  gate1Candidate({
+    id: 'invalid-contract-pressure-missing-meaning',
+    action: 'hard_contract_pressure',
+    taste: [
+      tasteSignal('role_support', false, 'taste:role_missing'),
+      tasteSignal('intent_support', true),
+    ],
+    bearings: [
+      bearingsSignal('admission_survival', true),
+      bearingsSignal('constraint_survival', true),
+    ],
+    field: fieldSignal('real_record', true),
+  }),
+)
+
+const invalidContractPressureFailedConstraint = decideCandidate(
+  gate1Candidate({
+    id: 'invalid-contract-pressure-failed-constraint',
+    action: 'hard_contract_pressure',
+    taste: [tasteSignal('role_support', true), tasteSignal('intent_support', true)],
+    bearings: [
+      bearingsSignal('admission_survival', true),
+      bearingsSignal('constraint_survival', false, 'bearings:constraint_failed'),
+    ],
+    field: fieldSignal('real_record', true),
+  }),
+)
+
+const invalidContractPressureMissingReal = decideCandidate(
+  gate1Candidate({
+    id: 'invalid-contract-pressure-missing-real',
+    action: 'hard_contract_pressure',
+    taste: [tasteSignal('role_support', true), tasteSignal('intent_support', true)],
+    bearings: [
+      bearingsSignal('admission_survival', true),
+      bearingsSignal('constraint_survival', true),
+    ],
+    field: fieldSignal('real_record', false, 'real:missing_record_truth'),
   }),
 )
 
@@ -537,7 +668,14 @@ const decisions = [
   safeSurpriseDemotion,
   unsafeSurpriseDemotion,
   validFamilyPreservationCap,
-  invalidFamilyPreservationCap,
+  invalidFamilyPreservationMissingMeaning,
+  invalidFamilyPreservationFailedFeasibility,
+  invalidFamilyPreservationMissingReal,
+  previouslyMaskedFamilyPreservation,
+  eligibleContractPressure,
+  invalidContractPressureMissingMeaning,
+  invalidContractPressureFailedConstraint,
+  invalidContractPressureMissingReal,
   ...noEligiblePreservation.decisions,
   emptyPoolDecision,
 ]
@@ -677,11 +815,57 @@ assert(
   'Family preservation cap can preserve only owner-valid candidates.',
 )
 assert(
-  invalidFamilyPreservationCap.decision === 'refuse_preservation' &&
-    invalidFamilyPreservationCap.reasons?.includes(
+  invalidFamilyPreservationMissingMeaning.decision === 'refuse_preservation' &&
+    invalidFamilyPreservationMissingMeaning.reasons?.includes(
+      'family_preservation:would_mask_missing_meaning',
+    ),
+  'Family preservation cap must refuse missing Taste meaning.',
+)
+assert(
+  invalidFamilyPreservationFailedFeasibility.decision === 'refuse_preservation' &&
+    invalidFamilyPreservationFailedFeasibility.reasons?.includes(
       'family_preservation:cap_refused_infeasible_candidate',
     ),
   'Family preservation cap must refuse infeasible candidates.',
+)
+assert(
+  invalidFamilyPreservationMissingReal.decision === 'refuse_preservation' &&
+    invalidFamilyPreservationMissingReal.reasons?.includes(
+      'family_preservation:would_mask_missing_real',
+    ),
+  'Family preservation cap must refuse missing Field Real.',
+)
+assert(
+  previouslyMaskedFamilyPreservation.decision === 'refuse_preservation' &&
+    previouslyMaskedFamilyPreservation.reasons?.includes(
+      'family_preservation:would_mask_failed_feasibility',
+    ),
+  'Previously masked family preservation must refuse failed owner criteria.',
+)
+assert(
+  eligibleContractPressure.decision === 'apply_contract_pressure',
+  'Eligible contract pressure should apply from owner-supported signals.',
+)
+assert(
+  invalidContractPressureMissingMeaning.decision === 'refuse_contract_pressure' &&
+    invalidContractPressureMissingMeaning.reasons?.includes(
+      'contract_pressure:would_mask_missing_meaning',
+    ),
+  'Contract pressure must not mask missing Taste meaning.',
+)
+assert(
+  invalidContractPressureFailedConstraint.decision === 'refuse_contract_pressure' &&
+    invalidContractPressureFailedConstraint.reasons?.includes(
+      'contract_pressure:would_mask_failed_constraint',
+    ),
+  'Contract pressure must not mask failed Bearings constraints.',
+)
+assert(
+  invalidContractPressureMissingReal.decision === 'refuse_contract_pressure' &&
+    invalidContractPressureMissingReal.reasons?.includes(
+      'contract_pressure:would_mask_missing_real',
+    ),
+  'Contract pressure must not emit without Field Real owner signal.',
 )
 assert(
   emptyPoolDecision.decision === 'no_action' &&
@@ -767,9 +951,29 @@ const output = {
     },
     familyPreservationCap: {
       validDecision: validFamilyPreservationCap.decision,
-      invalidDecision: invalidFamilyPreservationCap.decision,
-      invalidReasons: invalidFamilyPreservationCap.reasons,
+      missingMeaningDecision: invalidFamilyPreservationMissingMeaning.decision,
+      missingMeaningReasons: invalidFamilyPreservationMissingMeaning.reasons,
+      failedFeasibilityDecision:
+        invalidFamilyPreservationFailedFeasibility.decision,
+      failedFeasibilityReasons:
+        invalidFamilyPreservationFailedFeasibility.reasons,
+      missingRealDecision: invalidFamilyPreservationMissingReal.decision,
+      missingRealReasons: invalidFamilyPreservationMissingReal.reasons,
+      previouslyMaskedDecision: previouslyMaskedFamilyPreservation.decision,
+      previouslyMaskedReasons: previouslyMaskedFamilyPreservation.reasons,
+      previouslyMaskedSurvives:
+        previouslyMaskedFamilyPreservation.decision === 'preserve',
       capOverridesOwnerVerdicts: false,
+    },
+    contractPressure: {
+      eligibleDecision: eligibleContractPressure.decision,
+      missingMeaningDecision: invalidContractPressureMissingMeaning.decision,
+      missingMeaningReasons: invalidContractPressureMissingMeaning.reasons,
+      failedConstraintDecision: invalidContractPressureFailedConstraint.decision,
+      failedConstraintReasons: invalidContractPressureFailedConstraint.reasons,
+      missingRealDecision: invalidContractPressureMissingReal.decision,
+      missingRealReasons: invalidContractPressureMissingReal.reasons,
+      pressureMasksFailedOwnerCriteria: false,
     },
     emptyInvalidPool: {
       decision: emptyPoolDecision.decision,
@@ -784,6 +988,8 @@ const output = {
     noFallbackMasksFailedOwnerCriteria: true,
     noPreservationMasksFailedOwnerCriteria: true,
     noPreferredRoleAdmissionMasksFailedOwnerCriteria: true,
+    noFamilyPreservationMasksFailedOwnerCriteria: true,
+    noContractPressureMasksFailedOwnerCriteria: true,
     noPromotionManufacturesCandidateTruth: true,
     emptyInvalidPoolsRemainEmpty: true,
     refusalReasonsExplicit: decisions.every(

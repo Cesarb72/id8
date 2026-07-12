@@ -209,6 +209,13 @@ export type ArcGate1ActionRefusalReason =
   | 'surprise:demotion_would_hide_required_failure'
   | 'family_preservation:owner_signal_failed'
   | 'family_preservation:cap_refused_infeasible_candidate'
+  | 'family_preservation:would_mask_missing_meaning'
+  | 'family_preservation:would_mask_failed_feasibility'
+  | 'family_preservation:would_mask_missing_real'
+  | 'contract_pressure:owner_signal_failed'
+  | 'contract_pressure:would_mask_missing_meaning'
+  | 'contract_pressure:would_mask_failed_constraint'
+  | 'contract_pressure:would_mask_missing_real'
 
 export type ArcGate1ActionDecisionKind =
   | 'preserve'
@@ -222,6 +229,8 @@ export type ArcGate1ActionDecisionKind =
   | 'refuse_rescue'
   | 'admit'
   | 'refuse_admission'
+  | 'apply_contract_pressure'
+  | 'refuse_contract_pressure'
   | 'no_action'
   | 'no_preservation'
   | 'no_fallback'
