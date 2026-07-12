@@ -71,6 +71,8 @@ import {
   limitArcRolePoolCandidates,
   projectArcRolePools,
 } from '../../integrations/waypoint/coordination/coordinateArcRolePools'
+import { coordinateArcGate1ActionCandidate } from '../../integrations/waypoint/coordination/coordinateArcGate1ActionPolicy'
+import type { ArcGate1ActionRefusalReason } from '../../integrations/waypoint/coordination/arcGate1ActionPolicyView'
 import type {
   ArcPeakRecoveryBearingsFeasibilitySignal,
   ArcPeakRecoveryCandidate,
@@ -78,6 +80,7 @@ import type {
   ArcPeakRecoveryTastePeakWorthinessSignal,
 } from '../../integrations/waypoint/coordination/arcPeakRecoveryCoordinationView'
 import type { TasteRolePoolCandidateMeaningEvidence } from '../interpretation/taste/tasteRolePoolMeaningView'
+import { projectGate1ActionCandidate } from './projectGate1OwnerSignals'
 
 export interface RolePools {
   warmup: ScoredVenue[]
@@ -2220,6 +2223,66 @@ function evaluatePreferredRoleAdmission(
   }
 }
 
+function preferredRoleAdmissionRejectedReason(
+  reason?: ArcGate1ActionRefusalReason,
+  legacyReason?: PreferredDiscoveryAdmissionRejectionReason,
+): PreferredDiscoveryAdmissionRejectionReason {
+  if (legacyReason) {
+    return legacyReason
+  }
+  if (reason === 'preferred_role:would_mask_failed_admission') {
+    return 'rejected_hours'
+  }
+  if (reason === 'preferred_role:would_mask_missing_meaning') {
+    return 'rejected_role_fit'
+  }
+  if (reason === 'preferred_role:would_mask_missing_real') {
+    return 'rejected_context'
+  }
+  return 'rejected_role_fit'
+}
+
+function coordinatePreferredRoleAdmission(params: {
+  candidate: ScoredVenue | undefined
+  role: InternalRole
+  intent?: IntentProfile
+  legacyAdmission: PreferredRoleAdmissionDecision
+}): PreferredRoleAdmissionDecision {
+  const { candidate, role, intent, legacyAdmission } = params
+  if (!candidate) {
+    return legacyAdmission
+  }
+
+  const decision = coordinateArcGate1ActionCandidate(
+    projectGate1ActionCandidate({
+      id: `preferred-role:${role}:${getScoredVenueCandidateId(candidate)}`,
+      action: 'preferred_role_admission',
+      candidate,
+      role,
+      intent,
+      routeContext: 'role_pool',
+      deterministicTieBreakKey: `preferred-role:${role}:${getScoredVenueCandidateId(candidate)}`,
+    }),
+  )
+
+  if (decision.decision !== 'admit') {
+    return {
+      preferredVenueId: legacyAdmission.preferredVenueId,
+      rejectedReason: preferredRoleAdmissionRejectedReason(
+        decision.reasons?.[0],
+        legacyAdmission.rejectedReason,
+      ),
+    }
+  }
+
+  return {
+    preferredVenueId: legacyAdmission.preferredVenueId,
+    admittedCandidate: legacyAdmission.admittedCandidate ?? candidate,
+    hoursRelaxed: legacyAdmission.hoursRelaxed,
+    hoursRelaxationReason: legacyAdmission.hoursRelaxationReason,
+  }
+}
+
 function clampContractScore(value: number): number {
   return Math.max(-0.42, Math.min(0.42, value))
 }
@@ -2561,13 +2624,19 @@ function pickRoleCandidates(
   const preferredCandidate = preferredVenueId
     ? scoredVenues.find((item) => getScoredVenueBaseVenueId(item) === preferredVenueId)
     : undefined
-  const preferredAdmission = evaluatePreferredRoleAdmission(
+  const legacyPreferredAdmission = evaluatePreferredRoleAdmission(
     preferredCandidate,
     role,
     lensRole,
     crewPolicy,
     intent,
   )
+  const preferredAdmission = coordinatePreferredRoleAdmission({
+    candidate: preferredCandidate,
+    role,
+    intent,
+    legacyAdmission: legacyPreferredAdmission,
+  })
   const hasFeasibleStrongPeakMoment = scoredVenues.some((item) =>
     isFeasibleStrongPeakMomentCandidate(item, intent),
   )

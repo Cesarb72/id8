@@ -19,6 +19,7 @@ import type {
   ScoredVenue,
 } from '../types/arc'
 import type { IntentProfile } from '../types/intent'
+import type { VenueSourceMetadata } from '../types/normalization'
 import type { InternalRole } from '../types/venue'
 import type {
   ArcGate1ActionCandidate,
@@ -350,9 +351,38 @@ function projectBearingsSignals(
 }
 
 function fieldStopInput(candidate: ScoredVenue, role?: InternalRole): FieldRealStopInput {
+  const source = candidate.venue.source as Partial<VenueSourceMetadata>
+  const fieldVenue = {
+    ...candidate.venue,
+    source: {
+      ...source,
+      sourceOrigin: source.sourceOrigin ?? 'curated',
+      normalizedFromRawType: source.normalizedFromRawType ?? 'seed',
+      sourceConfidence: source.sourceConfidence ?? 1,
+      completenessScore: source.completenessScore ?? 1,
+      qualityScore: source.qualityScore ?? 1,
+      hoursKnown: source.hoursKnown ?? false,
+      likelyOpenForCurrentWindow: source.likelyOpenForCurrentWindow ?? false,
+      businessStatus: source.businessStatus ?? 'unknown',
+      timeConfidence: source.timeConfidence ?? 0,
+      hoursPressureLevel: source.hoursPressureLevel ?? 'unknown',
+      hoursPressureNotes: source.hoursPressureNotes ?? [],
+      hoursDemotionApplied: source.hoursDemotionApplied ?? false,
+      hoursSuppressionApplied: source.hoursSuppressionApplied ?? false,
+      sourceTypes: source.sourceTypes ?? [],
+      missingFields: source.missingFields ?? [],
+      inferredFields: source.inferredFields ?? [],
+      qualityGateStatus: source.qualityGateStatus ?? 'approved',
+      qualityGateNotes: source.qualityGateNotes ?? [],
+      approvalBlockers: source.approvalBlockers ?? [],
+      demotionReasons: source.demotionReasons ?? [],
+      suppressionReasons: source.suppressionReasons ?? [],
+    } satisfies VenueSourceMetadata,
+  }
+
   return {
     role: role ?? 'candidate',
-    venue: candidate.venue,
+    venue: fieldVenue,
     candidateIdentity: candidate.candidateIdentity,
   }
 }

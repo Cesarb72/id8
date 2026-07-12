@@ -69,6 +69,46 @@ function fallbackRefusalReason(
   return 'fallback:no_owner_valid_candidate'
 }
 
+function preferredRoleAdmissionPassed(candidate: ArcGate1ActionCandidate): boolean {
+  return (
+    hasPassedSignal(candidate, 'taste', 'role_support') &&
+    hasPassedSignal(candidate, 'taste', 'intent_support') &&
+    hasPassedSignal(candidate, 'bearings', 'hours_feasibility') &&
+    hasPassedSignal(candidate, 'bearings', 'distance_feasibility') &&
+    hasPassedSignal(candidate, 'bearings', 'admission_survival') &&
+    hasPassedSignal(candidate, 'bearings', 'constraint_survival') &&
+    hasPassedSignal(candidate, 'field', 'real_record')
+  )
+}
+
+function preferredRoleAdmissionRefusalReason(
+  candidate: ArcGate1ActionCandidate,
+): ArcGate1ActionRefusalReason {
+  if (
+    hasFailedSignal(candidate, 'taste', 'role_support') ||
+    hasFailedSignal(candidate, 'taste', 'intent_support')
+  ) {
+    return 'preferred_role:would_mask_missing_meaning'
+  }
+  if (
+    hasFailedSignal(candidate, 'bearings', 'hours_feasibility') ||
+    hasFailedSignal(candidate, 'bearings', 'distance_feasibility') ||
+    hasFailedSignal(candidate, 'bearings', 'admission_survival') ||
+    hasFailedSignal(candidate, 'bearings', 'constraint_survival') ||
+    !hasPassedSignal(candidate, 'bearings', 'admission_survival') ||
+    !hasPassedSignal(candidate, 'bearings', 'constraint_survival')
+  ) {
+    return 'preferred_role:would_mask_failed_admission'
+  }
+  if (
+    hasFailedSignal(candidate, 'field') ||
+    !hasPassedSignal(candidate, 'field', 'real_record')
+  ) {
+    return 'preferred_role:would_mask_missing_real'
+  }
+  return 'preferred_role:owner_signal_failed'
+}
+
 function buildDecision(
   candidate: ArcGate1ActionCandidate,
   decision: ArcGate1ActionDecisionKind,
@@ -221,10 +261,10 @@ export function coordinateArcGate1ActionCandidate(
   }
 
   if (candidate.action === 'preferred_role_admission') {
-    return passed
+    return preferredRoleAdmissionPassed(candidate)
       ? buildDecision(candidate, 'admit')
       : buildDecision(candidate, 'refuse_admission', [
-          'preservation:owner_signal_failed',
+          preferredRoleAdmissionRefusalReason(candidate),
         ])
   }
 

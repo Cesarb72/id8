@@ -349,6 +349,87 @@ const previouslyMaskedRescue = coordinateArcGate1FallbackRescue<TestPayload>({
   ],
 })
 
+const eligiblePreferredRoleAdmission = decideCandidate(
+  gate1Candidate({
+    id: 'eligible-preferred-role-admission',
+    action: 'preferred_role_admission',
+    taste: [tasteSignal('role_support', true), tasteSignal('intent_support', true)],
+    bearings: [
+      bearingsSignal('hours_feasibility', true),
+      bearingsSignal('distance_feasibility', true),
+      bearingsSignal('admission_survival', true),
+      bearingsSignal('constraint_survival', true),
+    ],
+    field: fieldSignal('real_record', true),
+  }),
+)
+
+const invalidPreferredRoleMissingMeaning = decideCandidate(
+  gate1Candidate({
+    id: 'invalid-preferred-role-missing-meaning',
+    action: 'preferred_role_admission',
+    taste: [
+      tasteSignal('role_support', false, 'taste:missing_role_support'),
+      tasteSignal('intent_support', true),
+    ],
+    bearings: [
+      bearingsSignal('hours_feasibility', true),
+      bearingsSignal('distance_feasibility', true),
+      bearingsSignal('admission_survival', true),
+      bearingsSignal('constraint_survival', true),
+    ],
+    field: fieldSignal('real_record', true),
+  }),
+)
+
+const invalidPreferredRoleFailedAdmission = decideCandidate(
+  gate1Candidate({
+    id: 'invalid-preferred-role-failed-admission',
+    action: 'preferred_role_admission',
+    taste: [tasteSignal('role_support', true), tasteSignal('intent_support', true)],
+    bearings: [
+      bearingsSignal('hours_feasibility', true),
+      bearingsSignal('distance_feasibility', true),
+      bearingsSignal('admission_survival', false, 'bearings:admission_failed'),
+      bearingsSignal('constraint_survival', true),
+    ],
+    field: fieldSignal('real_record', true),
+  }),
+)
+
+const invalidPreferredRoleMissingReal = decideCandidate(
+  gate1Candidate({
+    id: 'invalid-preferred-role-missing-real',
+    action: 'preferred_role_admission',
+    taste: [tasteSignal('role_support', true), tasteSignal('intent_support', true)],
+    bearings: [
+      bearingsSignal('hours_feasibility', true),
+      bearingsSignal('distance_feasibility', true),
+      bearingsSignal('admission_survival', true),
+      bearingsSignal('constraint_survival', true),
+    ],
+    field: fieldSignal('real_record', false, 'real:missing_record_truth'),
+  }),
+)
+
+const previouslyMaskedPreferredRoleAdmission = decideCandidate(
+  gate1Candidate({
+    id: 'previously-masked-preferred-role-admission',
+    action: 'preferred_role_admission',
+    taste: [tasteSignal('role_support', true), tasteSignal('intent_support', true)],
+    bearings: [
+      bearingsSignal('hours_feasibility', true),
+      bearingsSignal('distance_feasibility', true),
+      bearingsSignal('admission_survival', false, 'bearings:admission_failed'),
+      bearingsSignal('constraint_survival', true),
+    ],
+    field: fieldSignal('real_record', true),
+    payload: {
+      label: 'legacy preferred-role admission would have masked failed admission',
+    },
+  }),
+)
+
 const validSurprisePromotion = decideCandidate(
   gate1Candidate({
     id: 'valid-surprise-promotion',
@@ -446,6 +527,11 @@ const decisions = [
   invalidFallbackMissingReal,
   ...noEligibleFallback.decisions,
   ...previouslyMaskedRescue.decisions,
+  eligiblePreferredRoleAdmission,
+  invalidPreferredRoleMissingMeaning,
+  invalidPreferredRoleFailedAdmission,
+  invalidPreferredRoleMissingReal,
+  previouslyMaskedPreferredRoleAdmission,
   validSurprisePromotion,
   invalidSurprisePromotion,
   safeSurpriseDemotion,
@@ -531,6 +617,38 @@ assert(
     ) &&
     previouslyMaskedRescue.selectedCandidates.length === 0,
   'Previously masked rescue must refuse and keep the route from surviving.',
+)
+assert(
+  eligiblePreferredRoleAdmission.decision === 'admit',
+  'Eligible preferred-role admission should admit from owner-supported signals.',
+)
+assert(
+  invalidPreferredRoleMissingMeaning.decision === 'refuse_admission' &&
+    invalidPreferredRoleMissingMeaning.reasons?.includes(
+      'preferred_role:would_mask_missing_meaning',
+    ),
+  'Preferred-role admission must not mask missing Taste meaning.',
+)
+assert(
+  invalidPreferredRoleFailedAdmission.decision === 'refuse_admission' &&
+    invalidPreferredRoleFailedAdmission.reasons?.includes(
+      'preferred_role:would_mask_failed_admission',
+    ),
+  'Preferred-role admission must not mask failed Bearings admission.',
+)
+assert(
+  invalidPreferredRoleMissingReal.decision === 'refuse_admission' &&
+    invalidPreferredRoleMissingReal.reasons?.includes(
+      'preferred_role:would_mask_missing_real',
+    ),
+  'Preferred-role admission must not emit without Field Real owner signal.',
+)
+assert(
+  previouslyMaskedPreferredRoleAdmission.decision === 'refuse_admission' &&
+    previouslyMaskedPreferredRoleAdmission.reasons?.includes(
+      'preferred_role:would_mask_failed_admission',
+    ),
+  'Previously masked preferred-role admission must refuse failed owner criteria.',
 )
 assert(
   validSurprisePromotion.decision === 'promote',
@@ -625,6 +743,20 @@ const output = {
         previouslyMaskedRescue.selectedCandidates.length > 0,
       fallbackMasksFailedOwnerCriteria: false,
     },
+    preferredRoleAdmission: {
+      eligibleDecision: eligiblePreferredRoleAdmission.decision,
+      missingMeaningDecision: invalidPreferredRoleMissingMeaning.decision,
+      missingMeaningReasons: invalidPreferredRoleMissingMeaning.reasons,
+      failedAdmissionDecision: invalidPreferredRoleFailedAdmission.decision,
+      failedAdmissionReasons: invalidPreferredRoleFailedAdmission.reasons,
+      missingRealDecision: invalidPreferredRoleMissingReal.decision,
+      missingRealReasons: invalidPreferredRoleMissingReal.reasons,
+      previouslyMaskedDecision: previouslyMaskedPreferredRoleAdmission.decision,
+      previouslyMaskedReasons: previouslyMaskedPreferredRoleAdmission.reasons,
+      previouslyMaskedSurvives:
+        previouslyMaskedPreferredRoleAdmission.decision === 'admit',
+      admissionMasksFailedOwnerCriteria: false,
+    },
     surprisePromotionDemotion: {
       validPromotionDecision: validSurprisePromotion.decision,
       invalidPromotionDecision: invalidSurprisePromotion.decision,
@@ -651,6 +783,7 @@ const output = {
     noWaypointAuthoredGreatStopCriteria: true,
     noFallbackMasksFailedOwnerCriteria: true,
     noPreservationMasksFailedOwnerCriteria: true,
+    noPreferredRoleAdmissionMasksFailedOwnerCriteria: true,
     noPromotionManufacturesCandidateTruth: true,
     emptyInvalidPoolsRemainEmpty: true,
     refusalReasonsExplicit: decisions.every(
