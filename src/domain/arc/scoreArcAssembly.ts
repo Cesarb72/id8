@@ -22,8 +22,7 @@ import type {
 import {
   computeArcLocalStretchPolicy,
   computeArcWhenSpatialScorePressure,
-  isPeakDistanceFeasible,
-  isPeakRouteTimeFeasible,
+  evaluatePeakCandidateFeasibility,
 } from '../bearings/evaluateArcRouteMovementFeasibility'
 import { isMeaningfulMomentStretchCandidate } from '../constraints/localStretchPolicy'
 import {
@@ -462,41 +461,54 @@ function getUniqueRolePoolCandidates(rolePools?: RolePools): ArcStop['scoredVenu
   ]
 }
 
-function isArcPeakDistanceFeasible(
-  candidate: ArcStop['scoredVenue'],
-  intent: IntentProfile,
-): boolean {
-  return isPeakDistanceFeasible(candidate, intent, {
-    allowMeaningfulStretch: true,
-    isMeaningfulStretchCandidate: isMeaningfulMomentStretchCandidate,
-  })
-}
-
 function hasPeakConstraintConflict(candidate: ArcStop['scoredVenue']): boolean {
-  const hardContractConflict =
-    candidate.roleContract.peak.strength === 'hard' && !candidate.roleContract.peak.satisfied
-  return (
-    candidate.highlightValidity.validityLevel === 'invalid' ||
-    candidate.highlightValidity.personaVetoes.length > 0 ||
-    candidate.highlightValidity.contextVetoes.length > 0 ||
-    candidate.highlightValidity.violations.length > 0 ||
-    hardContractConflict
-  )
+  return !evaluatePeakCandidateFeasibility({
+    candidate,
+    evaluateRouteTime: false,
+    requireHighlightValidity: true,
+    requireHighlightVetoClear: true,
+    requirePeakContract: true,
+  }).constraintsFeasible
 }
 
 function hasPeakAnchorConflict(
   candidate: ArcStop['scoredVenue'],
   intent: IntentProfile,
 ): boolean {
-  if (intent.planningMode !== 'user-led' || !intent.anchor?.venueId) {
-    return false
-  }
+  return !evaluatePeakCandidateFeasibility({
+    candidate,
+    intent,
+    anchoredPeakBaseVenueId:
+      intent.planningMode === 'user-led' &&
+      (intent.anchor?.role ?? 'highlight') === 'highlight'
+        ? intent.anchor?.venueId
+        : undefined,
+    evaluateRouteTime: false,
+    requireHighlightValidity: false,
+    requireHighlightVetoClear: false,
+    requirePeakContract: false,
+  }).anchorFeasible
+}
 
-  const anchorRole = intent.anchor.role ?? 'highlight'
-  return (
-    anchorRole === 'highlight' &&
-    intent.anchor.venueId !== getScoredVenueBaseVenueId(candidate)
-  )
+function isArcPeakCandidateFeasible(
+  candidate: ArcStop['scoredVenue'],
+  intent: IntentProfile,
+): boolean {
+  return evaluatePeakCandidateFeasibility({
+    candidate,
+    intent,
+    anchoredPeakBaseVenueId:
+      intent.planningMode === 'user-led' &&
+      (intent.anchor?.role ?? 'highlight') === 'highlight'
+        ? intent.anchor?.venueId
+        : undefined,
+    allowMeaningfulStretch: true,
+    isMeaningfulStretchCandidate: isMeaningfulMomentStretchCandidate,
+    evaluateRouteTime: true,
+    requireHighlightValidity: true,
+    requireHighlightVetoClear: true,
+    requirePeakContract: true,
+  }).feasible
 }
 
 function isFeasiblePeakMomentLeadCandidate(
@@ -514,10 +526,7 @@ function isFeasiblePeakMomentLeadCandidate(
     strongMomentLead &&
     candidate.roleScores.peak >= 0.6 &&
     candidate.stopShapeFit.highlight >= 0.36 &&
-    !hasPeakAnchorConflict(candidate, intent) &&
-    isArcPeakDistanceFeasible(candidate, intent) &&
-    isPeakRouteTimeFeasible(candidate) &&
-    !hasPeakConstraintConflict(candidate)
+    isArcPeakCandidateFeasible(candidate, intent)
   )
 }
 
@@ -561,13 +570,28 @@ function isFeasibleRomanticMomentCandidate(
   if (!assessRomanticPersonaHighlightQualification(candidate).qualifies) {
     return false
   }
-  if (!isArcPeakDistanceFeasible(candidate, intent) || !isPeakRouteTimeFeasible(candidate)) {
+  const peakFeasibility = evaluatePeakCandidateFeasibility({
+    candidate,
+    intent,
+    anchoredPeakBaseVenueId:
+      intent.planningMode === 'user-led' &&
+      (intent.anchor?.role ?? 'highlight') === 'highlight'
+        ? intent.anchor?.venueId
+        : undefined,
+    allowMeaningfulStretch: true,
+    isMeaningfulStretchCandidate: isMeaningfulMomentStretchCandidate,
+    evaluateRouteTime: true,
+    requireHighlightValidity: true,
+    requireHighlightVetoClear: true,
+    requirePeakContract: true,
+  })
+  if (!peakFeasibility.distanceFeasible || !peakFeasibility.routeTimeFeasible) {
     return false
   }
 
   const highlightFeasible =
-    !hasPeakAnchorConflict(candidate, intent) &&
-    !hasPeakConstraintConflict(candidate) &&
+    peakFeasibility.anchorFeasible &&
+    peakFeasibility.constraintsFeasible &&
     candidate.roleScores.peak >= 0.58 &&
     candidate.stopShapeFit.highlight >= 0.34
   const warmupFeasible =
@@ -588,10 +612,7 @@ function isFeasibleRomanticHighlightCandidate(
 ): boolean {
   return (
     satisfiesRomanticPersonaHighlightContract(candidate, lens) &&
-    !hasPeakAnchorConflict(candidate, intent) &&
-    isArcPeakDistanceFeasible(candidate, intent) &&
-    isPeakRouteTimeFeasible(candidate) &&
-    !hasPeakConstraintConflict(candidate) &&
+    isArcPeakCandidateFeasible(candidate, intent) &&
     candidate.roleScores.peak >= 0.58 &&
     candidate.stopShapeFit.highlight >= 0.34
   )
@@ -684,10 +705,7 @@ function isFeasibleFamilyCompetitionHighlightCandidate(
   lens: ExperienceLens,
 ): boolean {
   if (
-    hasPeakAnchorConflict(candidate, intent) ||
-    !isArcPeakDistanceFeasible(candidate, intent) ||
-    !isPeakRouteTimeFeasible(candidate) ||
-    hasPeakConstraintConflict(candidate)
+    !isArcPeakCandidateFeasible(candidate, intent)
   ) {
     return false
   }

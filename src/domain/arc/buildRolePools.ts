@@ -21,7 +21,6 @@ import {
   satisfiesRomanticPersonaHighlightContract,
 } from '../contracts/romanticPersonaContract'
 import {
-  isCandidateWithinActiveDistanceWindow,
   isMeaningfulMomentStretchCandidate,
   isOutsideStrictNearbyButWithinBoundedStretch,
   isWithinStrictNearbyWindow,
@@ -58,6 +57,7 @@ import type {
   BearingsRouteStopRole,
   DistrictRoutePlaceFacts,
 } from '../bearings/routePlaceRightContract'
+import { evaluatePeakCandidateFeasibility } from '../bearings/evaluateArcRouteMovementFeasibility'
 
 export interface RolePools {
   warmup: ScoredVenue[]
@@ -822,30 +822,20 @@ function isPeakHighlightFeasibleCandidate(
   candidate: ScoredVenue,
   intent?: IntentProfile,
 ): boolean {
-  const anchoredPeakVenueId = getAnchorVenueId(intent, 'peak')
-  const hardContractConflict =
-    candidate.roleContract.peak.strength === 'hard' && !candidate.roleContract.peak.satisfied
-  if (anchoredPeakVenueId && anchoredPeakVenueId !== getScoredVenueBaseVenueId(candidate)) {
-    return false
-  }
-  if (candidate.highlightValidity.validityLevel === 'invalid') {
-    return false
-  }
-  if (intent && !isCandidateWithinActiveDistanceWindow(candidate, intent, { allowMeaningfulStretch: true })) {
-    return false
-  }
-  if (!intent && candidate.fitBreakdown.proximityFit < 0.48) {
-    return false
-  }
-  if (isPreferredRoleHoursInfeasible(candidate, 'peak')) {
-    return false
-  }
-  if (
-    candidate.highlightValidity.personaVetoes.length > 0 ||
-    candidate.highlightValidity.contextVetoes.length > 0 ||
-    candidate.highlightValidity.violations.length > 0 ||
-    hardContractConflict
-  ) {
+  const feasibility = evaluatePeakCandidateFeasibility({
+    candidate,
+    intent,
+    anchoredPeakBaseVenueId: getAnchorVenueId(intent, 'peak'),
+    allowMeaningfulStretch: true,
+    isMeaningfulStretchCandidate: isMeaningfulMomentStretchCandidate,
+    minimumProximityFitWithoutIntent: 0.48,
+    evaluateHoursPressure: true,
+    evaluateRouteTime: false,
+    requireHighlightValidity: true,
+    requireHighlightVetoClear: true,
+    requirePeakContract: true,
+  })
+  if (!feasibility.feasible) {
     return false
   }
   return candidate.roleScores.peak >= 0.58 && candidate.stopShapeFit.highlight >= 0.34
@@ -882,10 +872,19 @@ function isFeasibleRomanticMomentPoolCandidate(
   if (!candidate.taste.signals.isRomanticMomentCandidate) {
     return false
   }
-  if (intent && !isCandidateWithinActiveDistanceWindow(candidate, intent, { allowMeaningfulStretch: true })) {
-    return false
-  }
-  if (!intent && candidate.fitBreakdown.proximityFit < 0.48) {
+  const peakDistanceFeasibility = evaluatePeakCandidateFeasibility({
+    candidate,
+    intent,
+    allowMeaningfulStretch: true,
+    isMeaningfulStretchCandidate: isMeaningfulMomentStretchCandidate,
+    minimumProximityFitWithoutIntent: 0.48,
+    evaluateHoursPressure: false,
+    evaluateRouteTime: false,
+    requireHighlightValidity: false,
+    requireHighlightVetoClear: false,
+    requirePeakContract: false,
+  })
+  if (!peakDistanceFeasibility.distanceFeasible) {
     return false
   }
 
@@ -1214,26 +1213,19 @@ function isRecoverableCentralMomentHighlightCandidate(
   candidate: ScoredVenue,
   intent?: IntentProfile,
 ): boolean {
-  const hardContractConflict =
-    candidate.roleContract.peak.strength === 'hard' && !candidate.roleContract.peak.satisfied
-  if (hardContractConflict) {
-    return false
-  }
-  if (
-    candidate.highlightValidity.validityLevel === 'invalid' ||
-    isPreferredRoleHoursInfeasible(candidate, 'peak')
-  ) {
-    return false
-  }
-  if (
-    intent &&
-    !isCandidateWithinActiveDistanceWindow(candidate, intent, {
-      allowMeaningfulStretch: true,
-    })
-  ) {
-    return false
-  }
-  if (!intent && candidate.fitBreakdown.proximityFit < 0.4) {
+  const feasibility = evaluatePeakCandidateFeasibility({
+    candidate,
+    intent,
+    allowMeaningfulStretch: true,
+    isMeaningfulStretchCandidate: isMeaningfulMomentStretchCandidate,
+    minimumProximityFitWithoutIntent: 0.4,
+    evaluateHoursPressure: true,
+    evaluateRouteTime: false,
+    requireHighlightValidity: true,
+    requireHighlightVetoClear: false,
+    requirePeakContract: true,
+  })
+  if (!feasibility.feasible) {
     return false
   }
   if (

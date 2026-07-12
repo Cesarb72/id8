@@ -6,6 +6,7 @@ import {
 import type { ArcStop, ScoredVenue } from '../types/arc'
 import type { IntentProfile } from '../types/intent'
 import type { SpatialCoherenceAnalysis } from '../types/spatial'
+import { computeRoleAwareHoursPressure } from '../retrieval/computeRoleAwareHoursPressure'
 import type {
   WhenSignalProfile,
   WhenSpatialScoringMode,
@@ -45,6 +46,36 @@ export interface ComputeArcLocalStretchPolicyInput {
   isMeaningfulStretchCandidate: (candidate: ScoredVenue, intent: IntentProfile) => boolean
   scoreMeaningfulMomentStretchCandidate: (candidate: ScoredVenue) => number
 }
+
+export interface PeakCandidateFeasibilityVerdict {
+  feasible: boolean
+  distanceFeasible: boolean
+  routeTimeFeasible: boolean
+  hoursFeasible: boolean
+  anchorFeasible: boolean
+  constraintsFeasible: boolean
+  reasons: string[]
+  provenance: {
+    source: 'bearings'
+    version: string
+  }
+}
+
+export interface EvaluatePeakCandidateFeasibilityInput {
+  candidate: ScoredVenue
+  intent?: IntentProfile
+  anchoredPeakBaseVenueId?: string
+  allowMeaningfulStretch?: boolean
+  isMeaningfulStretchCandidate?: (candidate: ScoredVenue, intent: IntentProfile) => boolean
+  minimumProximityFitWithoutIntent?: number
+  evaluateHoursPressure?: boolean
+  evaluateRouteTime?: boolean
+  requireHighlightValidity?: boolean
+  requireHighlightVetoClear?: boolean
+  requirePeakContract?: boolean
+}
+
+const BEARINGS_PEAK_CANDIDATE_FEASIBILITY_VERSION = 'crux-step-3'
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
@@ -114,6 +145,95 @@ export function isPeakDistanceFeasible(
     return options.isMeaningfulStretchCandidate(candidate, intent)
   }
   return false
+}
+
+function isPeakHoursFeasible(candidate: ScoredVenue): boolean {
+  const source = candidate.venue.source
+  if (
+    source.businessStatus === 'temporarily-closed' ||
+    source.businessStatus === 'closed-permanently'
+  ) {
+    return false
+  }
+  if (source.sourceOrigin !== 'live') {
+    return true
+  }
+
+  const roleHours = computeRoleAwareHoursPressure(candidate.venue, 'peak')
+  if (!source.likelyOpenForCurrentWindow && source.timeConfidence >= 0.68) {
+    return false
+  }
+  return roleHours.penalty < 0.18
+}
+
+export function evaluatePeakCandidateFeasibility(
+  input: EvaluatePeakCandidateFeasibilityInput,
+): PeakCandidateFeasibilityVerdict {
+  const {
+    candidate,
+    intent,
+    anchoredPeakBaseVenueId,
+    allowMeaningfulStretch = true,
+    isMeaningfulStretchCandidate,
+    minimumProximityFitWithoutIntent = 0.48,
+    evaluateHoursPressure = false,
+    evaluateRouteTime = true,
+    requireHighlightValidity = true,
+    requireHighlightVetoClear = true,
+    requirePeakContract = true,
+  } = input
+
+  const distanceFeasible = intent
+    ? isPeakDistanceFeasible(candidate, intent, {
+        allowMeaningfulStretch,
+        isMeaningfulStretchCandidate,
+      })
+    : candidate.fitBreakdown.proximityFit >= minimumProximityFitWithoutIntent
+  const routeTimeFeasible = evaluateRouteTime ? isPeakRouteTimeFeasible(candidate) : true
+  const hoursFeasible = evaluateHoursPressure ? isPeakHoursFeasible(candidate) : true
+  const anchorFeasible =
+    !anchoredPeakBaseVenueId ||
+    anchoredPeakBaseVenueId === candidate.candidateIdentity.baseVenueId
+  const peakContractConflict =
+    candidate.roleContract.peak.strength === 'hard' && !candidate.roleContract.peak.satisfied
+  const highlightValidityFeasible =
+    !requireHighlightValidity || candidate.highlightValidity.validityLevel !== 'invalid'
+  const highlightVetoFeasible =
+    !requireHighlightVetoClear ||
+    (candidate.highlightValidity.personaVetoes.length === 0 &&
+      candidate.highlightValidity.contextVetoes.length === 0 &&
+      candidate.highlightValidity.violations.length === 0)
+  const contractFeasible = !requirePeakContract || !peakContractConflict
+  const constraintsFeasible =
+    highlightValidityFeasible && highlightVetoFeasible && contractFeasible
+  const reasons = [
+    ...(distanceFeasible ? [] : ['peak_feasibility:distance']),
+    ...(routeTimeFeasible ? [] : ['peak_feasibility:route_time']),
+    ...(hoursFeasible ? [] : ['peak_feasibility:hours']),
+    ...(anchorFeasible ? [] : ['peak_feasibility:anchor_conflict']),
+    ...(highlightValidityFeasible ? [] : ['peak_feasibility:invalid_highlight']),
+    ...(highlightVetoFeasible ? [] : ['peak_feasibility:highlight_veto']),
+    ...(contractFeasible ? [] : ['peak_feasibility:hard_contract_conflict']),
+  ]
+
+  return {
+    feasible:
+      distanceFeasible &&
+      routeTimeFeasible &&
+      hoursFeasible &&
+      anchorFeasible &&
+      constraintsFeasible,
+    distanceFeasible,
+    routeTimeFeasible,
+    hoursFeasible,
+    anchorFeasible,
+    constraintsFeasible,
+    reasons,
+    provenance: {
+      source: 'bearings',
+      version: BEARINGS_PEAK_CANDIDATE_FEASIBILITY_VERSION,
+    },
+  }
 }
 
 export function computeArcWhenSpatialScorePressure(params: {
