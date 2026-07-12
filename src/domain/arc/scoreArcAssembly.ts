@@ -24,6 +24,7 @@ import {
   computeArcWhenSpatialScorePressure,
   evaluatePeakCandidateFeasibility,
 } from '../bearings/evaluateArcRouteMovementFeasibility'
+import { coordinateArcScoreAssembly } from '../../integrations/waypoint/coordination/coordinateArcScoreAssembly'
 import { isMeaningfulMomentStretchCandidate } from '../constraints/localStretchPolicy'
 import {
   assessGenericHospitalityFallbackPenalty,
@@ -368,16 +369,6 @@ function computeSurpriseDirectionAlignmentAdjustments(
     alignment,
     applied: true,
   }
-}
-
-function normalizeArcTotalScore(value: number): number {
-  if (value <= 0) {
-    return 0
-  }
-  if (value <= 0.88) {
-    return value
-  }
-  return value / (1 + value - 0.88)
 }
 
 export function isArcViable(input: {
@@ -3239,69 +3230,73 @@ export function scoreArcAssembly(
     },
   })
 
-  const totalScoreRaw =
-    breakdown.roleFlowScore * 0.34 +
-      breakdown.diversityScore * 0.12 +
-      breakdown.geographyScore * 0.2 +
-      breakdown.hiddenGemLift * 0.1 +
-      breakdown.windDownScore * 0.14 +
-      pacing.pacingScore * 0.12 +
-      pacing.transitionSmoothnessScore * 0.1 +
-      pacing.outingLengthScore * 0.08 +
-      routeMeaning.vibeCoherenceScore * 0.1 +
-      routeMeaning.highlightVibeScore * 0.12 +
-      highlightMomentScore * 0.18 +
-      momentPreservation.varianceScore * 0.12 +
-      highlightValidityScore * 0.16 +
-      routeMeaning.arcContrastScore * 0.16 +
-      routeMeaning.highlightCenteringScore * 0.14 +
-      discoveryContract.score * 0.4 +
-      routeMeaning.supportStopVibeScore * 0.14 +
-      routeShapeBias.score * 0.08 +
-      alignmentPreservation.alignmentPreservationScore * 0.32 +
-      alignmentPreservation.themeSpreadScore * 0.08 +
-      momentPreservation.score * 0.16 +
-      routeMeaning.romanticContractScore +
-      routeMeaning.familyCompetitionScore +
-      routeMeaning.expressionReleaseScore +
-      routeMeaning.activationMomentElevationScore +
-      localStretchPolicy.score +
-      routeMeaning.roleEnergyScore * 0.1 +
-      liveRolePromotionScore * 0.06 +
-      routeMeaning.roleAwareCategoryLift * 0.12 +
-      surpriseDirectionAlignment.score +
-      surpriseHighlightCalibration.score +
-      highlightIntegrity.dominanceBoost +
-      routeMeaning.familyAlignmentBoost +
-      routeMeaning.categoryDiversityBonus +
-      routeMeaning.lensCoherenceScore * 0.1 +
-      routeMeaning.contextSpecificityLift * 0.09 -
-      highlightIntegrity.weakPenalty -
-      routeMeaning.familyMismatchPenalty -
-      highlightIntegrity.supportPenalty -
-      routeMeaning.fakeCompletenessPenalty -
-      discoveryContract.penalty * 0.18 -
-      routeMeaning.categoryDiversityPenalty -
-      pacing.awkwardPacingPenalty * 0.14 -
-      routeMeaning.dominancePenalty * 0.08 +
-      contractCompliance * 0.12 -
-      contractViolationPenalty * 0.16 -
-      momentPreservation.flatPenalty -
-      momentPreservation.penalty -
-      routeMeaning.romanticContractPenalty -
-      routeMeaning.familyCompetitionPenalty -
-      routeMeaning.expressionReleasePenalty -
-      routeMeaning.activationMomentElevationPenalty -
-      fallbackHighlightSuppression.penalty -
-      localStretchPolicy.penalty -
-      alignmentPreservation.themeSpreadPenalty -
-      surpriseDirectionAlignment.penalty -
-      surpriseHighlightCalibration.penalty -
-      routeMeaning.roleEnergyPenalty -
-      missedPeakPenalty.penalty -
-      alignmentPreservation.penalty +
-      whenSpatialPressure.scoreDelta
-  const totalScore = normalizeArcTotalScore(totalScoreRaw)
+  const scoreCoordination = coordinateArcScoreAssembly({
+    roleFlowScore: breakdown.roleFlowScore,
+    diversityScore: breakdown.diversityScore,
+    geographyScore: breakdown.geographyScore,
+    hiddenGemLift: breakdown.hiddenGemLift,
+    windDownScore: breakdown.windDownScore,
+    pacingScore: pacing.pacingScore,
+    transitionSmoothnessScore: pacing.transitionSmoothnessScore,
+    outingLengthScore: pacing.outingLengthScore,
+    vibeCoherenceScore: routeMeaning.vibeCoherenceScore,
+    highlightVibeScore: routeMeaning.highlightVibeScore,
+    highlightMomentScore,
+    momentVarianceScore: momentPreservation.varianceScore,
+    highlightValidityScore,
+    arcContrastScore: routeMeaning.arcContrastScore,
+    highlightCenteringScore: routeMeaning.highlightCenteringScore,
+    discoveryContractScore: discoveryContract.score,
+    supportStopVibeScore: routeMeaning.supportStopVibeScore,
+    routeShapeBiasScore: routeShapeBias.score,
+    alignmentPreservationScore:
+      alignmentPreservation.alignmentPreservationScore,
+    themeSpreadScore: alignmentPreservation.themeSpreadScore,
+    momentPreservationScore: momentPreservation.score,
+    romanticContractScore: routeMeaning.romanticContractScore,
+    familyCompetitionScore: routeMeaning.familyCompetitionScore,
+    expressionReleaseScore: routeMeaning.expressionReleaseScore,
+    activationMomentElevationScore:
+      routeMeaning.activationMomentElevationScore,
+    localStretchScore: localStretchPolicy.score,
+    roleEnergyScore: routeMeaning.roleEnergyScore,
+    liveRolePromotionScore,
+    roleAwareCategoryLift: routeMeaning.roleAwareCategoryLift,
+    surpriseDirectionAlignmentScore: surpriseDirectionAlignment.score,
+    surpriseHighlightCalibrationScore: surpriseHighlightCalibration.score,
+    highlightDominanceBoost: highlightIntegrity.dominanceBoost,
+    familyAlignmentBoost: routeMeaning.familyAlignmentBoost,
+    categoryDiversityBonus: routeMeaning.categoryDiversityBonus,
+    lensCoherenceScore: routeMeaning.lensCoherenceScore,
+    contextSpecificityLift: routeMeaning.contextSpecificityLift,
+    weakHighlightPenalty: highlightIntegrity.weakPenalty,
+    familyMismatchPenalty: routeMeaning.familyMismatchPenalty,
+    supportPenalty: highlightIntegrity.supportPenalty,
+    fakeCompletenessPenalty: routeMeaning.fakeCompletenessPenalty,
+    discoveryContractPenalty: discoveryContract.penalty,
+    categoryDiversityPenalty: routeMeaning.categoryDiversityPenalty,
+    awkwardPacingPenalty: pacing.awkwardPacingPenalty,
+    dominancePenalty: routeMeaning.dominancePenalty,
+    contractComplianceScore: contractCompliance,
+    contractViolationPenalty,
+    momentFlatPenalty: momentPreservation.flatPenalty,
+    momentPenalty: momentPreservation.penalty,
+    romanticContractPenalty: routeMeaning.romanticContractPenalty,
+    familyCompetitionPenalty: routeMeaning.familyCompetitionPenalty,
+    expressionReleasePenalty: routeMeaning.expressionReleasePenalty,
+    activationMomentElevationPenalty:
+      routeMeaning.activationMomentElevationPenalty,
+    fallbackHighlightPenalty: fallbackHighlightSuppression.penalty,
+    localStretchPenalty: localStretchPolicy.penalty,
+    themeSpreadPenalty: alignmentPreservation.themeSpreadPenalty,
+    surpriseDirectionAlignmentPenalty: surpriseDirectionAlignment.penalty,
+    surpriseHighlightCalibrationPenalty: surpriseHighlightCalibration.penalty,
+    roleEnergyPenalty: routeMeaning.roleEnergyPenalty,
+    missedPeakPenalty: missedPeakPenalty.penalty,
+    alignmentPreservationPenalty: alignmentPreservation.penalty,
+    whenSpatialScoreDelta: whenSpatialPressure.scoreDelta,
+  })
+  const totalScore = scoreCoordination.totalScore
 
   return {
     totalScore,
