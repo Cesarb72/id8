@@ -14,6 +14,11 @@ import {
   type TasteRouteMeaningStopEvidenceInput,
 } from '../interpretation/taste/computeRouteMeaningVerdict'
 import { computeRouteQualityVerdict } from '../interpretation/taste/computeRouteQualityVerdict'
+import { computeTasteRolePoolCandidateMeaning } from '../interpretation/taste/computeTasteRolePoolMeaningView'
+import type {
+  RolePoolMeaningCandidateEvidence,
+  RolePoolMeaningCandidateInput,
+} from '../interpretation/taste/computeRolePoolMeaningEvidence'
 import {
   computeArcLocalStretchPolicy,
   computeArcWhenSpatialScorePressure,
@@ -208,6 +213,54 @@ function toRouteMeaningStopEvidence(stop: ArcStop): TasteRouteMeaningStopEvidenc
   }
 }
 
+function toRolePoolMeaningCandidateEvidence(
+  candidate: ArcStop['scoredVenue'],
+): RolePoolMeaningCandidateInput {
+  const signals = candidate.taste.signals
+
+  return {
+    candidateVenueId: getScoredVenueBaseVenueId(candidate),
+    category: candidate.venue.category,
+    subcategory: candidate.venue.subcategory,
+    tags: candidate.venue.tags,
+    vibeTags: candidate.venue.vibeTags,
+    energy: signals.energy,
+    socialDensity: signals.socialDensity,
+    intimacy: signals.intimacy,
+    lingerFactor: signals.lingerFactor,
+    destinationFactor: signals.destinationFactor,
+    experientialFactor: signals.experientialFactor,
+    conversationFriendliness: signals.conversationFriendliness,
+    interactiveStrength: signals.interactiveStrength,
+    durationEstimate: signals.durationEstimate,
+    roleSuitability: signals.roleSuitability,
+    momentIntensityScore: signals.momentIntensity.score,
+    momentPotentialScore: signals.momentPotential.score,
+    anchorStrength: signals.anchorStrength,
+    primaryExperienceArchetype: signals.primaryExperienceArchetype,
+  }
+}
+
+function getTasteRolePoolCandidateMeaning(
+  candidate: ArcStop['scoredVenue'],
+): RolePoolMeaningCandidateEvidence {
+  return computeTasteRolePoolCandidateMeaning(
+    toRolePoolMeaningCandidateEvidence(candidate),
+  )
+}
+
+function getPeakMomentPotentialScore(candidate: ArcStop['scoredVenue']): number {
+  return getTasteRolePoolCandidateMeaning(candidate).expressionActivation.momentPotential
+}
+
+function getPeakMomentIntensityScore(candidate: ArcStop['scoredVenue']): number {
+  return getTasteRolePoolCandidateMeaning(candidate).expressionActivation.momentIntensity
+}
+
+function getPeakAnchorStrength(candidate: ArcStop['scoredVenue']): number {
+  return getTasteRolePoolCandidateMeaning(candidate).expressionActivation.anchorStrength
+}
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
 }
@@ -383,10 +436,10 @@ function computePeakMomentLeadScore(candidate: ArcStop['scoredVenue']): number {
 
   return (
     candidate.roleScores.peak * 0.42 +
-    candidate.taste.signals.momentPotential.score * 0.24 +
-    candidate.taste.signals.momentIntensity.score * 0.22 +
+    getPeakMomentPotentialScore(candidate) * 0.24 +
+    getPeakMomentIntensityScore(candidate) * 0.22 +
     getMomentIntensityTierBoost(candidate.taste.signals.momentIntensity) * 0.9 +
-    candidate.taste.signals.anchorStrength * 0.18 +
+    getPeakAnchorStrength(candidate) * 0.18 +
     getPeakMomentStrengthWeight(candidate.momentIdentity.strength) * 0.1 +
     getPeakMomentTypeWeight(candidate.momentIdentity.type) * 0.06
   ) * validityWeight
@@ -455,7 +508,7 @@ function isFeasiblePeakMomentLeadCandidate(
     candidate.momentIdentity.type === 'explore'
   const strongMomentLead =
     candidate.momentIdentity.strength === 'strong' ||
-    candidate.taste.signals.momentPotential.score >= 0.72
+    getPeakMomentPotentialScore(candidate) >= 0.72
   return (
     peakTypedMoment &&
     strongMomentLead &&
@@ -494,8 +547,8 @@ function computeRomanticMomentLeadScore(candidate: ArcStop['scoredVenue']): numb
 
   return (
     computePeakMomentLeadScore(candidate) +
-    candidate.taste.signals.momentPotential.score * 0.04 +
-    candidate.taste.signals.momentIntensity.score * 0.1 +
+    getPeakMomentPotentialScore(candidate) * 0.04 +
+    getPeakMomentIntensityScore(candidate) * 0.1 +
     experientialArchetypeLift -
     hospitalityPenalty
   )
@@ -598,8 +651,8 @@ function computeFallbackHighlightSuppression(
     assessment.appliedPenalty > 0 &&
     isGenericHospitalityFallbackCandidate(finalHighlight) &&
     (finalHighlight.highlightValidity.validityLevel === 'fallback' ||
-      finalHighlight.taste.signals.momentPotential.score < 0.64 ||
-      finalHighlight.taste.signals.momentIntensity.score < 0.66 ||
+      getPeakMomentPotentialScore(finalHighlight) < 0.64 ||
+      getPeakMomentIntensityScore(finalHighlight) < 0.66 ||
       finalHighlight.vibeAuthority.byRole.highlight < 0.58)
       ? 0.02
       : 0
@@ -2313,20 +2366,20 @@ function computeSurpriseHighlightCalibration(
     candidate.momentIdentity.type !== 'anchor' &&
     candidate.momentIdentity.type !== 'explore'
   const lowMoment =
-    candidate.taste.signals.momentPotential.score < 0.62 ||
-    candidate.taste.signals.momentIntensity.score < 0.64
+    getPeakMomentPotentialScore(candidate) < 0.62 ||
+    getPeakMomentIntensityScore(candidate) < 0.64
   const lowAuthority = candidate.vibeAuthority.byRole.highlight < 0.58
   const lowSpecificity = candidate.contextSpecificity.byRole.peak < 0.48
   const strongMoment =
-    candidate.taste.signals.momentPotential.score >= 0.74 &&
-    candidate.taste.signals.momentIntensity.score >= 0.72 &&
+    getPeakMomentPotentialScore(candidate) >= 0.74 &&
+    getPeakMomentIntensityScore(candidate) >= 0.72 &&
     (candidate.momentIdentity.type === 'anchor' ||
       candidate.momentIdentity.type === 'explore' ||
       candidate.momentIdentity.strength === 'strong')
   const strongSpecificity = candidate.contextSpecificity.byRole.peak >= 0.62
   const strongAuthority = candidate.vibeAuthority.byRole.highlight >= 0.68
   const dominantCenterpiece =
-    candidate.taste.signals.anchorStrength >= 0.68 ||
+    getPeakAnchorStrength(candidate) >= 0.68 ||
     candidate.taste.signals.destinationFactor >= 0.7 ||
     candidate.taste.signals.experientialFactor >= 0.74
 

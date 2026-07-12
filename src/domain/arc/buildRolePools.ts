@@ -40,6 +40,7 @@ import {
   computeTasteRolePoolMeaningForCandidate,
 } from '../interpretation/taste/computeTasteRolePoolMeaningView'
 import type {
+  RolePoolMeaningCandidateEvidence,
   RolePoolMeaningCandidateInput,
   RolePoolMeaningContextInput,
 } from '../interpretation/taste/computeRolePoolMeaningEvidence'
@@ -230,22 +231,36 @@ function isBuildFriendsEasyHangContext(
 
 function getEasyHangHardIncompatibleSignals(candidate: ScoredVenue): string[] {
   return [
-    ...computeTasteRolePoolCandidateMeaning(
-      toRolePoolMeaningCandidateEvidence(candidate),
-    ).hardIncompatibleSignals,
+    ...getTasteRolePoolCandidateMeaning(candidate).hardIncompatibleSignals,
   ]
 }
 
 function isEasyHangHardIncompatibleCandidate(candidate: ScoredVenue): boolean {
+  return getTasteRolePoolCandidateMeaning(candidate).hardIncompatible
+}
+
+function getTasteRolePoolCandidateMeaning(
+  candidate: ScoredVenue,
+): RolePoolMeaningCandidateEvidence {
   return computeTasteRolePoolCandidateMeaning(
     toRolePoolMeaningCandidateEvidence(candidate),
-  ).hardIncompatible
+  )
 }
 
 function getCategoryArchetypeMeaning(candidate: ScoredVenue) {
-  return computeTasteRolePoolCandidateMeaning(
-    toRolePoolMeaningCandidateEvidence(candidate),
-  ).categoryArchetype
+  return getTasteRolePoolCandidateMeaning(candidate).categoryArchetype
+}
+
+function getPeakMomentPotentialScore(candidate: ScoredVenue): number {
+  return getTasteRolePoolCandidateMeaning(candidate).expressionActivation.momentPotential
+}
+
+function getPeakMomentIntensityScore(candidate: ScoredVenue): number {
+  return getTasteRolePoolCandidateMeaning(candidate).expressionActivation.momentIntensity
+}
+
+function getPeakAnchorStrength(candidate: ScoredVenue): number {
+  return getTasteRolePoolCandidateMeaning(candidate).expressionActivation.anchorStrength
 }
 
 function contractWeight(
@@ -331,7 +346,7 @@ function isBaseRoleCandidate(
 ): boolean {
   const peakMomentException =
     role === 'peak' &&
-    item.taste.signals.momentPotential.score >= 0.62 &&
+    getPeakMomentPotentialScore(item) >= 0.62 &&
     (item.taste.signals.primaryExperienceArchetype === 'outdoor' ||
       item.taste.signals.primaryExperienceArchetype === 'scenic' ||
       item.taste.signals.primaryExperienceArchetype === 'activity' ||
@@ -426,12 +441,12 @@ export function computeRolePoolRankingBreakdown(
   const roleFitContribution = candidate.roleScores[role] * 0.45
   const highlightMomentContribution =
     role === 'peak'
-      ? candidate.taste.signals.momentPotential.score * 0.32 +
-        candidate.taste.signals.momentIntensity.score * 0.14 +
+      ? getPeakMomentPotentialScore(candidate) * 0.32 +
+        getPeakMomentIntensityScore(candidate) * 0.14 +
         getMomentIntensityTierBoost(candidate.taste.signals.momentIntensity) * 0.9
       : role === 'wildcard'
-        ? candidate.taste.signals.momentPotential.score * 0.06 +
-          candidate.taste.signals.momentIntensity.score * 0.03
+        ? getPeakMomentPotentialScore(candidate) * 0.06 +
+          getPeakMomentIntensityScore(candidate) * 0.03
         : 0
   const highlightArchetypeContribution =
     role === 'peak'
@@ -450,7 +465,7 @@ export function computeRolePoolRankingBreakdown(
     role === 'peak' &&
     (lens.tasteMode?.id === 'activity-led' || lens.tasteMode?.id === 'scenic-outdoor') &&
     passivePeakArchetype &&
-    candidate.taste.signals.momentPotential.score < 0.55
+    getPeakMomentPotentialScore(candidate) < 0.55
       ? 0.18
       : 0
   const tasteContribution = tasteInfluence.tasteBonus + highlightMomentContribution
@@ -1014,8 +1029,8 @@ function isSurprisePeakChallengeCandidate(params: {
     return false
   }
 
-  const momentPotential = candidate.taste.signals.momentPotential.score
-  const momentIntensity = candidate.taste.signals.momentIntensity.score
+  const momentPotential = getPeakMomentPotentialScore(candidate)
+  const momentIntensity = getPeakMomentIntensityScore(candidate)
   const specificity = candidate.contextSpecificity.byRole.peak
   const authority = candidate.vibeAuthority.byRole.highlight
   const diversity = computePeakChallengeDiversity(leader, candidate)
@@ -1222,7 +1237,7 @@ function isRecoverableCentralMomentHighlightCandidate(
     return false
   }
   if (
-    candidate.taste.signals.momentIntensity.score < CENTRAL_MOMENT_MIN_INTENSITY ||
+    getPeakMomentIntensityScore(candidate) < CENTRAL_MOMENT_MIN_INTENSITY ||
     candidate.fitScore < CENTRAL_MOMENT_MIN_QUALITY
   ) {
     return false
@@ -1235,14 +1250,14 @@ function isRecoverableCentralMomentHighlightCandidate(
   }
   const weakGenericCandidate =
     isGenericHospitalityHighlightCandidate(candidate) &&
-    candidate.taste.signals.momentPotential.score < 0.56 &&
-    candidate.taste.signals.anchorStrength < 0.54 &&
+    getPeakMomentPotentialScore(candidate) < 0.56 &&
+    getPeakAnchorStrength(candidate) < 0.54 &&
     candidate.contextSpecificity.byRole.peak < 0.44
   if (weakGenericCandidate) {
     return false
   }
   const coherentIdentity =
-    candidate.taste.signals.anchorStrength >= 0.52 ||
+    getPeakAnchorStrength(candidate) >= 0.52 ||
     candidate.taste.signals.categorySpecificity >= 0.54 ||
     candidate.taste.signals.personalityStrength >= 0.56 ||
     candidate.contextSpecificity.byRole.peak >= 0.44
@@ -1396,8 +1411,8 @@ function selectPeakCandidatesWithFamilyPreservation(
         (selectionScoreByCandidateId.get(getScoredVenueCandidateId(candidate)) ?? 0)
       return (
         scoreGap <= 0.18 &&
-        candidate.taste.signals.momentIntensity.score >= 0.68 &&
-        candidate.taste.signals.momentPotential.score >= 0.56 &&
+        getPeakMomentIntensityScore(candidate) >= 0.68 &&
+        getPeakMomentPotentialScore(candidate) >= 0.56 &&
         candidate.roleScores.peak >= roleThresholds.peak - 0.03 &&
         candidate.stopShapeFit.highlight >= 0.34
       )
@@ -1501,8 +1516,8 @@ function getPeakStrongMomentSelectionBias(
               : 0
     return (
       0.24 +
-      candidate.taste.signals.momentPotential.score * 0.08 +
-      candidate.taste.signals.momentIntensity.score * 0.08 +
+      getPeakMomentPotentialScore(candidate) * 0.08 +
+      getPeakMomentIntensityScore(candidate) * 0.08 +
       getMomentIntensityTierBoost(candidate.taste.signals.momentIntensity) * 0.8 +
       experientialArchetypeBoost
     )
@@ -1524,7 +1539,7 @@ function getPeakStrongMomentSelectionBias(
       : 0.12
   const passiveFallbackPenalty =
     passiveHospitalityFallback
-      ? candidate.taste.signals.momentPotential.score < 0.62
+      ? getPeakMomentPotentialScore(candidate) < 0.62
         ? 0.14
         : 0.08
       : 0
@@ -1586,8 +1601,8 @@ function getRomanticMomentSelectionBias(
           : 0
       return (
         0.24 +
-        candidate.taste.signals.momentPotential.score * 0.1 +
-        candidate.taste.signals.momentIntensity.score * 0.08 +
+        getPeakMomentPotentialScore(candidate) * 0.1 +
+        getPeakMomentIntensityScore(candidate) * 0.08 +
         getMomentIntensityTierBoost(candidate.taste.signals.momentIntensity) * 0.6 +
         (candidate.momentIdentity.type === 'anchor' ||
         candidate.momentIdentity.type === 'explore'
@@ -1610,8 +1625,8 @@ function getRomanticMomentSelectionBias(
     if (role === 'wildcard') {
       return (
         0.08 +
-        candidate.taste.signals.momentPotential.score * 0.04 +
-        candidate.taste.signals.momentIntensity.score * 0.03
+        getPeakMomentPotentialScore(candidate) * 0.04 +
+        getPeakMomentIntensityScore(candidate) * 0.03
       )
     }
     return 0.02
@@ -1637,9 +1652,9 @@ function getRomanticMomentSelectionBias(
       ? 0.05
       : 0
   const lowMomentPenalty =
-    candidate.taste.signals.momentPotential.score < 0.64
+    getPeakMomentPotentialScore(candidate) < 0.64
       ? 0.05
-      : candidate.taste.signals.momentPotential.score < 0.72
+      : getPeakMomentPotentialScore(candidate) < 0.72
         ? 0.03
         : 0
   const lowIntensityPenalty =
@@ -1685,7 +1700,7 @@ function getLocalStretchSelectionBias(
   }
 
   if (strictNearbyFailed) {
-    return 0.18 + candidate.taste.signals.momentPotential.score * 0.06
+    return 0.18 + getPeakMomentPotentialScore(candidate) * 0.06
   }
 
   return localSupplySufficient ? -0.2 : -0.08
@@ -1776,8 +1791,8 @@ function getPeakMomentPriority(
     : 0
 
   return (
-    candidate.taste.signals.momentPotential.score * 0.58 +
-    candidate.taste.signals.momentIntensity.score * 0.24 +
+    getPeakMomentPotentialScore(candidate) * 0.58 +
+    getPeakMomentIntensityScore(candidate) * 0.24 +
     getMomentIntensityTierBoost(candidate.taste.signals.momentIntensity) * 0.8 +
     (candidate.momentIdentity.strength === 'strong'
       ? 0.18
@@ -2180,7 +2195,7 @@ function computeContractRolePressure(params: {
     } else if (contractConstraints.peakCountModel === 'distributed') {
       scoreAdjustment += (socialDensity - 0.5) * 0.1
     } else {
-      scoreAdjustment += (candidate.taste.signals.anchorStrength - 0.5) * 0.08
+      scoreAdjustment += (getPeakAnchorStrength(candidate) - 0.5) * 0.08
     }
 
     if (contractConstraints.requireEscalation) {
@@ -2507,7 +2522,7 @@ function pickRoleCandidates(
           item.momentIdentity.strength === 'strong' &&
           item.roleScores.peak >= 0.64 &&
           item.stopShapeFit.highlight >= 0.4 &&
-          item.taste.signals.momentPotential.score >= 0.66,
+          getPeakMomentPotentialScore(item) >= 0.66,
       )
     : false
   const strictNearbyFailed =
