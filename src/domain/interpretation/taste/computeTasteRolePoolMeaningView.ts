@@ -13,6 +13,7 @@ import type {
   TasteRolePoolMeaningView,
 } from './tasteRolePoolMeaningView'
 import type { TasteRouteMeaningStopRole } from './routeMeaningVerdict'
+import type { ScoredVenue } from '../../types/arc'
 
 export interface TasteRolePoolMeaningCandidateRequest {
   role?: TasteRouteMeaningStopRole
@@ -291,6 +292,34 @@ export function computeTasteRolePoolMeaningForCandidate(input: {
     context: input.context,
     candidates: [{ role: input.role, candidate: input.candidate }],
   }).foundation[0]!
+}
+
+export function toTasteRolePoolMeaningCandidateInput(
+  candidate: ScoredVenue,
+): RolePoolMeaningCandidateInput {
+  const signals = candidate.taste.signals
+
+  return {
+    candidateVenueId: candidate.candidateIdentity.baseVenueId,
+    category: candidate.venue.category,
+    subcategory: candidate.venue.subcategory,
+    tags: candidate.venue.tags,
+    vibeTags: candidate.venue.vibeTags,
+    energy: signals.energy,
+    socialDensity: signals.socialDensity,
+    intimacy: signals.intimacy,
+    lingerFactor: signals.lingerFactor,
+    destinationFactor: signals.destinationFactor,
+    experientialFactor: signals.experientialFactor,
+    conversationFriendliness: signals.conversationFriendliness,
+    interactiveStrength: signals.interactiveStrength,
+    durationEstimate: signals.durationEstimate,
+    roleSuitability: signals.roleSuitability,
+    momentIntensityScore: signals.momentIntensity.score,
+    momentPotentialScore: signals.momentPotential.score,
+    anchorStrength: signals.anchorStrength,
+    primaryExperienceArchetype: signals.primaryExperienceArchetype,
+  }
 }
 
 export function computeTasteRolePoolContextMeaning(
