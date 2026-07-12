@@ -228,3 +228,50 @@ export function coordinateArcGate1SurprisePromotion<TPayload>(
     rejectedDecisions,
   }
 }
+
+export interface CoordinateArcGate1PreservationInput<TPayload = unknown> {
+  candidates: readonly ArcGate1ActionCandidate<'preservation', TPayload>[]
+}
+
+export interface CoordinateArcGate1PreservationResult<TPayload = unknown> {
+  decisions: readonly ArcGate1ActionDecision[]
+  preservedCandidates: readonly ArcGate1ActionCandidate<'preservation', TPayload>[]
+  refusalReasons: readonly ArcGate1ActionRefusalReason[]
+  noPreservationDecision?: ArcGate1ActionDecision
+}
+
+export function coordinateArcGate1Preservation<TPayload = unknown>(
+  input: CoordinateArcGate1PreservationInput<TPayload>,
+): CoordinateArcGate1PreservationResult<TPayload> {
+  const decisions = input.candidates.map((candidate) =>
+    coordinateArcGate1ActionCandidate(candidate),
+  )
+  const preservedCandidateIds = new Set(
+    decisions
+      .filter((decision) => decision.decision === 'preserve')
+      .map((decision) => decision.candidateId)
+      .filter((candidateId): candidateId is string => Boolean(candidateId)),
+  )
+  const preservedCandidates = input.candidates.filter((candidate) =>
+    preservedCandidateIds.has(candidate.id),
+  )
+  const refusalReasons = decisions.flatMap((decision) => decision.reasons ?? [])
+
+  return {
+    decisions,
+    preservedCandidates,
+    refusalReasons,
+    ...(input.candidates.length > 0 && preservedCandidates.length === 0
+      ? {
+          noPreservationDecision: {
+            source: 'waypoint',
+            decision: 'no_preservation',
+            reasons: refusalReasons.length
+              ? refusalReasons
+              : ['preservation:owner_signal_failed'],
+            ownerSignals: decisions.flatMap((decision) => decision.ownerSignals),
+          },
+        }
+      : {}),
+  }
+}

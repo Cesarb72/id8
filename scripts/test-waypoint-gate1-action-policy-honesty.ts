@@ -8,7 +8,10 @@ import type {
   ArcGate1TasteActionSignal,
   OwnerProvenancedGate1ActionSignal,
 } from '../src/integrations/waypoint/coordination/arcGate1ActionPolicyView'
-import { coordinateArcGate1ActionPolicy } from '../src/integrations/waypoint/coordination/coordinateArcGate1ActionPolicy'
+import {
+  coordinateArcGate1ActionPolicy,
+  coordinateArcGate1Preservation,
+} from '../src/integrations/waypoint/coordination/coordinateArcGate1ActionPolicy'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -203,6 +206,72 @@ const invalidPreservation = decideCandidate(
   }),
 )
 
+const eligibleTop40Preservation = decideCandidate(
+  gate1Candidate({
+    id: 'eligible-top40-preservation',
+    action: 'preservation',
+    taste: [tasteSignal('peak_support', true), tasteSignal('intent_support', true)],
+    bearings: [
+      bearingsSignal('route_feasibility', true),
+      bearingsSignal('place_right_feasibility', true),
+    ],
+    field: fieldSignal('real_record', true),
+  }),
+)
+
+const invalidTop40Preservation = decideCandidate(
+  gate1Candidate({
+    id: 'invalid-top40-preservation',
+    action: 'preservation',
+    taste: [tasteSignal('peak_support', true), tasteSignal('intent_support', true)],
+    bearings: [
+      bearingsSignal('route_feasibility', true),
+      bearingsSignal('place_right_feasibility', false, 'place_right:fail'),
+    ],
+    field: fieldSignal('real_record', true),
+  }),
+)
+
+const eligibleCompactPreservation = decideCandidate(
+  gate1Candidate({
+    id: 'eligible-compact-preservation',
+    action: 'preservation',
+    taste: [tasteSignal('peak_support', true), tasteSignal('role_support', true)],
+    bearings: [
+      bearingsSignal('compactness_feasibility', true),
+      bearingsSignal('place_right_feasibility', true),
+    ],
+    field: fieldSignal('real_record', true),
+  }),
+)
+
+const invalidCompactPreservation = decideCandidate(
+  gate1Candidate({
+    id: 'invalid-compact-preservation',
+    action: 'preservation',
+    taste: [tasteSignal('peak_support', true), tasteSignal('role_support', true)],
+    bearings: [
+      bearingsSignal('compactness_feasibility', false, 'compactness:fail'),
+      bearingsSignal('place_right_feasibility', false, 'place_right:fail'),
+    ],
+    field: fieldSignal('real_record', true),
+  }),
+)
+
+const noEligiblePreservation = coordinateArcGate1Preservation<TestPayload>({
+  candidates: [
+    gate1Candidate({
+      id: 'no-eligible-preservation',
+      action: 'preservation',
+      taste: [tasteSignal('peak_support', true)],
+      bearings: [
+        bearingsSignal('place_right_feasibility', false, 'place_right:fail'),
+      ],
+      field: fieldSignal('real_record', true),
+    }),
+  ],
+})
+
 const validFallback = decideCandidate(
   gate1Candidate({
     id: 'valid-fallback',
@@ -329,6 +398,10 @@ const emptyPoolDecision: ArcGate1ActionDecision = {
 const decisions = [
   validPreservation,
   invalidPreservation,
+  eligibleTop40Preservation,
+  invalidTop40Preservation,
+  eligibleCompactPreservation,
+  invalidCompactPreservation,
   validFallback,
   invalidFallbackMissingMeaning,
   invalidFallbackFailedFeasibility,
@@ -339,6 +412,7 @@ const decisions = [
   unsafeSurpriseDemotion,
   validFamilyPreservationCap,
   invalidFamilyPreservationCap,
+  ...noEligiblePreservation.decisions,
   emptyPoolDecision,
 ]
 
@@ -349,6 +423,35 @@ assert(
       'preservation:would_mask_failed_place_right',
     ),
   'Invalid preservation must refuse with explicit owner-failure masking reason.',
+)
+assert(
+  eligibleTop40Preservation.decision === 'preserve',
+  'Eligible top-40 preservation should preserve.',
+)
+assert(
+  invalidTop40Preservation.decision === 'refuse_preservation' &&
+    invalidTop40Preservation.reasons?.includes(
+      'preservation:would_mask_failed_place_right',
+    ),
+  'Invalid top-40 preservation must refuse with explicit Place-Right reason.',
+)
+assert(
+  eligibleCompactPreservation.decision === 'preserve',
+  'Eligible compact preservation should preserve.',
+)
+assert(
+  invalidCompactPreservation.decision === 'refuse_preservation' &&
+    invalidCompactPreservation.reasons?.includes(
+      'preservation:would_mask_failed_place_right',
+    ),
+  'Invalid compact preservation must refuse instead of faking compact route viability.',
+)
+assert(
+  noEligiblePreservation.noPreservationDecision?.decision === 'no_preservation' &&
+    noEligiblePreservation.noPreservationDecision.reasons?.includes(
+      'preservation:would_mask_failed_place_right',
+    ),
+  'No eligible preservation candidate should emit explicit no-preservation.',
 )
 assert(validFallback.decision === 'fallback', 'Valid fallback should be explicit.')
 assert(
@@ -422,6 +525,21 @@ const output = {
       decision: invalidPreservation.decision,
       reasons: invalidPreservation.reasons,
       masksFailedOwnerCriteria: false,
+    },
+    top40Preservation: {
+      eligibleDecision: eligibleTop40Preservation.decision,
+      invalidDecision: invalidTop40Preservation.decision,
+      invalidReasons: invalidTop40Preservation.reasons,
+      noEligibleDecision: noEligiblePreservation.noPreservationDecision?.decision,
+      noEligibleReasons: noEligiblePreservation.noPreservationDecision?.reasons,
+      routeRemainsHonest: true,
+    },
+    compactPreservation: {
+      eligibleDecision: eligibleCompactPreservation.decision,
+      invalidDecision: invalidCompactPreservation.decision,
+      invalidReasons: invalidCompactPreservation.reasons,
+      noFakeCompactRoute: true,
+      routeRemainsHonest: true,
     },
     validFallback: {
       decision: validFallback.decision,

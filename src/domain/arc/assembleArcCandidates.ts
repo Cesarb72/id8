@@ -23,6 +23,7 @@ import {
 } from '../../integrations/waypoint/coordination/coordinateArcCandidateAssembly'
 import {
   coordinateArcGate1SurprisePromotion,
+  coordinateArcGate1Preservation,
   type ArcGate1SurprisePromotionOption,
 } from '../../integrations/waypoint/coordination/coordinateArcGate1ActionPolicy'
 import { projectGate1ActionCandidate } from './projectGate1OwnerSignals'
@@ -615,6 +616,15 @@ interface ArcTop40PreservationResult {
   diagnostics?: ArcTop40PreservationDiagnostics
 }
 
+type PreservationCandidateKind = 'top40' | 'compact'
+
+interface PreservationCandidateRecord {
+  candidate: ArcCandidate
+  kind: PreservationCandidateKind
+  role: InternalRole
+  stop: ArcStop
+}
+
 function routeForCandidate(candidate: ArcCandidate): string {
   return candidate.stops.map((stop) => stop.scoredVenue.venue.name).join(' -> ')
 }
@@ -733,6 +743,66 @@ function compareTightCompactAnchorCandidates(
   return left.id.localeCompare(right.id)
 }
 
+function findStopForRole(candidate: ArcCandidate, role: InternalRole): ArcStop | undefined {
+  return candidate.stops.find((stop) => stop.role === role)
+}
+
+function findPreservationStop(
+  candidate: ArcCandidate,
+  pools: RolePools,
+  intent: IntentProfile,
+  kind: PreservationCandidateKind,
+): { role: InternalRole; stop: ArcStop } | undefined {
+  if (intent.planningMode === 'user-led' && intent.anchor?.venueId) {
+    const anchorRole = toInternalRole(intent.anchor.role ?? 'highlight')
+    if (candidateMatchesPreferredRole(candidate, anchorRole, intent.anchor.venueId)) {
+      const stop = findStopForRole(candidate, anchorRole)
+      if (stop) {
+        return { role: anchorRole, stop }
+      }
+    }
+  }
+
+  for (const role of preferredDiscoveryRoleOrder) {
+    const status = pools.contractPoolStatus[role]
+    if (
+      status.preferredDiscoveryVenueAdmitted &&
+      status.preferredDiscoveryVenueId &&
+      candidateMatchesPreferredRole(candidate, role, status.preferredDiscoveryVenueId)
+    ) {
+      const stop = findStopForRole(candidate, role)
+      if (stop) {
+        return { role, stop }
+      }
+    }
+  }
+
+  if (kind === 'compact') {
+    const fallbackStop = candidate.stops[1] ?? candidate.stops[0]
+    return fallbackStop ? { role: fallbackStop.role, stop: fallbackStop } : undefined
+  }
+
+  return undefined
+}
+
+function buildPreservationCandidateRecord(
+  candidate: ArcCandidate,
+  pools: RolePools,
+  intent: IntentProfile,
+  kind: PreservationCandidateKind,
+): PreservationCandidateRecord | undefined {
+  const preservationStop = findPreservationStop(candidate, pools, intent, kind)
+  if (!preservationStop) {
+    return undefined
+  }
+  return {
+    candidate,
+    kind,
+    role: preservationStop.role,
+    stop: preservationStop.stop,
+  }
+}
+
 export function preservePreferredArcCandidates(
   rankedCandidates: ArcCandidate[],
   pools: RolePools,
@@ -810,12 +880,41 @@ export function preservePreferredArcCandidates(
     return { candidates: topCandidates }
   }
 
-  const preservationCandidates = [
-    ...missingPreferredArcCandidates,
-    ...missingTightCompactCandidates.filter(
-      (candidate) => !missingPreferredArcCandidates.some((item) => item.id === candidate.id),
-    ),
+  const preservationCandidateRecords = [
+    ...missingPreferredArcCandidates
+      .map((candidate) =>
+        buildPreservationCandidateRecord(candidate, pools, intent, 'top40'),
+      )
+      .filter((record): record is PreservationCandidateRecord => Boolean(record)),
+    ...missingTightCompactCandidates
+      .filter(
+        (candidate) => !missingPreferredArcCandidates.some((item) => item.id === candidate.id),
+      )
+      .map((candidate) =>
+        buildPreservationCandidateRecord(candidate, pools, intent, 'compact'),
+      )
+      .filter((record): record is PreservationCandidateRecord => Boolean(record)),
   ]
+  const preservationDecisions = coordinateArcGate1Preservation({
+    candidates: preservationCandidateRecords.map((record) =>
+      projectGate1ActionCandidate({
+        id: record.candidate.id,
+        action: 'preservation',
+        candidate: record.stop.scoredVenue,
+        role: record.role,
+        intent,
+        routeCandidate: record.candidate,
+        routeContext: 'preservation_pool',
+        deterministicTieBreakKey: `${record.kind}:${record.candidate.id}`,
+      }),
+    ),
+  })
+  const preservedCandidateIds = new Set(
+    preservationDecisions.preservedCandidates.map((candidate) => candidate.id),
+  )
+  const preservationCandidates = preservationCandidateRecords
+    .filter((record) => preservedCandidateIds.has(record.candidate.id))
+    .map((record) => record.candidate)
   const missingPreservedArcIds = new Set(
     preservationCandidates.map((candidate) => candidate.id),
   )
