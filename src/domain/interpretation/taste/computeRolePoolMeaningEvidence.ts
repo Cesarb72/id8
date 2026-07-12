@@ -120,6 +120,16 @@ export interface RolePoolMeaningCandidateEvidence {
     socialDensity: number
     interactiveStrength: number
   }
+  expressionActivation: {
+    energy: number
+    socialDensity: number
+    interactiveStrength: number
+    momentIntensity: number
+    momentPotential: number
+    anchorStrength: number
+    activationQuality: number
+    expressionQuality: number
+  }
 }
 
 export interface RolePoolMeaningEvidence {
@@ -287,6 +297,21 @@ export function computeRolePoolCandidateMeaningEvidence(
     input.primaryExperienceArchetype === 'social' ||
     input.category === 'cafe' ||
     input.category === 'dessert'
+  const activationQuality = clamp01(
+    input.momentPotentialScore * 0.32 +
+      input.momentIntensityScore * 0.28 +
+      input.interactiveStrength * 0.16 +
+      input.experientialFactor * 0.14 +
+      input.socialDensity * 0.1,
+  )
+  const expressionQuality = clamp01(
+    input.interactiveStrength * 0.28 +
+      input.socialDensity * 0.2 +
+      input.energy * 0.16 +
+      input.momentIntensityScore * 0.16 +
+      input.momentPotentialScore * 0.12 +
+      input.anchorStrength * 0.08,
+  )
 
   return {
     source: 'taste',
@@ -331,6 +356,16 @@ export function computeRolePoolCandidateMeaningEvidence(
       energy: input.energy,
       socialDensity: input.socialDensity,
       interactiveStrength: input.interactiveStrength,
+    },
+    expressionActivation: {
+      energy: input.energy,
+      socialDensity: input.socialDensity,
+      interactiveStrength: input.interactiveStrength,
+      momentIntensity: input.momentIntensityScore,
+      momentPotential: input.momentPotentialScore,
+      anchorStrength: input.anchorStrength,
+      activationQuality,
+      expressionQuality,
     },
   }
 }

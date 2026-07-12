@@ -109,6 +109,75 @@ function buildCategoryArchetypeMeaning(
   }
 }
 
+function buildExpressionActivationMeaning(
+  evidence: RolePoolMeaningEvidence,
+): TasteRolePoolCandidateMeaningEvidence<'expression_activation_meaning'> {
+  const expressionActivation = evidence.candidate.expressionActivation
+
+  return {
+    source: 'taste',
+    kind: 'expression_activation_meaning',
+    candidateVenueId: evidence.candidate.candidateVenueId,
+    role: evidence.role,
+    score: Math.max(
+      expressionActivation.activationQuality,
+      expressionActivation.expressionQuality,
+    ),
+    components: [
+      {
+        source: 'taste',
+        key: 'candidate_energy',
+        label: 'Candidate energy',
+        value: expressionActivation.energy,
+      },
+      {
+        source: 'taste',
+        key: 'candidate_social_density',
+        label: 'Candidate social density',
+        value: expressionActivation.socialDensity,
+      },
+      {
+        source: 'taste',
+        key: 'candidate_interactive_strength',
+        label: 'Candidate interactive strength',
+        value: expressionActivation.interactiveStrength,
+      },
+      {
+        source: 'taste',
+        key: 'candidate_moment_intensity',
+        label: 'Candidate moment intensity',
+        value: expressionActivation.momentIntensity,
+      },
+      {
+        source: 'taste',
+        key: 'candidate_moment_potential',
+        label: 'Candidate moment potential',
+        value: expressionActivation.momentPotential,
+      },
+      {
+        source: 'taste',
+        key: 'candidate_anchor_strength',
+        label: 'Candidate anchor strength',
+        value: expressionActivation.anchorStrength,
+      },
+      {
+        source: 'taste',
+        key: 'candidate_activation_quality',
+        label: 'Candidate activation quality',
+        value: expressionActivation.activationQuality,
+      },
+      {
+        source: 'taste',
+        key: 'candidate_expression_quality',
+        label: 'Candidate expression quality',
+        value: expressionActivation.expressionQuality,
+      },
+    ],
+    candidateEvidence: evidence.candidate,
+    rolePoolEvidence: evidence.rolePoolEvidence,
+  }
+}
+
 function groupByRole(
   candidates: readonly TasteRolePoolCandidateMeaningEvidence[],
 ): TasteRolePoolMeaningView['rolePools'] {
@@ -141,6 +210,7 @@ export function computeTasteRolePoolMeaningView(
     buildRomanticRoleMeaning(evidence),
     buildFamilyRoleMeaning(evidence),
     buildCategoryArchetypeMeaning(evidence),
+    buildExpressionActivationMeaning(evidence),
   ])
 
   return {
