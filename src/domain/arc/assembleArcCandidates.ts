@@ -21,6 +21,12 @@ import {
   scoreArcAssembly,
   type ScoreArcAssemblyOptions,
 } from './scoreArcAssembly'
+import {
+  buildArcWildcardStops,
+  coordinateArcCoreRouteShapes,
+  projectArcCandidateAssembly,
+  rankArcCandidatesForAssembly,
+} from '../../integrations/waypoint/coordination/coordinateArcCandidateAssembly'
 import type {
   ArcCandidate,
   AnchorArcTraceDiagnostics,
@@ -35,27 +41,6 @@ import type { CrewPolicy } from '../types/crewPolicies'
 import type { ExperienceLens } from '../types/experienceLens'
 import type { IntentProfile } from '../types/intent'
 import type { InternalRole } from '../types/venue'
-
-function buildCoreStops(
-  warmup: ScoredVenue,
-  peak: ScoredVenue,
-  cooldown: ScoredVenue,
-): ArcStop[] {
-  return [
-    { role: 'warmup', scoredVenue: warmup },
-    { role: 'peak', scoredVenue: peak },
-    { role: 'cooldown', scoredVenue: cooldown },
-  ]
-}
-
-function withWildcard(stops: ArcStop[], wildcard: ScoredVenue): ArcStop[] {
-  return [
-    stops[0],
-    stops[1],
-    { role: 'wildcard', scoredVenue: wildcard },
-    stops[2],
-  ]
-}
 
 function scoreSupportReadability(
   support: ScoredVenue,
@@ -1058,10 +1043,12 @@ export function assembleArcCandidates(
   }
   const candidates: ArcCandidate[] = []
 
-  for (const warmup of pools.warmup) {
-    for (const peak of pools.peak) {
-      for (const cooldown of pools.cooldown) {
-        const baseStops = buildCoreStops(warmup, peak, cooldown)
+  for (const coreRoute of coordinateArcCoreRouteShapes({
+    warmupCandidates: pools.warmup,
+    peakCandidates: pools.peak,
+    cooldownCandidates: pools.cooldown,
+  })) {
+        const { warmup, peak, cooldown, stops: baseStops } = coreRoute
         const baseIncludesAnchor =
           anchorRole && anchorVenueId
             ? stopsMatchRole(baseStops, anchorRole, anchorVenueId)
@@ -1110,7 +1097,7 @@ export function assembleArcCandidates(
           pools,
           scoringOptions,
         )
-        const baseCandidate: ArcCandidate = {
+        const baseCandidate = projectArcCandidateAssembly({
           id: createId('arc'),
           stops: baseStops,
           totalScore: baseScore.totalScore,
@@ -1118,7 +1105,7 @@ export function assembleArcCandidates(
           pacing: baseScore.pacing,
           spatial: baseScore.spatial,
           hasWildcard: false,
-        }
+        })
         candidates.push(baseCandidate)
         if (baseIncludesAnchor) {
           postValidationAnchorArcCount += 1
@@ -1133,7 +1120,7 @@ export function assembleArcCandidates(
           const candidateTier = strongSurpriseIds.has(getScoredVenueCandidateId(wildcard))
             ? 'strong'
             : 'nearStrong'
-          const wildcardStops = withWildcard(baseStops, wildcard)
+          const wildcardStops = buildArcWildcardStops(baseStops, wildcard)
           const promotionAssessment = evaluateSurprisePromotion({
             baseStops,
             wildcard,
@@ -1243,7 +1230,7 @@ export function assembleArcCandidates(
                   }
                 } else {
                   heldWildcardComparableScore = wildcardScore.totalScore
-                  heldWildcardCandidate = {
+                  heldWildcardCandidate = projectArcCandidateAssembly({
                     id: createId('arc'),
                     stops: wildcardStops,
                     totalScore: wildcardScore.totalScore,
@@ -1261,7 +1248,7 @@ export function assembleArcCandidates(
                       allowedTradeoff,
                       acceptanceBonusValue,
                     ),
-                  }
+                  })
                 }
               }
             }
@@ -1278,7 +1265,7 @@ export function assembleArcCandidates(
             promotedSurpriseWins
           ) {
             surpriseDiagnostics.generatedSurpriseArcCount += 1
-            const promotedCandidate: ArcCandidate = {
+            const promotedCandidate = projectArcCandidateAssembly({
               id: createId('arc'),
               stops: promotionAssessment.promotedStops,
               totalScore: promotionAssessment.promotedScore.totalScore,
@@ -1304,7 +1291,7 @@ export function assembleArcCandidates(
                     promotionAssessment.demotedHighlightDisposition,
                 },
               ),
-            }
+            })
             candidates.push(promotedCandidate)
             if (promotedIncludesAnchor) {
               postValidationAnchorArcCount += 1
@@ -1349,8 +1336,6 @@ export function assembleArcCandidates(
             }
           }
         }
-      }
-    }
   }
 
   if (candidates.length === 0) {
@@ -1364,32 +1349,7 @@ export function assembleArcCandidates(
     candidates.push(...partialFallbackCandidates)
   }
 
-  const rankedCandidates = candidates.sort((left, right) => {
-    const scoreDelta = right.totalScore - left.totalScore
-    if (scoreDelta !== 0) {
-      return scoreDelta
-    }
-    const leftPromotion =
-      left.surpriseInjection?.promotionOutcome === 'promoted_to_highlight' ? 1 : 0
-    const rightPromotion =
-      right.surpriseInjection?.promotionOutcome === 'promoted_to_highlight' ? 1 : 0
-    if (rightPromotion !== leftPromotion) {
-      return rightPromotion - leftPromotion
-    }
-    const leftTier =
-      left.surpriseInjection?.candidateTier === 'strong'
-        ? 2
-        : left.surpriseInjection?.candidateTier === 'nearStrong'
-          ? 1
-          : 0
-    const rightTier =
-      right.surpriseInjection?.candidateTier === 'strong'
-        ? 2
-        : right.surpriseInjection?.candidateTier === 'nearStrong'
-          ? 1
-          : 0
-      return rightTier - leftTier
-  })
+  const rankedCandidates = rankArcCandidatesForAssembly(candidates)
   const top40Preservation = preservePreferredArcCandidates(
     rankedCandidates,
     pools,
