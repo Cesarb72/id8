@@ -65,6 +65,12 @@ import {
   coordinateArcPeakRecovery,
   type ArcPeakRecoveryReviewedCandidate,
 } from '../../integrations/waypoint/coordination/coordinateArcPeakRecovery'
+import {
+  coordinateArcRolePoolOrdering,
+  getArcRolePoolCandidateLimit,
+  limitArcRolePoolCandidates,
+  projectArcRolePools,
+} from '../../integrations/waypoint/coordination/coordinateArcRolePools'
 import type {
   ArcPeakRecoveryBearingsFeasibilitySignal,
   ArcPeakRecoveryCandidate,
@@ -2888,13 +2894,18 @@ function pickRoleCandidates(
           : 0),
     ] as const),
   )
-  const ranked = [...roleCandidates].sort((left, right) => {
-    return (
-      (selectionScoreByCandidateId.get(getScoredVenueCandidateId(right)) ?? 0) -
-        (selectionScoreByCandidateId.get(getScoredVenueCandidateId(left)) ?? 0) ||
-      right.fitScore - left.fitScore
-    )
+  const rolePoolLimit = getArcRolePoolCandidateLimit(role, cooldownBoosted)
+  const rolePoolOrdering = coordinateArcRolePoolOrdering({
+    candidates: roleCandidates,
+    preferredCandidate: preferredAdmission.admittedCandidate,
+    includePreferredCandidate: finalAllowPreferredAdmission,
+    getCandidateId: getScoredVenueCandidateId,
+    getSelectionScore: (candidate) =>
+      selectionScoreByCandidateId.get(getScoredVenueCandidateId(candidate)) ?? 0,
+    getTieBreakScore: (candidate) => candidate.fitScore,
+    projectPreferredCandidate: (candidate) => markRoleCandidate(candidate, intent, role),
   })
+  const ranked = rolePoolOrdering.ranked
 
   if (
     enforceContract &&
@@ -2907,25 +2918,16 @@ function pickRoleCandidates(
       fallbackReason ?? `${roleContract.label} relaxed to admit the selected discovery venue.`
   }
 
-  const rankedWithPreference = finalAllowPreferredAdmission && preferredAdmission.admittedCandidate
-    ? [
-        markRoleCandidate(preferredAdmission.admittedCandidate, intent, role),
-        ...ranked.filter(
-          (item) =>
-            getScoredVenueCandidateId(item) !==
-            getScoredVenueCandidateId(preferredAdmission.admittedCandidate!),
-        ),
-      ]
-    : ranked
+  const rankedWithPreference = rolePoolOrdering.rankedWithPreference
   const limitedRanked =
     role === 'peak'
       ? selectPeakCandidatesWithFamilyPreservation(
           rankedWithPreference,
           selectionScoreByCandidateId,
-          cooldownBoosted ? 16 : 14,
+          rolePoolLimit,
           intent,
         )
-      : rankedWithPreference.slice(0, cooldownBoosted ? 16 : 14)
+      : limitArcRolePoolCandidates(rankedWithPreference, rolePoolLimit)
   const tightSupportCandidateCountAfterAdmission = tightSupportAdmissionTrace.active
     ? limitedRanked.filter((candidate) =>
         tightSupportCandidateIds.has(getScoredVenueCandidateId(candidate)),
@@ -3069,16 +3071,10 @@ export function buildRolePools(
     experienceContract,
   )
 
-  return {
-    warmup: warmup.candidates,
-    peak: peak.candidates,
-    wildcard: wildcard.candidates,
-    cooldown: cooldown.candidates,
-    contractPoolStatus: {
-      warmup: warmup.status,
-      peak: peak.status,
-      wildcard: wildcard.status,
-      cooldown: cooldown.status,
-    },
-  }
+  return projectArcRolePools({
+    warmup,
+    peak,
+    wildcard,
+    cooldown,
+  }) as RolePools
 }
