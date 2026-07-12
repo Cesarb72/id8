@@ -57,7 +57,21 @@ import type {
   BearingsRouteStopRole,
   DistrictRoutePlaceFacts,
 } from '../bearings/routePlaceRightContract'
-import { evaluatePeakCandidateFeasibility } from '../bearings/evaluateArcRouteMovementFeasibility'
+import {
+  evaluatePeakCandidateFeasibility,
+  type PeakCandidateFeasibilityVerdict,
+} from '../bearings/evaluateArcRouteMovementFeasibility'
+import {
+  coordinateArcPeakRecovery,
+  type ArcPeakRecoveryReviewedCandidate,
+} from '../../integrations/waypoint/coordination/coordinateArcPeakRecovery'
+import type {
+  ArcPeakRecoveryBearingsFeasibilitySignal,
+  ArcPeakRecoveryCandidate,
+  ArcPeakRecoveryTasteCentralMomentQualitySignal,
+  ArcPeakRecoveryTastePeakWorthinessSignal,
+} from '../../integrations/waypoint/coordination/arcPeakRecoveryCoordinationView'
+import type { TasteRolePoolCandidateMeaningEvidence } from '../interpretation/taste/tasteRolePoolMeaningView'
 
 export interface RolePools {
   warmup: ScoredVenue[]
@@ -99,8 +113,6 @@ export const roleThresholds: Record<InternalRole, number> = {
   cooldown: 0.6,
 }
 
-const CENTRAL_MOMENT_MIN_INTENSITY = 0.52
-const CENTRAL_MOMENT_MIN_QUALITY = 0.56
 const CENTRAL_MOMENT_RECOVERY_BOOST = 0.06
 const CENTRAL_MOMENT_FAMILY_ALIGNMENT_BOOST = 0.04
 const CENTRAL_MOMENT_FAMILY_MISMATCH_PENALTY = 0.04
@@ -1209,13 +1221,78 @@ function getCentralMomentFamilyAdjustment(
   return -CENTRAL_MOMENT_FAMILY_MISMATCH_PENALTY
 }
 
-function isRecoverableCentralMomentHighlightCandidate(
-  candidate: ScoredVenue,
-  intent?: IntentProfile,
-): boolean {
+interface CentralMomentRecoveryCoordinationPayload {
+  candidate: ScoredVenue
+  recoveryScore: number
+  familyAdjustment: number
+  recoveryReason: string
+}
+
+interface CentralMomentRecoveryCandidateReview {
+  reviewedCandidate: ArcPeakRecoveryReviewedCandidate
+  waypointCandidate?: ArcPeakRecoveryCandidate<CentralMomentRecoveryCoordinationPayload>
+}
+
+function toPeakWorthinessAssessment(
+  evidence: ReturnType<typeof computeTasteRolePoolMeaningForCandidate>,
+): TasteRolePoolCandidateMeaningEvidence<'peak_worthiness'> {
+  const peakWorthiness = evidence.candidate.peakWorthiness
+
+  return {
+    source: 'taste',
+    kind: 'peak_worthiness',
+    candidateVenueId: evidence.candidate.candidateVenueId,
+    role: 'highlight',
+    score: peakWorthiness.score,
+    strength: peakWorthiness.candidatePeakSuitability,
+    reasons: peakWorthiness.reasons,
+    components: peakWorthiness.components,
+    candidateEvidence: evidence.candidate,
+    rolePoolEvidence: evidence.rolePoolEvidence,
+  }
+}
+
+function toCentralMomentQualityAssessment(
+  evidence: ReturnType<typeof computeTasteRolePoolMeaningForCandidate>,
+): TasteRolePoolCandidateMeaningEvidence<'central_moment_quality'> {
+  const centralMomentQuality = evidence.candidate.centralMomentQuality
+
+  return {
+    source: 'taste',
+    kind: 'central_moment_quality',
+    candidateVenueId: evidence.candidate.candidateVenueId,
+    role: 'highlight',
+    score: centralMomentQuality.score,
+    compatibility:
+      centralMomentQuality.status === 'central_moment'
+        ? 'compatible'
+        : centralMomentQuality.status === 'possible_central_moment'
+          ? 'partial'
+          : 'conflict',
+    reasons: centralMomentQuality.reasons,
+    components: centralMomentQuality.components,
+    candidateEvidence: evidence.candidate,
+    rolePoolEvidence: evidence.rolePoolEvidence,
+  }
+}
+
+function evaluateCentralMomentRecoveryCandidate(params: {
+  candidate: ScoredVenue
+  intent?: IntentProfile
+  recoveryScore: number
+  familyAdjustment: number
+}): CentralMomentRecoveryCandidateReview {
+  const candidateId = getScoredVenueCandidateId(params.candidate)
+  const tasteEvidence = computeTasteRolePoolMeaningForCandidate({
+    role: 'highlight',
+    context: toRolePoolMeaningContext(params.intent),
+    candidate: toRolePoolMeaningCandidateEvidence(params.candidate),
+  })
+  const peakWorthiness = tasteEvidence.candidate.peakWorthiness
+  const centralMomentQuality = tasteEvidence.candidate.centralMomentQuality
   const feasibility = evaluatePeakCandidateFeasibility({
-    candidate,
-    intent,
+    candidate: params.candidate,
+    intent: params.intent,
     allowMeaningfulStretch: true,
     isMeaningfulStretchCandidate: isMeaningfulMomentStretchCandidate,
     minimumProximityFitWithoutIntent: 0.4,
@@ -1225,35 +1302,101 @@ function isRecoverableCentralMomentHighlightCandidate(
     requireHighlightVetoClear: false,
     requirePeakContract: true,
   })
-  if (!feasibility.feasible) {
-    return false
+  const reviewedCandidate: ArcPeakRecoveryReviewedCandidate = {
+    candidateId,
+    tastePeakAssessment: {
+      source: 'taste',
+      status: peakWorthiness.status,
+      reasons: peakWorthiness.reasons,
+    },
+    bearingsPeakFeasibility: {
+      source: 'bearings',
+      feasible: feasibility.feasible,
+      reasons: feasibility.reasons,
+    },
   }
-  if (
-    getPeakMomentIntensityScore(candidate) < CENTRAL_MOMENT_MIN_INTENSITY ||
-    candidate.fitScore < CENTRAL_MOMENT_MIN_QUALITY
-  ) {
-    return false
+
+  if (peakWorthiness.status !== 'peak_worthy' || !feasibility.feasible) {
+    return { reviewedCandidate }
   }
-  if (
-    candidate.roleScores.peak < roleThresholds.peak - 0.11 ||
-    candidate.stopShapeFit.highlight < 0.28
-  ) {
-    return false
+
+  const peakWorthinessSignal: ArcPeakRecoveryTastePeakWorthinessSignal = {
+    source: 'taste',
+    key: 'taste_peak_worthiness',
+    label: 'Taste peak-worthiness',
+    value: true,
+    status: 'peak_worthy',
+    assessment: toPeakWorthinessAssessment(tasteEvidence),
   }
-  const weakGenericCandidate =
-    isGenericHospitalityHighlightCandidate(candidate) &&
-    getPeakMomentPotentialScore(candidate) < 0.56 &&
-    getPeakAnchorStrength(candidate) < 0.54 &&
-    candidate.contextSpecificity.byRole.peak < 0.44
-  if (weakGenericCandidate) {
-    return false
+  const centralMomentQualitySignal: ArcPeakRecoveryTasteCentralMomentQualitySignal = {
+    source: 'taste',
+    key: 'taste_central_moment_quality',
+    label: 'Taste central-moment quality',
+    value:
+      centralMomentQuality.status === 'central_moment' ||
+      centralMomentQuality.status === 'possible_central_moment',
+    status: centralMomentQuality.status,
+    assessment: toCentralMomentQualityAssessment(tasteEvidence),
   }
-  const coherentIdentity =
-    getPeakAnchorStrength(candidate) >= 0.52 ||
-    candidate.taste.signals.categorySpecificity >= 0.54 ||
-    candidate.taste.signals.personalityStrength >= 0.56 ||
-    candidate.contextSpecificity.byRole.peak >= 0.44
-  return coherentIdentity
+  const bearingsFeasibilitySignal: ArcPeakRecoveryBearingsFeasibilitySignal = {
+    source: 'bearings',
+    key: 'bearings_peak_feasibility',
+    label: 'Bearings peak feasibility',
+    value: true,
+    verdict: feasibility as PeakCandidateFeasibilityVerdict & {
+      feasible: true
+    },
+  }
+  const recoveryReason =
+    params.familyAdjustment > 0
+      ? 'central_moment_recovery_family_aligned'
+      : params.familyAdjustment < 0
+        ? 'central_moment_recovery_family_mismatch_tolerated'
+        : 'central_moment_recovery'
+  const waypointCandidate: ArcPeakRecoveryCandidate<CentralMomentRecoveryCoordinationPayload> = {
+    id: candidateId,
+    payload: {
+      candidate: params.candidate,
+      recoveryScore: params.recoveryScore,
+      familyAdjustment: params.familyAdjustment,
+      recoveryReason,
+    },
+    identity: {
+      candidateId,
+      baseVenueId: getScoredVenueBaseVenueId(params.candidate),
+      traceLabel: params.candidate.candidateIdentity.traceLabel,
+    },
+    roleContext: {
+      candidateRole: 'peak',
+      rolePoolRole: 'peak',
+    },
+    coordinationContext: {
+      context: 'recovery_pool_candidate',
+      requestReason: 'empty_standard_peak_pool',
+    },
+    deterministicTieBreakKey: candidateId,
+    tastePeakWorthiness: peakWorthinessSignal,
+    tasteCentralMomentQuality: centralMomentQualitySignal,
+    bearingsPeakFeasibility: bearingsFeasibilitySignal,
+    signals: [
+      peakWorthinessSignal,
+      centralMomentQualitySignal,
+      bearingsFeasibilitySignal,
+    ],
+    compatibility: {
+      source: 'compat',
+      legacyReasonCodes: [recoveryReason],
+      oldScoreFields: {
+        recoveryScore: params.recoveryScore,
+        familyAdjustment: params.familyAdjustment,
+      },
+    },
+  }
+
+  return {
+    reviewedCandidate,
+    waypointCandidate,
+  }
 }
 
 function computeRomanticCenterpieceConviction(candidate: ScoredVenue): number {
@@ -2531,9 +2674,7 @@ function pickRoleCandidates(
   }
 
   if (role === 'peak' && roleCandidates.length === 0) {
-    const recoveredCentralMomentCandidates = scoredVenues
-      .filter((candidate) => isRecoverableCentralMomentHighlightCandidate(candidate, intent))
-      .map((candidate) => {
+    const centralMomentRecoveryReviews = scoredVenues.map((candidate) => {
         const familyAdjustment = getCentralMomentFamilyAdjustment(candidate, intent)
         const recoveryScore =
           computeRoleSelectionScore({
@@ -2549,46 +2690,50 @@ function pickRoleCandidates(
           }) +
           CENTRAL_MOMENT_RECOVERY_BOOST +
           familyAdjustment
-        return {
-          candidate: {
-            ...candidate,
-            recoveredCentralMomentHighlight: true,
-            centralMomentRecoveryReason:
-              familyAdjustment > 0
-                ? 'central_moment_recovery_family_aligned'
-                : familyAdjustment < 0
-                  ? 'central_moment_recovery_family_mismatch_tolerated'
-                  : 'central_moment_recovery',
-          } satisfies ScoredVenue,
+
+        return evaluateCentralMomentRecoveryCandidate({
+          candidate,
           recoveryScore,
           familyAdjustment,
-        }
+          intent,
+        })
       })
-      .sort((left, right) => {
-        const scoreDelta = right.recoveryScore - left.recoveryScore
-        if (scoreDelta !== 0) {
-          return scoreDelta
-        }
-        const familyDelta = right.familyAdjustment - left.familyAdjustment
-        if (familyDelta !== 0) {
-          return familyDelta
-        }
-        return getScoredVenueCandidateId(left.candidate).localeCompare(
-          getScoredVenueCandidateId(right.candidate),
-        )
-      })
-      .slice(0, cooldownBoosted ? 8 : 6)
+    const recoveryCoordination = coordinateArcPeakRecovery({
+      candidates: centralMomentRecoveryReviews
+        .map((review) => review.waypointCandidate)
+        .filter(
+          (
+            candidate,
+          ): candidate is ArcPeakRecoveryCandidate<CentralMomentRecoveryCoordinationPayload> =>
+            Boolean(candidate),
+        ),
+      reviewedCandidates: centralMomentRecoveryReviews.map(
+        (review) => review.reviewedCandidate,
+      ),
+      selectLimit: cooldownBoosted ? 8 : 6,
+      getCoordinationScore: (candidate) => candidate.payload?.recoveryScore ?? 0,
+      getRecoveryReason: (candidate) => candidate.payload?.recoveryReason,
+    })
 
-    if (recoveredCentralMomentCandidates.length > 0) {
-      roleCandidates = recoveredCentralMomentCandidates.map((entry) => entry.candidate)
+    if (recoveryCoordination.selectedCandidates.length > 0) {
+      roleCandidates = recoveryCoordination.selectedCandidates.map((entry) => ({
+        ...entry.payload!.candidate,
+        recoveredCentralMomentHighlight: true,
+        centralMomentRecoveryReason:
+          entry.payload!.recoveryReason,
+      }))
       usedRecoveredCentralMomentHighlight = true
-      recoveredHighlightCandidatesCount = recoveredCentralMomentCandidates.length
+      recoveredHighlightCandidatesCount =
+        recoveryCoordination.selectedCandidates.length
       centralMomentRecoveryReason =
+        recoveryCoordination.recoveryReason ??
         'no_standard_peak_candidates_central_moment_recovery_activated'
       contractRelaxed = true
       fallbackReason =
         fallbackReason ??
         'Central-moment highlight recovery activated: no standard peak survived in local supply.'
+    } else {
+      centralMomentRecoveryReason = recoveryCoordination.emptyPoolOutcome
     }
   }
 
