@@ -107,6 +107,8 @@ export interface RolePoolDiagnosticsStatus extends RolePoolStatusBase {
   recoveredCentralMomentHighlight?: boolean
   recoveredHighlightCandidatesCount?: number
   centralMomentRecoveryReason?: string
+  tightSupportAdmissionActive?: boolean
+  tightSupportAdmissionReason?: string
   requiredAnchorBaseVenueId?: string
   requiredAnchorNeighborhood?: string
   nearAnchorSupportCandidateCountBeforeAdmission?: number
@@ -151,5 +153,15 @@ export function projectRolePoolDiagnosticsStatus(
     recoveredCentralMomentHighlight: status.recoveredCentralMomentHighlight,
     recoveredHighlightCandidatesCount: status.recoveredHighlightCandidatesCount,
     centralMomentRecoveryReason: status.centralMomentRecoveryReason,
+    tightSupportAdmissionActive: status.tightSupportAdmissionActive,
+    tightSupportAdmissionReason: status.tightSupportAdmissionReason,
+    requiredAnchorBaseVenueId: status.requiredAnchorBaseVenueId,
+    requiredAnchorNeighborhood: status.requiredAnchorNeighborhood,
+    nearAnchorSupportCandidateCountBeforeAdmission:
+      status.nearAnchorSupportCandidateCountBeforeAdmission,
+    nearAnchorSupportCandidateCountAfterAdmission:
+      status.nearAnchorSupportCandidateCountAfterAdmission,
+    nearAnchorSupportCandidateIds: status.nearAnchorSupportCandidateIds,
+    supportSupplyMissing: status.supportSupplyMissing,
   }
 }

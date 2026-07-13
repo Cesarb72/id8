@@ -19,6 +19,7 @@ import {
   projectRolePoolDiagnosticsStatus,
   type RoleContractSet,
   type RolePoolCompatibilityStatus,
+  type RolePoolDiagnosticsStatus,
 } from '../src/domain/types/roleContract.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
 import type { InternalRole, Venue } from '../src/domain/types/venue.ts'
@@ -460,7 +461,9 @@ const diagnosticExperienceContract: ExperienceContract = {
   debug: { derivedFrom: [], contractReasonSummary: '', occasionReasonSummary: '' },
 }
 
-function summarizeTightSupportStatus(status: RolePoolCompatibilityStatus) {
+function summarizeTightSupportStatus(
+  status: RolePoolCompatibilityStatus | RolePoolDiagnosticsStatus,
+) {
   return {
     role: status.role,
     tightSupportAdmissionActive: status.tightSupportAdmissionActive,
@@ -527,10 +530,29 @@ function buildTightSupportEmittedFixture() {
     diagnosticContractConstraints,
     diagnosticExperienceContract,
   )
+  const warmupCompatibility = summarizeTightSupportStatus(pools.contractPoolStatus.warmup)
+  const cooldownCompatibility = summarizeTightSupportStatus(pools.contractPoolStatus.cooldown)
+  const warmupDiagnostics = summarizeTightSupportStatus(
+    projectRolePoolDiagnosticsStatus(pools.contractPoolStatus.warmup),
+  )
+  const cooldownDiagnostics = summarizeTightSupportStatus(
+    projectRolePoolDiagnosticsStatus(pools.contractPoolStatus.cooldown),
+  )
+
+  assertDeepEqual(
+    warmupDiagnostics,
+    warmupCompatibility,
+    'Tight-support warmup diagnostics bucket projection',
+  )
+  assertDeepEqual(
+    cooldownDiagnostics,
+    cooldownCompatibility,
+    'Tight-support cooldown diagnostics bucket projection',
+  )
 
   return {
-    warmup: summarizeTightSupportStatus(pools.contractPoolStatus.warmup),
-    cooldown: summarizeTightSupportStatus(pools.contractPoolStatus.cooldown),
+    warmup: warmupCompatibility,
+    cooldown: cooldownCompatibility,
   }
 }
 
@@ -539,6 +561,19 @@ function summarizeRecoveredCentralMomentStatus(status: RolePoolCompatibilityStat
     role: status.role,
     contractRelaxed: status.contractRelaxed,
     fallbackReason: status.fallbackReason,
+    relaxedCandidateCount: status.relaxedCandidateCount,
+    recoveredCentralMomentHighlight: status.recoveredCentralMomentHighlight,
+    recoveredHighlightCandidatesCount: status.recoveredHighlightCandidatesCount,
+    centralMomentRecoveryReason: status.centralMomentRecoveryReason,
+    selectedCandidateRecovered: status.recoveredCentralMomentHighlight === true,
+  }
+}
+
+function summarizeRecoveredCentralMomentDiagnostics(
+  status: RolePoolCompatibilityStatus | RolePoolDiagnosticsStatus,
+) {
+  return {
+    role: status.role,
     relaxedCandidateCount: status.relaxedCandidateCount,
     recoveredCentralMomentHighlight: status.recoveredCentralMomentHighlight,
     recoveredHighlightCandidatesCount: status.recoveredHighlightCandidatesCount,
@@ -573,8 +608,24 @@ function buildRecoveredCentralMomentEmittedFixture() {
   )
 
   const selectedPeak = pools.peak[0]
+  const peakCompatibility = summarizeRecoveredCentralMomentStatus(
+    pools.contractPoolStatus.peak,
+  )
+  const peakCompatibilityDiagnostics = summarizeRecoveredCentralMomentDiagnostics(
+    pools.contractPoolStatus.peak,
+  )
+  const peakDiagnostics = summarizeRecoveredCentralMomentDiagnostics(
+    projectRolePoolDiagnosticsStatus(pools.contractPoolStatus.peak),
+  )
+
+  assertDeepEqual(
+    peakDiagnostics,
+    peakCompatibilityDiagnostics,
+    'Recovered-central-moment diagnostics bucket projection',
+  )
+
   return {
-    peak: summarizeRecoveredCentralMomentStatus(pools.contractPoolStatus.peak),
+    peak: peakCompatibility,
     selectedPeak: selectedPeak
       ? {
           candidateId: selectedPeak.candidateIdentity.baseVenueId,
@@ -896,6 +947,8 @@ async function main(): Promise<void> {
         bestValidHighlightChallengerId: 'live_google_ChIJ-bROCHLLj4AR7F3uIwQLL3w',
         recoveredCentralMomentHighlight: false,
         recoveredHighlightCandidatesCount: 0,
+        tightSupportAdmissionActive: false,
+        tightSupportAdmissionReason: 'not_tight_build_support_context',
       },
     },
     tightSupportEmittedTrace: {

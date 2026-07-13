@@ -3127,6 +3127,21 @@ function pickRoleCandidates(
       role === 'peak' ? recoveredHighlightCandidatesCount : undefined,
     centralMomentRecoveryReason:
       role === 'peak' ? centralMomentRecoveryReason : undefined,
+    tightSupportAdmissionActive: tightSupportAdmissionTrace.active,
+    tightSupportAdmissionReason: tightSupportAdmissionTrace.reason,
+    requiredAnchorBaseVenueId: tightSupportAdmissionTrace.requiredAnchorBaseVenueId,
+    requiredAnchorNeighborhood: tightSupportAdmissionTrace.requiredAnchorNeighborhood,
+    nearAnchorSupportCandidateCountBeforeAdmission: tightSupportAdmissionTrace.active
+      ? tightSupportCandidateCountBeforeAdmission
+      : undefined,
+    nearAnchorSupportCandidateCountAfterAdmission:
+      tightSupportCandidateCountAfterAdmission,
+    nearAnchorSupportCandidateIds: tightSupportAdmissionTrace.active
+      ? tightSupportCandidates.map((candidate) => getScoredVenueBaseVenueId(candidate))
+      : undefined,
+    supportSupplyMissing: tightSupportAdmissionTrace.active
+      ? tightSupportCandidateCountAfterAdmission === 0
+      : undefined,
   }
   return {
     candidates: limitedRanked,
@@ -3153,21 +3168,6 @@ function pickRoleCandidates(
       preferredDiscoveryVenueHoursRelaxationReason:
         preferredAdmission.hoursRelaxationReason,
       ...diagnosticsStatus,
-      tightSupportAdmissionActive: tightSupportAdmissionTrace.active,
-      tightSupportAdmissionReason: tightSupportAdmissionTrace.reason,
-      requiredAnchorBaseVenueId: tightSupportAdmissionTrace.requiredAnchorBaseVenueId,
-      requiredAnchorNeighborhood: tightSupportAdmissionTrace.requiredAnchorNeighborhood,
-      nearAnchorSupportCandidateCountBeforeAdmission: tightSupportAdmissionTrace.active
-        ? tightSupportCandidateCountBeforeAdmission
-        : undefined,
-      nearAnchorSupportCandidateCountAfterAdmission:
-        tightSupportCandidateCountAfterAdmission,
-      nearAnchorSupportCandidateIds: tightSupportAdmissionTrace.active
-        ? tightSupportCandidates.map((candidate) => getScoredVenueBaseVenueId(candidate))
-        : undefined,
-      supportSupplyMissing: tightSupportAdmissionTrace.active
-        ? tightSupportCandidateCountAfterAdmission === 0
-        : undefined,
     },
   }
 }
