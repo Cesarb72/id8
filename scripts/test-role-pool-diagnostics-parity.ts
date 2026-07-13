@@ -6,6 +6,7 @@ import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
 import type { RolePoolDiagnostics } from '../src/domain/types/diagnostics.ts'
 import type { IntentInput } from '../src/domain/types/intent.ts'
 import type { UserStopRole } from '../src/domain/types/itinerary.ts'
+import { projectRolePoolDiagnosticsStatus } from '../src/domain/types/roleContract.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
 
 const originalFetch = globalThis.fetch
@@ -144,6 +145,7 @@ function summarizeFailedStarterRoleStatus(
   diagnostics: Awaited<ReturnType<typeof buildCurateFailedStarterDiagnostics>>,
 ) {
   const highlight = diagnostics.rolePools.highlight.contractStatus
+  const highlightDiagnosticsStatus = projectRolePoolDiagnosticsStatus(highlight)
   return {
     starterId: diagnostics.starterId,
     startCount: diagnostics.rolePools.start.count,
@@ -169,6 +171,7 @@ function summarizeFailedStarterRoleStatus(
       recoveredHighlightCandidatesCount: highlight.recoveredHighlightCandidatesCount,
       centralMomentRecoveryReason: highlight.centralMomentRecoveryReason,
     },
+    highlightDiagnosticsStatus,
   }
 }
 
@@ -335,6 +338,22 @@ async function main(): Promise<void> {
         recoveredCentralMomentHighlight: false,
         recoveredHighlightCandidatesCount: 0,
       },
+      highlightDiagnosticsStatus: {
+        role: 'peak',
+        contractLabel: 'Dessert & Conversation highlight contract',
+        contractStrength: 'hard',
+        strictCandidateCount: 34,
+        relaxedCandidateCount: 34,
+        bestContractCandidateId: 'live_google_ChIJW5Ondc_Lj4ARJAwUecl7o3s',
+        validCandidateCount: 34,
+        fallbackCandidateCount: 19,
+        invalidCandidateCount: 7,
+        fallbackUsedBecauseNoValidHighlight: false,
+        bestValidHighlightCandidateId: 'live_google_ChIJW5Ondc_Lj4ARJAwUecl7o3s',
+        bestValidHighlightChallengerId: 'live_google_ChIJ-bROCHLLj4AR7F3uIwQLL3w',
+        recoveredCentralMomentHighlight: false,
+        recoveredHighlightCandidatesCount: 0,
+      },
     },
   }
 
@@ -352,6 +371,7 @@ async function main(): Promise<void> {
           highlightValidityDiagnostics: true,
           selectedHighlightValidity: true,
           failedStarterDiagnostics: true,
+          diagnosticsBucketProjection: true,
           tightSupportDiagnostics: observed.compactnessDiagnostics !== undefined,
           recoveredCentralMomentTrace: observed.fallbackTrace !== undefined,
           generationTraceRolePoolDiagnosticsShape: true,

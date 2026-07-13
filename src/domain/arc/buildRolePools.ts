@@ -9,6 +9,7 @@ import type { ContractConstraints, ExperienceContract } from '../types/intent'
 import type {
   AnchorHoursRelaxationReason,
   RoleContractPoolStatus,
+  RolePoolDiagnosticsStatus,
   RoleContractRule,
   RoleContractSet,
   RoleContractStrength,
@@ -3107,6 +3108,26 @@ function pickRoleCandidates(
           .filter((item) => item.highlightValidity.validityLevel === 'valid')
           .sort((left, right) => right.roleScores.peak - left.roleScores.peak)[1]?.venue.id
       : undefined
+  const diagnosticsStatus: RolePoolDiagnosticsStatus = {
+    role,
+    contractLabel: roleContract.label,
+    contractStrength: roleContract.strength,
+    strictCandidateCount: contractStrictCandidates.length,
+    relaxedCandidateCount: ranked.length,
+    bestContractCandidateId,
+    validCandidateCount: role === 'peak' ? strictValidHighlightCandidates.length : undefined,
+    fallbackCandidateCount: role === 'peak' ? strictFallbackHighlightCandidates.length : undefined,
+    invalidCandidateCount: role === 'peak' ? strictInvalidHighlightCandidates.length : undefined,
+    fallbackUsedBecauseNoValidHighlight: role === 'peak' ? fallbackUsedBecauseNoValidHighlight : undefined,
+    bestValidHighlightCandidateId,
+    bestValidHighlightChallengerId,
+    recoveredCentralMomentHighlight:
+      role === 'peak' ? usedRecoveredCentralMomentHighlight : undefined,
+    recoveredHighlightCandidatesCount:
+      role === 'peak' ? recoveredHighlightCandidatesCount : undefined,
+    centralMomentRecoveryReason:
+      role === 'peak' ? centralMomentRecoveryReason : undefined,
+  }
   return {
     candidates: limitedRanked,
     status: {
@@ -3131,21 +3152,7 @@ function pickRoleCandidates(
       preferredDiscoveryVenueHoursRelaxed: preferredAdmission.hoursRelaxed,
       preferredDiscoveryVenueHoursRelaxationReason:
         preferredAdmission.hoursRelaxationReason,
-      strictCandidateCount: contractStrictCandidates.length,
-      relaxedCandidateCount: ranked.length,
-      bestContractCandidateId,
-      validCandidateCount: role === 'peak' ? strictValidHighlightCandidates.length : undefined,
-      fallbackCandidateCount: role === 'peak' ? strictFallbackHighlightCandidates.length : undefined,
-      invalidCandidateCount: role === 'peak' ? strictInvalidHighlightCandidates.length : undefined,
-      fallbackUsedBecauseNoValidHighlight: role === 'peak' ? fallbackUsedBecauseNoValidHighlight : undefined,
-      bestValidHighlightCandidateId,
-      bestValidHighlightChallengerId,
-      recoveredCentralMomentHighlight:
-        role === 'peak' ? usedRecoveredCentralMomentHighlight : undefined,
-      recoveredHighlightCandidatesCount:
-        role === 'peak' ? recoveredHighlightCandidatesCount : undefined,
-      centralMomentRecoveryReason:
-        role === 'peak' ? centralMomentRecoveryReason : undefined,
+      ...diagnosticsStatus,
       tightSupportAdmissionActive: tightSupportAdmissionTrace.active,
       tightSupportAdmissionReason: tightSupportAdmissionTrace.reason,
       requiredAnchorBaseVenueId: tightSupportAdmissionTrace.requiredAnchorBaseVenueId,
