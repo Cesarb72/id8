@@ -15,9 +15,9 @@ import type {
 } from '../src/domain/types/intent.ts'
 import type {
   RoleContractSet,
-  RolePoolAdmissionStatus,
   RolePoolCompatibilityStatus,
 } from '../src/domain/types/roleContract.ts'
+import { projectRolePoolAdmissionStatus } from '../src/domain/types/roleContract.ts'
 import type { InternalRole, Venue } from '../src/domain/types/venue.ts'
 
 const originalFetch = globalThis.fetch
@@ -49,32 +49,8 @@ function assertDeepEqual<T>(actual: T, expected: T, label: string): void {
   assert(actualJson === expectedJson, `${label} changed.\nExpected:\n${expectedJson}\nActual:\n${actualJson}`)
 }
 
-function projectRolePoolAdmissionStatus(
-  status: RolePoolCompatibilityStatus,
-): RolePoolAdmissionStatus {
-  return {
-    role: status.role,
-    contractLabel: status.contractLabel,
-    contractStrength: status.contractStrength,
-    contractSatisfied: status.contractSatisfied,
-    contractRelaxed: status.contractRelaxed,
-    fallbackReason: status.fallbackReason,
-    preferredDiscoveryVenueId: status.preferredDiscoveryVenueId,
-    preferredDiscoveryVenueAdmitted: status.preferredDiscoveryVenueAdmitted,
-    preferredDiscoveryVenueRejectedReason: status.preferredDiscoveryVenueRejectedReason,
-    preferredDiscoveryVenueHoursRelaxed: status.preferredDiscoveryVenueHoursRelaxed,
-    preferredDiscoveryVenueHoursRelaxationReason:
-      status.preferredDiscoveryVenueHoursRelaxationReason,
-    tightSupportAdmissionActive: status.tightSupportAdmissionActive,
-    tightSupportAdmissionReason: status.tightSupportAdmissionReason,
-    requiredAnchorBaseVenueId: status.requiredAnchorBaseVenueId,
-    requiredAnchorNeighborhood: status.requiredAnchorNeighborhood,
-    supportSupplyMissing: status.supportSupplyMissing,
-  }
-}
-
 function summarizeAdmissionStatus(
-  status: RolePoolCompatibilityStatus | RolePoolAdmissionStatus,
+  status: RolePoolCompatibilityStatus | ReturnType<typeof projectRolePoolAdmissionStatus>,
 ) {
   return {
     role: status.role,

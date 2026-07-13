@@ -134,6 +134,30 @@ export interface RolePoolCompatibilityStatus
 
 export interface RoleContractPoolStatus extends RolePoolCompatibilityStatus {}
 
+export function projectRolePoolAdmissionStatus(
+  status: RolePoolCompatibilityStatus,
+): RolePoolAdmissionStatus {
+  return {
+    role: status.role,
+    contractLabel: status.contractLabel,
+    contractStrength: status.contractStrength,
+    contractSatisfied: status.contractSatisfied,
+    contractRelaxed: status.contractRelaxed,
+    fallbackReason: status.fallbackReason,
+    preferredDiscoveryVenueId: status.preferredDiscoveryVenueId,
+    preferredDiscoveryVenueAdmitted: status.preferredDiscoveryVenueAdmitted,
+    preferredDiscoveryVenueRejectedReason: status.preferredDiscoveryVenueRejectedReason,
+    preferredDiscoveryVenueHoursRelaxed: status.preferredDiscoveryVenueHoursRelaxed,
+    preferredDiscoveryVenueHoursRelaxationReason:
+      status.preferredDiscoveryVenueHoursRelaxationReason,
+    tightSupportAdmissionActive: status.tightSupportAdmissionActive,
+    tightSupportAdmissionReason: status.tightSupportAdmissionReason,
+    requiredAnchorBaseVenueId: status.requiredAnchorBaseVenueId,
+    requiredAnchorNeighborhood: status.requiredAnchorNeighborhood,
+    supportSupplyMissing: status.supportSupplyMissing,
+  }
+}
+
 export function projectRolePoolDiagnosticsStatus(
   status: RolePoolCompatibilityStatus,
 ): RolePoolDiagnosticsStatus {
