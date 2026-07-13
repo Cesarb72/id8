@@ -1,4 +1,8 @@
-import { getRolePoolForRole, computeRolePoolRankingBreakdown } from '../arc/buildRolePools'
+import {
+  getRolePoolForRole,
+  computeRolePoolRankingBreakdown,
+  computeRolePoolRankingScore,
+} from '../arc/buildRolePools'
 import { roleProjection } from '../config/roleProjection'
 import { computeRoleAwareHoursPressure } from '../retrieval/computeRoleAwareHoursPressure'
 import { computeRoleAwareLiveLift } from '../retrieval/computeRoleAwareLiveLift'
@@ -67,8 +71,8 @@ function pickTopCandidate(
 ): ScoredVenue | undefined {
   return [...candidates].sort(
     (left, right) =>
-      computeRolePoolRankingBreakdown(right, role, lens).score -
-      computeRolePoolRankingBreakdown(left, role, lens).score,
+      computeRolePoolRankingScore(right, role, lens) -
+      computeRolePoolRankingScore(left, role, lens),
   )[0]
 }
 

@@ -513,6 +513,73 @@ for (const parityCase of scoreParityCases) {
   )
 }
 
+const debugCompetitionRole: InternalRole = 'peak'
+const debugCompetitionCandidates = scoreParityCases
+  .filter((entry) => entry.role === debugCompetitionRole)
+  .map((entry) => entry.candidate)
+const legacyDebugCompetitionOrdering = [...debugCompetitionCandidates].sort(
+  (left, right) =>
+    computeRolePoolRankingBreakdown(
+      right,
+      debugCompetitionRole,
+      scoreParityLens,
+      scoreParityIntent,
+    ).score -
+    computeRolePoolRankingBreakdown(
+      left,
+      debugCompetitionRole,
+      scoreParityLens,
+      scoreParityIntent,
+    ).score,
+)
+const scorePathDebugCompetitionOrdering = [...debugCompetitionCandidates].sort(
+  (left, right) =>
+    computeRolePoolRankingScore(
+      right,
+      debugCompetitionRole,
+      scoreParityLens,
+      scoreParityIntent,
+    ) -
+    computeRolePoolRankingScore(
+      left,
+      debugCompetitionRole,
+      scoreParityLens,
+      scoreParityIntent,
+    ),
+)
+
+assert(
+  signature(legacyDebugCompetitionOrdering) ===
+    signature(scorePathDebugCompetitionOrdering),
+  'Debug competition ordering changed when sorting through score path.',
+)
+
+for (const candidate of debugCompetitionCandidates) {
+  const score = computeRolePoolRankingScore(
+    candidate,
+    debugCompetitionRole,
+    scoreParityLens,
+    scoreParityIntent,
+  )
+  const breakdown = computeRolePoolRankingBreakdown(
+    candidate,
+    debugCompetitionRole,
+    scoreParityLens,
+    scoreParityIntent,
+  )
+
+  assert(
+    Math.abs(score - breakdown.score) < 1e-12,
+    `Debug competition score path diverged from breakdown score for ${candidateId(candidate)}.`,
+  )
+  assert(
+    typeof breakdown.tasteContribution === 'number' &&
+      typeof breakdown.tasteRoleSuitabilityContribution === 'number' &&
+      typeof breakdown.highlightPlausibilityContribution === 'number',
+    `Debug breakdown diagnostic fields missing for ${candidateId(candidate)}.`,
+  )
+}
+
 const helperSource = readFileSync(
   'src/integrations/waypoint/coordination/coordinateArcRolePools.ts',
   'utf8',
@@ -545,6 +612,9 @@ console.log(
       capsPreserved: true,
       compatibilityProjectionPreserved: true,
       scoreDebugSplitParity: true,
+      debugCompetitionOrderingPreserved: true,
+      debugSortingScorePathParity: true,
+      breakdownDiagnosticFieldsPreserved: true,
       representativeScoreCases: scoreParityCases.map((entry) => entry.name),
       representativeRoles: ['start', 'highlight', 'windDown'],
       gate1PolicyMoved: false,
