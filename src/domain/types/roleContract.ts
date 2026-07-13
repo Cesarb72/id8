@@ -44,10 +44,17 @@ export interface RoleContractEvaluation {
   violations: string[]
 }
 
-export interface RoleContractPoolStatus {
+interface RolePoolStatusBase {
   role: InternalRole
   contractLabel: string
   contractStrength: RoleContractStrength
+}
+
+/**
+ * Load-bearing role-pool behavior truth. Later consumers can migrate here when
+ * proving candidate admission, preservation, and ordering behavior is unchanged.
+ */
+export interface RolePoolAdmissionStatus extends RolePoolStatusBase {
   contractSatisfied: boolean
   contractRelaxed: boolean
   fallbackReason?: string
@@ -56,6 +63,38 @@ export interface RoleContractPoolStatus {
   preferredDiscoveryVenueRejectedReason?: PreferredDiscoveryAdmissionRejectionReason
   preferredDiscoveryVenueHoursRelaxed?: boolean
   preferredDiscoveryVenueHoursRelaxationReason?: AnchorHoursRelaxationReason
+  tightSupportAdmissionActive?: boolean
+  tightSupportAdmissionReason?: string
+  requiredAnchorBaseVenueId?: string
+  requiredAnchorNeighborhood?: string
+  supportSupplyMissing?: boolean
+}
+
+/**
+ * User-facing role-pool explanation truth.
+ *
+ * This bucket is user-facing. Any future consumer migration must prove public
+ * stop-reason copy is byte-for-byte or snapshot-equivalent unchanged
+ * before/after, including rejectedReason and fallbackReason cases. This is
+ * part of the honest-failure / never-masked-route posture.
+ */
+export interface RolePoolPublicReasonStatus extends RolePoolStatusBase {
+  contractSatisfied: boolean
+  contractRelaxed: boolean
+  fallbackReason?: string
+  preferredDiscoveryVenueRejectedReason?: PreferredDiscoveryAdmissionRejectionReason
+  preferredDiscoveryVenueHoursRelaxed?: boolean
+  preferredDiscoveryVenueHoursRelaxationReason?: AnchorHoursRelaxationReason
+  fallbackUsedBecauseNoValidHighlight?: boolean
+  centralMomentRecoveryReason?: string
+  selectedHighlightVetoReason?: string
+}
+
+/**
+ * Debug and development diagnostics. These fields explain pool formation and
+ * route selection, but are not the behavior-authoring path by themselves.
+ */
+export interface RolePoolDiagnosticsStatus extends RolePoolStatusBase {
   strictCandidateCount: number
   relaxedCandidateCount: number
   bestContractCandidateId?: string
@@ -68,8 +107,6 @@ export interface RoleContractPoolStatus {
   recoveredCentralMomentHighlight?: boolean
   recoveredHighlightCandidatesCount?: number
   centralMomentRecoveryReason?: string
-  tightSupportAdmissionActive?: boolean
-  tightSupportAdmissionReason?: string
   requiredAnchorBaseVenueId?: string
   requiredAnchorNeighborhood?: string
   nearAnchorSupportCandidateCountBeforeAdmission?: number
@@ -83,3 +120,14 @@ export interface RoleContractPoolStatus {
   selectedHighlightVetoReason?: string
   packLiteralRequirementSatisfied?: boolean
 }
+
+/**
+ * Temporary compatibility shape for the existing contractPoolStatus projection.
+ * Keep this intact while later slices migrate consumers into narrower buckets.
+ */
+export interface RolePoolCompatibilityStatus
+  extends RolePoolAdmissionStatus,
+    RolePoolPublicReasonStatus,
+    RolePoolDiagnosticsStatus {}
+
+export interface RoleContractPoolStatus extends RolePoolCompatibilityStatus {}
