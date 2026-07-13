@@ -1,6 +1,4 @@
 import type {
-  RoleProfile,
-  RouteRoleInvariants,
   RouteShapeArcShape,
   RouteShapeContract,
   RouteShapeRole,
@@ -10,10 +8,7 @@ export interface WaypointRouteShapeContract {
   source: 'waypoint'
   arcShape: RouteShapeArcShape
   roleOrder: RouteShapeRole[]
-  roleProfile: Record<RouteShapeRole, RoleProfile>
-  roleInvariants: RouteRoleInvariants
   mutationProfile: RouteShapeContract['mutationProfile']
-  expansionProfile: RouteShapeContract['expansionProfile']
   structuralPreservationRules: {
     requiredRoles: RouteShapeRole[]
     allowedRoles: RouteShapeContract['mutationProfile']['allowedRoles']

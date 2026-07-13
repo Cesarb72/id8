@@ -10,7 +10,7 @@ export interface BearingsRouteMovementConstraints {
   feasibilityGuardrails: {
     requireNeighborhoodContinuity: boolean
     allowClusterEscape: boolean
-    maxDriveMinutes: number
-    maxWalkMinutes: number
+    maxDriveMinutes?: number
+    maxWalkMinutes?: number
   }
 }
