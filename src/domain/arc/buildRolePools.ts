@@ -115,6 +115,8 @@ export interface RolePoolRankingBreakdown {
   cooldownPreferenceContribution: number
 }
 
+type RolePoolRankingContributions = Omit<RolePoolRankingBreakdown, 'score'>
+
 export const roleThresholds: Record<InternalRole, number> = {
   warmup: 0.56,
   peak: 0.63,
@@ -411,12 +413,46 @@ export function getRolePoolForRole(role: InternalRole, pools: RolePools): Scored
   return pools.cooldown
 }
 
-export function computeRolePoolRankingBreakdown(
+function getRolePoolAlignmentWeight(role: InternalRole): number {
+  return role === 'peak' ? 1.72 : role === 'warmup' ? 1.28 : role === 'wildcard' ? 1.06 : 1
+}
+
+function computeRolePoolRankingTotal(
+  contributions: RolePoolRankingContributions,
+  role: InternalRole,
+): number {
+  const roleAlignmentWeight = getRolePoolAlignmentWeight(role)
+
+  return (
+    contributions.roleFitContribution +
+    contributions.tasteContribution +
+    contributions.highlightPlausibilityContribution +
+    contributions.modeAlignmentContribution * roleAlignmentWeight -
+    contributions.modeAlignmentPenaltyContribution * roleAlignmentWeight +
+    contributions.discoveryPreferenceContribution +
+    contributions.fitContribution +
+    contributions.lensContribution +
+    contributions.stopShapeContribution +
+    contributions.vibeContribution +
+    contributions.contextContribution -
+    contributions.dominancePenaltyContribution +
+    contributions.momentContribution +
+    contributions.highlightValidityContribution +
+    contributions.contractBonusContribution -
+    contributions.contractPenaltyContribution +
+    contributions.rolePoolLiftContribution +
+    contributions.roleLiftContribution +
+    contributions.rolePromotionContribution +
+    contributions.cooldownPreferenceContribution
+  )
+}
+
+function computeRolePoolRankingContributions(
   candidate: ScoredVenue,
   role: InternalRole,
   lens: ExperienceLens,
   intent?: IntentProfile,
-): RolePoolRankingBreakdown {
+): RolePoolRankingContributions {
   const lensRole = roleToLensStop(role)
   const meaningEvidence = computeTasteRolePoolMeaningForCandidate({
     role: lensRole,
@@ -502,8 +538,6 @@ export function computeRolePoolRankingBreakdown(
       : 0
   const modeAlignmentContribution = tasteInfluence.modeAlignmentContribution
   const modeAlignmentPenaltyContribution = tasteInfluence.modeAlignmentPenalty
-  const roleAlignmentWeight =
-    role === 'peak' ? 1.72 : role === 'warmup' ? 1.28 : role === 'wildcard' ? 1.06 : 1
   const fitContribution = candidate.fitScore * 0.18
   const lensContribution = candidate.lensCompatibility * 0.22
   const stopShapeContribution = candidate.stopShapeFit[lensRole] * 0.15
@@ -520,30 +554,7 @@ export function computeRolePoolRankingBreakdown(
   const roleLiftContribution = liveLift.roleLiftByRole[role]
   const rolePromotionContribution = roleAwareLiveLift.promotion
 
-  const score =
-    roleFitContribution +
-    tasteContribution +
-    highlightPlausibilityContribution +
-    modeAlignmentContribution * roleAlignmentWeight -
-    modeAlignmentPenaltyContribution * roleAlignmentWeight +
-    discoveryPreferenceContribution +
-    fitContribution +
-    lensContribution +
-    stopShapeContribution +
-    vibeContribution +
-    contextContribution -
-    dominancePenaltyContribution +
-    momentContribution +
-    highlightValidityContribution +
-    contractBonusContribution -
-    contractPenaltyContribution +
-    rolePoolLiftContribution +
-    roleLiftContribution +
-    rolePromotionContribution +
-    cooldownPreferenceContribution
-
   return {
-    score,
     roleFitContribution,
     tasteContribution,
     tasteRoleSuitabilityContribution,
@@ -568,13 +579,30 @@ export function computeRolePoolRankingBreakdown(
   }
 }
 
+export function computeRolePoolRankingBreakdown(
+  candidate: ScoredVenue,
+  role: InternalRole,
+  lens: ExperienceLens,
+  intent?: IntentProfile,
+): RolePoolRankingBreakdown {
+  const contributions = computeRolePoolRankingContributions(candidate, role, lens, intent)
+
+  return {
+    score: computeRolePoolRankingTotal(contributions, role),
+    ...contributions,
+  }
+}
+
 export function computeRolePoolRankingScore(
   candidate: ScoredVenue,
   role: InternalRole,
   lens: ExperienceLens,
   intent?: IntentProfile,
 ): number {
-  return computeRolePoolRankingBreakdown(candidate, role, lens, intent).score
+  return computeRolePoolRankingTotal(
+    computeRolePoolRankingContributions(candidate, role, lens, intent),
+    role,
+  )
 }
 
 interface RoleCandidateSelection {
