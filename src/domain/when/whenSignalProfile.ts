@@ -1,4 +1,11 @@
 export type ConciergeCardSpatialMode = 'WALKABLE' | 'FLEXIBLE'
+export type WhenSignalPosture =
+  | 'now_doable_tonight'
+  | 'later_tonight'
+  | 'this_weekend'
+  | 'next_week'
+  | 'pick_a_time'
+export type WhenSignalInputSource = 'defaulted' | 'user_supplied'
 export type WhenSignalTimePhase =
   | 'morning'
   | 'afternoon'
@@ -10,18 +17,33 @@ export type WhenSignalMovementPreference = 'walkable' | 'flexible'
 export type WhenSpatialScoringMode = 'off' | 'soft_curate_spatial'
 
 export interface WhenSignalDraftInput {
+  whenPosture?: WhenSignalPosture
+  whenPostureSource?: WhenSignalInputSource
   startTime?: string
   durationMinutes: number | null
+  durationSource?: WhenSignalInputSource
   spatialMode: ConciergeCardSpatialMode
+  flexibilitySource?: WhenSignalInputSource
 }
 
 export interface WhenSignalProfile {
+  whenPosture: WhenSignalPosture
+  whenPostureSource: WhenSignalInputSource
+  whenDefaulted: boolean
   startTime?: string
   durationMinutes: number | null
+  durationSource: WhenSignalInputSource
   spatialMode: ConciergeCardSpatialMode
+  flexibilitySource: WhenSignalInputSource
   timePhase: WhenSignalTimePhase
   durationBand: WhenSignalDurationBand
   movementPreference: WhenSignalMovementPreference
+  eventsReadiness: {
+    seam: 'when_plus_where'
+    status: 'parked'
+    canSeedFutureEventsQuery: boolean
+    reason: string
+  }
   reasonSummary: string
 }
 
@@ -91,12 +113,19 @@ function getDurationBand(durationMinutes: number | null): WhenSignalDurationBand
 }
 
 export function buildWhenSignalProfile(when: WhenSignalDraftInput): WhenSignalProfile {
+  const whenPosture = when.whenPosture ?? 'now_doable_tonight'
+  const whenPostureSource =
+    when.whenPostureSource ?? (when.whenPosture ? 'user_supplied' : 'defaulted')
   const startTime = when.startTime?.trim() || undefined
   const timePhase = getTimePhase(startTime)
   const durationBand = getDurationBand(when.durationMinutes)
+  const durationSource =
+    when.durationSource ?? (when.durationMinutes == null ? 'defaulted' : 'user_supplied')
+  const flexibilitySource = when.flexibilitySource ?? 'defaulted'
   const movementPreference =
     when.spatialMode === 'FLEXIBLE' ? 'flexible' : 'walkable'
   const reasonSummary = [
+    `when ${whenPosture}`,
     timePhase === 'unspecified'
       ? 'no explicit start time'
       : `time phase ${timePhase}`,
@@ -107,12 +136,23 @@ export function buildWhenSignalProfile(when: WhenSignalDraftInput): WhenSignalPr
   ].join(' | ')
 
   return {
+    whenPosture,
+    whenPostureSource,
+    whenDefaulted: whenPostureSource === 'defaulted',
     startTime,
     durationMinutes: when.durationMinutes,
+    durationSource,
     spatialMode: when.spatialMode,
+    flexibilitySource,
     timePhase,
     durationBand,
     movementPreference,
+    eventsReadiness: {
+      seam: 'when_plus_where',
+      status: 'parked',
+      canSeedFutureEventsQuery: true,
+      reason: 'When posture is structured for a future when+where Events query; Events behavior is parked.',
+    },
     reasonSummary,
   }
 }

@@ -93,6 +93,7 @@ export type ConciergeObjectivePrimary =
   | 'preserve_route_integrity'
   | 'search_and_route'
 export type ConciergeObjectiveOccasion = 'explore' | 'connect' | 'celebrate'
+export type ConciergeObjectiveSource = 'defaulted' | 'user_supplied'
 
 export interface OccasionInterpretationProfile {
   occasion: ConciergeObjectiveOccasion
@@ -149,6 +150,8 @@ export interface ConciergeIntent {
     primary: ConciergeObjectivePrimary
     occasion: ConciergeObjectiveOccasion
   }
+  objectiveDefaulted?: boolean
+  objectiveSource?: ConciergeObjectiveSource
   controlPosture: {
     mode: ConciergeControlPostureMode
   }

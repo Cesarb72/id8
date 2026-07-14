@@ -38,6 +38,22 @@ export type DistrictCoordinateSource = 'real' | 'pseudo_fixture'
 
 export type DistrictIdentityKind = 'canonical' | 'live_only'
 
+export type MovementOriginPrecision =
+  | 'precise'
+  | 'neighborhood'
+  | 'city'
+  | 'query_fallback'
+  | 'unknown'
+
+export type MovementOriginSource =
+  | 'geolocation'
+  | 'explicit_origin'
+  | 'query_coordinates'
+  | 'neighborhood_fallback'
+  | 'city_fallback'
+  | 'query_fallback'
+  | 'unknown'
+
 export type PlaceEntity = {
   id: string
   name: string
@@ -140,6 +156,7 @@ export type ResolveLocationInput = {
   locationQuery: string
   userLatLng?: DistrictPoint
   searchRadiusM?: number
+  originSource?: Extract<MovementOriginSource, 'geolocation' | 'explicit_origin'>
 }
 
 export type ResolvedLocation = {
@@ -155,6 +172,14 @@ export type ResolvedLocation = {
     | 'query_coordinates'
     | 'default_fallback'
     | 'unresolved_query'
+  originPrecision?: MovementOriginPrecision
+  originSource?: MovementOriginSource
+  eventsReadiness?: {
+    seam: 'when_plus_where'
+    status: 'parked'
+    canSeedFutureEventsQuery: boolean
+    reason: string
+  }
   meta: {
     city?: string
     neighborhood?: string

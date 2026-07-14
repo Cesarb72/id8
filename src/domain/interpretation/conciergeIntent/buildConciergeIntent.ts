@@ -17,6 +17,7 @@ export interface BuildApplicationConciergeIntentParams {
   primaryVibe: VibeAnchor
   city: string
   objectiveOccasion?: ConciergeObjectiveOccasion
+  objectiveSource?: ConciergeIntent['objectiveSource']
   starterPack?: StarterPack | null
   anchor?: PlanAnchor | null
   anchorDisplayName?: string | null
@@ -231,6 +232,9 @@ export function buildApplicationConciergeIntent(
         : 'medium'
   const certaintyPriority: ConciergeIntent['realityPosture']['certaintyPriority'] =
     persona === 'family' ? 'high' : 'medium'
+  const objectiveDefaulted = params.objectiveOccasion == null
+  const objectiveOccasion = params.objectiveOccasion ?? 'connect'
+  const objectiveSource = params.objectiveSource ?? (objectiveDefaulted ? 'defaulted' : 'user_supplied')
   const seedToken =
     params.candidateLineage?.candidateArtifactId
       ? `candidate_${normalizeConciergeIntentToken(params.candidateLineage.candidateArtifactId)}`
@@ -254,8 +258,10 @@ export function buildApplicationConciergeIntent(
     intentMode,
     objective: {
       primary: objectivePrimary,
-      occasion: params.objectiveOccasion ?? (params.mode === 'surprise' ? 'explore' : 'connect'),
+      occasion: objectiveOccasion,
     },
+    objectiveDefaulted,
+    objectiveSource,
     controlPosture: {
       mode: controlMode,
     },

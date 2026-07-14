@@ -8,9 +8,11 @@ import type {
 import {
   buildWhenSignalProfile,
   type ConciergeCardSpatialMode,
+  type WhenSignalInputSource,
   type WhenSignalDraftInput,
   type WhenSignalDurationBand,
   type WhenSignalMovementPreference,
+  type WhenSignalPosture,
   type WhenSignalProfile,
   type WhenSignalTimePhase,
 } from '../../domain/when/whenSignalProfile'
@@ -18,8 +20,10 @@ import {
 export { buildWhenSignalProfile }
 export type {
   ConciergeCardSpatialMode,
+  WhenSignalInputSource,
   WhenSignalDurationBand,
   WhenSignalMovementPreference,
+  WhenSignalPosture,
   WhenSignalProfile,
   WhenSignalTimePhase,
 }

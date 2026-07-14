@@ -1,5 +1,7 @@
 import type {
   DistrictPoint,
+  MovementOriginPrecision,
+  MovementOriginSource,
   ResolveLocationInput,
   ResolvedLocation,
 } from '../types/districtTypes'
@@ -179,9 +181,29 @@ function resolveFromHint(normalizedQuery: string): LocationHint | undefined {
   })[0]
 }
 
+function buildEventsReadiness(): ResolvedLocation['eventsReadiness'] {
+  return {
+    seam: 'when_plus_where',
+    status: 'parked',
+    canSeedFutureEventsQuery: true,
+    reason:
+      'Location posture is structured for a future when+where Events query; Events behavior is parked.',
+  }
+}
+
+function locationOriginForHint(hint: LocationHint): {
+  originPrecision: MovementOriginPrecision
+  originSource: MovementOriginSource
+} {
+  return hint.neighborhood
+    ? { originPrecision: 'neighborhood', originSource: 'neighborhood_fallback' }
+    : { originPrecision: 'city', originSource: 'city_fallback' }
+}
+
 export function resolveLocation(input: ResolveLocationInput): ResolvedLocation {
   const normalizedQuery = normalizeQuery(input.locationQuery)
   const nowIso = new Date().toISOString()
+  const eventsReadiness = buildEventsReadiness()
 
   if (input.userLatLng) {
     return {
@@ -192,6 +214,9 @@ export function resolveLocation(input: ResolveLocationInput): ResolvedLocation {
       radiusM: clamp(input.searchRadiusM ?? DEFAULT_RADIUS_M, MIN_RADIUS_M, MAX_RADIUS_M),
       confidence: 'high',
       source: 'user_lat_lng',
+      originPrecision: 'precise',
+      originSource: input.originSource ?? 'geolocation',
+      eventsReadiness,
       meta: {
         geocoder: 'manual-user-location',
         resolvedAtIso: nowIso,
@@ -209,6 +234,9 @@ export function resolveLocation(input: ResolveLocationInput): ResolvedLocation {
       radiusM: clamp(input.searchRadiusM ?? DEFAULT_RADIUS_M, MIN_RADIUS_M, MAX_RADIUS_M),
       confidence: 'medium',
       source: 'query_coordinates',
+      originPrecision: 'precise',
+      originSource: 'explicit_origin',
+      eventsReadiness,
       meta: {
         geocoder: 'query-coordinate-parser',
         resolvedAtIso: nowIso,
@@ -225,6 +253,9 @@ export function resolveLocation(input: ResolveLocationInput): ResolvedLocation {
       radiusM: clamp(input.searchRadiusM ?? DEFAULT_RADIUS_M, MIN_RADIUS_M, MAX_RADIUS_M),
       confidence: 'low',
       source: 'unresolved_query',
+      originPrecision: 'unknown',
+      originSource: 'unknown',
+      eventsReadiness,
       meta: {
         geocoder: 'heuristic-location-hints',
         unresolvedReason: 'Enter a city or neighborhood (for example: "San Jose, CA" or "Denver, CO").',
@@ -235,6 +266,7 @@ export function resolveLocation(input: ResolveLocationInput): ResolvedLocation {
 
   const hint = resolveFromHint(normalizedQuery)
   if (hint) {
+    const origin = locationOriginForHint(hint)
     return {
       query: input.locationQuery,
       normalizedQuery,
@@ -243,6 +275,8 @@ export function resolveLocation(input: ResolveLocationInput): ResolvedLocation {
       radiusM: clamp(input.searchRadiusM ?? hint.radiusM, MIN_RADIUS_M, MAX_RADIUS_M),
       confidence: normalizedQuery.length > 0 ? 'medium' : 'low',
       source: 'query_lookup',
+      ...origin,
+      eventsReadiness,
       meta: {
         city: hint.city,
         neighborhood: hint.neighborhood,
@@ -263,6 +297,9 @@ export function resolveLocation(input: ResolveLocationInput): ResolvedLocation {
       radiusM: clamp(input.searchRadiusM ?? 6200, MIN_RADIUS_M, MAX_RADIUS_M),
       confidence: 'low',
       source: 'query_lookup',
+      originPrecision: 'city',
+      originSource: 'city_fallback',
+      eventsReadiness,
       meta: {
         city: parsedCityState.city,
         countryCode: 'US',
@@ -284,6 +321,9 @@ export function resolveLocation(input: ResolveLocationInput): ResolvedLocation {
     radiusM: clamp(input.searchRadiusM ?? DEFAULT_RADIUS_M, MIN_RADIUS_M, MAX_RADIUS_M),
     confidence: 'low',
     source: 'unresolved_query',
+    originPrecision: 'query_fallback',
+    originSource: 'query_fallback',
+    eventsReadiness,
     meta: {
       geocoder: 'heuristic-location-hints',
       unresolvedReason,
