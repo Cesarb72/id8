@@ -256,11 +256,11 @@ try {
   )
   assert(
     insufficientProviderResult.opportunity === null,
-    'Insufficient provider role diversity must use static fallback.',
+    'Insufficient provider role diversity must fail closed without emitting a provider opportunity.',
   )
   assert(
-    insufficientProviderResult.diagnostics.buildProviderStaticFallbackUsed === true,
-    'Insufficient mock supply must preserve static fallback diagnostics.',
+    insufficientProviderResult.diagnostics.buildProviderStaticFallbackUsed === false,
+    'Insufficient mock supply must not preserve static fallback masking diagnostics.',
   )
 
   const providerResult = roleDiverseProviderResult

@@ -1019,6 +1019,7 @@ export async function buildProviderSourceOpportunity(
       diagnostics: {
         ...diagnostics,
         buildProviderSupplyBlockedReason: 'provider_insufficient_role_diversity',
+        buildProviderStaticFallbackUsed: false,
       },
       opportunity: null,
     }
