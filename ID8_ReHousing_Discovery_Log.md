@@ -215,6 +215,7 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 *(append discoveries here)*
 
 ### Application
+- [2026-07-14] [Phase 4 Application Slice 1 - scoreAnchoredRoleFit shadow-engine impact observer] - Phase 4 Application audit found `SandboxConciergePage.tsx` still imports `scoreAnchoredRoleFit` directly from Arc while the public page wraps Sandbox. Impact: Application still authors role-fit ordering in canonical repair, signature highlight shortlist, strong curation role pools, role-pool repair, and swap/identity hydration paths. Action: added an observer freezing current Application-side impacts and classifying owner-signal replacements; no production behavior, public copy/UI, route generation, provider, Gate 2, draft/swap, or cleanup migration changes.
 *(append discoveries here)*
 
 ### Cross-cutting (contracts, gravity wells, seams)
