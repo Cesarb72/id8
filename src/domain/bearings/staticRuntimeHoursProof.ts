@@ -133,6 +133,17 @@ export function evaluateStaticRuntimeHoursProof(
     }
   }
 
+  if (planningWindow.whenProjection?.broadFuture) {
+    return {
+      status: 'unknown_for_plan_window',
+      required,
+      proofSource: runtimeHoursProof.proofSource,
+      structuredPeriodCount: runtimeHoursProof.structuredPeriods.length,
+      textHoursAvailable: runtimeHoursProof.textHoursAvailable,
+      planningWindowLabel: planningWindow.label,
+    }
+  }
+
   if (runtimeHoursProof.structuredPeriods.length === 0) {
     return {
       status: 'unknown_for_plan_window',

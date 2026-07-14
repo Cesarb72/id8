@@ -2757,6 +2757,7 @@ async function runGeneratePlanInternal(
     liveEnvelope: options.liveEnvelope,
     stepBCurateLiveSmokeActive: options.stepBCurateLiveSmokeActive,
     starterPack: options.starterPack,
+    whenSignalProfile: options.whenSignalProfile,
   })
   if (options.debugMode && typeof window !== 'undefined') {
     console.info('[ID8 TRACE] runGeneratePlan retrieval ingress', {

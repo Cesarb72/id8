@@ -5,12 +5,13 @@ import {
   type FieldCorpusRuntimeHoursAdmissionDiagnostic,
   type FieldCorpusRuntimeHoursAdmissionDiagnostics,
 } from '../../bearings/fieldCorpusRuntimeHoursAdmission'
-import { resolvePlanningTimeWindow } from '../../temporal/resolvePlanningTimeWindow'
+import { resolvePlanningTimeWindowResolution } from '../../temporal/resolvePlanningTimeWindow'
 import type { PromotedFieldProviderCorpusVenue } from './types'
 import type { IntentProfile } from '../../types/intent'
 import type { SourceMode } from '../../types/sourceMode'
 import type { StarterPack } from '../../types/starterPack'
 import type { Venue } from '../../types/venue'
+import type { WhenSignalProfile } from '../../when/whenSignalProfile'
 
 export const curateStaticFieldCorpusStarterAliases: Record<string, string> = {
   'arcade-and-drinks': 'arcade-drinks',
@@ -46,6 +47,8 @@ export interface CurateStaticFieldCorpusDiagnostics {
 
 export interface ResolveCurateStaticFieldCorpusVenuesInput {
   intent: IntentProfile
+  whenSignalProfile?: WhenSignalProfile
+  clock?: Date
   starterPack?: StarterPack
   existingCuratedVenues: Venue[]
   requestedSourceMode: SourceMode
@@ -188,6 +191,8 @@ function dedupePromotedCandidates(
 
 export function resolveCurateStaticFieldCorpusVenues({
   intent,
+  whenSignalProfile,
+  clock,
   starterPack,
   existingCuratedVenues,
   requestedSourceMode,
@@ -252,16 +257,30 @@ export function resolveCurateStaticFieldCorpusVenues({
   }
 
   const dedupedCandidates = dedupePromotedCandidates(candidates)
-  const planningWindow = resolvePlanningTimeWindow(intent)
+  const planningWindowResolution = resolvePlanningTimeWindowResolution(intent, {
+    whenSignalProfile,
+    clock,
+  })
+  const planningWindow = planningWindowResolution.planningWindow
+  const timeSpecificity =
+    planningWindowResolution.whenProjection?.strictness === 'strict'
+      ? 'explicit'
+      : undefined
   const runtimeHoursAdmission = applyFieldCorpusRuntimeHoursAdmission(
     dedupedCandidates.venues,
     planningWindow,
+    {
+      timeSpecificity,
+      invalidPlanningWindowReason: planningWindowResolution.whenProjection?.valid === false
+        ? planningWindowResolution.whenProjection.invalidReason
+        : undefined,
+    },
   )
   const projectedCandidates = runtimeHoursAdmission.admitted.map((promotedVenue) =>
     projectStaticFieldVenue(
       promotedVenue,
       runtimeHoursAdmission.diagnosticsByVenueId.get(promotedVenue.id),
-      planningWindow.source,
+      planningWindow?.source,
     ),
   )
   const venues: Venue[] = []

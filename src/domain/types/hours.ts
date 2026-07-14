@@ -9,6 +9,7 @@ export type PlanningTimeWindowSource =
   | 'gate1_default_evening_window'
   | 'intent_time_window'
   | 'runtime_current_window'
+  | 'when_planning_window'
 
 export type HoursPressureLevel =
   | 'strong-open'
@@ -36,6 +37,14 @@ export interface PlanningTimeWindowSignal {
   label: string
   source?: PlanningTimeWindowSource
   usesIntentWindow: boolean
+  whenProjection?: {
+    posture: string
+    strictness: 'soft' | 'medium' | 'broad' | 'strict'
+    whenDefaulted: boolean
+    source: 'defaulted' | 'user_supplied'
+    broadFuture: boolean
+    actualRuntimeClockUsed: boolean
+  }
 }
 
 export interface HoursPressureAnalysis {

@@ -4,7 +4,6 @@ import { evaluateStaticRuntimeHoursProof } from '../src/domain/bearings/staticRu
 import { sanJoseProviderCorpusVenues } from '../src/domain/field/corpus/sanJoseProviderCorpus.ts'
 import { RUNTIME_HOURS_VALIDATION_REQUIRED } from '../src/domain/field/corpus/types.ts'
 import type { PromotedFieldProviderCorpusVenue } from '../src/domain/field/corpus/types.ts'
-import { buildGate1DefaultEveningWindow } from '../src/domain/temporal/resolvePlanningTimeWindow.ts'
 import type { PlanningTimeWindowSignal } from '../src/domain/types/hours.ts'
 
 const originalFetch = globalThis.fetch
@@ -83,10 +82,33 @@ function requiredVenue(
 
 function buildExplicitWindow(): PlanningTimeWindowSignal {
   return {
-    ...buildGate1DefaultEveningWindow(),
-    label: 'Intent Friday 7:00 PM',
+    day: 2,
+    hour: 20,
+    minute: 30,
+    phase: 'evening',
+    label: 'Intent Tuesday 8:30 PM',
     source: 'intent_time_window',
     usesIntentWindow: true,
+  }
+}
+
+function buildProjectedDefaultWindow(): PlanningTimeWindowSignal {
+  return {
+    day: 2,
+    hour: 20,
+    minute: 15,
+    phase: 'evening',
+    label: 'Defaulted now Tuesday 8:15 PM',
+    source: 'when_planning_window',
+    usesIntentWindow: false,
+    whenProjection: {
+      posture: 'now_doable_tonight',
+      strictness: 'soft',
+      whenDefaulted: true,
+      source: 'defaulted',
+      broadFuture: false,
+      actualRuntimeClockUsed: true,
+    },
   }
 }
 
@@ -104,14 +126,14 @@ function evaluateFixture(
 function main(): void {
   globalThis.fetch = fetchTrap
 
-  const unspecifiedWindow = buildGate1DefaultEveningWindow()
+  const unspecifiedWindow = buildProjectedDefaultWindow()
   const explicitWindow = buildExplicitWindow()
   const openRequired = requiredVenue('test-open-required', {
     runtimeHoursProof: {
       structuredPeriods: [
         {
-          open: { day: 5, hour: 17, minute: 0 },
-          close: { day: 6, hour: 1, minute: 0 },
+          open: { day: 2, hour: 20, minute: 0 },
+          close: { day: 2, hour: 21, minute: 30 },
         },
       ],
       textHoursAvailable: false,
@@ -208,7 +230,7 @@ function main(): void {
   )
   assert(
     unknownDiagnostic.timeSpecificity === 'unspecified',
-    'Curate default Gate 1 window must be classified as unspecified.',
+    'Curate default When planning window must be classified as unspecified.',
   )
   assert(
     unknownDiagnostic.relaxationApplied,

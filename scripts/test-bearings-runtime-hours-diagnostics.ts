@@ -10,6 +10,7 @@ import { normalizeIntent } from '../src/domain/intent/normalizeIntent.ts'
 import { retrieveVenues } from '../src/domain/retrieval/retrieveVenues.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
 import type { Venue } from '../src/domain/types/venue.ts'
+import { buildWhenSignalProfile } from '../src/domain/when/whenSignalProfile.ts'
 
 const originalFetch = globalThis.fetch
 const originalFlagValue = process.env[FIELD_STATIC_PROVIDER_CORPUS_CURATE_ENV_KEY]
@@ -96,7 +97,7 @@ function validatePureHelper(): void {
     source: {
       ...requiredFixture.source,
       runtimeHoursPlanWindowProofStatus: 'open_for_plan_window',
-      runtimeHoursPlanWindowSource: 'gate1_default_evening_window',
+      runtimeHoursPlanWindowSource: 'when_planning_window',
       runtimeHoursStructuredPeriodCount: 6,
     },
   }
@@ -105,7 +106,7 @@ function validatePureHelper(): void {
     source: {
       ...requiredFixture.source,
       runtimeHoursPlanWindowProofStatus: 'unknown_for_plan_window',
-      runtimeHoursPlanWindowSource: 'gate1_default_evening_window',
+      runtimeHoursPlanWindowSource: 'when_planning_window',
       runtimeHoursStructuredPeriodCount: 0,
     },
   }
@@ -204,6 +205,7 @@ async function validateCurateRetrievalDiagnostics(): Promise<void> {
   const retrieval = await retrieveVenues(intent, lens, {
     requestedSourceMode: 'curated',
     starterPack,
+    whenSignalProfile: buildWhenSignalProfile({ spatialMode: 'WALKABLE' }),
   })
 
   assert(retrieval.sourceMode.requestedMode === 'curated', 'Requested sourceMode must remain curated.')
@@ -230,8 +232,8 @@ async function validateCurateRetrievalDiagnostics(): Promise<void> {
   const admission = retrieval.sourceMode.curateStaticCorpus.runtimeHoursAdmission
   assert(admission !== undefined, 'Curate static corpus diagnostics must include runtime-hours admission.')
   assert(
-    admission.planningWindow.source === 'gate1_default_evening_window',
-    'Gate 1 default planning window source must be explicit.',
+    admission.planningWindow.source === 'when_planning_window',
+    'Runtime-hours planning window source must come from Bearings When projection.',
   )
   assert(admission.evaluatedCount > 0, 'Runtime-hours admission must evaluate Field corpus candidates.')
   assert(

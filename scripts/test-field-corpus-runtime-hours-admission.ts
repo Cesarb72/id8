@@ -2,7 +2,11 @@ import { applyFieldCorpusRuntimeHoursAdmission } from '../src/domain/bearings/fi
 import { sanJoseProviderCorpusVenues } from '../src/domain/field/corpus/sanJoseProviderCorpus.ts'
 import { RUNTIME_HOURS_VALIDATION_REQUIRED } from '../src/domain/field/corpus/types.ts'
 import type { PromotedFieldProviderCorpusVenue } from '../src/domain/field/corpus/types.ts'
-import { buildGate1DefaultEveningWindow } from '../src/domain/temporal/resolvePlanningTimeWindow.ts'
+import {
+  projectBearingsWhenPlanningWindow,
+  projectWhenPlanningWindowToSignal,
+} from '../src/domain/bearings/projectWhenPlanningWindow.ts'
+import { buildWhenSignalProfile } from '../src/domain/when/whenSignalProfile.ts'
 
 const originalFetch = globalThis.fetch
 let fetchCallCount = 0
@@ -81,18 +85,24 @@ function requiredVenue(
 
 function main(): void {
   globalThis.fetch = fetchTrap
-  const planningWindow = buildGate1DefaultEveningWindow()
+  const planningWindow = projectWhenPlanningWindowToSignal(
+    projectBearingsWhenPlanningWindow({
+      whenSignalProfile: buildWhenSignalProfile({ spatialMode: 'WALKABLE' }),
+      clock: new Date(2026, 6, 14, 20, 15, 0, 0),
+    }),
+  )
+  assert(planningWindow !== undefined, 'Projected default When planning window must exist.')
   assert(
-    planningWindow.source === 'gate1_default_evening_window',
-    'Gate 1 default planning window source must be explicit.',
+    planningWindow.source === 'when_planning_window',
+    'Default planning window source must come from Bearings When projection.',
   )
 
   const openRequired = requiredVenue('test-open-required', {
     runtimeHoursProof: {
       structuredPeriods: [
         {
-          open: { day: 5, hour: 17, minute: 0 },
-          close: { day: 6, hour: 1, minute: 0 },
+          open: { day: 2, hour: 20, minute: 0 },
+          close: { day: 2, hour: 21, minute: 30 },
         },
       ],
       textHoursAvailable: false,

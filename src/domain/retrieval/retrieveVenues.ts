@@ -58,6 +58,7 @@ import type {
 } from '../types/sourceMode'
 import type { StarterPack } from '../types/starterPack'
 import type { Venue } from '../types/venue'
+import type { WhenSignalProfile } from '../when/whenSignalProfile'
 
 function sanitize(value: string): string {
   return value.trim().toLowerCase()
@@ -160,6 +161,7 @@ interface RetrieveVenuesOptions {
   livePocketHint?: LiveRetrievalPocketHint
   stepBCurateLiveSmokeActive?: boolean
   starterPack?: StarterPack
+  whenSignalProfile?: WhenSignalProfile
 }
 
 type ProviderAuthoritySummary = Partial<Record<ProviderAuthorityClass, number>>
@@ -723,6 +725,7 @@ export async function retrieveVenues(
     : [...curatedFixtureVenues, ...baseCuratedVenues]
   const curateStaticCorpus = resolveCurateStaticFieldCorpusVenues({
     intent,
+    whenSignalProfile: options.whenSignalProfile,
     starterPack: options.starterPack,
     existingCuratedVenues: baseCuratedPool,
     requestedSourceMode,

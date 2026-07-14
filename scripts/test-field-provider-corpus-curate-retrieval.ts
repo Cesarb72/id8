@@ -13,10 +13,12 @@ import { normalizeIntent } from '../src/domain/intent/normalizeIntent.ts'
 import { retrieveVenues } from '../src/domain/retrieval/retrieveVenues.ts'
 import type { IntentProfile } from '../src/domain/types/intent.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
+import { buildWhenSignalProfile } from '../src/domain/when/whenSignalProfile.ts'
 
 const originalFetch = globalThis.fetch
 const originalFlagValue = process.env[FIELD_STATIC_PROVIDER_CORPUS_CURATE_ENV_KEY]
 let fetchCallCount = 0
+const fixedClock = new Date(2026, 6, 14, 20, 15, 0, 0)
 
 const fetchTrap: typeof fetch = async () => {
   fetchCallCount += 1
@@ -59,6 +61,8 @@ function setFlag(value: string | undefined): void {
 function resolveForStarter(starterPack: StarterPack, mode: IntentProfile['mode'] = 'curate') {
   return resolveCurateStaticFieldCorpusVenues({
     intent: buildIntent(starterPack, mode),
+    whenSignalProfile: buildWhenSignalProfile({ spatialMode: 'WALKABLE' }),
+    clock: fixedClock,
     starterPack,
     existingCuratedVenues: curatedVenues,
     requestedSourceMode: 'curated',
@@ -99,11 +103,13 @@ async function validateFlagOffParity(): Promise<void> {
   const baseline = await retrieveVenues(intent, lens, {
     requestedSourceMode: 'curated',
     starterPack,
+    whenSignalProfile: buildWhenSignalProfile({ spatialMode: 'WALKABLE' }),
   })
   setFlag('0')
   const disabled = await retrieveVenues(intent, lens, {
     requestedSourceMode: 'curated',
     starterPack,
+    whenSignalProfile: buildWhenSignalProfile({ spatialMode: 'WALKABLE' }),
   })
 
   assert(
@@ -124,6 +130,7 @@ async function validateFlagOnCurateRetrieval(): Promise<void> {
   const retrieval = await retrieveVenues(intent, lens, {
     requestedSourceMode: 'curated',
     starterPack,
+    whenSignalProfile: buildWhenSignalProfile({ spatialMode: 'WALKABLE' }),
   })
 
   assert(retrieval.sourceMode.requestedMode === 'curated', 'Requested sourceMode must remain curated.')
@@ -140,8 +147,8 @@ async function validateFlagOnCurateRetrieval(): Promise<void> {
   )
   assert(
     retrieval.sourceMode.curateStaticCorpus.runtimeHoursAdmission?.planningWindow.source ===
-      'gate1_default_evening_window',
-    'Flag-on Curate retrieval must expose explicit Gate 1 runtime-hours planning window source.',
+      'when_planning_window',
+    'Flag-on Curate retrieval must expose Bearings When runtime-hours planning window source.',
   )
   assert(
     retrieval.sourceMode.curateStaticCorpus.runtimeHoursAdmission.evaluatedCount > 0,
@@ -224,8 +231,8 @@ function validateResolverSemantics(): void {
     'Resolver must record static curated collision drops.',
   )
   assert(
-    hidden.diagnostics.runtimeHoursAdmission?.planningWindow.source === 'gate1_default_evening_window',
-    'Resolver diagnostics must mark the Gate 1 default runtime-hours planning window source.',
+    hidden.diagnostics.runtimeHoursAdmission?.planningWindow.source === 'when_planning_window',
+    'Resolver diagnostics must mark the Bearings When runtime-hours planning window source.',
   )
   assert(
     hidden.diagnostics.runtimeHoursAdmission.evaluatedCount > 0,

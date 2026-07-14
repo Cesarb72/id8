@@ -49,15 +49,17 @@ function parseHourFromTimeWindow(timeWindow?: string): number | undefined {
   return Math.max(0, Math.min(23, hour))
 }
 
-export function getTimeWindowSignal(intent: IntentProfile): PlanningTimeWindowSignal {
-  const now = new Date()
+export function getTimeWindowSignal(
+  intent: IntentProfile,
+  clock = new Date(),
+): PlanningTimeWindowSignal {
   const parsedHour = parseHourFromTimeWindow(intent.timeWindow)
-  const hour = parsedHour ?? now.getHours()
-  const minute = parsedHour === undefined ? now.getMinutes() : 0
+  const hour = parsedHour ?? clock.getHours()
+  const minute = parsedHour === undefined ? clock.getMinutes() : 0
   const phase = getPhaseFromHour(hour)
 
   return {
-    day: now.getDay(),
+    day: clock.getDay(),
     hour,
     minute,
     phase,

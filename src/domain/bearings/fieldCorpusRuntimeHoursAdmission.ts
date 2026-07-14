@@ -4,9 +4,9 @@ import {
 } from './staticRuntimeHoursProof'
 import {
   evaluateHoursAdmissibility,
+  type BearingsHoursTimeSpecificity,
   type BearingsHoursAdmissibilityReason,
   type BearingsHoursAdmissibilityStatus,
-  type BearingsHoursTimeSpecificity,
 } from './hoursAdmissibilityPolicy'
 import type { PromotedFieldProviderCorpusVenue } from '../field/corpus/types'
 import type { PlanningTimeWindowSignal } from '../types/hours'
@@ -28,13 +28,15 @@ export interface FieldCorpusRuntimeHoursAdmissionDiagnostic {
 }
 
 export interface FieldCorpusRuntimeHoursAdmissionDiagnostics {
-  planningWindow: {
+  planningWindow?: {
     day: number
     hour: number
     minute: number
     label: string
     source?: PlanningTimeWindowSignal['source']
+    usesIntentWindow: boolean
   }
+  invalidPlanningWindowReason?: string
   evaluatedCount: number
   requiredCount: number
   openCount: number
@@ -56,7 +58,11 @@ export interface FieldCorpusRuntimeHoursAdmissionResult {
 
 export function applyFieldCorpusRuntimeHoursAdmission(
   candidates: PromotedFieldProviderCorpusVenue[],
-  planningWindow: PlanningTimeWindowSignal,
+  planningWindow: PlanningTimeWindowSignal | undefined,
+  options: {
+    timeSpecificity?: BearingsHoursTimeSpecificity
+    invalidPlanningWindowReason?: string
+  } = {},
 ): FieldCorpusRuntimeHoursAdmissionResult {
   const admitted: PromotedFieldProviderCorpusVenue[] = []
   const blocked: PromotedFieldProviderCorpusVenue[] = []
@@ -68,6 +74,7 @@ export function applyFieldCorpusRuntimeHoursAdmission(
     const admissibility = evaluateHoursAdmissibility({
       proof,
       planningWindow,
+      timeSpecificity: options.timeSpecificity,
     })
     const diagnostic: FieldCorpusRuntimeHoursAdmissionDiagnostic = {
       venueId: candidate.id,
@@ -112,13 +119,17 @@ export function applyFieldCorpusRuntimeHoursAdmission(
     admitted,
     blocked,
     diagnostics: {
-      planningWindow: {
-        day: planningWindow.day,
-        hour: planningWindow.hour,
-        minute: planningWindow.minute,
-        label: planningWindow.label,
-        source: planningWindow.source,
-      },
+      planningWindow: planningWindow
+        ? {
+            day: planningWindow.day,
+            hour: planningWindow.hour,
+            minute: planningWindow.minute,
+            label: planningWindow.label,
+            source: planningWindow.source,
+            usesIntentWindow: planningWindow.usesIntentWindow,
+          }
+        : undefined,
+      invalidPlanningWindowReason: options.invalidPlanningWindowReason,
       evaluatedCount: venueDiagnostics.length,
       requiredCount: venueDiagnostics.filter((diagnostic) => diagnostic.required).length,
       openCount,

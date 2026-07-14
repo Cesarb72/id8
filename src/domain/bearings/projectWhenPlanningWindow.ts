@@ -1,4 +1,4 @@
-import type { PlanningTimePhase } from '../types/hours'
+import type { PlanningTimePhase, PlanningTimeWindowSignal } from '../types/hours'
 import type { WhenSignalPosture, WhenSignalProfile } from '../when/whenSignalProfile'
 
 export type BearingsWhenPlanningWindowStrictness = 'soft' | 'medium' | 'broad' | 'strict'
@@ -328,6 +328,33 @@ export function projectBearingsWhenPlanningWindow(
     diagnostics: {
       ...baseDiagnostics,
       reason: 'Pick-a-time preserves the explicit user time with strict Bearings feasibility semantics.',
+    },
+  }
+}
+
+export function projectWhenPlanningWindowToSignal(
+  projection: BearingsWhenPlanningWindowProjection,
+): PlanningTimeWindowSignal | undefined {
+  const window = projection.representativeWindow
+  if (!projection.valid || !window) {
+    return undefined
+  }
+
+  return {
+    day: window.day,
+    hour: window.hour,
+    minute: window.minute,
+    phase: window.phase,
+    label: window.label,
+    source: 'when_planning_window',
+    usesIntentWindow: projection.strictness === 'strict',
+    whenProjection: {
+      posture: projection.posture,
+      strictness: projection.strictness,
+      whenDefaulted: projection.whenDefaulted,
+      source: projection.whenPostureSource,
+      broadFuture: projection.broadFuture,
+      actualRuntimeClockUsed: projection.actualRuntimeClockUsed,
     },
   }
 }
