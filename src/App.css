@@ -2245,6 +2245,86 @@ fieldset {
   line-height: 1.42;
 }
 
+.concierge-when-card {
+  display: grid;
+  gap: 0.62rem;
+}
+
+.concierge-when-control-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 0.48rem;
+}
+
+.concierge-when-control-group.compact {
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+}
+
+.concierge-when-option,
+.concierge-when-chip {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgb(198 207 213 / 0.86);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.94);
+  color: rgb(34 44 52 / 0.92);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.concierge-when-option {
+  display: grid;
+  gap: 0.16rem;
+  padding: 0.58rem 0.66rem;
+}
+
+.concierge-when-option span {
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.concierge-when-option small {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.25;
+}
+
+.concierge-when-chip {
+  padding: 0.52rem 0.6rem;
+  font-size: 0.84rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.concierge-when-option.selected,
+.concierge-when-chip.selected {
+  border-color: rgb(71 83 153 / 0.9);
+  background: rgb(238 241 255 / 0.92);
+  color: rgb(42 49 121 / 0.98);
+}
+
+.concierge-when-field {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.concierge-when-field span {
+  color: rgb(71 83 153 / 0.92);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.concierge-when-field input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgb(198 207 213 / 0.86);
+  border-radius: 8px;
+  padding: 0.5rem 0.62rem;
+  color: rgb(34 44 52 / 0.92);
+  font: inherit;
+}
+
 .concierge-flow .preview-adjustments-grid.compact {
   gap: 0.56rem;
 }

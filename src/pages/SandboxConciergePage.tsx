@@ -17,7 +17,14 @@ import {
   buildWhenSignalProfile,
   type ConciergeCardInputDraft,
   type ConciergeCardVibeDraft,
+  type ConciergeCardWhenDraft,
+  type ConciergeCardSpatialMode,
+  type WhenSignalPosture,
 } from '../app/types/conciergeCardInput'
+import {
+  applyConciergeCardWhenCapture,
+  buildDefaultConciergeCardWhenDraft,
+} from '../app/concierge/whenCardCapture'
 import {
   getConciergeCardSequence,
   getInitialConciergeCardFlowState,
@@ -2551,6 +2558,130 @@ const vibeOptions: Array<{ label: string; value: VibeAnchor }> = [
   { label: 'Cozy', value: 'cozy' },
   { label: 'Cultured', value: 'cultured' },
 ]
+
+const whenPostureOptions: Array<{
+  value: WhenSignalPosture
+  label: string
+  detail: string
+}> = [
+  {
+    value: 'now_doable_tonight',
+    label: 'Now',
+    detail: 'Doable tonight',
+  },
+  {
+    value: 'later_tonight',
+    label: 'Later tonight',
+    detail: 'Keep the plan evening-first',
+  },
+  {
+    value: 'this_weekend',
+    label: 'This weekend',
+    detail: 'Hold a weekend posture',
+  },
+  {
+    value: 'next_week',
+    label: 'Next week',
+    detail: 'Plan ahead without Events',
+  },
+  {
+    value: 'pick_a_time',
+    label: 'Pick a time',
+    detail: 'Use an explicit time',
+  },
+]
+
+const whenDurationOptions: Array<{ value: number | null; label: string }> = [
+  { value: null, label: 'Open' },
+  { value: 90, label: '90 min' },
+  { value: 150, label: '2.5 hr' },
+  { value: 210, label: '3.5 hr' },
+]
+
+const whenMovementOptions: Array<{ value: ConciergeCardSpatialMode; label: string }> = [
+  { value: 'WALKABLE', label: 'Walkable' },
+  { value: 'FLEXIBLE', label: 'Flexible' },
+]
+
+function ConciergeWhenCardBody({
+  when,
+  onChange,
+}: {
+  when: ConciergeCardWhenDraft
+  onChange: (update: Parameters<typeof applyConciergeCardWhenCapture>[1]) => void
+}) {
+  const activePosture = when.whenPosture ?? 'now_doable_tonight'
+
+  return (
+    <div className="concierge-when-card" data-card-id="when">
+      <div className="concierge-when-control-group" aria-label="When posture">
+        {whenPostureOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={`concierge-when-option${
+              activePosture === option.value ? ' selected' : ''
+            }`}
+            aria-pressed={activePosture === option.value}
+            onClick={() => onChange({ whenPosture: option.value })}
+          >
+            <span>{option.label}</span>
+            <small>{option.detail}</small>
+          </button>
+        ))}
+      </div>
+
+      {activePosture === 'pick_a_time' && (
+        <label className="concierge-when-field">
+          <span>Start time</span>
+          <input
+            type="text"
+            value={when.startTime ?? ''}
+            placeholder="8:30pm"
+            onChange={(event) =>
+              onChange({
+                whenPosture: 'pick_a_time',
+                startTime: event.target.value,
+              })
+            }
+          />
+        </label>
+      )}
+
+      <div className="concierge-when-control-group compact" aria-label="Duration">
+        {whenDurationOptions.map((option) => (
+          <button
+            key={option.label}
+            type="button"
+            className={`concierge-when-chip${
+              when.durationMinutes === option.value ? ' selected' : ''
+            }`}
+            aria-pressed={when.durationMinutes === option.value}
+            onClick={() => onChange({ durationMinutes: option.value })}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="concierge-when-control-group compact" aria-label="Movement range">
+        {whenMovementOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={`concierge-when-chip${
+              when.spatialMode === option.value ? ' selected' : ''
+            }`}
+            aria-pressed={when.spatialMode === option.value}
+            onClick={() => onChange({ spatialMode: option.value })}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 function getConciergeCardVibeUxProfile(vibe: VibeAnchor): ConciergeCardVibeDraft['uxProfile'] {
   if (vibe === 'cozy' || vibe === 'chill') {
@@ -10430,11 +10561,7 @@ export function SandboxConciergePage({
   const districtLocationQuery = useMemo(() => city.trim(), [city])
   const canonicalCardInputDraft = useMemo<ConciergeCardInputDraft>(
     () => {
-      const when = {
-        startTime: undefined,
-        durationMinutes: null,
-        spatialMode: 'WALKABLE',
-      } satisfies ConciergeCardInputDraft['when']
+      const when = buildDefaultConciergeCardWhenDraft()
 
       return {
         city,
@@ -10461,6 +10588,12 @@ export function SandboxConciergePage({
       setHintLabel(null)
     }
   }, [canonicalCardInputDraft])
+  const handlePublicCardPreviewWhenChange = useCallback(
+    (update: Parameters<typeof applyConciergeCardWhenCapture>[1]) => {
+      setCardPreviewDraft((current) => applyConciergeCardWhenCapture(current, update))
+    },
+    [],
+  )
   const handlePublicCardPreviewAnswer = useCallback(() => {
     const activeCardId = cardFlowState.activeCardId
     if (!activeCardId) {
@@ -23391,7 +23524,14 @@ export function SandboxConciergePage({
                 canSkip={activePublicCardPreviewCard.requirement === 'optional'}
                 onAnswer={handlePublicCardPreviewAnswer}
                 onSkip={handlePublicCardPreviewSkip}
-              />
+              >
+                {activePublicCardPreviewCard.id === 'when' ? (
+                  <ConciergeWhenCardBody
+                    when={cardPreviewDraft.when}
+                    onChange={handlePublicCardPreviewWhenChange}
+                  />
+                ) : undefined}
+              </ConciergeCardStep>
             </>
           ) : (
             <p className="concierge-card-preview-fallback">

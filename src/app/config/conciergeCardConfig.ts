@@ -224,14 +224,31 @@ function formatOccasionLabel(value: ConciergeCardInputDraft['objectiveOccasion']
   return 'Connect'
 }
 
+function formatWhenPostureLabel(when: ConciergeCardInputDraft['when']): string {
+  const posture = when.whenPosture ?? 'now_doable_tonight'
+  if (posture === 'later_tonight') {
+    return 'Later tonight'
+  }
+  if (posture === 'this_weekend') {
+    return 'This weekend'
+  }
+  if (posture === 'next_week') {
+    return 'Next week'
+  }
+  if (posture === 'pick_a_time') {
+    return when.startTime?.trim() || 'Pick a time'
+  }
+  return 'Now / doable tonight'
+}
+
 function formatWhenLabel(when: ConciergeCardInputDraft['when']): string {
   const details = [
-    when.startTime,
+    formatWhenPostureLabel(when),
     when.durationMinutes == null ? undefined : `${when.durationMinutes} min`,
     when.spatialMode === 'FLEXIBLE' ? 'Flexible' : 'Walkable',
   ].filter((value): value is string => Boolean(value))
 
-  return details.length > 0 ? details.join(' · ') : 'Anything'
+  return details.join(' | ')
 }
 
 function getEchoValueLabel(params: {
