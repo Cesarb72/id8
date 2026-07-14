@@ -212,6 +212,7 @@ If a discovery is a *decision* (changed scope, chose an approach), also log it t
 - [2026-07-12] [Compat unwind Slice 1J - RolePoolAdmissionStatus projection helper] - admission migration safety reassessment found no consumer migration is safe yet because preferred-discovery, contract, fallback, and hours fields cross route generation, score override, public reason-copy, and Gate 1 guardrails. Impact: projection-only helper is safe; behavior migration remains held. Action: moved the observer-local admission projection into the role contract type layer as a production helper, updated the admission parity observer to use it, and preserved all compatibility consumers unchanged.
 
 ### LCE
+- [2026-07-14] [Phase 4 LCE Slice 1 - route-source and mutation-authority observer] - LCE consume-side audit found `buildLceRuntimeContract` already consumes `RuntimeRouteArtifact` first, rejects `SelectedRouteArtifact` as authority, and blocks page-local `finalRoute` from lock/LCE authority. Sandbox swap already builds a user-confirmed LCE runtime contract before patching `RuntimeRouteArtifact`. Impact: LCE consume-side is MVP-correct; remaining repair/live-sensing residue parks to Phase 5/post-MVP. Action: added observer coverage freezing `RuntimeRouteArtifact`-first consumption, `SelectedRouteArtifact`/page-local rejection, sandbox swap `RuntimeRouteArtifact` mutation authority, and provider-call silence before closing the LCE box for MVP.
 *(append discoveries here)*
 
 ### Application
