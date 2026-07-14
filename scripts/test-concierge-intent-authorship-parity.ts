@@ -933,27 +933,47 @@ function classifyPlannerIntentAuthoritative(): {
   }
 }
 
+function assertAppCompatibilityAdapterThin(): void {
+  const appAdapterSource = readFileSync(
+    join(repoRoot, 'src/app/concierge/conciergeIntentAdapter.ts'),
+    'utf8',
+  )
+  assert(
+    appAdapterSource.includes(
+      "from '../../domain/interpretation/conciergeIntent/buildConciergeIntent'",
+    ),
+    'App ConciergeIntent adapter must re-export the Interpretation-owned builder.',
+  )
+  assert(
+    !appAdapterSource.includes('function ') &&
+      !appAdapterSource.includes('const ') &&
+      !appAdapterSource.includes('return {'),
+    'App ConciergeIntent adapter must remain a thin compatibility re-export with no authorship logic.',
+  )
+}
+
 function main(): void {
+  assertAppCompatibilityAdapterThin()
   const modeResults = cases.map(assertCaseOutput)
   const plannerClassification = classifyPlannerIntentAuthoritative()
 
   const authorshipBoundary = [
-    ['objective', 'src/app/concierge/conciergeIntentAdapter.ts', 'Interpretation', 'yes', 'yes'],
-    ['control posture', 'src/app/concierge/conciergeIntentAdapter.ts', 'Interpretation', 'yes', 'yes'],
-    ['pacing', 'src/app/concierge/conciergeIntentAdapter.ts', 'Interpretation', 'yes', 'yes'],
-    ['travel tolerance', 'src/app/concierge/conciergeIntentAdapter.ts', 'Interpretation', 'yes', 'yes'],
-    ['structure rigidity', 'src/app/concierge/conciergeIntentAdapter.ts', 'Interpretation', 'yes', 'yes'],
-    ['swap tolerance', 'src/app/concierge/conciergeIntentAdapter.ts', 'Interpretation', 'yes', 'yes'],
-    ['starter lineage', 'src/app/concierge/conciergeIntentAdapter.ts', 'Interpretation', 'yes', 'yes'],
-    ['anchor lineage', 'src/app/concierge/conciergeIntentAdapter.ts', 'Interpretation', 'yes', 'yes'],
-    ['candidate lineage', 'src/app/concierge/conciergeIntentAdapter.ts', 'Interpretation', 'yes', 'yes'],
+    ['objective', 'src/domain/interpretation/conciergeIntent/buildConciergeIntent.ts', 'Interpretation', 'yes', 'moved'],
+    ['control posture', 'src/domain/interpretation/conciergeIntent/buildConciergeIntent.ts', 'Interpretation', 'yes', 'moved'],
+    ['pacing', 'src/domain/interpretation/conciergeIntent/buildConciergeIntent.ts', 'Interpretation', 'yes', 'moved'],
+    ['travel tolerance', 'src/domain/interpretation/conciergeIntent/buildConciergeIntent.ts', 'Interpretation', 'yes', 'moved'],
+    ['structure rigidity', 'src/domain/interpretation/conciergeIntent/buildConciergeIntent.ts', 'Interpretation', 'yes', 'moved'],
+    ['swap tolerance', 'src/domain/interpretation/conciergeIntent/buildConciergeIntent.ts', 'Interpretation', 'yes', 'moved'],
+    ['starter lineage', 'src/domain/interpretation/conciergeIntent/buildConciergeIntent.ts', 'Interpretation', 'yes', 'moved'],
+    ['anchor lineage', 'src/domain/interpretation/conciergeIntent/buildConciergeIntent.ts', 'Interpretation', 'yes', 'moved'],
+    ['candidate lineage', 'src/domain/interpretation/conciergeIntent/buildConciergeIntent.ts', 'Interpretation', 'yes', 'moved'],
   ].map(([output, currentAuthor, correctOwner, observedParityFrozen, moveCandidate]) => ({
     output,
     currentAuthor,
     correctOwner,
     observedParityFrozen,
     moveCandidate,
-    notes: 'current app-authored output frozen before relocation',
+    notes: 'Interpretation-owned output available through app compatibility re-export',
   }))
 
   console.info('ConciergeIntent authorship parity')
