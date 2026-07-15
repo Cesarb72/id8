@@ -47,7 +47,10 @@ import {
 import { JourneyMapReal } from '../components/journey/JourneyMapReal'
 import type { JourneyWaypointOverride } from '../components/journey/JourneyMapReal'
 import { RouteSpine } from '../components/journey/RouteSpine'
-import { buildSteeringSwapProposalDisplay } from '../app/steering/steeringProposalDisplay'
+import {
+  buildSteeringSwapProposalDisplay,
+  buildSteeringSwapProposalSelection,
+} from '../app/steering/steeringProposalDisplay'
 import { DevTopNav } from '../components/layout/DevTopNav'
 import { PageShell } from '../components/layout/PageShell'
 import {
@@ -68,6 +71,7 @@ import {
   coordinateSteeringPrelockSwapProposals,
   projectSteeringSwapCandidateForCoordination,
 } from '../integrations/waypoint/coordination/coordinateSteeringPrelockProposals'
+import type { SteeringPrelockAcceptedProposal } from '../integrations/waypoint/coordination/steeringPrelockProposal'
 import { inverseRoleProjection } from '../domain/config/roleProjection'
 import {
   buildDirectionPlanningSelection as buildDirectionPlanningSelectionEngine,
@@ -17503,6 +17507,22 @@ export function SandboxConciergePage({
     }
   }, [])
 
+  const handleSelectSteeringProposal = useCallback(
+    (role: UserStopRole, proposal: SteeringPrelockAcceptedProposal) => {
+      const selection = buildSteeringSwapProposalSelection(proposal)
+      if (!selection) {
+        setError('This steering proposal is missing route-safe identity and cannot be applied.')
+        return
+      }
+      if (selection.targetRole !== role) {
+        setError('This steering proposal no longer matches the route slot. Please reopen review.')
+        return
+      }
+      void handlePreviewAlternative(selection.targetRole, selection.routeIdentity)
+    },
+    [handlePreviewAlternative],
+  )
+
   const handleApplyPreviewSwap = async (invocation: SwapCommitInvocation) => {
     const markGuardFailure = (reason: string, message: string) => {
       setSwapCompatibilityDebug({
@@ -28213,6 +28233,7 @@ export function SandboxConciergePage({
                 onShowSwap={() => undefined}
                 onShowNearby={() => undefined}
                 onApplySwap={() => undefined}
+                onSelectSteeringProposal={handleSelectSteeringProposal}
                 onPreviewAlternative={handlePreviewAlternative}
               />
 

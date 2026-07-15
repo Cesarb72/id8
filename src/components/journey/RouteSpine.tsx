@@ -17,6 +17,7 @@ import type { ItineraryStop, UserStopRole } from '../../domain/types/itinerary'
 import type { StorySpine } from '../../domain/types/itinerary'
 import { buildPlanningStopRepresentation } from '../../domain/adapters/buildPlanningStopRepresentation'
 import type { SteeringSwapProposalDisplay } from '../../app/steering/steeringProposalDisplay'
+import type { SteeringPrelockAcceptedProposal } from '../../integrations/waypoint/coordination/steeringPrelockProposal'
 
 type RouteArcType = 'full' | 'partial' | 'highlightOnly'
 
@@ -109,6 +110,10 @@ interface RouteSpineProps {
   onShowNearby: (role: UserStopRole) => void
   onApplySwap: (role: UserStopRole, venueId: string) => void
   onPreviewAlternative?: (role: UserStopRole, venueId: string) => void
+  onSelectSteeringProposal?: (
+    role: UserStopRole,
+    proposal: SteeringPrelockAcceptedProposal,
+  ) => void
   onPreviewDecisionAction?: (role: UserStopRole, decision: 'keep' | 'timing') => void
   onApplyRoleShape?: (role: UserStopRole, actionId: DraftRoleShapeActionId) => void
   onApplyComposeAction?: (role: UserStopRole, actionId: DraftComposeActionId) => boolean
@@ -175,6 +180,7 @@ export function RouteSpine({
   onShowNearby,
   onApplySwap,
   onPreviewAlternative,
+  onSelectSteeringProposal,
   onPreviewDecisionAction,
   onApplyRoleShape,
   onApplyComposeAction,
@@ -800,6 +806,9 @@ export function RouteSpine({
                       onShowSwap={() => onShowSwap(stop.role)}
                       onShowNearby={() => onShowNearby(stop.role)}
                       onApplySwap={(venueId) => onApplySwap(stop.role, venueId)}
+                      onSelectSteeringProposal={(proposal) =>
+                        onSelectSteeringProposal?.(stop.role, proposal)
+                      }
                       onApplyRoleShape={(actionId) => onApplyRoleShape?.(stop.role, actionId)}
                       onApplyComposeAction={(actionId) =>
                         onApplyComposeAction ? onApplyComposeAction(stop.role, actionId) : false

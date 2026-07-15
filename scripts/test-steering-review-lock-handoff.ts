@@ -1,4 +1,6 @@
 import { strict as assert } from 'node:assert'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { patchFinalRouteStop } from '../src/domain/artifacts/runtimeRouteProjection.ts'
 import {
@@ -29,6 +31,9 @@ import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types
 
 const originalFetch = globalThis.fetch
 let fetchCallCount = 0
+const projectRoot = process.cwd()
+const readSource = (relativePath: string) =>
+  readFileSync(join(projectRoot, relativePath), 'utf8')
 
 function installFetchTrap(): void {
   globalThis.fetch = (async (input) => {
@@ -668,6 +673,26 @@ function applySelectedProposal(params: {
 function main(): void {
   installFetchTrap()
   try {
+    const sandboxSource = readSource('src/pages/SandboxConciergePage.tsx')
+    const routeSpineSource = readSource('src/components/journey/RouteSpine.tsx')
+    const nearbyNodeSource = readSource('src/components/journey/NearbyNodeGroup.tsx')
+    assert.ok(
+      sandboxSource.includes('handleSelectSteeringProposal'),
+      'Review-lock proof must cover the real Sandbox steering selection handler.',
+    )
+    assert.ok(
+      sandboxSource.includes('handlePreviewAlternative(selection.targetRole, selection.routeIdentity)'),
+      'Sandbox steering selection must enter the existing preview path.',
+    )
+    assert.ok(
+      routeSpineSource.includes('onSelectSteeringProposal'),
+      'RouteSpine must expose selected steering proposal handoff.',
+    )
+    assert.ok(
+      nearbyNodeSource.includes('onSelectSteeringProposal(proposal.proposal)'),
+      'NearbyNodeGroup must hand the accepted Waypoint proposal payload upward.',
+    )
+
     const originalReviewedRoute = buildRuntimeRoute()
     const originalReviewedItinerary = buildItinerary()
     const originalIds = routeIds(originalReviewedRoute)
@@ -831,8 +856,14 @@ function main(): void {
             selectedRouteArtifactOverridePrevented: true,
             runtimeRouteArtifactShapeValid: true,
           },
+          uiApplyPath: {
+            sandboxSelectionHandler: true,
+            routeSpineSelectionHandoff: true,
+            nearbyNodeAcceptedProposalHandoff: true,
+            entersPreviewCommitPath: true,
+          },
           guardrails: {
-            visibleUiTouched: false,
+            visibleUiTouched: true,
             objectiveUiTouched: false,
             eventsTouched: false,
             providerActivated: false,

@@ -17,6 +17,16 @@ export interface SteeringSwapProposalDisplayItem {
   feasibilityLabel: string
   movementLabel: string
   ownerEvidence: readonly ('taste' | 'bearings' | 'field')[]
+  proposal: SteeringPrelockAcceptedProposal
+}
+
+export interface SteeringSwapProposalSelection {
+  targetRole: UserStopRole
+  routeIdentity: string
+  providerRecordId?: string
+  displayName: string
+  rank: number
+  proposal: SteeringPrelockAcceptedProposal
 }
 
 export interface SteeringSwapProposalRefusalDisplay {
@@ -125,6 +135,23 @@ function buildRefusalDisplay(
   }
 }
 
+export function buildSteeringSwapProposalSelection(
+  proposal: SteeringPrelockAcceptedProposal,
+): SteeringSwapProposalSelection | undefined {
+  const routeIdentity = proposal.candidateIdentity.baseVenueId?.trim()
+  if (!routeIdentity) {
+    return undefined
+  }
+  return {
+    targetRole: proposal.targetRole,
+    routeIdentity,
+    providerRecordId: proposal.candidateIdentity.providerRecordId,
+    displayName: proposal.candidateIdentity.displayName,
+    rank: proposal.rank.rank,
+    proposal,
+  }
+}
+
 export function buildSteeringSwapProposalDisplay(params: {
   currentStopLabel: string
   currentRole: UserStopRole
@@ -143,6 +170,7 @@ export function buildSteeringSwapProposalDisplay(params: {
       feasibilityLabel: formatFeasibility(proposal),
       movementLabel: formatMovement(proposal),
       ownerEvidence: ['taste', 'bearings', 'field'],
+      proposal,
     }))
 
   return {

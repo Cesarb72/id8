@@ -9,6 +9,7 @@ import type { DraftRoleShapeAction, DraftRoleShapeActionId } from '../../domain/
 import type { StopAlternative, StopAlternativeKind } from '../../domain/types/arc'
 import type { ItineraryStop } from '../../domain/types/itinerary'
 import type { SteeringSwapProposalDisplay } from '../../app/steering/steeringProposalDisplay'
+import type { SteeringPrelockAcceptedProposal } from '../../integrations/waypoint/coordination/steeringPrelockProposal'
 
 interface NearbyNodeGroupProps {
   stop: ItineraryStop
@@ -26,6 +27,7 @@ interface NearbyNodeGroupProps {
   onShowSwap: () => void
   onShowNearby: () => void
   onApplySwap: (venueId: string) => void
+  onSelectSteeringProposal?: (proposal: SteeringPrelockAcceptedProposal) => void
   onApplyRoleShape?: (actionId: DraftRoleShapeActionId) => void
   onApplyComposeAction?: (actionId: DraftComposeActionId) => boolean
   onSearchCompose?: (
@@ -168,6 +170,7 @@ export function NearbyNodeGroup({
   onShowSwap,
   onShowNearby,
   onApplySwap,
+  onSelectSteeringProposal,
   onApplyRoleShape,
   onApplyComposeAction,
   onSearchCompose,
@@ -338,24 +341,42 @@ export function NearbyNodeGroup({
 
       {hasSteeringProposalDisplay && steeringProposalDisplay && (
         <div className="nearby-node-list steering-proposal-list">
-          {steeringProposalDisplay.proposals.map((proposal) => (
-            <article
-              key={`${stop.role}_steering_${proposal.routeIdentity}_${proposal.rank}`}
-              className="nearby-node-item steering-proposal-item"
-              data-route-identity={proposal.routeIdentity}
-            >
-              <div className="nearby-node-item-topline">
-                <span className="nearby-node-item-label">Swap option {proposal.rank}</span>
-                <span className="nearby-node-item-rationale">{proposal.roleFitLabel}</span>
-              </div>
-              <strong>{proposal.displayName}</strong>
-              <small>
-                {[proposal.area, proposal.feasibilityLabel, proposal.movementLabel]
-                  .filter(Boolean)
-                  .join(' | ')}
-              </small>
-            </article>
-          ))}
+          {steeringProposalDisplay.proposals.map((proposal) => {
+            const content = (
+              <>
+                <div className="nearby-node-item-topline">
+                  <span className="nearby-node-item-label">Swap option {proposal.rank}</span>
+                  <span className="nearby-node-item-rationale">{proposal.roleFitLabel}</span>
+                </div>
+                <strong>{proposal.displayName}</strong>
+                <small>
+                  {[proposal.area, proposal.feasibilityLabel, proposal.movementLabel]
+                    .filter(Boolean)
+                    .join(' | ')}
+                </small>
+              </>
+            )
+            const key = `${stop.role}_steering_${proposal.routeIdentity}_${proposal.rank}`
+            return onSelectSteeringProposal ? (
+              <button
+                key={key}
+                type="button"
+                className="nearby-node-item steering-proposal-item"
+                data-route-identity={proposal.routeIdentity}
+                onClick={() => onSelectSteeringProposal(proposal.proposal)}
+              >
+                {content}
+              </button>
+            ) : (
+              <article
+                key={key}
+                className="nearby-node-item steering-proposal-item"
+                data-route-identity={proposal.routeIdentity}
+              >
+                {content}
+              </article>
+            )
+          })}
           {steeringProposalDisplay.proposals.length === 0 &&
             steeringProposalDisplay.refusal && (
               <p className="nearby-node-empty steering-proposal-refusal">

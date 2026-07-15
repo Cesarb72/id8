@@ -177,15 +177,15 @@ try {
     'Sandbox steering identity projection',
   )
   assertContains(routeSpineSource, 'steeringProposalsByRole', 'RouteSpine steering display prop')
+  assertContains(routeSpineSource, 'onSelectSteeringProposal', 'RouteSpine steering selection prop')
   assertContains(nearbyNodeSource, 'steeringProposalDisplay', 'NearbyNodeGroup display prop')
-  assertContains(nearbyNodeSource, '<article', 'Steering proposal display row')
+  assertContains(nearbyNodeSource, 'onSelectSteeringProposal(proposal.proposal)', 'Steering proposal selected payload')
   assertContains(nearbyNodeSource, 'data-route-identity', 'Steering proposal route identity marker')
   assertContains(nearbyNodeSource, 'steering-proposal-refusal', 'Steering refusal display marker')
   const steeringDisplayBlock = nearbyNodeSource.slice(
     nearbyNodeSource.indexOf('steering-proposal-list'),
     nearbyNodeSource.indexOf('{!displayOnly && !visibleKind'),
   )
-  assertExcludes(steeringDisplayBlock, 'onClick', 'Steering proposal display block')
   assertExcludes(steeringDisplayBlock, 'onApplySwap', 'Steering proposal display block')
   assertExcludes(displaySource, '.sort(', 'Application display projection')
   assertExcludes(displaySource, 'scoreAnchoredRoleFit', 'Application display projection')
@@ -365,7 +365,7 @@ try {
         refusalMatrix,
         boundary: {
           consumesWaypointCoordinator: true,
-          displayOnlyNoApply: true,
+          selectionUsesProposalPayload: true,
           noAppLocalOrdering: true,
           noAppIdentityHydration: true,
           noFakeAlternatives: true,
