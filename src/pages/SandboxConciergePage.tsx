@@ -47,6 +47,7 @@ import {
 import { JourneyMapReal } from '../components/journey/JourneyMapReal'
 import type { JourneyWaypointOverride } from '../components/journey/JourneyMapReal'
 import { RouteSpine } from '../components/journey/RouteSpine'
+import { buildSteeringSwapProposalDisplay } from '../app/steering/steeringProposalDisplay'
 import { DevTopNav } from '../components/layout/DevTopNav'
 import { PageShell } from '../components/layout/PageShell'
 import {
@@ -18033,6 +18034,101 @@ export function SandboxConciergePage({
     () => projectFinalRouteToPlanningDisplayStops(canonicalRouteArtifact),
     [canonicalRouteArtifact],
   )
+  const steeringProposalsByRole = useMemo(() => {
+    if (!plan || !canonicalRouteArtifact || planningDisplayStops.length === 0) {
+      return {}
+    }
+
+    const crewPolicy = getCrewPolicy(plan.intentProfile.crew)
+    const entries: Array<
+      [
+        UserStopRole,
+        ReturnType<typeof buildSteeringSwapProposalDisplay>,
+      ]
+    > = []
+
+    for (const stop of planningDisplayStops) {
+      if (stop.role !== 'start' && stop.role !== 'highlight' && stop.role !== 'windDown') {
+        continue
+      }
+      const internalRole = roleToInternalRole[stop.role]
+      const currentRuntimeStop =
+        canonicalRouteArtifact.finalRoute.stops.find((routeStop) => routeStop.role === stop.role) ??
+        canonicalRouteArtifact.finalRoute.stops.find(
+          (routeStop) => routeStop.sourceStopId === stop.id || routeStop.venueId === stop.venueId,
+        )
+      const projectedCandidates = plan.scoredVenues
+        .filter((candidate) => candidate.candidateIdentity.kind !== 'moment')
+        .filter((candidate) => candidate.venue.id !== stop.venueId)
+        .filter((candidate) => hasSourceBackedIdentity(candidate))
+        .filter((candidate) => hasNavigableVenueLocation(candidate))
+        .filter((candidate) => candidate.roleScores[internalRole] >= 0.44)
+        .map((candidate) => {
+          const swappedArc = swapArcStop({
+            currentArc: plan.selectedArc,
+            role: inverseRoleProjection[stop.role],
+            replacement: candidate,
+            intent: plan.intentProfile,
+            crewPolicy,
+            lens: plan.lens,
+          })
+          if (!swappedArc) {
+            return undefined
+          }
+          const swappedItinerary = projectItinerary(swappedArc, plan.intentProfile, plan.lens)
+          const candidateStop = swappedItinerary.stops.find((item) => item.role === stop.role)
+          if (!candidateStop) {
+            return undefined
+          }
+          const projectedCandidate = projectSteeringSwapCandidateForCoordination({
+            currentStop: stop,
+            currentRuntimeStop,
+            candidate,
+            candidateStop,
+            targetRole: stop.role,
+            internalRole,
+          })
+          if (projectedCandidate.status !== 'projected') {
+            return undefined
+          }
+          return projectedCandidate.candidate
+        })
+        .filter(
+          (
+            value,
+          ): value is NonNullable<
+            ReturnType<typeof projectSteeringSwapCandidateForCoordination> extends {
+              status: 'projected'
+              candidate: infer TCandidate
+            }
+              ? TCandidate
+              : never
+          > => Boolean(value),
+        )
+
+      const currentStopIdentity = projectedCandidates[0]?.currentStopIdentity
+      if (!currentStopIdentity) {
+        continue
+      }
+      const coordination = coordinateSteeringPrelockSwapProposals({
+        targetRole: stop.role,
+        currentStopIdentity,
+        candidates: projectedCandidates,
+      })
+      entries.push([
+        stop.role,
+        buildSteeringSwapProposalDisplay({
+          currentStopLabel: stop.venueName,
+          currentRole: stop.role,
+          coordination,
+        }),
+      ])
+    }
+
+    return Object.fromEntries(entries) as Partial<
+      Record<UserStopRole, ReturnType<typeof buildSteeringSwapProposalDisplay>>
+    >
+  }, [canonicalRouteArtifact, plan, planningDisplayStops])
   const postSwapCanonicalStopIdBySlot = useMemo(
     () =>
       renderOnlyFinalRoute
@@ -28111,6 +28207,7 @@ export function SandboxConciergePage({
                 enableActiveStopTracking
                 alternativesByRole={{}}
                 alternativeKindsByRole={{}}
+                steeringProposalsByRole={steeringProposalsByRole}
                 highlightDecisionSignal="Chosen over closer options to carry the night better."
                 onFocusRole={setActiveRole}
                 onShowSwap={() => undefined}

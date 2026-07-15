@@ -16,6 +16,7 @@ import type { GenerationTrace } from '../../domain/runGeneratePlan'
 import type { ItineraryStop, UserStopRole } from '../../domain/types/itinerary'
 import type { StorySpine } from '../../domain/types/itinerary'
 import { buildPlanningStopRepresentation } from '../../domain/adapters/buildPlanningStopRepresentation'
+import type { SteeringSwapProposalDisplay } from '../../app/steering/steeringProposalDisplay'
 
 type RouteArcType = 'full' | 'partial' | 'highlightOnly'
 
@@ -40,6 +41,7 @@ interface RouteSpineProps {
   generationTrace?: GenerationTrace
   alternativesByRole: Partial<Record<UserStopRole, StopAlternative[]>>
   alternativeKindsByRole: Partial<Record<UserStopRole, StopAlternativeKind>>
+  steeringProposalsByRole?: Partial<Record<UserStopRole, SteeringSwapProposalDisplay>>
   roleShapeActionsByRole?: Partial<Record<UserStopRole, DraftRoleShapeAction[]>>
   composeActionsByRole?: Partial<Record<UserStopRole, DraftComposeAction[]>>
   ownedStopKindsByRole?: Partial<Record<UserStopRole, 'candidate' | 'custom'>>
@@ -142,6 +144,7 @@ export function RouteSpine({
   generationTrace,
   alternativesByRole,
   alternativeKindsByRole,
+  steeringProposalsByRole,
   roleShapeActionsByRole,
   composeActionsByRole,
   ownedStopKindsByRole,
@@ -672,6 +675,7 @@ export function RouteSpine({
           const anchorStop = stopAdjustDisabled && Boolean(lockedNote)
           const unavailableReason = unavailableByRole?.[stop.role]
           const inlineDetail = inlineDetailsByRole?.[stop.role]
+          const steeringProposalDisplay = steeringProposalsByRole?.[stop.role]
           const showInlineDetailToggle =
             enableInlineDetails &&
             Boolean(
@@ -779,14 +783,16 @@ export function RouteSpine({
                     onPreviewDecisionAction={onPreviewDecisionAction}
                   />
 
-                  {allowStopAdjustments && !stopAdjustDisabled && (
+                  {((allowStopAdjustments && !stopAdjustDisabled) || steeringProposalDisplay) && (
                     <NearbyNodeGroup
                       stop={stop}
                       mode={adjustMode}
-                      isExpanded={isExpanded}
+                      displayOnly={!allowStopAdjustments || stopAdjustDisabled}
+                      isExpanded={isExpanded || Boolean(steeringProposalDisplay)}
                       ownershipKind={ownershipKind}
                       visibleKind={alternativeKindsByRole[stop.role]}
                       alternatives={alternativesByRole[stop.role] ?? []}
+                      steeringProposalDisplay={steeringProposalDisplay}
                       nearbyCount={generationTrace?.nearbyAlternativeCounts[stop.role]}
                       swapCount={generationTrace?.alternativeCounts[stop.role]}
                       roleShapeActions={roleShapeActionsByRole?.[stop.role] ?? []}

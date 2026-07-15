@@ -8,14 +8,17 @@ import type {
 import type { DraftRoleShapeAction, DraftRoleShapeActionId } from '../../domain/arc/reshapeArcStop'
 import type { StopAlternative, StopAlternativeKind } from '../../domain/types/arc'
 import type { ItineraryStop } from '../../domain/types/itinerary'
+import type { SteeringSwapProposalDisplay } from '../../app/steering/steeringProposalDisplay'
 
 interface NearbyNodeGroupProps {
   stop: ItineraryStop
   mode?: 'full' | 'swap-only'
+  displayOnly?: boolean
   isExpanded?: boolean
   ownershipKind?: 'candidate' | 'custom'
   visibleKind?: StopAlternativeKind
   alternatives: StopAlternative[]
+  steeringProposalDisplay?: SteeringSwapProposalDisplay
   nearbyCount?: number
   swapCount?: number
   roleShapeActions?: DraftRoleShapeAction[]
@@ -152,10 +155,12 @@ function buildOwnershipContextCopy(
 export function NearbyNodeGroup({
   stop,
   mode = 'full',
+  displayOnly = false,
   isExpanded = false,
   ownershipKind,
   visibleKind,
   alternatives,
+  steeringProposalDisplay,
   nearbyCount = 0,
   swapCount = 0,
   roleShapeActions = [],
@@ -176,14 +181,20 @@ export function NearbyNodeGroup({
   const [composeLoading, setComposeLoading] = useState(false)
   const [composeResults, setComposeResults] = useState<DraftComposeSearchResult[]>([])
   const hasVisibleAlternatives = alternatives.length > 0
+  const hasSteeringProposalDisplay = Boolean(
+    steeringProposalDisplay &&
+      (steeringProposalDisplay.proposals.length > 0 || steeringProposalDisplay.refusal),
+  )
   const previewLimit = mode === 'swap-only' ? 3 : 2
   const previewAlternatives = showAll ? alternatives : alternatives.slice(0, previewLimit)
   const hiddenCount = Math.max(alternatives.length - previewAlternatives.length, 0)
   const canReplace = composeActions.some((action) => action.id === 'replace-stop')
   const routeEditActions = composeActions.filter((action) => action.id !== 'replace-stop')
-  const canSwap = swapCount > 0 || (visibleKind === 'swap' && alternatives.length > 0)
+  const canSwap =
+    !displayOnly && (swapCount > 0 || (visibleKind === 'swap' && alternatives.length > 0))
   const ownershipContextCopy = buildOwnershipContextCopy(ownershipKind)
   const showDraftActionGroups =
+    !displayOnly &&
     mode === 'swap-only' &&
     (canSwap ||
       canReplace ||
@@ -287,21 +298,31 @@ export function NearbyNodeGroup({
         hasVisibleAlternatives ? ' expanded' : ''
       }${
         visibleKind ? ' open' : ''
-      } active`}
+      }${displayOnly ? ' display-only' : ''} active`}
     >
       <div className="nearby-node-header">
         <div>
-          <p className="nearby-node-kicker">Edit this stop</p>
+          <p className="nearby-node-kicker">
+            {displayOnly ? 'Swap options' : 'Edit this stop'}
+          </p>
           <p className="nearby-node-copy">
-            {buildSummaryCopy(mode, visibleKind, nearbyCount, swapCount)}
+            {displayOnly
+              ? `${steeringProposalDisplay?.currentStopLabel ?? stop.venueName} | ${
+                  steeringProposalDisplay?.currentRoleLabel ?? stop.title
+                }`
+              : buildSummaryCopy(mode, visibleKind, nearbyCount, swapCount)}
           </p>
           {ownershipContextCopy && (
             <p className="nearby-node-context-note">{ownershipContextCopy}</p>
           )}
         </div>
         <div className="nearby-node-actions">
-          <span className="nearby-node-preview-chip">{swapCount} swaps</span>
-          {mode === 'full' && (
+          <span className="nearby-node-preview-chip">
+            {displayOnly
+              ? `${steeringProposalDisplay?.proposals.length ?? 0} proposed`
+              : `${swapCount} swaps`}
+          </span>
+          {!displayOnly && mode === 'full' && (
             <>
               <span className="nearby-node-preview-chip">{nearbyCount} nearby</span>
               <button type="button" className="chip-action subtle" onClick={onShowNearby}>
@@ -315,7 +336,36 @@ export function NearbyNodeGroup({
         </div>
       </div>
 
-      {!visibleKind && !hasVisibleAlternatives && (
+      {hasSteeringProposalDisplay && steeringProposalDisplay && (
+        <div className="nearby-node-list steering-proposal-list">
+          {steeringProposalDisplay.proposals.map((proposal) => (
+            <article
+              key={`${stop.role}_steering_${proposal.routeIdentity}_${proposal.rank}`}
+              className="nearby-node-item steering-proposal-item"
+              data-route-identity={proposal.routeIdentity}
+            >
+              <div className="nearby-node-item-topline">
+                <span className="nearby-node-item-label">Swap option {proposal.rank}</span>
+                <span className="nearby-node-item-rationale">{proposal.roleFitLabel}</span>
+              </div>
+              <strong>{proposal.displayName}</strong>
+              <small>
+                {[proposal.area, proposal.feasibilityLabel, proposal.movementLabel]
+                  .filter(Boolean)
+                  .join(' | ')}
+              </small>
+            </article>
+          ))}
+          {steeringProposalDisplay.proposals.length === 0 &&
+            steeringProposalDisplay.refusal && (
+              <p className="nearby-node-empty steering-proposal-refusal">
+                {steeringProposalDisplay.refusal.message}
+              </p>
+            )}
+        </div>
+      )}
+
+      {!displayOnly && !visibleKind && !hasVisibleAlternatives && (
         <div className="nearby-node-preview">
           <span className="nearby-node-preview-label">
             {mode === 'swap-only' ? 'Looking for same-role swaps' : 'Nothing selected yet'}
@@ -326,11 +376,11 @@ export function NearbyNodeGroup({
         </div>
       )}
 
-      {visibleKind && !hasVisibleAlternatives && (
+      {!displayOnly && visibleKind && !hasVisibleAlternatives && (
         <p className="nearby-node-empty">{buildEmptyCopy(visibleKind, mode)}</p>
       )}
 
-      {hasVisibleAlternatives && (
+      {!displayOnly && hasVisibleAlternatives && (
         <div className="nearby-node-list">
           {previewAlternatives.map((option) => (
             <button
