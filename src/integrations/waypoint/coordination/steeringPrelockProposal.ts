@@ -111,7 +111,7 @@ export interface SteeringMovementDeltaEvidence
 export interface SteeringStopIdentity
   extends SteeringPrelockEvidenceGuardrails {
   source: 'field'
-  venueId: string
+  venueId?: string
   candidateId?: string
   baseVenueId?: string
   displayName: string
