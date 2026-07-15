@@ -45,7 +45,11 @@ type Closeability = 'closeable' | 'partially_closeable' | 'likely_parked' | 'inc
 interface SteeringShadowPathInventory {
   path: InventoryPath
   currentImplementation: string
-  currentAuthor: 'application' | 'application_arc_mixed' | 'arc_lce_mixed'
+  currentAuthor:
+    | 'application'
+    | 'application_arc_mixed'
+    | 'arc_lce_mixed'
+    | 'waypoint_over_owner_evidence'
   usesScoreAnchoredRoleFit: boolean
   behaviorDriving: boolean
   ownerAuthoredReplacementPossible: boolean
@@ -114,10 +118,20 @@ try {
   assertContains(sandboxSource, 'function getRoleAlternatives(', 'Sandbox local alternatives path')
   assertContains(
     sandboxSource,
+    'coordinateSteeringPrelockSwapProposals',
+    'Sandbox swap proposal coordination',
+  )
+  assertContains(
+    sandboxSource,
+    'projectSteeringSwapCandidateForCoordination',
+    'Sandbox swap identity projection',
+  )
+  assertDoesNotContain(
+    sandboxSource,
     'scoreAnchoredRoleFit(left, role) * 0.9 + leftProximity * 0.1',
     'Sandbox swap ordering',
   )
-  assertContains(
+  assertDoesNotContain(
     sandboxSource,
     'scoreAnchoredRoleFit(left, internalRole)',
     'Sandbox swap identity hydration ordering',
@@ -226,9 +240,9 @@ try {
     {
       path: 'swap_ordering',
       currentImplementation:
-        'Sandbox pre-lock swap alternatives are ordered by scoreAnchoredRoleFit and proximity; AppShell also calls Arc getRoleAlternatives/swapArcStop.',
-      currentAuthor: 'application_arc_mixed',
-      usesScoreAnchoredRoleFit: true,
+        'Sandbox pre-lock swap alternatives are ordered through Waypoint steering proposals over owner evidence; AppShell still has Arc alternatives active.',
+      currentAuthor: 'waypoint_over_owner_evidence',
+      usesScoreAnchoredRoleFit: false,
       behaviorDriving: true,
       ownerAuthoredReplacementPossible: true,
       minimalPayloadNeeded:
@@ -238,9 +252,9 @@ try {
     {
       path: 'swap_identity_hydration',
       currentImplementation:
-        'Sandbox resolves swap identity/display candidates locally using scoreAnchoredRoleFit and raw role thresholds.',
-      currentAuthor: 'application',
-      usesScoreAnchoredRoleFit: true,
+        'Sandbox resolves swap identity/display candidates using steering identity projection in Waypoint proposal order.',
+      currentAuthor: 'waypoint_over_owner_evidence',
+      usesScoreAnchoredRoleFit: false,
       behaviorDriving: true,
       ownerAuthoredReplacementPossible: true,
       minimalPayloadNeeded:
@@ -252,8 +266,8 @@ try {
   const swapOrdering = pathInventory.find((entry) => entry.path === 'swap_ordering')
   assert.ok(swapOrdering, 'swap ordering inventory missing')
   assertInventory(swapOrdering, {
-    currentAuthor: 'application_arc_mixed',
-    usesScoreAnchoredRoleFit: true,
+    currentAuthor: 'waypoint_over_owner_evidence',
+    usesScoreAnchoredRoleFit: false,
     behaviorDriving: true,
     ownerAuthoredReplacementPossible: true,
     phase5Closeability: 'closeable',
@@ -262,8 +276,8 @@ try {
   const swapIdentityHydration = pathInventory.find((entry) => entry.path === 'swap_identity_hydration')
   assert.ok(swapIdentityHydration, 'swap identity hydration inventory missing')
   assertInventory(swapIdentityHydration, {
-    currentAuthor: 'application',
-    usesScoreAnchoredRoleFit: true,
+    currentAuthor: 'waypoint_over_owner_evidence',
+    usesScoreAnchoredRoleFit: false,
     ownerAuthoredReplacementPossible: true,
     phase5Closeability: 'closeable',
   })
@@ -390,28 +404,28 @@ try {
         },
         currentSteeringInventory: pathInventory,
         swapOrderingDiagnosis: {
-          currentOrderer: 'Sandbox Application path, with AppShell/Arc alternatives also active',
-          ownership: 'application_arc_mixed',
-          usesScoreAnchoredRoleFit: true,
+          currentOrderer:
+            'Sandbox pre-lock swap path uses Waypoint steering proposals; AppShell/Arc alternatives and held repair paths remain active.',
+          ownership: 'waypoint_over_owner_evidence',
+          usesScoreAnchoredRoleFit: false,
           consumedSignals: [
-            'scoreAnchoredRoleFit',
-            'proximity',
-            'roleScores',
-            'fitScore',
-            'lensCompatibility',
-            'roleContract',
+            'Taste role-fit evidence',
+            'Bearings feasibility',
+            'Bearings movementDelta',
+            'Field identity/provenance',
+            'Waypoint proposal rank',
             'swapArcStop validation/scoring',
           ],
-          waypointReplacementPossibleWithoutMeaningAuthorship: true,
+          waypointReplacementConsumedWithoutMeaningAuthorship: true,
           minimalWaypointReadModel:
             'Taste role-fit evidence + Bearings feasibility/movement + Field identity/provenance + compat route slot/action context',
         },
         identityHydrationDiagnosis: {
-          applicationHydratesLocally: true,
-          fieldCanonicalIdentityExistsPartially: true,
+          applicationHydratesSwapLocally: false,
+          fieldCanonicalIdentityProjectionConsumed: true,
           cB2Minimum:
             'displayName, providerRecordId, venueId/baseVenueId, coordinates, address, neighborhood, sourceOrigin, candidateId',
-          projectionOnlyFeasible: true,
+          providerIdsRemainProvenanceOnly: true,
         },
         rolePoolAndShortlistDiagnosis: {
           publicRolePoolPayloadExists: false,

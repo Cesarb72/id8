@@ -63,6 +63,10 @@ import {
 } from '../app/wrapper/arcFlowPhase'
 import { swapArcStop } from '../domain/arc/swapArcStop'
 import { scoreAnchoredRoleFit } from '../domain/arc/scoreAnchoredRoleFit'
+import {
+  coordinateSteeringPrelockSwapProposals,
+  projectSteeringSwapCandidateForCoordination,
+} from '../integrations/waypoint/coordination/coordinateSteeringPrelockProposals'
 import { inverseRoleProjection } from '../domain/config/roleProjection'
 import {
   buildDirectionPlanningSelection as buildDirectionPlanningSelectionEngine,
@@ -8863,8 +8867,8 @@ function getRoleAlternatives(
     return projection
   }
 
-  const buildRanked = (includeUsed: boolean, minRoleScore: number): ScoredVenue[] =>
-    scoredVenues
+  const buildRanked = (includeUsed: boolean, minRoleScore: number): ScoredVenue[] => {
+    const projected = scoredVenues
       .filter((candidate) => candidate.venue.id !== currentVenueId)
       .filter((candidate) => candidate.candidateIdentity.kind !== 'moment')
       .filter((candidate) => hasSourceBackedIdentity(candidate))
@@ -8872,13 +8876,71 @@ function getRoleAlternatives(
       .filter((candidate) => (includeUsed ? true : !usedVenueIds.has(candidate.venue.id)))
       .filter((candidate) => candidate.roleScores[role] >= minRoleScore)
       .filter((candidate) => Boolean(resolveProjection(candidate)))
-      .sort((left, right) => {
-        const leftProximity = 1 / (1 + Math.abs(left.venue.driveMinutes - stop.driveMinutes))
-        const rightProximity = 1 / (1 + Math.abs(right.venue.driveMinutes - stop.driveMinutes))
-        const leftScore = scoreAnchoredRoleFit(left, role) * 0.9 + leftProximity * 0.1
-        const rightScore = scoreAnchoredRoleFit(right, role) * 0.9 + rightProximity * 0.1
-        return rightScore - leftScore || left.venue.name.localeCompare(right.venue.name)
+      .map((candidate) => {
+        const projection = resolveProjection(candidate)
+        if (!projection) {
+          return undefined
+        }
+        const projectedCandidate = projectSteeringSwapCandidateForCoordination({
+          currentStop: stop,
+          currentRuntimeStop: targetRouteStop,
+          candidate,
+          candidateStop: projection.candidateStop,
+          targetRole: stop.role,
+          internalRole: role,
+        })
+        if (projectedCandidate.status !== 'projected') {
+          return undefined
+        }
+        return {
+          candidate,
+          steeringCandidate: projectedCandidate.candidate,
+        }
       })
+      .filter(
+        (
+          value,
+        ): value is {
+          candidate: ScoredVenue
+          steeringCandidate: NonNullable<
+            ReturnType<typeof projectSteeringSwapCandidateForCoordination> extends {
+              status: 'projected'
+              candidate: infer TCandidate
+            }
+              ? TCandidate
+              : never
+          >
+        } => Boolean(value),
+      )
+
+    const currentStopIdentity = projected[0]?.steeringCandidate.currentStopIdentity
+    if (!currentStopIdentity) {
+      return []
+    }
+    const coordination = coordinateSteeringPrelockSwapProposals({
+      targetRole: stop.role,
+      currentStopIdentity,
+      candidates: projected.map((entry) => entry.steeringCandidate),
+    })
+    const scoreByBaseVenueId = new Map(
+      coordination.acceptedProposals.map((proposal) => [
+        proposal.candidateIdentity.baseVenueId,
+        proposal.rank.score ?? 0,
+      ]),
+    )
+    return projected
+      .filter((entry) =>
+        Boolean(scoreByBaseVenueId.has(entry.steeringCandidate.candidateIdentity.baseVenueId)),
+      )
+      .sort((left, right) => {
+        const leftScore =
+          scoreByBaseVenueId.get(left.steeringCandidate.candidateIdentity.baseVenueId) ?? 0
+        const rightScore =
+          scoreByBaseVenueId.get(right.steeringCandidate.candidateIdentity.baseVenueId) ?? 0
+        return rightScore - leftScore || left.candidate.venue.name.localeCompare(right.candidate.venue.name)
+      })
+      .map((entry) => entry.candidate)
+  }
 
   const strictPrimary = buildRanked(false, 0.52)
   const strictFallback = buildRanked(true, 0.52)
@@ -11167,17 +11229,68 @@ export function SandboxConciergePage({
 
       for (const stop of coreStops) {
         const internalRole = roleToInternalRole[stop.role]
-        const rankedCandidates = plan.scoredVenues
+        const projectedCandidates = plan.scoredVenues
           .filter((candidate) => candidate.candidateIdentity.kind !== 'moment')
           .filter((candidate) => candidate.venue.id !== stop.venueId)
           .filter((candidate) => hasSourceBackedIdentity(candidate))
           .filter((candidate) => hasNavigableVenueLocation(candidate))
           .filter((candidate) => candidate.roleScores[internalRole] >= 0.44)
-          .sort((left, right) => {
-            const leftScore = scoreAnchoredRoleFit(left, internalRole)
-            const rightScore = scoreAnchoredRoleFit(right, internalRole)
-            return rightScore - leftScore || left.venue.name.localeCompare(right.venue.name)
+          .map((candidate) => {
+            const projectedCandidate = projectSteeringSwapCandidateForCoordination({
+              currentStop: stop,
+              candidate,
+              targetRole: stop.role,
+              internalRole,
+            })
+            if (projectedCandidate.status !== 'projected') {
+              return undefined
+            }
+            return {
+              candidate,
+              steeringCandidate: projectedCandidate.candidate,
+            }
           })
+          .filter(
+            (
+              value,
+            ): value is {
+              candidate: ScoredVenue
+              steeringCandidate: NonNullable<
+                ReturnType<typeof projectSteeringSwapCandidateForCoordination> extends {
+                  status: 'projected'
+                  candidate: infer TCandidate
+                }
+                  ? TCandidate
+                  : never
+              >
+            } => Boolean(value),
+          )
+        const currentStopIdentity = projectedCandidates[0]?.steeringCandidate.currentStopIdentity
+        const coordination = currentStopIdentity
+          ? coordinateSteeringPrelockSwapProposals({
+              targetRole: stop.role,
+              currentStopIdentity,
+              candidates: projectedCandidates.map((entry) => entry.steeringCandidate),
+            })
+          : undefined
+        const scoreByBaseVenueId = new Map(
+          (coordination?.acceptedProposals ?? []).map((proposal) => [
+            proposal.candidateIdentity.baseVenueId,
+            proposal.rank.score ?? 0,
+          ]),
+        )
+        const rankedCandidates = projectedCandidates
+          .filter((entry) =>
+            Boolean(scoreByBaseVenueId.has(entry.steeringCandidate.candidateIdentity.baseVenueId)),
+          )
+          .sort((left, right) => {
+            const leftScore =
+              scoreByBaseVenueId.get(left.steeringCandidate.candidateIdentity.baseVenueId) ?? 0
+            const rightScore =
+              scoreByBaseVenueId.get(right.steeringCandidate.candidateIdentity.baseVenueId) ?? 0
+            return rightScore - leftScore || left.candidate.venue.name.localeCompare(right.candidate.venue.name)
+          })
+          .map((entry) => entry.candidate)
           .slice(0, 14)
 
         for (const candidate of rankedCandidates) {
