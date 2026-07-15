@@ -11,10 +11,17 @@ import type {
   WhenSignalProfile,
   WhenSpatialScoringMode,
 } from '../when/whenSignalProfile'
+import {
+  projectOriginMovementPosture,
+  type OriginMovementPostureProjection,
+} from './projectOriginMovementPosture'
 
 export interface ArcWhenSpatialScorePressure {
   mode: WhenSpatialScoringMode
   movementPreference?: WhenSignalProfile['movementPreference']
+  originMovementStrictness?: OriginMovementPostureProjection['strictness']
+  originMovementRadiusPosture?: OriginMovementPostureProjection['movementRadiusPosture']
+  originAllowsTightWalkableClaims?: boolean
   scoreDelta: number
   positiveSignal: number
   negativeSignal: number
@@ -54,6 +61,8 @@ export interface PeakCandidateFeasibilityVerdict {
   hoursFeasible: boolean
   anchorFeasible: boolean
   constraintsFeasible: boolean
+  originMovementPosture?: OriginMovementPostureProjection
+  originAdjustedDistanceLimitMinutes?: number
   reasons: string[]
   provenance: {
     source: 'bearings'
@@ -101,6 +110,66 @@ function getArcStopCandidateId(stop: ArcStop): string {
   return stop.scoredVenue.candidateIdentity.candidateId
 }
 
+function hasIntentOriginMarker(intent: IntentProfile): boolean {
+  return Boolean(intent.originPrecision || intent.originSource)
+}
+
+export function resolveIntentOriginMovementPosture(
+  intent: IntentProfile,
+): OriginMovementPostureProjection | undefined {
+  if (!hasIntentOriginMarker(intent)) {
+    return undefined
+  }
+  return projectOriginMovementPosture({
+    originPrecision: intent.originPrecision,
+    originSource: intent.originSource,
+  })
+}
+
+function getOriginAdjustedDistanceLimitMinutes(
+  originMovementPosture: OriginMovementPostureProjection | undefined,
+): number | undefined {
+  if (!originMovementPosture || originMovementPosture.allowsTightWalkableClaims) {
+    return undefined
+  }
+  if (!originMovementPosture.valid) {
+    return 0
+  }
+  if (originMovementPosture.movementRadiusPosture === 'medium') {
+    return 18
+  }
+  if (originMovementPosture.movementRadiusPosture === 'soft') {
+    return 28
+  }
+  if (originMovementPosture.movementRadiusPosture === 'softest') {
+    return 28
+  }
+  return undefined
+}
+
+function isOriginAdjustedDistanceFeasible(
+  candidate: ScoredVenue,
+  originMovementPosture: OriginMovementPostureProjection,
+): boolean {
+  const adjustedLimit = getOriginAdjustedDistanceLimitMinutes(originMovementPosture)
+  if (adjustedLimit === 0) {
+    return false
+  }
+  if (adjustedLimit !== undefined && candidate.venue.driveMinutes <= adjustedLimit) {
+    return true
+  }
+  if (originMovementPosture.movementRadiusPosture === 'softest') {
+    return candidate.fitBreakdown.proximityFit >= 0.32
+  }
+  if (originMovementPosture.movementRadiusPosture === 'soft') {
+    return candidate.fitBreakdown.proximityFit >= 0.42
+  }
+  if (originMovementPosture.movementRadiusPosture === 'medium') {
+    return candidate.fitBreakdown.proximityFit >= 0.48
+  }
+  return false
+}
+
 export function isPeakRouteTimeFeasible(candidate: ScoredVenue): boolean {
   const source = candidate.venue.source
   if (
@@ -129,6 +198,11 @@ export function isPeakDistanceFeasible(
 ): boolean {
   if (intent.distanceMode !== 'nearby') {
     return candidate.fitBreakdown.proximityFit >= 0.48
+  }
+
+  const originMovementPosture = resolveIntentOriginMovementPosture(intent)
+  if (originMovementPosture && !originMovementPosture.allowsTightWalkableClaims) {
+    return isOriginAdjustedDistanceFeasible(candidate, originMovementPosture)
   }
 
   if (isWithinStrictNearbyWindow(candidate.venue.driveMinutes, intent.distanceMode)) {
@@ -228,6 +302,12 @@ export function evaluatePeakCandidateFeasibility(
     hoursFeasible,
     anchorFeasible,
     constraintsFeasible,
+    originMovementPosture: intent
+      ? resolveIntentOriginMovementPosture(intent)
+      : undefined,
+    originAdjustedDistanceLimitMinutes: intent
+      ? getOriginAdjustedDistanceLimitMinutes(resolveIntentOriginMovementPosture(intent))
+      : undefined,
     reasons,
     provenance: {
       source: 'bearings',
@@ -251,13 +331,32 @@ export function computeArcWhenSpatialScorePressure(params: {
   }
 
   const { spatial } = params
+  const originMovementPosture = resolveIntentOriginMovementPosture(params.intent)
   const transitionCount = Math.max(1, spatial.transitions.length)
   const sameClusterRate = spatial.sameClusterTransitionCount / transitionCount
   const clusterEscapeRate = spatial.clusterEscapeCount / transitionCount
   const longTransitionRate = spatial.longTransitionCount / transitionCount
   const movementPreference = whenSignalProfile.movementPreference
+  const effectiveMovementPreference =
+    movementPreference === 'walkable' &&
+    originMovementPosture &&
+    !originMovementPosture.allowsTightWalkableClaims
+      ? 'flexible'
+      : movementPreference
+  const originReason =
+    originMovementPosture && !originMovementPosture.allowsTightWalkableClaims
+      ? `; origin ${originMovementPosture.strictness}/${originMovementPosture.movementRadiusPosture} blocks tight walkable claims`
+      : ''
+  const originFields = originMovementPosture
+    ? {
+        originMovementStrictness: originMovementPosture.strictness,
+        originMovementRadiusPosture: originMovementPosture.movementRadiusPosture,
+        originAllowsTightWalkableClaims:
+          originMovementPosture.allowsTightWalkableClaims,
+      }
+    : {}
 
-  if (movementPreference === 'walkable') {
+  if (effectiveMovementPreference === 'walkable') {
     const positiveSignal = clamp01(
       sameClusterRate * 0.46 +
         (spatial.clustersVisited.length <= 1 ? 0.36 : 0) +
@@ -271,13 +370,14 @@ export function computeArcWhenSpatialScorePressure(params: {
     return {
       mode,
       movementPreference,
+      ...originFields,
       scoreDelta: clamp((positiveSignal - negativeSignal) * 0.03, -0.03, 0.03),
       positiveSignal: roundToThousandths(positiveSignal),
       negativeSignal: roundToThousandths(negativeSignal),
       reason:
         positiveSignal >= negativeSignal
-          ? 'walkable preference favored tighter same-cluster route'
-          : 'walkable preference penalized long or repeated cluster movement',
+          ? `walkable preference favored tighter same-cluster route${originReason}`
+          : `walkable preference penalized long or repeated cluster movement${originReason}`,
     }
   }
 
@@ -296,13 +396,14 @@ export function computeArcWhenSpatialScorePressure(params: {
   return {
     mode,
     movementPreference,
+    ...originFields,
     scoreDelta: clamp((positiveSignal - negativeSignal) * 0.03, -0.03, 0.03),
     positiveSignal: roundToThousandths(positiveSignal),
     negativeSignal: roundToThousandths(negativeSignal),
     reason:
       positiveSignal >= negativeSignal
-        ? 'flexible preference favored justified cross-cluster breadth'
-        : 'flexible preference penalized excessive or repeated long movement',
+        ? `flexible preference favored justified cross-cluster breadth${originReason}`
+        : `flexible preference penalized excessive or repeated long movement${originReason}`,
   }
 }
 
@@ -357,15 +458,26 @@ export function computeArcLocalStretchPolicy(
       (candidate.momentIdentity.strength === 'strong' ||
         isMeaningfulStretchCandidate(candidate, intent)),
   )
+  const originMovementPosture = resolveIntentOriginMovementPosture(intent)
+  const originSoftened = Boolean(
+    originMovementPosture && !originMovementPosture.allowsTightWalkableClaims,
+  )
   const localMeaningfulCandidates = feasibleMeaningfulCandidates.filter((candidate) =>
-    isWithinStrictNearbyWindow(candidate.venue.driveMinutes, intent.distanceMode),
+    originSoftened
+      ? isPeakDistanceFeasible(candidate, intent, {
+          allowMeaningfulStretch: true,
+          isMeaningfulStretchCandidate,
+        })
+      : isWithinStrictNearbyWindow(candidate.venue.driveMinutes, intent.distanceMode),
   )
-  const boundedMeaningfulCandidates = feasibleMeaningfulCandidates.filter((candidate) =>
-    isOutsideStrictNearbyButWithinBoundedStretch(
-      candidate.venue.driveMinutes,
-      intent.distanceMode,
-    ) && isMeaningfulStretchCandidate(candidate, intent),
-  )
+  const boundedMeaningfulCandidates = originSoftened
+    ? []
+    : feasibleMeaningfulCandidates.filter((candidate) =>
+        isOutsideStrictNearbyButWithinBoundedStretch(
+          candidate.venue.driveMinutes,
+          intent.distanceMode,
+        ) && isMeaningfulStretchCandidate(candidate, intent),
+      )
   const bestLocalMeaningful = [...localMeaningfulCandidates].sort((left, right) => {
     return (
       scoreMeaningfulMomentStretchCandidate(right) -
@@ -404,12 +516,12 @@ export function computeArcLocalStretchPolicy(
     strictNearbyMeaningfulCount: localMeaningfulCandidates.length,
     boundedStretchMeaningfulCount: boundedMeaningfulCandidates.length,
     localSupplyDerivedFrom: localSupplySufficient
-      ? `strict nearby meaningful count = ${localMeaningfulCandidates.length}`
-      : 'strict nearby meaningful count = 0',
+      ? `${originSoftened ? 'origin-adjusted' : 'strict nearby'} meaningful count = ${localMeaningfulCandidates.length}`
+      : `${originSoftened ? 'origin-adjusted' : 'strict nearby'} meaningful count = 0`,
     strictNearbyFailedDerivedFrom: strictNearbyFailed
-      ? `strict nearby meaningful count = 0, bounded stretch count = ${boundedMeaningfulCandidates.length}`
+      ? `${originSoftened ? 'origin-adjusted' : 'strict nearby'} meaningful count = 0, bounded stretch count = ${boundedMeaningfulCandidates.length}`
       : boundedMeaningfulCandidates.length > 0
-        ? `strict nearby meaningful count = ${localMeaningfulCandidates.length}, bounded stretch count = ${boundedMeaningfulCandidates.length}`
+        ? `${originSoftened ? 'origin-adjusted' : 'strict nearby'} meaningful count = ${localMeaningfulCandidates.length}, bounded stretch count = ${boundedMeaningfulCandidates.length}`
         : 'bounded stretch count = 0',
     stretchedCandidateName: stretchedStop?.scoredVenue.venue.name,
     stretchedCandidateDistanceStatus:

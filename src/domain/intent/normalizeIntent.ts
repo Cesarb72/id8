@@ -78,5 +78,7 @@ export function normalizeIntent(input: IntentInput): IntentProfile {
     anchor: normalizedAnchor,
     discoveryPreferences,
     selectedDirectionContext: input.selectedDirectionContext,
+    originPrecision: input.originPrecision,
+    originSource: input.originSource,
   }
 }

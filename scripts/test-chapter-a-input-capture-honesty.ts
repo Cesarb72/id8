@@ -366,10 +366,14 @@ async function assertOriginOvertrust(
     'src/domain/constraints/localStretchPolicy.ts',
     'src/domain/spatial/computeSpatialCoherence.ts',
   ].map(sourceText).join('\n')
+  const a4OriginStrictnessWired =
+    activeMovementSources.includes('resolveIntentOriginMovementPosture') &&
+    activeMovementSources.includes('projectOriginMovementPosture') &&
+    /originPrecision|originSource/.test(activeMovementSources)
   assert.equal(
-    /originPrecision|originSource|userLatLng|resolvedLocation/.test(activeMovementSources),
-    false,
-    'Active movement strictness should not consume origin precision until A4 wiring.',
+    a4OriginStrictnessWired,
+    true,
+    'A4 should wire origin precision/source into Bearings movement strictness.',
   )
   const movementStrictness = observeMovementStrictness()
 
@@ -399,7 +403,7 @@ async function assertOriginOvertrust(
       movementStrictnessObserved: movementStrictness,
       sameAsPreciseGps: `radius=${sameRadiusAsPrecise ? 'same' : 'different'}; movement=${sameMovementAsPrecise ? 'same' : 'different'}`,
       verdict: fallbackButBehaviorDriving
-        ? 'fallback center is behavior-driving; movement strictness is marker-insensitive'
+        ? 'fallback center is behavior-driving; A4 Bearings strictness is available when marker is threaded'
         : location.originPrecision === 'precise'
           ? 'precise origin behavior'
           : 'not behavior-driving',
@@ -459,9 +463,9 @@ async function main(): Promise<void> {
     console.table(overtrustRows)
     console.info('THIN threading confirmation')
     console.table(thinRows)
-    console.info('A4 sizing verdict: over-trust partly confirmed - A4 targeted.')
+    console.info('A4 sizing verdict: over-trust partly confirmed - A4 wiring present.')
     console.info(
-      'Reason: fallback centers/radii drive District retrieval, while active Bearings movement strictness is marker-insensitive and does not yet consume originPrecision.',
+      'Reason: fallback centers/radii still drive District retrieval, while Bearings now has an originPrecision/originSource strictness seam when marker-threaded.',
     )
     console.info(`provider/network calls: ${providerCallCount}`)
   } finally {

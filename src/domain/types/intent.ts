@@ -1,4 +1,8 @@
 import type { RefinementMode } from './refinement'
+import type {
+  MovementOriginPrecision,
+  MovementOriginSource,
+} from '../../engines/district/types/districtTypes'
 
 export type PersonaMode = 'romantic' | 'friends' | 'family'
 export type PersonaSource = 'explicit' | 'derived'
@@ -493,6 +497,8 @@ export interface IntentInput {
   anchor?: PlanAnchor
   discoveryPreferences?: PreferredDiscoveryVenue[]
   selectedDirectionContext?: SelectedDirectionContext
+  originPrecision?: MovementOriginPrecision
+  originSource?: MovementOriginSource
 }
 
 export interface IntentProfile {
@@ -514,4 +520,6 @@ export interface IntentProfile {
   anchor?: Required<PlanAnchor>
   discoveryPreferences?: PreferredDiscoveryVenue[]
   selectedDirectionContext?: SelectedDirectionContext
+  originPrecision?: MovementOriginPrecision
+  originSource?: MovementOriginSource
 }
