@@ -154,6 +154,7 @@ export interface BuildRouteAuthoritySnapshotInput {
   contractEntryArtifact?: ContractEntryArtifact | null
   selectedDirectionId?: string | null
   selectedArtifactId?: string | null
+  greatStopStatus?: string | null
   runtimeRouteArtifact?: RuntimeRouteArtifact | null
   approvedPayload?: RouteAuthorityApprovedPayloadReference | null
   legacyCurateRefinementEntryPayload?: RouteAuthorityLegacyCurateRefinementEntryPayloadReference | null
@@ -577,6 +578,10 @@ export function buildRouteAuthoritySnapshot(
     nonEmpty(artifact?.id) ??
     nonEmpty(input.approvedPayload?.artifactId) ??
     null
+  const greatStopStatus =
+    nonEmpty(input.greatStopStatus) ??
+    nonEmpty(artifact?.enrichment?.runtimeLockEligibility?.greatStopStatus) ??
+    null
   const buildDiagnostics =
     input.buildContext?.mode === 'build'
       ? buildRouteAuthorityBuildDiagnostics({
@@ -594,6 +599,9 @@ export function buildRouteAuthoritySnapshot(
   let legacySelectedMismatchReasons: string[] = []
   let pageLocalMismatchReasons: string[] = []
 
+  if (greatStopStatus === 'FAIL') {
+    rejectionReasons.push('great_stop_failed')
+  }
   if (artifact) {
     const artifactValidation = validateContractEntryArtifactPreCommitTruth(artifact)
     rejectionReasons.push(...artifactValidation.rejectionReasons)
@@ -795,7 +803,8 @@ export function buildRouteAuthoritySnapshot(
       : rejectionReasons.includes('approved_payload_route_mismatch') ||
           rejectionReasons.includes('runtime_route_artifact_mismatch') ||
           rejectionReasons.includes('generated_route_identity_mismatch') ||
-          rejectionReasons.includes('required_anchor_role_missing')
+          rejectionReasons.includes('required_anchor_role_missing') ||
+          hasInvalidArtifactValidationReason(rejectionReasons)
         ? 'invalid'
         : lockReadyCanonicalRouteTruthCandidate
           ? 'valid'

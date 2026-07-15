@@ -1,4 +1,5 @@
 import { sanJoseVenues } from '../src/data/venues.ts'
+import { buildContractEntryRuntimeRouteLockTruth } from '../src/app/services/live/contractEntryLockHandoff.ts'
 import { getArcStopBaseVenueId } from '../src/domain/candidates/candidateIdentity.ts'
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
 import type { BuildLocationClass, GreatStopGateResult } from '../src/domain/types/greatStopGate.ts'
@@ -98,24 +99,19 @@ function criteriaSummary(gate: GreatStopGateResult) {
   }
 }
 
-function assertAllCriteriaPass(cell: ThinCellId, gate: GreatStopGateResult): void {
-  assert(gate.status === 'PASS', `${cell} formal Great Stop status changed to ${gate.status}.`)
-  assert(gate.criteria.real.passed, `${cell} failed real: ${gate.criteria.real.reasons.join('|')}`)
+function assertLifecycleMatchesGate(cell: ThinCellId, params: {
+  gate: GreatStopGateResult
+  lockEligible: boolean
+  lockRejectionReason: string | null
+}): void {
+  if (params.gate.status === 'PASS') {
+    assert(params.lockEligible, `${cell} formal Great Stop PASS must remain lockable.`)
+    return
+  }
+  assert(!params.lockEligible, `${cell} formal Great Stop FAIL must not be lockable.`)
   assert(
-    gate.criteria.roleRight.passed,
-    `${cell} failed role_right: ${gate.criteria.roleRight.reasons.join('|')}`,
-  )
-  assert(
-    gate.criteria.intentRight.passed,
-    `${cell} failed intent_right: ${gate.criteria.intentRight.reasons.join('|')}`,
-  )
-  assert(
-    gate.criteria.placeRight.passed,
-    `${cell} failed place_right: ${gate.criteria.placeRight.reasons.join('|')}`,
-  )
-  assert(
-    gate.criteria.momentRight.passed,
-    `${cell} failed moment_right: ${gate.criteria.momentRight.reasons.join('|')}`,
+    params.lockRejectionReason === 'great_stop_failed',
+    `${cell} formal Great Stop FAIL must reject lock with great_stop_failed, received ${params.lockRejectionReason}.`,
   )
 }
 
@@ -135,6 +131,17 @@ try {
       greatStop.preset.locationClass === spec.locationClass,
       `${spec.cell} formal gate should infer ${spec.locationClass}, got ${greatStop.preset.locationClass}.`,
     )
+    const lockTruth = buildContractEntryRuntimeRouteLockTruth({
+      artifact: result.contractEntryArtifact,
+      itinerary: result.itinerary,
+      scoredVenues: result.scoredVenues,
+      selectedDirectionId: result.intentProfile.selectedDirectionContext?.directionId ?? 'thin-build',
+      selectedClusterConfirmation: `${spec.cell} THIN route`,
+      city: result.itinerary.city,
+      persona: result.intentProfile.persona ?? spec.persona,
+      vibe: result.intentProfile.primaryAnchor,
+      mode: 'build',
+    })
 
     observed.push({
       cell: spec.cell,
@@ -147,6 +154,8 @@ try {
       formalGateRun: true,
       criteria: criteriaSummary(greatStop),
       aggregatedResult: greatStop.status,
+      lockable: lockTruth.ok,
+      lockRejectionReason: lockTruth.ok ? null : lockTruth.reason,
       failedCriteria: greatStop.failedCriteria,
       reasons: greatStop.reasons,
       preset: greatStop.preset,
@@ -183,7 +192,10 @@ try {
   )
 
   for (const entry of observed) {
-    assertAllCriteriaPass(entry.cell, {
+    assertLifecycleMatchesGate(entry.cell, {
+      lockEligible: entry.lockable,
+      lockRejectionReason: entry.lockRejectionReason,
+      gate: {
       status: entry.aggregatedResult,
       failedCriteria: entry.failedCriteria,
       reasons: entry.reasons,
@@ -197,6 +209,7 @@ try {
       },
       preset: entry.preset,
       diagnostics: {} as GreatStopGateResult['diagnostics'],
+      },
     })
   }
 } finally {

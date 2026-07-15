@@ -130,6 +130,9 @@ export interface ContractEntryArtifactRuntimeLockEligibility {
   eligible: boolean
   status?: 'eligible' | 'ineligible' | 'not_evaluated'
   rejectionReasons?: string[]
+  greatStopStatus?: 'PASS' | 'FAIL' | string
+  greatStopFailedCriteria?: string[]
+  greatStopRejectionReasons?: string[]
   selectedDirectionId?: string
   runtimeRouteArtifact?: RuntimeRouteArtifact
   buildMetadata?: {

@@ -249,6 +249,17 @@ export function buildContractEntryArtifactFromGeneration(
   const missingRoleReasons = buildMissingRoleReasons(roleCoverage)
   const validationStatus: ContractEntryArtifactValidationStatus =
     missingRoleReasons.length > 0 ? 'incomplete' : 'valid'
+  const greatStopGateResult = diagnostics.greatStopGateResult
+  const greatStopPassed = greatStopGateResult?.status === 'PASS'
+  const greatStopFailed = greatStopGateResult?.status === 'FAIL'
+  const greatStopLockRejectionReasons = greatStopFailed ? ['great_stop_failed'] : []
+  const runtimeLockRejectionReasons = [
+    ...missingRoleReasons,
+    ...greatStopLockRejectionReasons,
+  ]
+  const runtimeLockEligible =
+    missingRoleReasons.length === 0 &&
+    (greatStopGateResult === undefined || greatStopPassed)
   const highlight = getRoleStop(itinerary, 'highlight') ?? itinerary.stops[0]
   const start = getRoleStop(itinerary, 'start') ?? itinerary.stops[0]
   const locationStop = start ?? highlight
@@ -311,12 +322,19 @@ export function buildContractEntryArtifactFromGeneration(
     }),
     modeContextFit: buildModeContextFit(mode),
     runtimeLockEligibility: {
-      eligible: missingRoleReasons.length === 0,
-      status: missingRoleReasons.length === 0 ? 'eligible' : 'ineligible',
-      rejectionReasons: missingRoleReasons,
+      eligible: runtimeLockEligible,
+      status: runtimeLockEligible ? 'eligible' : 'ineligible',
+      rejectionReasons: runtimeLockRejectionReasons,
+      ...(greatStopGateResult
+        ? {
+            greatStopStatus: greatStopGateResult.status,
+            greatStopFailedCriteria: [...greatStopGateResult.failedCriteria],
+            greatStopRejectionReasons: [...greatStopGateResult.reasons],
+          }
+        : {}),
       ...(selectedDirectionId ? { selectedDirectionId } : {}),
       buildMetadata: {
-        canBuildRuntimeRoute: missingRoleReasons.length === 0,
+        canBuildRuntimeRoute: runtimeLockEligible,
         ...(missingRoleReasons.length > 0
           ? {
               missingRoles: missingRoleReasons.map((reason) =>

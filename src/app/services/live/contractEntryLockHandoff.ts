@@ -124,6 +124,9 @@ function buildCanonicalStopByRole(params: {
 export function buildContractEntryRuntimeRouteLockTruth(
   input: ContractEntryRuntimeRouteLockInput,
 ): ContractEntryRuntimeRouteLockResult {
+  if (input.artifact.enrichment?.runtimeLockEligibility?.greatStopStatus === 'FAIL') {
+    return { ok: false, reason: 'great_stop_failed' }
+  }
   const artifactValidation = validateContractEntryArtifactPreCommitTruth(input.artifact, {
     requireEnrichment: true,
   })

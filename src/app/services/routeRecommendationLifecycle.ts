@@ -65,6 +65,8 @@ export function buildRouteRecommendationLifecycleDiagnostics(
     input.greatStopFailureClassification ?? null
   const routeAuthorityStatus = input.routeAuthorityStatus ?? null
   const lockInputAvailable = Boolean(input.lockInputAvailable)
+  const greatStopPassed = greatStopStatus === 'PASS'
+  const greatStopFailed = greatStopStatus === 'FAIL' || Boolean(greatStopFailureClassification)
   const candidateSurface = isCandidateRouteLifecycleSurface({
     routeSummarySource,
     routeSummaryProvenance,
@@ -75,10 +77,16 @@ export function buildRouteRecommendationLifecycleDiagnostics(
   let reviewEligible = Boolean(input.reviewEligible)
   let lockEligible = Boolean(input.lockEligible) && lockInputAvailable
 
-  if (runtimeRouteArtifactPresent) {
+  if (greatStopFailed) {
+    phase = 'great_stop_failed'
+    userFacingLabel = 'Great Stop failed - no recommendation yet'
+    reviewEligible = false
+    lockEligible = false
+    reasons.push('great_stop_failed')
+  } else if (runtimeRouteArtifactPresent && greatStopPassed) {
     phase = 'runtime_route'
     userFacingLabel = 'Runtime route'
-  } else if (routeAuthorityStatus === 'valid' && lockInputAvailable) {
+  } else if (routeAuthorityStatus === 'valid' && lockInputAvailable && greatStopPassed) {
     phase = 'authority_valid_lockable'
     userFacingLabel = 'Reviewable route - ready to lock'
   } else if (candidateSurface) {
@@ -87,14 +95,8 @@ export function buildRouteRecommendationLifecycleDiagnostics(
     reviewEligible = false
     lockEligible = false
     reasons.push('candidate_route_summary_not_generated_truth')
-  } else if (greatStopStatus === 'FAIL' || greatStopFailureClassification) {
-    phase = 'great_stop_failed'
-    userFacingLabel = 'Great Stop failed - no recommendation yet'
-    reviewEligible = false
-    lockEligible = false
-    reasons.push('great_stop_failed')
   } else if (
-    greatStopStatus === 'PASS' &&
+    greatStopPassed &&
     generatedContractEntryArtifactPresent &&
     finalRoutePresent
   ) {
@@ -110,6 +112,9 @@ export function buildRouteRecommendationLifecycleDiagnostics(
     }
     if (!finalRoutePresent) {
       reasons.push('final_route_missing')
+    }
+    if (!greatStopPassed) {
+      reasons.push('great_stop_pass_required')
     }
   }
 
