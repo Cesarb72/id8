@@ -534,6 +534,7 @@ export async function buildContractDrivenBuildWaypointPlan(
       fieldRealVerdict: computeFieldRealVerdictForArcCandidate(parity.anchoredPlan.selectedArc),
       locationClass: input.greatStopGateLocationClass,
       locationClassSource: input.greatStopGateLocationClass ? 'explicit' : undefined,
+      placeRightTolerance: routeShapeContract.movementProfile.placeRightTolerance,
     })
     const diagnostics: GreatStopGateSelectionDiagnostics = {
       status: postRepairGreatStopGateResult.status,

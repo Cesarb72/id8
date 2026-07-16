@@ -91,6 +91,7 @@ import {
   rankArcCandidatesWithDiagnostics,
   type WaypointContractInput,
 } from '../integrations/waypoint/rankArcCandidates'
+import { projectRouteShapeOwnership } from '../integrations/waypoint/coordination/projectRouteShapeOwnership'
 import type { WaypointRankedCandidate } from '../integrations/waypoint/core'
 import type { RankedPocket } from '../engines/district/types/districtTypes'
 import type { ContractGateWorld } from './bearings/buildContractGateWorld'
@@ -576,8 +577,16 @@ function buildGreatStopCompactnessRankingDiagnostics(params: {
   intent: IntentProfile
   locationClass?: BuildLocationClass
   locationClassSource?: 'explicit'
+  placeRightTolerance?: RouteShapeContract['movementProfile']['placeRightTolerance']
 }): GreatStopCompactnessRankingDiagnostics | undefined {
-  const { rankedEntries, candidatePool, intent, locationClass, locationClassSource } = params
+  const {
+    rankedEntries,
+    candidatePool,
+    intent,
+    locationClass,
+    locationClassSource,
+    placeRightTolerance,
+  } = params
   if (rankedEntries.length === 0) {
     return undefined
   }
@@ -623,6 +632,7 @@ function buildGreatStopCompactnessRankingDiagnostics(params: {
           fieldRealVerdict: computeFieldRealVerdictForArcCandidate(entry.candidate),
           locationClass,
           locationClassSource,
+          placeRightTolerance,
         })
       })(),
     }))
@@ -899,6 +909,7 @@ function buildBuildCandidatePoolCompactnessDiagnostics(params: {
   intent: IntentProfile
   locationClass?: BuildLocationClass
   locationClassSource?: 'explicit'
+  placeRightTolerance?: RouteShapeContract['movementProfile']['placeRightTolerance']
 }): BuildCandidatePoolCompactnessDiagnostics | undefined {
   const {
     preTop40RankedEntries,
@@ -909,6 +920,7 @@ function buildBuildCandidatePoolCompactnessDiagnostics(params: {
     intent,
     locationClass,
     locationClassSource,
+    placeRightTolerance,
   } = params
   if (preTop40RankedEntries.length === 0) {
     return undefined
@@ -934,6 +946,7 @@ function buildBuildCandidatePoolCompactnessDiagnostics(params: {
       fieldRealVerdict: computeFieldRealVerdictForArcCandidate(entry.candidate),
       locationClass,
       locationClassSource,
+      placeRightTolerance,
     })
     return {
       entry,
@@ -3215,6 +3228,11 @@ async function runGeneratePlanInternal(
         : curateHardCommitRequired
           ? curateHardCommitCandidates
           : rankedCandidates
+  const bearingsMovementConstraints = options.routeShapeContract
+    ? projectRouteShapeOwnership({ routeShapeContract: options.routeShapeContract })
+        .bearingsMovementConstraints
+    : undefined
+  const placeRightTolerance = bearingsMovementConstraints?.placeRightTolerance
   const preTop40ArcCandidates = arcAssembly.preTop40Candidates ?? arcCandidates
   const preTop40Ranking =
     greatStopSelectionActive && preTop40ArcCandidates.length > 0
@@ -3233,6 +3251,7 @@ async function runGeneratePlanInternal(
           intent: planningIntent,
           locationClass: options.greatStopGateLocationClass,
           locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
+          placeRightTolerance,
         })
       : undefined
   const compactnessRankingDiagnostics =
@@ -3243,6 +3262,7 @@ async function runGeneratePlanInternal(
           intent: planningIntent,
           locationClass: options.greatStopGateLocationClass,
           locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
+          placeRightTolerance,
         })
       : undefined
   const greatStopSelection =
@@ -3252,6 +3272,7 @@ async function runGeneratePlanInternal(
           intent: planningIntent,
           locationClass: options.greatStopGateLocationClass,
           locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
+          placeRightTolerance,
           placeRightVerdictForCandidate: (candidate) =>
             buildPlaceRightVerdictForCandidate({
               candidate,
@@ -4434,6 +4455,7 @@ async function runGeneratePlanInternal(
       routePacing: selectedArcPlaceRight.routePacing,
       placeRightVerdict: selectedArcPlaceRight.placeRightVerdict,
       fieldRealVerdict: computeFieldRealVerdictForArcCandidate(selectedArc),
+      placeRightTolerance,
     }),
     strictShapeEnabled,
     boundaryDiagnostics,

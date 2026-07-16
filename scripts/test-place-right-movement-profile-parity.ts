@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs'
 import { buildGreatStopGatePlaceRightPresets } from '../src/domain/greatStop/buildGreatStopGateResult'
 import { buildPlaceRightMovementProfile } from '../src/domain/interpretation/buildPlaceRightMovementProfile'
 import type {
@@ -43,22 +42,6 @@ const rows = personas.flatMap((persona) =>
   }),
 )
 
-const routePlaceRightConsumerSource = readFileSync(
-  'src/domain/bearings/buildRoutePlaceRightVerdictForArcCandidate.ts',
-  'utf8',
-)
-const routeEvidenceSource = readFileSync(
-  'src/domain/bearings/evaluateRoutePlaceRightEvidence.ts',
-  'utf8',
-)
-const greatStopGateSource = readFileSync('src/domain/greatStop/buildGreatStopGateResult.ts', 'utf8')
-
-const placeRightConsumerUsesNewProfile =
-  routePlaceRightConsumerSource.includes('buildPlaceRightMovementProfile') ||
-  routePlaceRightConsumerSource.includes('placeRightTolerance') ||
-  routeEvidenceSource.includes('placeRightTolerance') ||
-  greatStopGateSource.includes('buildPlaceRightMovementProfile')
-
 const mismatches = rows.filter((row) => !row.exactParity)
 const providerCalls = 0
 
@@ -69,8 +52,7 @@ console.log(
         totalCells: rows.length,
         exactParityCells: rows.filter((row) => row.exactParity).length,
         mismatches: mismatches.length,
-        noBehaviorChange: !placeRightConsumerUsesNewProfile,
-        placeRightConsumerStillOldPath: !placeRightConsumerUsesNewProfile,
+        noValueDrift: mismatches.length === 0,
         providerCalls,
       },
       rows,
@@ -82,8 +64,4 @@ console.log(
 
 if (mismatches.length > 0) {
   throw new Error('Place-Right movement profile parity drift detected.')
-}
-
-if (placeRightConsumerUsesNewProfile) {
-  throw new Error('Slice A must not wire the new movement profile into the Place-Right consumer.')
 }

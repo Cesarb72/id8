@@ -16,7 +16,12 @@ import type {
   GreatStopGateStatus,
   GreatStopTravelTolerance,
 } from '../types/greatStopGate'
-import type { DistanceMode, IntentProfile, PersonaMode } from '../types/intent'
+import type {
+  DistanceMode,
+  IntentProfile,
+  PersonaMode,
+  RouteShapePlaceRightMovementProfile,
+} from '../types/intent'
 import type { UserStopRole } from '../types/itinerary'
 import type { BearingsPlaceRightVerdict } from '../bearings/routePlaceRightContract'
 import type { FieldRealVerdict } from '../field/fieldRealVerdict'
@@ -238,6 +243,7 @@ function evaluatePlaceRightFromBearings(params: {
   persona: PersonaMode
   locationClass: BuildLocationClass
   verdict?: BearingsPlaceRightVerdict
+  placeRightTolerance?: RouteShapePlaceRightMovementProfile
 }): {
   result: GreatStopCriterionResult
   diagnostics: Pick<
@@ -246,7 +252,16 @@ function evaluatePlaceRightFromBearings(params: {
   >
   preset: PlaceRightPreset
 } {
-  const preset = PLACE_RIGHT_PRESETS[params.persona][params.locationClass]
+  const preset = params.placeRightTolerance
+    ? {
+        travelTolerance: params.placeRightTolerance.travelTolerance,
+        maxComfortableTotalMovementMinutes:
+          params.placeRightTolerance.maxComfortableTotalMovementMinutes,
+        maxSingleTransitionMinutes: params.placeRightTolerance.maxSingleTransitionMinutes,
+        maxClusterEscapes: params.placeRightTolerance.maxClusterEscapes,
+        driveLikeMovement: params.placeRightTolerance.driveLikeMovement,
+      }
+    : PLACE_RIGHT_PRESETS[params.persona][params.locationClass]
   const verdict = params.verdict
   const reasons =
     verdict?.compatibility.greatStopPlaceRightReasonCodes ??
@@ -484,6 +499,7 @@ export function buildGreatStopGateResult(params: {
   fieldRealVerdict?: FieldRealVerdict
   locationClass?: BuildLocationClass
   locationClassSource?: GreatStopGatePresetSource
+  placeRightTolerance?: RouteShapePlaceRightMovementProfile
 }): GreatStopGateResult {
   const { selectedArc, intent } = params
   const persona = intent.persona ?? 'friends'
@@ -495,6 +511,7 @@ export function buildGreatStopGateResult(params: {
     persona,
     locationClass,
     verdict: params.placeRightVerdict,
+    placeRightTolerance: params.placeRightTolerance,
   })
   const momentRight = evaluateMomentRight(selectedArc)
   const requiredAnchorRole = intent.anchor?.role
@@ -843,6 +860,7 @@ export function selectGreatStopGatePassingCandidate(params: {
   intent: IntentProfile
   locationClass?: BuildLocationClass
   locationClassSource?: GreatStopGatePresetSource
+  placeRightTolerance?: RouteShapePlaceRightMovementProfile
   placeRightVerdictForCandidate?: (candidate: ArcCandidate) => BearingsPlaceRightVerdict
   fieldRealVerdictForCandidate?: (candidate: ArcCandidate) => FieldRealVerdict
   stage: GreatStopGateSelectionStage
@@ -972,6 +990,7 @@ export function selectGreatStopGatePassingCandidate(params: {
       fieldRealVerdict: params.fieldRealVerdictForCandidate?.(candidate),
       locationClass: params.locationClass,
       locationClassSource: params.locationClassSource,
+      placeRightTolerance: params.placeRightTolerance,
     })
     const skippedForRequiredAnchor =
       result.requiredAnchor != null &&
