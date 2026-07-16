@@ -605,31 +605,28 @@ function buildGreatStopCompactnessRankingDiagnostics(params: {
       signals.maxSingleTransitionEstimate > signals.maxTransitionLimit
     )
   })
-  const placeRightEntries =
-    locationClass && locationClassSource
-      ? entries
-          .map((entry, index) => ({
-            entry,
-            rank: index + 1,
-            gateResult: (() => {
-              const placeRight = buildPlaceRightVerdictForCandidate({
-                candidate: entry.candidate,
-                intent,
-                locationClass,
-              })
-              return buildGreatStopGateResult({
-                selectedArc: entry.candidate,
-                intent,
-                routePacing: placeRight.routePacing,
-                placeRightVerdict: placeRight.placeRightVerdict,
-                fieldRealVerdict: computeFieldRealVerdictForArcCandidate(entry.candidate),
-                locationClass,
-                locationClassSource,
-              })
-            })(),
-          }))
-          .filter(({ gateResult }) => gateResult.criteria.placeRight.passed)
-      : []
+  const placeRightEntries = entries
+    .map((entry, index) => ({
+      entry,
+      rank: index + 1,
+      gateResult: (() => {
+        const placeRight = buildPlaceRightVerdictForCandidate({
+          candidate: entry.candidate,
+          intent,
+          locationClass,
+        })
+        return buildGreatStopGateResult({
+          selectedArc: entry.candidate,
+          intent,
+          routePacing: placeRight.routePacing,
+          placeRightVerdict: placeRight.placeRightVerdict,
+          fieldRealVerdict: computeFieldRealVerdictForArcCandidate(entry.candidate),
+          locationClass,
+          locationClassSource,
+        })
+      })(),
+    }))
+    .filter(({ gateResult }) => gateResult.criteria.placeRight.passed)
   const topRows = entries.slice(0, 5).map((entry, index) =>
     buildCompactnessCandidateDetail({
       entry,
@@ -652,7 +649,7 @@ function buildGreatStopCompactnessRankingDiagnostics(params: {
     compactnessEvaluatedCandidateCount: entries.length,
     compactnessAdjustedCandidateCount: adjustedEntries.length,
     compactnessCandidateCount: compactEntries.length,
-    compactnessPassingPlaceRightCandidateCount: locationClass ? placeRightEntries.length : undefined,
+    compactnessPassingPlaceRightCandidateCount: placeRightEntries.length,
     firstCompactCandidateRank: nearestCompact?.rank,
     firstPlaceRightCandidateRank: nearestPlaceRight?.rank,
     compactCandidateRanks: compactEntries.slice(0, 25).map(({ rank }) => rank),
@@ -924,25 +921,20 @@ function buildBuildCandidatePoolCompactnessDiagnostics(params: {
     postTop40RankedEntries.map((entry, index) => [entry.candidate.id, index + 1] as const),
   )
   const evaluated = preTop40RankedEntries.map((entry, index) => {
-    const gateResult =
-      locationClass && locationClassSource
-        ? (() => {
-            const placeRight = buildPlaceRightVerdictForCandidate({
-              candidate: entry.candidate,
-              intent,
-              locationClass,
-            })
-            return buildGreatStopGateResult({
-              selectedArc: entry.candidate,
-              intent,
-              routePacing: placeRight.routePacing,
-              placeRightVerdict: placeRight.placeRightVerdict,
-              fieldRealVerdict: computeFieldRealVerdictForArcCandidate(entry.candidate),
-              locationClass,
-              locationClassSource,
-            })
-          })()
-        : undefined
+    const placeRight = buildPlaceRightVerdictForCandidate({
+      candidate: entry.candidate,
+      intent,
+      locationClass,
+    })
+    const gateResult = buildGreatStopGateResult({
+      selectedArc: entry.candidate,
+      intent,
+      routePacing: placeRight.routePacing,
+      placeRightVerdict: placeRight.placeRightVerdict,
+      fieldRealVerdict: computeFieldRealVerdictForArcCandidate(entry.candidate),
+      locationClass,
+      locationClassSource,
+    })
     return {
       entry,
       rank: index + 1,
@@ -3214,23 +3206,24 @@ async function runGeneratePlanInternal(
     )
   }
   let greatStopGateSelectionDiagnostics: GreatStopGateSelectionDiagnostics | undefined
-  const buildGreatStopSelectionActive =
-    planningIntent.mode === 'build' && Boolean(options.greatStopGateLocationClass)
-  const buildGreatStopCandidatePool =
-    buildGreatStopSelectionActive
-      ? buildSelectedCandidatePreservationRequired
-        ? buildSelectedCandidatePreservationCandidates
-        : buildRequiredAnchorCandidatePool
-      : []
+  const greatStopSelectionActive = true
+  const greatStopCandidatePool =
+    buildSelectedCandidatePreservationRequired
+      ? buildSelectedCandidatePreservationCandidates
+      : buildRequiredAnchorPreservationRequired
+        ? buildRequiredAnchorCandidatePool
+        : curateHardCommitRequired
+          ? curateHardCommitCandidates
+          : rankedCandidates
   const preTop40ArcCandidates = arcAssembly.preTop40Candidates ?? arcCandidates
   const preTop40Ranking =
-    buildGreatStopSelectionActive && preTop40ArcCandidates.length > 0
+    greatStopSelectionActive && preTop40ArcCandidates.length > 0
       ? waypointContractInput
         ? rankArcCandidatesFromContract(preTop40ArcCandidates, waypointContractInput)
         : rankArcCandidatesWithDiagnostics(preTop40ArcCandidates, planningIntent)
       : undefined
   const buildCandidatePoolCompactnessDiagnostics =
-    buildGreatStopSelectionActive && preTop40Ranking
+    greatStopSelectionActive && preTop40Ranking
       ? buildBuildCandidatePoolCompactnessDiagnostics({
           preTop40RankedEntries: preTop40Ranking.ranked,
           postTop40RankedEntries: ranking.ranked,
@@ -3243,19 +3236,19 @@ async function runGeneratePlanInternal(
         })
       : undefined
   const compactnessRankingDiagnostics =
-    buildGreatStopSelectionActive
+    greatStopSelectionActive
       ? buildGreatStopCompactnessRankingDiagnostics({
           rankedEntries: ranking.ranked,
-          candidatePool: buildGreatStopCandidatePool,
+          candidatePool: greatStopCandidatePool,
           intent: planningIntent,
           locationClass: options.greatStopGateLocationClass,
           locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
         })
       : undefined
-  const buildGreatStopSelection =
-    buildGreatStopSelectionActive
+  const greatStopSelection =
+    greatStopSelectionActive
       ? selectGreatStopGatePassingCandidate({
-          candidates: buildGreatStopCandidatePool,
+          candidates: greatStopCandidatePool,
           intent: planningIntent,
           locationClass: options.greatStopGateLocationClass,
           locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
@@ -3279,15 +3272,15 @@ async function runGeneratePlanInternal(
             : compactnessRankingDiagnostics,
         })
       : undefined
-  if (buildGreatStopSelection) {
-    greatStopGateSelectionDiagnostics = buildGreatStopSelection.diagnostics
-    if (!buildGreatStopSelection.selectedCandidate) {
-      throw new GreatStopGateSelectionError(buildGreatStopSelection.diagnostics)
+  if (greatStopSelection) {
+    greatStopGateSelectionDiagnostics = greatStopSelection.diagnostics
+    if (!greatStopSelection.selectedCandidate) {
+      throw new GreatStopGateSelectionError(greatStopSelection.diagnostics)
     }
   }
   let selectedArc =
-    (buildGreatStopSelectionActive
-      ? buildGreatStopSelection?.selectedCandidate
+    (greatStopSelectionActive
+      ? greatStopSelection?.selectedCandidate
       : buildSelectedCandidatePreservationRequired
         ? buildSelectedCandidatePreservationCandidates[0]
         : buildRequiredAnchorPreservationRequired && finalAnchorCandidates.length > 0

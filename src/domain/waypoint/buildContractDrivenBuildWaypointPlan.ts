@@ -525,59 +525,57 @@ export async function buildContractDrivenBuildWaypointPlan(
     }
   }
 
-  const postRepairGreatStopGateDiagnostics = input.greatStopGateLocationClass
-    ? (() => {
-        const postRepairGreatStopGateResult = buildGreatStopGateResult({
-          selectedArc: parity.anchoredPlan.selectedArc,
-          intent: result.intentProfile,
-          routePacing: buildGreatStopRoutePacingDiagnostics(parity.anchoredPlan.selectedArc),
-          fieldRealVerdict: computeFieldRealVerdictForArcCandidate(parity.anchoredPlan.selectedArc),
-          locationClass: input.greatStopGateLocationClass,
-          locationClassSource: 'explicit',
-        })
-        const diagnostics: GreatStopGateSelectionDiagnostics = {
-          status: postRepairGreatStopGateResult.status,
-          stage: 'post_repair_verification',
-          selectedCandidateId: parity.anchoredPlan.selectedArc.id,
-          selectedCandidateRank: 1,
-          evaluatedCandidateCount: 1,
-          failedTopCandidateCriteria: postRepairGreatStopGateResult.failedCriteria,
-          failureReasons: [...postRepairGreatStopGateResult.reasons],
-          bestFailingCandidateSummary:
-            postRepairGreatStopGateResult.status === 'FAIL'
-              ? {
-                  candidateId: parity.anchoredPlan.selectedArc.id,
-                  rank: 1,
-                  signature: parity.anchoredPlan.selectedArc.stops
-                    .map((stop) => `${stop.role}:${stop.scoredVenue.venue.id}`)
-                    .join('|'),
-                  stopVenueIdsByRole: {
-                    start: parity.anchoredPlan.selectedArc.stops.find((stop) => stop.role === 'warmup')
-                      ?.scoredVenue.venue.id,
-                    highlight: parity.anchoredPlan.selectedArc.stops.find((stop) => stop.role === 'peak')
-                      ?.scoredVenue.venue.id,
-                    windDown: parity.anchoredPlan.selectedArc.stops.find((stop) => stop.role === 'cooldown')
-                      ?.scoredVenue.venue.id,
-                  },
-                  requiredAnchorPreserved: postRepairGreatStopGateResult.requiredAnchor?.survived,
-                  requiredAnchorRoleCorrect: postRepairGreatStopGateResult.requiredAnchor
-                    ? postRepairGreatStopGateResult.requiredAnchor.survived &&
-                      postRepairGreatStopGateResult.requiredAnchor.creditedRole ===
-                        postRepairGreatStopGateResult.requiredAnchor.role
-                    : undefined,
-                  failedCriteria: [...postRepairGreatStopGateResult.failedCriteria],
-                  reasons: [...postRepairGreatStopGateResult.reasons],
-                }
-              : undefined,
-          passingCandidateCount: postRepairGreatStopGateResult.status === 'PASS' ? 1 : 0,
-          selectedGateResult: postRepairGreatStopGateResult,
-        }
-        if (postRepairGreatStopGateResult.status === 'FAIL') {
-          throw new GreatStopGateSelectionError(diagnostics)
-        }
-        return diagnostics
-      })()
-    : undefined
+  const postRepairGreatStopGateDiagnostics = (() => {
+    const postRepairGreatStopGateResult = buildGreatStopGateResult({
+      selectedArc: parity.anchoredPlan.selectedArc,
+      intent: result.intentProfile,
+      routePacing: buildGreatStopRoutePacingDiagnostics(parity.anchoredPlan.selectedArc),
+      fieldRealVerdict: computeFieldRealVerdictForArcCandidate(parity.anchoredPlan.selectedArc),
+      locationClass: input.greatStopGateLocationClass,
+      locationClassSource: input.greatStopGateLocationClass ? 'explicit' : undefined,
+    })
+    const diagnostics: GreatStopGateSelectionDiagnostics = {
+      status: postRepairGreatStopGateResult.status,
+      stage: 'post_repair_verification',
+      selectedCandidateId: parity.anchoredPlan.selectedArc.id,
+      selectedCandidateRank: 1,
+      evaluatedCandidateCount: 1,
+      failedTopCandidateCriteria: postRepairGreatStopGateResult.failedCriteria,
+      failureReasons: [...postRepairGreatStopGateResult.reasons],
+      bestFailingCandidateSummary:
+        postRepairGreatStopGateResult.status === 'FAIL'
+          ? {
+              candidateId: parity.anchoredPlan.selectedArc.id,
+              rank: 1,
+              signature: parity.anchoredPlan.selectedArc.stops
+                .map((stop) => `${stop.role}:${stop.scoredVenue.venue.id}`)
+                .join('|'),
+              stopVenueIdsByRole: {
+                start: parity.anchoredPlan.selectedArc.stops.find((stop) => stop.role === 'warmup')
+                  ?.scoredVenue.venue.id,
+                highlight: parity.anchoredPlan.selectedArc.stops.find((stop) => stop.role === 'peak')
+                  ?.scoredVenue.venue.id,
+                windDown: parity.anchoredPlan.selectedArc.stops.find((stop) => stop.role === 'cooldown')
+                  ?.scoredVenue.venue.id,
+              },
+              requiredAnchorPreserved: postRepairGreatStopGateResult.requiredAnchor?.survived,
+              requiredAnchorRoleCorrect: postRepairGreatStopGateResult.requiredAnchor
+                ? postRepairGreatStopGateResult.requiredAnchor.survived &&
+                  postRepairGreatStopGateResult.requiredAnchor.creditedRole ===
+                    postRepairGreatStopGateResult.requiredAnchor.role
+                : undefined,
+              failedCriteria: [...postRepairGreatStopGateResult.failedCriteria],
+              reasons: [...postRepairGreatStopGateResult.reasons],
+            }
+          : undefined,
+      passingCandidateCount: postRepairGreatStopGateResult.status === 'PASS' ? 1 : 0,
+      selectedGateResult: postRepairGreatStopGateResult,
+    }
+    if (postRepairGreatStopGateResult.status === 'FAIL') {
+      throw new GreatStopGateSelectionError(diagnostics)
+    }
+    return diagnostics
+  })()
 
   const postParityContractEntryArtifact = buildContractEntryArtifactFromGeneration({
     itinerary: parity.canonicalItinerary,

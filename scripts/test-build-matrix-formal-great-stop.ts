@@ -490,7 +490,7 @@ async function main(): Promise<void> {
             anchors: results.map((item) => item.anchor),
           },
           locationClassCaveat:
-            'Generation-based proof does not pass explicit greatStopGateLocationClass because that activates Build Great Stop pre-selection; current formal gate infers L1 from nearby and L2 otherwise, so historical L3 cells measure as actual L2 unless a separate explicit-gate observer is requested.',
+            'Generation-based proof does not pass explicit greatStopGateLocationClass, so current formal gate infers L1 from nearby and L2 otherwise; historical L3 cells measure as actual L2 unless a separate explicit-location-class observer is requested.',
           providerCalls: fetchCallCount,
           summary,
           failureDistribution: failureDistribution(results),

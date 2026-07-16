@@ -15,6 +15,7 @@ import type { ContractEntryArtifact } from '../src/domain/artifacts/contractEntr
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
 import { getArcStopBaseVenueId } from '../src/domain/candidates/candidateIdentity.ts'
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
+import { GreatStopGateSelectionError } from '../src/domain/types/greatStopGate.ts'
 import type { ScoredVenue } from '../src/domain/types/arc.ts'
 import type { IntentInput } from '../src/domain/types/intent.ts'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
@@ -475,12 +476,34 @@ async function assertThinFailIsNonLockable(): Promise<{
       },
     ],
   }
-  const result = await runGeneratePlan(input, {
-    seedVenues: sanJoseVenues,
-    sourceMode: 'curated',
-    sourceModeOverrideApplied: true,
-    debugMode: false,
-  })
+  let result: Awaited<ReturnType<typeof runGeneratePlan>> | undefined
+  try {
+    result = await runGeneratePlan(input, {
+      seedVenues: sanJoseVenues,
+      sourceMode: 'curated',
+      sourceModeOverrideApplied: true,
+      debugMode: false,
+    })
+  } catch (error) {
+    if (!(error instanceof GreatStopGateSelectionError)) {
+      throw error
+    }
+    const diagnostics = error.greatStopGateSelectionDiagnostics
+    assert(
+      diagnostics.status === 'FAIL',
+      'Build THIN soft-gate exhaustion must expose structured FAIL diagnostics.',
+    )
+    assert(
+      diagnostics.stage === 'pre_selection_gate',
+      'Build THIN soft-gate exhaustion must fail before selected route commitment.',
+    )
+    return {
+      status: diagnostics.status,
+      lockEligible: false,
+      failedCriteria: diagnostics.failedTopCandidateCriteria ?? [],
+      selectedStopBaseVenueIds: [],
+    }
+  }
   const greatStop = result.trace.greatStopGateResult
   assert(greatStop, 'Build THIN route must expose formal Great Stop result.')
   assert(greatStop.status === 'FAIL', 'Build THIN observer expects current Adega formal Great Stop FAIL.')

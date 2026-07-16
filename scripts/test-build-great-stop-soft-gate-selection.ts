@@ -5,8 +5,10 @@ import {
 } from '../src/domain/greatStop/buildGreatStopGateResult'
 import { GreatStopGateSelectionError } from '../src/domain/types/greatStopGate'
 import type { ArcCandidate, ArcStop } from '../src/domain/types/arc'
+import type { BearingsPlaceRightVerdict } from '../src/domain/bearings/routePlaceRightContract'
 import type { CrewPolicy } from '../src/domain/types/crewPolicies'
 import type { ExperienceLens } from '../src/domain/types/experienceLens'
+import type { FieldRealVerdict } from '../src/domain/field/fieldRealVerdict'
 import type {
   BuildLocationClass,
   GreatStopCompactnessRankingDiagnostics,
@@ -24,6 +26,91 @@ globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
     throw new Error(message)
+  }
+}
+
+function buildSyntheticFieldRealPass(candidate: ArcCandidate): FieldRealVerdict {
+  return {
+    realReady: true,
+    status: 'pass',
+    identityUsable: true,
+    sourceUsable: true,
+    provenanceValid: true,
+    availabilityKnown: true,
+    availabilityStatus: 'available_from_record',
+    stalenessStatus: 'current',
+    suppressionStatus: 'not_suppressed',
+    failureReasons: [],
+    stopEvidence: [],
+    routeEvidence: {
+      stopCount: candidate.stops.length,
+      failingStopCount: 0,
+      unknownStopCount: 0,
+      failureReasons: [],
+    },
+    provenance: {
+      source: 'field',
+      evaluatedFrom: 'already_retrieved_record_truth',
+      notes: ['synthetic-owner-verdict'],
+    },
+    compatibility: {
+      greatStopRealInputs: {
+        realReady: true,
+        realVerdict: 'pass',
+        realFailureReasons: [],
+        unusableStopCount: 0,
+        unknownStopCount: 0,
+      },
+    },
+  }
+}
+
+function buildSyntheticPlaceRightVerdict(candidate: ArcCandidate): BearingsPlaceRightVerdict {
+  const failsPlace = candidate.id.includes('fails-place')
+  const status = failsPlace ? 'fail' : 'pass'
+  const reasons = failsPlace ? ['place_right:total_movement_over_preset'] : []
+  return {
+    placeRightReady: true,
+    status,
+    reasons,
+    distanceBurden: {
+      status,
+      burden: failsPlace ? 'high' : 'low',
+      reasonCodes: reasons,
+      notes: failsPlace ? ['total:32', 'max:16'] : ['total:17', 'max:9'],
+    },
+    movementToleranceFit: { status, reasonCodes: reasons },
+    stretchAdmissibility: { status: 'not_applicable', reasonCodes: [] },
+    supportProximityVerdict: { status, reasonCodes: reasons },
+    supportSupplyBuildabilityVerdict: { status, reasonCodes: reasons },
+    requiredStopSurvivalVerdict: { status, reasonCodes: reasons },
+    openClosedViabilityVerdict: { status: 'pass', reasonCodes: [] },
+    stopEvidence: [],
+    routeEvidence: {
+      status,
+      distanceBurden: {
+        status,
+        burden: failsPlace ? 'high' : 'low',
+        reasonCodes: reasons,
+        notes: failsPlace ? ['total:32', 'max:16'] : ['total:17', 'max:9'],
+      },
+      movementToleranceFit: { status, reasonCodes: reasons },
+      stretchAdmissibility: { status: 'not_applicable', reasonCodes: [] },
+      supportProximity: { status, reasonCodes: reasons },
+      supportSupplyBuildability: { status, reasonCodes: reasons },
+      requiredStopSurvival: { status, reasonCodes: reasons },
+      openClosedViability: { status: 'pass', reasonCodes: [] },
+      reasonCodes: reasons,
+    },
+    compatibility: {
+      greatStopPlaceRightStatus: status,
+      greatStopPlaceRightReasonCodes: reasons,
+    },
+    provenance: {
+      source: 'bearings',
+      version: 'synthetic-owner-verdict',
+      notes: ['synthetic-owner-verdict'],
+    },
   }
 }
 
@@ -519,6 +606,8 @@ const selection = selectGreatStopGatePassingCandidate({
   locationClass: 'L2 Mid',
   locationClassSource: 'explicit',
   stage: 'pre_selection_gate',
+  placeRightVerdictForCandidate: buildSyntheticPlaceRightVerdict,
+  fieldRealVerdictForCandidate: buildSyntheticFieldRealPass,
   compactnessRankingDiagnostics,
 })
 
@@ -556,6 +645,8 @@ const missingAnchorSelection = selectGreatStopGatePassingCandidate({
   locationClass: 'L2 Mid',
   locationClassSource: 'explicit',
   stage: 'pre_selection_gate',
+  placeRightVerdictForCandidate: buildSyntheticPlaceRightVerdict,
+  fieldRealVerdictForCandidate: buildSyntheticFieldRealPass,
 })
 assert(
   missingAnchorSelection.selectedCandidate?.id === secondPassingCandidate.id,
@@ -610,6 +701,8 @@ const allMissingAnchor = selectGreatStopGatePassingCandidate({
   locationClass: 'L2 Mid',
   locationClassSource: 'explicit',
   stage: 'pre_selection_gate',
+  placeRightVerdictForCandidate: buildSyntheticPlaceRightVerdict,
+  fieldRealVerdictForCandidate: buildSyntheticFieldRealPass,
 })
 assert(!allMissingAnchor.selectedCandidate, 'All-missing-anchor case must not select a candidate.')
 assert(allMissingAnchor.diagnostics.status === 'FAIL', 'All-missing-anchor diagnostics should fail.')
@@ -680,6 +773,8 @@ const cappedDiagnosticsSelection = selectGreatStopGatePassingCandidate({
   locationClass: 'L2 Mid',
   locationClassSource: 'explicit',
   stage: 'pre_selection_gate',
+  placeRightVerdictForCandidate: buildSyntheticPlaceRightVerdict,
+  fieldRealVerdictForCandidate: buildSyntheticFieldRealPass,
 })
 assert(
   cappedDiagnosticsSelection.diagnostics.fullEvaluatedCandidateCount === 30 &&
@@ -699,6 +794,8 @@ const allFail = selectGreatStopGatePassingCandidate({
   locationClass: 'L2 Mid',
   locationClassSource: 'explicit',
   stage: 'pre_selection_gate',
+  placeRightVerdictForCandidate: buildSyntheticPlaceRightVerdict,
+  fieldRealVerdictForCandidate: buildSyntheticFieldRealPass,
 })
 assert(!allFail.selectedCandidate, 'All-candidates-fail case must not select a candidate.')
 assert(allFail.diagnostics.status === 'FAIL', 'All-candidates-fail diagnostics should fail.')
@@ -972,6 +1069,8 @@ const adegaIdentitySelection = selectGreatStopGatePassingCandidate({
   locationClass: 'L2 Mid',
   locationClassSource: 'explicit',
   stage: 'pre_selection_gate',
+  placeRightVerdictForCandidate: buildSyntheticPlaceRightVerdict,
+  fieldRealVerdictForCandidate: buildSyntheticFieldRealPass,
 })
 assert(
   adegaIdentityCounts.containingRequiredAnchorByVenueId === 0,
@@ -1063,18 +1162,23 @@ assert(!lockInputAvailable, 'All-fail case must not produce lock input.')
 const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf8')
 const arcCombinationSource = readFileSync('src/domain/arc/isValidArcCombination.ts', 'utf8')
 assert(
-  runGeneratePlanSource.includes("planningIntent.mode === 'build' && Boolean(options.greatStopGateLocationClass)") &&
+  !runGeneratePlanSource.includes("planningIntent.mode === 'build' && Boolean(options.greatStopGateLocationClass)") &&
+    runGeneratePlanSource.includes('const greatStopSelectionActive = true') &&
+    runGeneratePlanSource.includes('const greatStopCandidatePool =') &&
     runGeneratePlanSource.includes('selectGreatStopGatePassingCandidate({') &&
     runGeneratePlanSource.includes("stage: 'pre_selection_gate'") &&
-    runGeneratePlanSource.includes('throw new GreatStopGateSelectionError(buildGreatStopSelection.diagnostics)'),
-  'runGeneratePlan must make Great Stop gate load-bearing before selectedArc is committed when explicit Build location class is supplied.',
+    runGeneratePlanSource.includes('throw new GreatStopGateSelectionError(greatStopSelection.diagnostics)'),
+  'runGeneratePlan must make Great Stop gate load-bearing before selectedArc is committed across modes, with location class as preset input only.',
 )
 assert(
   runGeneratePlanSource.includes('const buildRequiredAnchorCandidatePool') &&
     runGeneratePlanSource.includes('buildRequiredAnchorPreservationRequired && finalAnchorCandidates.length > 0') &&
-    runGeneratePlanSource.includes(': buildRequiredAnchorCandidatePool') &&
-    runGeneratePlanSource.includes('? finalAnchorCandidates[0]'),
-  'runGeneratePlan must prefer required-anchor-preserving Build candidates before Great Stop selection and final selectedArc fallback.',
+    runGeneratePlanSource.includes('buildRequiredAnchorPreservationRequired') &&
+    runGeneratePlanSource.includes('? buildRequiredAnchorCandidatePool') &&
+    runGeneratePlanSource.includes(': curateHardCommitRequired') &&
+    runGeneratePlanSource.includes('? curateHardCommitCandidates') &&
+    runGeneratePlanSource.includes(': rankedCandidates'),
+  'runGeneratePlan must build a mode-appropriate candidate pool before Great Stop selection, preserving Build required-anchor candidates when needed.',
 )
 assert(
   arcCombinationSource.includes('const anchorStopPresent = hasAnchorStop(stops, intent)') &&
@@ -1086,10 +1190,11 @@ const postRepairGateIndex = waypointBuildSource.indexOf('postRepairGreatStopGate
 const artifactIndex = waypointBuildSource.indexOf('const postParityContractEntryArtifact')
 assert(postRepairGateIndex >= 0 && artifactIndex > postRepairGateIndex, 'Post-repair Great Stop verification must run before generated artifact creation.')
 assert(
-    waypointBuildSource.includes('const postRepairGreatStopGateDiagnostics = input.greatStopGateLocationClass') &&
+    !waypointBuildSource.includes('const postRepairGreatStopGateDiagnostics = input.greatStopGateLocationClass') &&
+    waypointBuildSource.includes('const postRepairGreatStopGateDiagnostics = (() => {') &&
     waypointBuildSource.includes("stage: 'post_repair_verification'") &&
     waypointBuildSource.includes('throw new GreatStopGateSelectionError(diagnostics)'),
-  'Post-repair verification must throw structured Great Stop failure diagnostics.',
+  'Post-repair verification must throw structured Great Stop failure diagnostics without using location class as the activation switch.',
 )
 
 const routeAuthoritySource = readFileSync('src/app/services/routeAuthority/routeAuthorityService.ts', 'utf8')
