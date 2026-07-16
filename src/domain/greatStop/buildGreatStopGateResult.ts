@@ -248,7 +248,7 @@ function evaluatePlaceRightFromBearings(params: {
   result: GreatStopCriterionResult
   diagnostics: Pick<
     GreatStopGateResult['diagnostics'],
-    'movement' | 'clusterCoherence' | 'zigzagOrBacktrack'
+    'movement' | 'clusterCoherence' | 'zigzagOrBacktrack' | 'placeRightClauseAttribution'
   >
   preset: PlaceRightPreset
 } {
@@ -326,6 +326,7 @@ function evaluatePlaceRightFromBearings(params: {
         detected: backtrackDetected,
         ...(backtrackDetected ? { reason: 'place_right:backtrack_structure' } : {}),
       },
+      placeRightClauseAttribution: verdict?.clauseAttribution,
     },
   }
 }
@@ -582,6 +583,7 @@ export function buildGreatStopGateResult(params: {
       arcProgression: momentRight.diagnostics.arcProgression,
       laneVariance: momentRight.diagnostics.laneVariance,
       strongMoment: momentRight.diagnostics.strongMoment,
+      placeRightClauseAttribution: placeRight.diagnostics.placeRightClauseAttribution,
     },
   }
 }
@@ -754,6 +756,7 @@ function buildFailureDetail(params: {
     clusterEscapeCount: result.diagnostics.clusterCoherence.clusterEscapeCount,
     backtrackDetected: result.diagnostics.zigzagOrBacktrack.detected,
     driveLikeMovementDetected: result.diagnostics.movement.driveLikeMovement,
+    placeRightClauseAttribution: result.diagnostics.placeRightClauseAttribution,
     momentFailureReasons: [...result.criteria.momentRight.reasons],
     roleEnergyNote: candidate.scoreBreakdown.roleEnergyNote,
     scoreSummary: {

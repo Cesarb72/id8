@@ -1,5 +1,6 @@
 import type { PersonaMode } from './intent'
 import type { UserStopRole } from './itinerary'
+import type { BearingsPlaceRightClauseAttribution } from '../bearings/routePlaceRightContract'
 
 export type GreatStopGateStatus = 'PASS' | 'FAIL'
 
@@ -76,6 +77,7 @@ export interface GreatStopGateDiagnostics {
     momentStrengthScore?: number
     momentFlatPenalty?: number
   }
+  placeRightClauseAttribution?: BearingsPlaceRightClauseAttribution
 }
 
 export interface GreatStopGateResult {
@@ -129,6 +131,7 @@ export interface GreatStopGateCandidateFailureDetail {
   clusterEscapeCount: number
   backtrackDetected: boolean
   driveLikeMovementDetected: boolean
+  placeRightClauseAttribution?: BearingsPlaceRightClauseAttribution
   momentFailureReasons: string[]
   roleEnergyNote?: string
   scoreSummary: {

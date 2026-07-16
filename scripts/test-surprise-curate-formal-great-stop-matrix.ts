@@ -4,6 +4,7 @@ import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
 import {
   GreatStopGateSelectionError,
   type BuildLocationClass,
+  type GreatStopGateCandidateFailureDetail,
   type GreatStopGateCriterion,
   type GreatStopGateResult,
   type GreatStopGateSelectionDiagnostics,
@@ -19,6 +20,26 @@ import type {
 type MatrixMode = Extract<ExperienceMode, 'surprise' | 'curate'>
 type PassFail = 'PASS' | 'FAIL'
 type MatrixCellStatus = 'completed' | 'soft_gate_exhausted' | 'runtime_error'
+
+interface ClauseAttributionSummary {
+  sameDistrict: string
+  walkableCluster: string
+  deliberateMovement: string
+  rescueSource: string[]
+  hardFailureReasons: string[]
+  preClauseFailureReasons: string[]
+}
+
+interface FocusCandidateAttributionRow {
+  candidateRank: number
+  route: string[]
+  sameDistrict: string
+  walkableCluster: string
+  deliberateMovement: string
+  finalPlaceRight: PassFail
+  failureReasons: string[]
+  rescueSource: string[]
+}
 
 interface MatrixCellSpec {
   mode: MatrixMode
@@ -57,6 +78,8 @@ interface MatrixCellResult {
     preset?: GreatStopGateResult['preset']
   } | null
   selectionDiagnostics: GreatStopGateSelectionDiagnostics | null
+  placeRightClauseAttribution: ClauseAttributionSummary | null
+  focusedCandidateAttributionRows: FocusCandidateAttributionRow[]
   fallbackHit: boolean
   providerCalls: number
   errorMessage?: string
@@ -135,6 +158,55 @@ function unique(values: readonly string[]): string[] {
   return [...new Set(values)]
 }
 
+function summarizeClauseAttribution(
+  attribution: GreatStopGateResult['diagnostics']['placeRightClauseAttribution'],
+): ClauseAttributionSummary | null {
+  if (!attribution) {
+    return null
+  }
+  return {
+    sameDistrict: attribution.sameDistrict.status,
+    walkableCluster: attribution.walkableCluster.status,
+    deliberateMovement: attribution.deliberateMovement.status,
+    rescueSource: attribution.rescueSource === 'none' ? [] : [...attribution.rescueSource],
+    hardFailureReasons: unique(attribution.hardFailureReasons),
+    preClauseFailureReasons: unique(attribution.preClauseFailureReasons),
+  }
+}
+
+function focusRowFromFailureDetail(
+  detail: GreatStopGateCandidateFailureDetail,
+): FocusCandidateAttributionRow {
+  const attribution = summarizeClauseAttribution(detail.placeRightClauseAttribution)
+  return {
+    candidateRank: detail.rank,
+    route: detail.routeNames,
+    sameDistrict: attribution?.sameDistrict ?? 'not_reported',
+    walkableCluster: attribution?.walkableCluster ?? 'not_reported',
+    deliberateMovement: attribution?.deliberateMovement ?? 'not_reported',
+    finalPlaceRight: detail.failedCriteria.includes('place_right') ? 'FAIL' : 'PASS',
+    failureReasons: unique(detail.failureReasons),
+    rescueSource: attribution?.rescueSource ?? [],
+  }
+}
+
+function focusRowsFromSelectionDiagnostics(
+  diagnostics: GreatStopGateSelectionDiagnostics,
+): FocusCandidateAttributionRow[] {
+  const details = diagnostics.greatStopCandidateFailureDetails
+  if (!details) {
+    return []
+  }
+  const byRank = new Map<number, GreatStopGateCandidateFailureDetail>()
+  if (details.nearestToPassCandidate) {
+    byRank.set(details.nearestToPassCandidate.rank, details.nearestToPassCandidate)
+  }
+  for (const detail of details.topFailingCandidates) {
+    byRank.set(detail.rank, detail)
+  }
+  return [...byRank.values()].sort((left, right) => left.rank - right.rank).map(focusRowFromFailureDetail)
+}
+
 function criterionStatus(
   criterion: GreatStopGateCriterion,
   failedCriteria: readonly GreatStopGateCriterion[],
@@ -165,6 +237,9 @@ function rowFromGate(params: {
     params.selectionDiagnostics?.status === 'PASS'
       ? `selected rank ${selectedRank ?? 'unknown'}`
       : params.selectionDiagnostics?.status ?? 'not_reported'
+  const clauseAttribution = summarizeClauseAttribution(
+    params.gate.diagnostics.placeRightClauseAttribution,
+  )
 
   return {
     mode: params.spec.mode,
@@ -212,6 +287,19 @@ function rowFromGate(params: {
           passingCandidateCount: params.selectionDiagnostics.passingCandidateCount,
         }
       : null,
+    placeRightClauseAttribution: clauseAttribution,
+    focusedCandidateAttributionRows: [
+      {
+        candidateRank: selectedRank ?? 0,
+        route: params.result.selectedArc.stops.map((stop) => stop.scoredVenue.venue.name),
+        sameDistrict: clauseAttribution?.sameDistrict ?? 'not_reported',
+        walkableCluster: clauseAttribution?.walkableCluster ?? 'not_reported',
+        deliberateMovement: clauseAttribution?.deliberateMovement ?? 'not_reported',
+        finalPlaceRight: passFail(params.gate.criteria.placeRight.passed),
+        failureReasons: unique(params.gate.criteria.placeRight.reasons),
+        rescueSource: clauseAttribution?.rescueSource ?? [],
+      },
+    ],
     fallbackHit: true,
     providerCalls: fetchCallCount,
   }
@@ -263,6 +351,8 @@ function rowFromSelectionError(
       passingCandidateCount: diagnostics.passingCandidateCount,
       bestFailingCandidateSummary: diagnostics.bestFailingCandidateSummary,
     },
+    placeRightClauseAttribution: null,
+    focusedCandidateAttributionRows: focusRowsFromSelectionDiagnostics(diagnostics),
     fallbackHit: true,
     providerCalls: fetchCallCount,
   }
@@ -292,6 +382,8 @@ function rowFromRuntimeError(spec: MatrixCellSpec, error: unknown): MatrixCellRe
     failureReasons: [`runtime_error:${message}`],
     greatStopGateResult: null,
     selectionDiagnostics: null,
+    placeRightClauseAttribution: null,
+    focusedCandidateAttributionRows: [],
     fallbackHit: true,
     providerCalls: fetchCallCount,
     errorMessage: message,

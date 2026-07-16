@@ -1,6 +1,7 @@
 import type {
   BearingsDistanceBurdenVerdict,
   BearingsFeasibilitySubVerdict,
+  BearingsPlaceRightClauseAttribution,
   BearingsPlaceRightVerdict,
   BearingsRouteFeasibilityInput,
   BearingsRouteFeasibilityStatus,
@@ -38,6 +39,137 @@ function supportCountForRelationship(
   relationship: DistrictRouteAnchorSupportRelationshipFact | undefined,
 ): number {
   return relationship?.sameNeighborhoodSupportCount ?? relationship?.supportBaseVenueIds.length ?? 0
+}
+
+function clauseStatus(passed: boolean): BearingsRouteFeasibilityStatus {
+  return passed ? 'pass' : 'fail'
+}
+
+function buildPlaceRightClauseAttribution(params: {
+  input: BearingsRouteFeasibilityInput
+  preClauseFailureReasons: string[]
+  hardFailureReasons: string[]
+}): BearingsPlaceRightClauseAttribution {
+  const { input, preClauseFailureReasons, hardFailureReasons } = params
+  const districtFacts = input.districtFacts
+  const sameDistrictPassed =
+    districtFacts.sameNeighborhood.allStopsSameNeighborhood === true &&
+    districtFacts.sameNeighborhood.neighborhoods.length === 1
+  const sameDistrict = {
+    clause: 'same_district' as const,
+    status: clauseStatus(sameDistrictPassed),
+    evidence: [
+      `neighborhoods:${districtFacts.sameNeighborhood.neighborhoods.join('|') || 'none'}`,
+      `allStopsSameNeighborhood:${String(districtFacts.sameNeighborhood.allStopsSameNeighborhood)}`,
+    ],
+    nonPassReasons: sameDistrictPassed
+      ? []
+      : [
+          districtFacts.sameNeighborhood.neighborhoods.length > 1
+            ? 'multiple_district_route_place_facts'
+            : 'same_district_not_asserted_by_district_facts',
+        ],
+  }
+
+  const spatialMode = input.movementContract.spatialMode ?? (
+    input.movementContract.tolerance === 'flexible' ? 'flexible' : 'walkable'
+  )
+  const clusterIds = districtFacts.clusterCoherence.clusterIds
+  const clusterEscapeCount = districtFacts.clusterCoherence.clusterEscapeCount ?? 0
+  const repeatedClusterEscapeCount = districtFacts.clusterCoherence.repeatedClusterEscapeCount ?? 0
+  const backtrackDetected = districtFacts.clusterCoherence.backtrackDetected === true
+  const longTransitionCount = districtFacts.clusterCoherence.longTransitionCount ?? 0
+  const sameClusterRoute = clusterIds.length <= 1 && clusterEscapeCount === 0
+  const controlledDestinationJump =
+    spatialMode === 'walkable' &&
+    clusterIds.length <= 2 &&
+    clusterEscapeCount <= 2 &&
+    repeatedClusterEscapeCount === 0 &&
+    !backtrackDetected
+  const flexibleClusterRoute =
+    spatialMode === 'flexible' &&
+    clusterIds.length <= 2 &&
+    repeatedClusterEscapeCount === 0 &&
+    !backtrackDetected
+  const walkableClusterPassed =
+    sameClusterRoute || controlledDestinationJump || flexibleClusterRoute
+  const walkableCluster = {
+    clause: 'walkable_cluster' as const,
+    status: clauseStatus(walkableClusterPassed),
+    evidence: [
+      `spatialMode:${spatialMode}`,
+      `clusterIds:${clusterIds.join('|') || 'none'}`,
+      `clusterEscapeCount:${clusterEscapeCount}`,
+      `repeatedClusterEscapeCount:${repeatedClusterEscapeCount}`,
+      `backtrackDetected:${String(backtrackDetected)}`,
+      `longTransitionCount:${longTransitionCount}`,
+    ],
+    nonPassReasons: walkableClusterPassed
+      ? []
+      : [
+          repeatedClusterEscapeCount > 0 || backtrackDetected
+            ? 'repeated_bouncing_not_walkable_cluster'
+            : clusterIds.length > 2
+              ? 'too_many_clusters_for_walkable_cluster'
+              : 'walkable_cluster_not_asserted_by_spatial_facts',
+        ],
+  }
+
+  const stretchEvidence = input.tasteStretchEvidence ?? []
+  const validStretchEvidence = stretchEvidence.find(
+    (evidence) =>
+      evidence.stretchApplied === true &&
+      evidence.localSupplyInsufficient === true &&
+      evidence.strongerNearbyishMoment === true &&
+      evidence.boundedStretchRespected === true &&
+      evidence.stretchWorthiness === 'worth_it',
+  )
+  const deliberateMovement = {
+    clause: 'deliberate_movement' as const,
+    status: clauseStatus(Boolean(validStretchEvidence)),
+    evidence: validStretchEvidence
+      ? [
+          `baseVenueId:${validStretchEvidence.baseVenueId}`,
+          'localSupplyInsufficient:true',
+          'strongerNearbyishMoment:true',
+          'boundedStretchRespected:true',
+          'stretchApplied:true',
+        ]
+      : stretchEvidence.length > 0
+        ? stretchEvidence.flatMap((evidence) => [
+            `baseVenueId:${evidence.baseVenueId}`,
+            `localSupplyInsufficient:${String(evidence.localSupplyInsufficient)}`,
+            `strongerNearbyishMoment:${String(evidence.strongerNearbyishMoment)}`,
+            `boundedStretchRespected:${String(evidence.boundedStretchRespected)}`,
+            `stretchApplied:${String(evidence.stretchApplied)}`,
+            `stretchWorthiness:${evidence.stretchWorthiness}`,
+          ])
+        : ['local_stretch_evidence_missing'],
+    nonPassReasons: validStretchEvidence
+      ? []
+      : [
+          stretchEvidence.length === 0
+            ? 'local_stretch_evidence_missing'
+            : 'local_stretch_conditions_not_satisfied',
+        ],
+  }
+
+  const passedClauses = [
+    ...(sameDistrict.status === 'pass' ? [sameDistrict.clause] : []),
+    ...(walkableCluster.status === 'pass' ? [walkableCluster.clause] : []),
+    ...(deliberateMovement.status === 'pass' ? [deliberateMovement.clause] : []),
+  ]
+
+  return {
+    sameDistrict,
+    walkableCluster,
+    deliberateMovement,
+    passedClauses,
+    rescueSource: passedClauses.length > 0 ? passedClauses : 'none',
+    blockedByHardFailure: hardFailureReasons.length > 0,
+    hardFailureReasons,
+    preClauseFailureReasons,
+  }
 }
 
 function buildDistanceBurden(input: BearingsRouteFeasibilityInput): BearingsDistanceBurdenVerdict {
@@ -156,7 +288,21 @@ export function evaluateRoutePlaceRightEvidence(
     ...movementReasonCodes,
     ...stretchReasonCodes,
   ])
-  const status = structuralMissing || !districtFactsPresent ? 'unknown' : getStatus(reasons)
+  const hardFailureReasons = unique([
+    ...(districtFactsPresent ? [] : ['place_right:district_provenance_missing']),
+    ...(structuralMissing ? ['place_right:district_structural_facts_missing'] : []),
+    ...requiredStopSurvival.verdict.reasonCodes,
+    ...openClosedReasonCodes,
+    ...stretchReasonCodes,
+  ])
+  const clauseAttribution = buildPlaceRightClauseAttribution({
+    input,
+    preClauseFailureReasons: reasons,
+    hardFailureReasons,
+  })
+  const clauseRescued = clauseAttribution.passedClauses.length > 0 && hardFailureReasons.length === 0
+  const finalReasonCodes = clauseRescued ? [] : reasons
+  const status = structuralMissing || !districtFactsPresent ? 'unknown' : getStatus(finalReasonCodes)
   const placeRightReady = districtFactsPresent && !structuralMissing
   const supportProximityVerdict = subVerdict(getStatus(supportReasonCodes), supportReasonCodes)
   const supportSupplyBuildabilityVerdict = subVerdict(
@@ -175,13 +321,13 @@ export function evaluateRoutePlaceRightEvidence(
     supportSupplyBuildability: supportSupplyBuildabilityVerdict,
     requiredStopSurvival: requiredStopSurvival.verdict,
     openClosedViability: openClosedViabilityVerdict,
-    reasonCodes: reasons,
+    reasonCodes: finalReasonCodes,
   }
 
   return {
     placeRightReady,
     status,
-    reasons,
+    reasons: finalReasonCodes,
     distanceBurden,
     movementToleranceFit,
     stretchAdmissibility,
@@ -191,9 +337,10 @@ export function evaluateRoutePlaceRightEvidence(
     openClosedViabilityVerdict,
     stopEvidence: requiredStopSurvival.stopEvidence,
     routeEvidence,
+    clauseAttribution,
     compatibility: {
       greatStopPlaceRightStatus: status,
-      greatStopPlaceRightReasonCodes: reasons,
+      greatStopPlaceRightReasonCodes: finalReasonCodes,
       distanceBurdenSummary: distanceBurden.burden,
       movementToleranceSummary: movementToleranceFit.status,
       supportBuildabilitySummary: supportSupplyBuildabilityVerdict.status,

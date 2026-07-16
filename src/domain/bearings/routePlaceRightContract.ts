@@ -160,6 +160,7 @@ export interface BearingsDistanceBurdenFacts {
 export interface BearingsMovementContractFacts {
   tolerance: BearingsRouteMovementTolerance
   travelPosture?: BearingsRouteTravelPosture
+  spatialMode?: 'walkable' | 'flexible'
   requireContinuity?: boolean
   reasonCodes?: string[]
 }
@@ -176,7 +177,34 @@ export interface BearingsTasteStretchEvidence {
   baseVenueId: string
   stretchWorthiness: 'worth_it' | 'not_worth_it' | 'unknown'
   source: 'taste'
+  localSupplyInsufficient?: boolean
+  strongerNearbyishMoment?: boolean
+  boundedStretchRespected?: boolean
+  stretchApplied?: boolean
   reasonCodes?: string[]
+}
+
+export type BearingsPlaceRightClauseName =
+  | 'same_district'
+  | 'walkable_cluster'
+  | 'deliberate_movement'
+
+export interface BearingsPlaceRightClauseVerdict {
+  clause: BearingsPlaceRightClauseName
+  status: BearingsRouteFeasibilityStatus
+  evidence: string[]
+  nonPassReasons: string[]
+}
+
+export interface BearingsPlaceRightClauseAttribution {
+  sameDistrict: BearingsPlaceRightClauseVerdict
+  walkableCluster: BearingsPlaceRightClauseVerdict
+  deliberateMovement: BearingsPlaceRightClauseVerdict
+  passedClauses: BearingsPlaceRightClauseName[]
+  rescueSource: BearingsPlaceRightClauseName[] | 'none'
+  blockedByHardFailure: boolean
+  hardFailureReasons: string[]
+  preClauseFailureReasons: string[]
 }
 
 export interface BearingsRouteFeasibilityInput {
@@ -247,6 +275,7 @@ export interface BearingsRouteFeasibilityVerdict {
   openClosedViabilityVerdict: BearingsFeasibilitySubVerdict
   stopEvidence: BearingsStopLevelFeasibilityEvidence[]
   routeEvidence: BearingsRouteLevelFeasibilityEvidence
+  clauseAttribution?: BearingsPlaceRightClauseAttribution
   compatibility: BearingsPlaceRightCompatibilityValues
   provenance: BearingsRouteFeasibilityProvenance
 }

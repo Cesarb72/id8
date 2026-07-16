@@ -4,6 +4,7 @@ import type { IntentProfile } from '../types/intent'
 import { getArcStopBaseVenueId } from '../candidates/candidateIdentity'
 import { buildDistrictRoutePlaceFactsForArcCandidate } from '../interpretation/district/routePlaceFacts'
 import { evaluateRoutePlaceRightEvidence } from './evaluateRoutePlaceRightEvidence'
+import { getSpatialMode } from '../types/spatial'
 import type {
   BearingsDistanceTransitionFact,
   BearingsMovementContractFacts,
@@ -38,6 +39,7 @@ function movementContractFor(params: {
     return {
       tolerance: 'flexible',
       travelPosture: 'limited_drive',
+      spatialMode: 'flexible',
       requireContinuity: false,
       reasonCodes: [],
     }
@@ -46,6 +48,7 @@ function movementContractFor(params: {
     return {
       tolerance: 'contained',
       travelPosture: 'walkable',
+      spatialMode: 'walkable',
       requireContinuity: true,
       reasonCodes: [],
     }
@@ -55,6 +58,7 @@ function movementContractFor(params: {
     return {
       tolerance: 'contained',
       travelPosture: 'walkable',
+      spatialMode: getSpatialMode(intent.distanceMode),
       requireContinuity: true,
       reasonCodes: [],
     }
@@ -62,6 +66,7 @@ function movementContractFor(params: {
   return {
     tolerance: 'compressed',
     travelPosture: 'limited_drive',
+    spatialMode: getSpatialMode(intent.distanceMode),
     requireContinuity: false,
     reasonCodes: [],
   }
@@ -87,6 +92,39 @@ function buildRoutePlaceRightInput(params: {
       evidenceSource: 'route_pacing_diagnostics',
     }
   })
+  const localSupplyInsufficient = candidate.scoreBreakdown.localSupplySufficient === false
+  const strongerNearbyishMoment = (candidate.scoreBreakdown.boundedStretchMeaningfulCount ?? 0) > 0
+  const boundedStretchRespected =
+    candidate.scoreBreakdown.stretchedCandidateDistanceStatus ===
+    'outside nearby but within bounded stretch'
+  const stretchApplied = candidate.scoreBreakdown.stretchApplied === true
+  const stretchedStop = candidate.stops.find(
+    (stop) => stop.scoredVenue.venue.name === candidate.scoreBreakdown.stretchedCandidateName,
+  )
+  const tasteStretchEvidence =
+    stretchApplied ||
+    localSupplyInsufficient ||
+    strongerNearbyishMoment ||
+    candidate.scoreBreakdown.strictNearbyFailed === true
+      ? [
+          {
+            baseVenueId:
+              stretchedStop?.scoredVenue.candidateIdentity.baseVenueId ??
+              stretchedStop?.scoredVenue.venue.id ??
+              candidate.id,
+            stretchWorthiness:
+              stretchApplied && boundedStretchRespected ? ('worth_it' as const) : ('unknown' as const),
+            source: 'taste' as const,
+            localSupplyInsufficient,
+            strongerNearbyishMoment,
+            boundedStretchRespected,
+            stretchApplied,
+            reasonCodes: candidate.scoreBreakdown.stretchReason
+              ? [candidate.scoreBreakdown.stretchReason]
+              : [],
+          },
+        ]
+      : undefined
 
   return {
     routeId: candidate.id,
@@ -135,6 +173,7 @@ function buildRoutePlaceRightInput(params: {
       supportSupplyMissing: (relationship.sameNeighborhoodSupportCount ?? 0) === 0,
       reasonCodes: [],
     })),
+    tasteStretchEvidence,
   }
 }
 
