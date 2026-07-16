@@ -142,6 +142,7 @@ import {
 import { buildCuratePreviewCommitabilityCacheKey } from '../app/services/curate/curatePreviewCommitabilityCache'
 import { findScoredVenueForStopWithPolicy } from '../app/services/build/finalRouteDetailCopyTruth'
 import { buildRouteRecommendationLifecycleDiagnostics } from '../app/services/routeRecommendationLifecycle'
+import { buildGreatStopRecoverySurfaceModel } from '../app/services/greatStopRecoverySurface'
 import {
   SwapCommitCoreError,
   applyPreviewSwapCommit,
@@ -22291,6 +22292,42 @@ export function SandboxConciergePage({
   const surpriseRetryAvailable = Boolean(
     isSurpriseWrapperActive && !loading && selectedDirectionId && selectedCandidateRouteArtifact,
   )
+  const publicSurpriseGreatStopRecoveryModel = buildGreatStopRecoverySurfaceModel({
+    mode: 'surprise',
+    diagnostics:
+      isPublicSurface && isSurpriseWrapperActive
+        ? generationContractDebug?.greatStopGateSelectionDiagnostics ?? null
+        : null,
+    failureClassification:
+      isPublicSurface && isSurpriseWrapperActive
+        ? generationContractDebug?.greatStopGateFailureClassification ?? null
+        : null,
+  })
+  const publicBuildGreatStopRecoveryModel = buildGreatStopRecoverySurfaceModel({
+    mode: 'build',
+    diagnostics:
+      isPublicSurface && isBuildWrapperActive
+        ? generationContractDebug?.greatStopGateSelectionDiagnostics ?? null
+        : null,
+    failureClassification:
+      isPublicSurface && isBuildWrapperActive
+        ? generationContractDebug?.greatStopGateFailureClassification ?? null
+        : null,
+  })
+  const publicSurpriseGreatStopFailureRecoveryVisible = Boolean(
+    isPublicSurface && isSurpriseWrapperActive && publicSurpriseGreatStopRecoveryModel.active,
+  )
+  const publicBuildGreatStopFailureRecoveryVisible = Boolean(
+    isPublicSurface && isBuildWrapperActive && publicBuildGreatStopRecoveryModel.active,
+  )
+  const publicGreatStopFailureRecoveryVisible = Boolean(
+    publicSurpriseGreatStopFailureRecoveryVisible || publicBuildGreatStopFailureRecoveryVisible,
+  )
+  const publicGreatStopRecoverySurfaceModel = publicBuildGreatStopFailureRecoveryVisible
+    ? publicBuildGreatStopRecoveryModel
+    : publicSurpriseGreatStopFailureRecoveryVisible
+      ? publicSurpriseGreatStopRecoveryModel
+      : null
   const surpriseGeneratingNoticeRenderActive =
     surpriseDirectionFallbackPreviewSuppressed && !surpriseGenerationFailureRecoveryVisible
   const publicSurpriseTruthGateSuppressPreview = Boolean(
@@ -22298,14 +22335,16 @@ export function SandboxConciergePage({
       isSurpriseWrapperActive &&
       publicCandidateOnlyPreviewActive &&
       !publicCommittedRouteReady &&
-      (selectedCandidatePreviewValidationFailed || publicSurpriseDriftRecoveryVisible),
+      (selectedCandidatePreviewValidationFailed ||
+        publicSurpriseDriftRecoveryVisible ||
+        publicSurpriseGreatStopFailureRecoveryVisible),
   )
   const publicBuildTruthGateSuppressPreview = Boolean(
     isPublicSurface &&
       isBuildWrapperActive &&
       publicCandidateOnlyPreviewActive &&
       !publicCommittedRouteReady &&
-      Boolean(error),
+      (Boolean(error) || publicBuildGreatStopFailureRecoveryVisible),
   )
   const publicTruthGateSuppressPreview = Boolean(
     publicSurpriseTruthGateSuppressPreview || publicBuildTruthGateSuppressPreview,
@@ -27835,6 +27874,55 @@ export function SandboxConciergePage({
         </section>
       )}
 
+      {publicGreatStopFailureRecoveryVisible && publicGreatStopRecoverySurfaceModel && (
+        <section
+          className="preview-notice draft-feedback"
+          aria-live="polite"
+          aria-label="Great Stop route recovery"
+          data-id8-great-stop-recovery-state="visible"
+          data-id8-great-stop-recovery-mode={publicGreatStopRecoverySurfaceModel.mode}
+          data-id8-great-stop-recovery-reason={publicGreatStopRecoverySurfaceModel.reasonCode}
+          data-id8-great-stop-recovery-criteria={
+            publicGreatStopRecoverySurfaceModel.failedCriteria.join(',') || 'none'
+          }
+        >
+          <p className="preview-notice-title">{publicGreatStopRecoverySurfaceModel.title}</p>
+          <p className="preview-notice-copy">{publicGreatStopRecoverySurfaceModel.copy}</p>
+          <div className="action-row draft-actions">
+            {isPublicSurface && isSurpriseWrapperActive && publicSurpriseRouteChoiceRecoveryAvailable && (
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={handleReturnToPublicSurpriseRouteChoice}
+                disabled={loading}
+              >
+                Choose another route
+              </button>
+            )}
+            {isPublicSurface && isSurpriseWrapperActive && (
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={handleRetrySurpriseGeneration}
+                disabled={!surpriseRetryAvailable}
+              >
+                Try this surprise again
+              </button>
+            )}
+            {isPublicSurface && isBuildWrapperActive && (
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={handleBuildFullPlan}
+                disabled={!previewGenerateDirectionId || loading}
+              >
+                Try building again
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
       {renderSharedPlanPreview && (
         <section
           className={`plan-preview${
@@ -28164,7 +28252,10 @@ export function SandboxConciergePage({
         </section>
       )}
 
-      {error && !surpriseGenerationFailureRecoveryVisible && !publicSurpriseDriftRecoveryVisible && (
+      {error &&
+        !surpriseGenerationFailureRecoveryVisible &&
+        !publicSurpriseDriftRecoveryVisible &&
+        !publicGreatStopFailureRecoveryVisible && (
         <div className="preview-notice draft-feedback">
           <p className="preview-notice-title">Could not generate</p>
           <p className="preview-notice-copy">{error}</p>
