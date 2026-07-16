@@ -261,7 +261,7 @@ import {
 } from '../domain/adapters/buildVenueCardStopRepresentation'
 import {
   previewDistrictRecommendationsForPlanBuild,
-  runPlanBuild,
+  runPlanBuildWithLegacyPlaceRightFallback,
   runStepBCurateLiveSmokeCandidateSupply,
   searchAnchorVenueOptions,
   type AnchorSearchChip,
@@ -14696,7 +14696,7 @@ export function SandboxConciergePage({
 
     void (async () => {
       try {
-        const result = await runPlanBuild(
+        const result = await runPlanBuildWithLegacyPlaceRightFallback(
           {
             ...buildCurateStarterPlannerInput(selectedStarterPack),
             city: districtLocationQuery,
@@ -14922,7 +14922,7 @@ export function SandboxConciergePage({
     isCurateWrapperActive,
     persona,
     primaryVibe,
-    runPlanBuild,
+    runPlanBuildWithLegacyPlaceRightFallback,
     selectedDirection,
     selectedStarterPack,
     step2PrimarySourceOpportunities,
@@ -15342,7 +15342,7 @@ export function SandboxConciergePage({
           resultAnchor: buildPlannerAnchor,
           buildPlannerAnchor,
         })
-        let result: Awaited<ReturnType<typeof runPlanBuild>>
+        let result: Awaited<ReturnType<typeof runPlanBuildWithLegacyPlaceRightFallback>>
         let strongCurationPass: StrongCurationTastePassResult
         let anchoredPlan: FullStopRealityContractOutcome
         let canonicalItinerary: Itinerary
@@ -15457,7 +15457,7 @@ export function SandboxConciergePage({
             discoveryPreferences: selectedArtifactDiscoveryPreferences,
             anchor: buildPlannerAnchor,
           })
-          const planBuildOptions: Parameters<typeof runPlanBuild>[1] = {
+          const planBuildOptions: Parameters<typeof runPlanBuildWithLegacyPlaceRightFallback>[1] = {
             sourceMode: generationSourceMode,
             sourceModeOverrideApplied: true,
             debugMode: false,
@@ -15480,7 +15480,7 @@ export function SandboxConciergePage({
             strategyAdmissibleWorlds,
             selectedArtifactLineage: activeSelectedArtifactLineage,
           }
-          result = await runPlanBuild(planBuildInput, planBuildOptions)
+          result = await runPlanBuildWithLegacyPlaceRightFallback(planBuildInput, planBuildOptions)
           preLineageExpectedDirectionId = activeDirectionContract.id
           preLineageActualDirectionId = result.intentProfile.selectedDirectionContext?.directionId ?? null
           preLineagePassed = preLineageActualDirectionId === preLineageExpectedDirectionId
@@ -16727,7 +16727,7 @@ export function SandboxConciergePage({
             },
             {
               runPlanBuild: (input, options) =>
-                runPlanBuild(
+                runPlanBuildWithLegacyPlaceRightFallback(
                   input,
                   options
                     ? {
@@ -16912,7 +16912,7 @@ export function SandboxConciergePage({
       persona,
       primaryVibe,
       resolveDirectionForCandidateArtifact,
-      runPlanBuild,
+      runPlanBuildWithLegacyPlaceRightFallback,
       selectedDirectionId,
       selectedStarterPack,
       starterAwareOpportunityDebugById,

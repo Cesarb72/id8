@@ -1,4 +1,4 @@
-import { runPlanBuild } from '../arcApplicationService'
+import { runPlanBuildWithLegacyPlaceRightFallback } from '../arcApplicationService'
 import {
   buildCurateCommittedRouteFallbackDecision,
   buildCurateStarterPlannerInput,
@@ -186,7 +186,7 @@ export async function buildCuratePublicCardGateDiagnostics(params: {
   starterPack: StarterPack
   fetchCallCount: () => number
 }): Promise<CuratePublicCardGateDiagnostics> {
-  const directResult = await runPlanBuild(buildCurateStarterPlannerInput(params.starterPack), {
+  const directResult = await runPlanBuildWithLegacyPlaceRightFallback(buildCurateStarterPlannerInput(params.starterPack), {
     starterPack: params.starterPack,
     sourceMode: 'curated',
     sourceModeOverrideApplied: false,
@@ -257,7 +257,7 @@ export async function buildCuratePublicCardGateDiagnostics(params: {
     selectedDirectionContext: buildDiagnosticDirectionContext(params.starterPack),
     discoveryPreferences,
   }
-  const qualificationResult = await runPlanBuild(qualificationInput, {
+  const qualificationResult = await runPlanBuildWithLegacyPlaceRightFallback(qualificationInput, {
     starterPack: params.starterPack,
     sourceMode: 'curated',
     sourceModeOverrideApplied: true,

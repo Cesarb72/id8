@@ -63,7 +63,7 @@ import {
   type ArcFlowPhase,
 } from './wrapper/arcFlowPhase'
 import {
-  runPlanBuild,
+  runPlanBuildWithLegacyPlaceRightFallback,
   searchAnchorVenueOptions,
   type GenerationTrace,
 } from './services/arcApplicationService'
@@ -1311,7 +1311,7 @@ function AppShellContent({
             sourceModeOverrideApplied: debugFlags.sourceModeOverrideApplied,
             seedVenues: state.selectedAnchorVenue ? [state.selectedAnchorVenue] : undefined,
           }
-          const result = await runPlanBuild(input, planBuildOptions)
+          const result = await runPlanBuildWithLegacyPlaceRightFallback(input, planBuildOptions)
           if (cancelled) {
             return
           }
@@ -2327,7 +2327,7 @@ function AppShellContent({
           input,
           selectedAnchorVenueId: state.selectedAnchorVenue?.id,
         })
-        const result = await runPlanBuild(input, {
+        const result = await runPlanBuildWithLegacyPlaceRightFallback(input, {
           starterPack: selectedPack,
           baselineArc: state.generatedArc,
           baselineTrace: state.generationTrace,

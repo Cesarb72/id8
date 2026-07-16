@@ -14,7 +14,7 @@ import { createLiveArtifactPlanId, saveLiveArtifactSession } from '../domain/liv
 import { getCrewPolicy } from '../domain/intent/getCrewPolicy'
 import { projectItinerary } from '../domain/itinerary/projectItinerary'
 import { buildTonightSignals } from '../domain/journey/buildTonightSignals'
-import { runPlanBuild } from '../app/services/arcApplicationService'
+import { runPlanBuildWithLegacyPlaceRightFallback } from '../app/services/arcApplicationService'
 import { getSourceMode } from '../domain/sources/getSourceMode'
 import type { ArcCandidate, ScoredVenue } from '../domain/types/arc'
 import type { ExperienceLens } from '../domain/types/experienceLens'
@@ -741,7 +741,7 @@ export function DemoPage() {
       const interpretation = getRealityInterpretation(persona, primaryVibe)
       const selectedClusterConfirmation =
         interpretation.cards[selectedCluster].confirmation
-      const result = await runPlanBuild(
+      const result = await runPlanBuildWithLegacyPlaceRightFallback(
         {
           mode: 'build',
           planningMode: 'engine-led',

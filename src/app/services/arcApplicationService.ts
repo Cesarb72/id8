@@ -21,7 +21,7 @@ import {
   type AnchorSearchChip,
   type AnchorSearchResult,
 } from '../../domain/search/searchAnchorVenues'
-import type { IntentInput } from '../../domain/types/intent'
+import type { IntentInput, RouteShapeContract } from '../../domain/types/intent'
 import type { ContractEntryArtifactLineage } from '../../domain/artifacts/contractEntryArtifact'
 import type { StarterPack } from '../../domain/types/starterPack'
 
@@ -56,9 +56,13 @@ const STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE: LiveProviderEnvelope =
 export type { AnchorSearchChip, AnchorSearchResult, DistrictPreviewResult, GenerationTrace }
 export type { ContractEntryArtifactLineage }
 
+export type PlaceRightCarriedPlanBuildOptions = RunGeneratePlanOptions & {
+  routeShapeContract: RouteShapeContract
+}
+
 export async function runPlanBuild(
   input: IntentInput,
-  options?: RunGeneratePlanOptions,
+  options: PlaceRightCarriedPlanBuildOptions,
 ): Promise<GeneratePlanResult> {
   if (options?.debugMode && typeof window !== 'undefined') {
     console.info('[ID8 TRACE] runPlanBuild ingress', {
@@ -69,6 +73,13 @@ export async function runPlanBuild(
       city: input.city,
     })
   }
+  return runGeneratePlan(input, options)
+}
+
+export async function runPlanBuildWithLegacyPlaceRightFallback(
+  input: IntentInput,
+  options?: RunGeneratePlanOptions,
+): Promise<GeneratePlanResult> {
   return runGeneratePlan(input, options)
 }
 

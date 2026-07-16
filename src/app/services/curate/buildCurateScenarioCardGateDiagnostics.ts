@@ -1,6 +1,6 @@
 import {
   previewDistrictRecommendationsForPlanBuild,
-  runPlanBuild,
+  runPlanBuildWithLegacyPlaceRightFallback,
 } from '../arcApplicationService'
 import {
   enrichContractEntryArtifactWithDirectionBacking,
@@ -553,7 +553,7 @@ async function qualifyArtifact(params: {
   sourceMode: CurateScenarioCardGateDiagnostics['sourceMode']
 }> {
   const directionId = params.artifact.selection.directionId
-  const qualificationResult = await runPlanBuild(
+  const qualificationResult = await runPlanBuildWithLegacyPlaceRightFallback(
     {
       ...buildStarterInput(params.starterPack),
       selectedDirectionContext: directionId
@@ -605,7 +605,7 @@ export async function buildCurateScenarioCardGateDiagnostics(params: {
 }): Promise<CurateScenarioCardGateDiagnostics> {
   const persona = params.starterPack.personaBias ?? 'romantic'
   const primaryVibe = params.starterPack.primaryAnchor
-  const directResult = await runPlanBuild(buildStarterInput(params.starterPack), {
+  const directResult = await runPlanBuildWithLegacyPlaceRightFallback(buildStarterInput(params.starterPack), {
     starterPack: params.starterPack,
     sourceMode: 'curated',
     sourceModeOverrideApplied: false,
