@@ -430,6 +430,7 @@ export async function buildContractDrivenBuildWaypointPlan(
     selectedDirectionContext: input.selectedDirectionContextForValidation,
     conciergeIntent: input.conciergeIntent,
     contractConstraints: input.canonicalInterpretationBundle.contractConstraints,
+    placeRightLocationClass: input.greatStopGateLocationClass,
   })
   const compatibilityProjection = projectConciergeIntentToIntentInput({
     conciergeIntent: input.conciergeIntent,

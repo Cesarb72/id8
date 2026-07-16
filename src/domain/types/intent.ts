@@ -20,6 +20,20 @@ export type RouteShapeArcShape =
   | 'steady_open_curated_center_soft_landing'
   | 'focused_open_social_center_clean_landing'
 
+export type RouteShapePlaceRightTravelTolerance = 'tight' | 'balanced' | 'expanded'
+export type RouteShapePlaceRightDriveLikeMovement = 'discouraged' | 'limited' | 'acceptable'
+export type RouteShapePlaceRightLocationClass = 'L1 Dense' | 'L2 Mid' | 'L3 Sparse'
+
+export interface RouteShapePlaceRightMovementProfile {
+  source: 'interpretation_contract_constraints'
+  travelTolerance: RouteShapePlaceRightTravelTolerance
+  maxComfortableTotalMovementMinutes: number
+  maxSingleTransitionMinutes: number
+  maxClusterEscapes: number
+  driveLikeMovement: RouteShapePlaceRightDriveLikeMovement
+  reasonCodes: string[]
+}
+
 export type RouteShapeEnergyLevel = 'low' | 'medium' | 'high'
 export type RouteShapePacing = 'quick' | 'balanced' | 'linger'
 export type RouteShapeVariability = 'fixed' | 'guided-flex' | 'flexible'
@@ -75,6 +89,7 @@ export interface RouteShapeContract {
     radius: 'tight' | 'balanced' | 'open'
     maxTransitionMinutes: number
     neighborhoodContinuity: 'strict' | 'preferred' | 'flexible'
+    placeRightTolerance?: RouteShapePlaceRightMovementProfile
   }
   mutationProfile: {
     swapFlexibility: 'low' | 'medium' | 'high'

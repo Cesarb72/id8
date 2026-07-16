@@ -91,6 +91,7 @@ function projectBearingsMovementConstraints(
     radius: movementProfile.radius,
     maxTransitionMinutes: movementProfile.maxTransitionMinutes,
     neighborhoodContinuity: movementProfile.neighborhoodContinuity,
+    placeRightTolerance: movementProfile.placeRightTolerance,
     movementPosture: movementProfile.radius,
     feasibilityGuardrails: {
       requireNeighborhoodContinuity: movementProfile.neighborhoodContinuity === 'strict',

@@ -6,6 +6,7 @@ export interface BearingsRouteMovementConstraints {
   radius: RouteShapeContract['movementProfile']['radius']
   maxTransitionMinutes: RouteShapeContract['movementProfile']['maxTransitionMinutes']
   neighborhoodContinuity: RouteShapeContract['movementProfile']['neighborhoodContinuity']
+  placeRightTolerance?: RouteShapeContract['movementProfile']['placeRightTolerance']
   movementPosture: 'tight' | 'balanced' | 'open'
   feasibilityGuardrails: {
     requireNeighborhoodContinuity: boolean

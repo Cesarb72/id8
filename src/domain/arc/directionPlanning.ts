@@ -19,6 +19,7 @@ import type {
   DirectionCoreRole,
 } from '../bearings/assessDirectionContractBuildability'
 import { inferObservedDirectionIdentity } from '../interpretation/direction/directionIdentity'
+import { buildPlaceRightMovementProfile } from '../interpretation/buildPlaceRightMovementProfile'
 import type {
   DirectionIdentityMode,
   DirectionPlanningSelection,
@@ -42,6 +43,7 @@ import type {
   RouteInvariantIntensity,
   RouteInvariantTrait,
   RouteShapeContract,
+  RouteShapePlaceRightLocationClass,
   RouteShapeRole,
   RoleProfile,
 } from '../types/intent'
@@ -472,6 +474,7 @@ export function buildRouteShapeContract(params: {
   selectedDirectionContext: ResolvedDirectionContext
   conciergeIntent: ConciergeIntent
   contractConstraints: ContractConstraints
+  placeRightLocationClass?: RouteShapePlaceRightLocationClass
 }): RouteShapeContract {
   const { selectedDirection, selectedDirectionContext, conciergeIntent, contractConstraints } = params
   console.assert(
@@ -509,6 +512,14 @@ export function buildRouteShapeContract(params: {
         : movementRadius === 'balanced'
           ? 'preferred'
           : 'flexible',
+    ...(params.placeRightLocationClass
+      ? {
+          placeRightTolerance: buildPlaceRightMovementProfile({
+            persona: conciergeIntent.experienceProfile.persona,
+            locationClass: params.placeRightLocationClass,
+          }),
+        }
+      : {}),
   }
   const swapFlexibility: RouteShapeContract['mutationProfile']['swapFlexibility'] = contractConstraints
     .windDownStrictness === 'flexible'
