@@ -6,6 +6,7 @@ import {
 import { normalizeRawPlace } from '../normalize/normalizeRawPlace'
 import { computeTasteRolePoolMeaningForVenue } from '../interpretation/taste/computeTasteRolePoolMeaningView'
 import { projectFieldSourceFacts } from '../field/projectFieldSourceFacts'
+import { coordinateBuildProviderSourceOpportunityOutcome } from '../waypoint/coordinateBuildProviderSourceOpportunityOutcome'
 import type { RolePoolMeaningEvidence } from '../interpretation/taste/computeRolePoolMeaningEvidence'
 import type { RawPlace } from '../types/rawPlace'
 import type { Venue } from '../types/venue'
@@ -1066,26 +1067,17 @@ export async function buildProviderSourceOpportunity(
     equivalence,
   }
 
-  if (admittedNearbyCandidates.length === 0) {
-    return {
-      diagnostics: {
-        ...diagnostics,
-        buildProviderSupplyBlockedReason: 'provider_no_admissible_candidates',
-      },
-      opportunity: null,
-    }
-  }
+  const coordinatedOutcome = coordinateBuildProviderSourceOpportunityOutcome({
+    nearbyCandidateCount: admittedNearbyCandidates.length,
+    roleCandidateCounts,
+  })
 
-  if (
-    roleCandidateCounts.start === 0 ||
-    roleCandidateCounts.highlight === 0 ||
-    roleCandidateCounts.windDown === 0
-  ) {
+  if (!coordinatedOutcome.emitted) {
     return {
       diagnostics: {
         ...diagnostics,
-        buildProviderSupplyBlockedReason: 'provider_insufficient_role_diversity',
-        buildProviderStaticFallbackUsed: false,
+        buildProviderSupplyBlockedReason: coordinatedOutcome.blockedReason,
+        buildProviderStaticFallbackUsed: coordinatedOutcome.staticFallbackUsed,
       },
       opportunity: null,
     }
@@ -1094,9 +1086,9 @@ export async function buildProviderSourceOpportunity(
   return {
     diagnostics: {
       ...diagnostics,
-      buildProviderSourceOpportunityEmitted: true,
-      buildProviderSupplyBlockedReason: null,
-      buildProviderStaticFallbackUsed: false,
+      buildProviderSourceOpportunityEmitted: coordinatedOutcome.emitted,
+      buildProviderSupplyBlockedReason: coordinatedOutcome.blockedReason,
+      buildProviderStaticFallbackUsed: coordinatedOutcome.staticFallbackUsed,
     },
     opportunity: {
       id: `build_provider_live_${anchorCanonicalVenueId}_${requestedAt}`,
