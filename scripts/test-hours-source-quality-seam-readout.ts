@@ -2,6 +2,7 @@ import { curatedVenues } from '../src/data/venues'
 import { applyFieldCorpusRuntimeHoursAdmission } from '../src/domain/bearings/fieldCorpusRuntimeHoursAdmission'
 import { sanJoseProviderCorpusVenues } from '../src/domain/field/corpus/sanJoseProviderCorpus'
 import { computeFieldRealVerdict } from '../src/domain/field/computeFieldRealVerdict'
+import { projectFieldSourceFacts } from '../src/domain/field/projectFieldSourceFacts'
 import { buildProviderPublicLiveEnvelope } from '../src/domain/providers/buildProviderPublicLiveWiring'
 import {
   buildProviderSourceOpportunity,
@@ -20,6 +21,33 @@ type Scenario =
   | 'fallback-masked-role-diversity-collapse'
 
 type RoleName = 'start' | 'highlight' | 'windDown'
+
+type SourceFactSummary = {
+  sourceOrigin: Venue['source']['sourceOrigin']
+  normalizedFromRawType: Venue['source']['normalizedFromRawType']
+  provider?: Venue['source']['provider']
+  providerRecordId?: string
+  sourceQueryLabel?: string
+  sourceConfidence: number
+  completenessScore: number
+  qualityScore: number
+  openNow?: boolean
+  hoursKnown: boolean
+  likelyOpenForCurrentWindow: boolean
+  businessStatus: Venue['source']['businessStatus']
+  timeConfidence: number
+  hoursPressureLevel: Venue['source']['hoursPressureLevel']
+  hoursPressureNotes: string[]
+  hoursDemotionApplied: boolean
+  hoursSuppressionApplied: boolean
+  qualityGateStatus: Venue['source']['qualityGateStatus']
+  qualityGateNotes: string[]
+  approvalBlockers: string[]
+  demotionReasons: string[]
+  suppressionReasons: string[]
+  missingFields: string[]
+  inferredFields: string[]
+}
 
 type FailureSummary = Record<
   RoleName,
@@ -115,6 +143,88 @@ function emptyFailureSummary(): FailureSummary {
       hoursSuppressed: 0,
       qualityGateNotApproved: 0,
     },
+  }
+}
+
+function sourceFactSummaryFromVenue(venue: Venue): SourceFactSummary {
+  const { source } = venue
+  return {
+    sourceOrigin: source.sourceOrigin,
+    normalizedFromRawType: source.normalizedFromRawType,
+    provider: source.provider,
+    providerRecordId: source.providerRecordId,
+    sourceQueryLabel: source.sourceQueryLabel,
+    sourceConfidence: source.sourceConfidence,
+    completenessScore: source.completenessScore,
+    qualityScore: source.qualityScore,
+    openNow: source.openNow,
+    hoursKnown: source.hoursKnown,
+    likelyOpenForCurrentWindow: source.likelyOpenForCurrentWindow,
+    businessStatus: source.businessStatus,
+    timeConfidence: source.timeConfidence,
+    hoursPressureLevel: source.hoursPressureLevel,
+    hoursPressureNotes: source.hoursPressureNotes,
+    hoursDemotionApplied: source.hoursDemotionApplied,
+    hoursSuppressionApplied: source.hoursSuppressionApplied,
+    qualityGateStatus: source.qualityGateStatus,
+    qualityGateNotes: source.qualityGateNotes,
+    approvalBlockers: source.approvalBlockers,
+    demotionReasons: source.demotionReasons,
+    suppressionReasons: source.suppressionReasons,
+    missingFields: source.missingFields,
+    inferredFields: source.inferredFields,
+  }
+}
+
+function sourceFactSummaryFromProjection(venue: Venue): SourceFactSummary {
+  const facts = projectFieldSourceFacts(venue)
+  return {
+    sourceOrigin: facts.source.sourceOrigin,
+    normalizedFromRawType: facts.source.normalizedFromRawType,
+    provider: facts.source.provider,
+    providerRecordId: facts.source.providerRecordId,
+    sourceQueryLabel: facts.source.sourceQueryLabel,
+    sourceConfidence: facts.completeness.sourceConfidence,
+    completenessScore: facts.completeness.completenessScore,
+    qualityScore: facts.completeness.qualityScore,
+    openNow: facts.availability.openNow,
+    hoursKnown: facts.availability.hoursKnown,
+    likelyOpenForCurrentWindow: facts.availability.likelyOpenForCurrentWindow,
+    businessStatus: facts.availability.businessStatus,
+    timeConfidence: facts.availability.timeConfidence,
+    hoursPressureLevel: facts.availability.hoursPressureLevel,
+    hoursPressureNotes: facts.availability.hoursPressureNotes,
+    hoursDemotionApplied: facts.availability.hoursDemotionApplied,
+    hoursSuppressionApplied: facts.availability.hoursSuppressionApplied,
+    qualityGateStatus: facts.quality.qualityGateStatus,
+    qualityGateNotes: facts.quality.qualityGateNotes,
+    approvalBlockers: facts.quality.approvalBlockers,
+    demotionReasons: facts.quality.demotionReasons,
+    suppressionReasons: facts.quality.suppressionReasons,
+    missingFields: facts.completeness.missingFields,
+    inferredFields: facts.completeness.inferredFields,
+  }
+}
+
+function assertFieldFactProjectionMatch(caseName: string, venue: Venue): {
+  case: string
+  venueId: string
+  oldFacts: SourceFactSummary
+  newFacts: SourceFactSummary
+  factMatch: true
+} {
+  const oldFacts = sourceFactSummaryFromVenue(venue)
+  const newFacts = sourceFactSummaryFromProjection(venue)
+  assert(
+    JSON.stringify(oldFacts) === JSON.stringify(newFacts),
+    `${caseName}: Field source fact projection drifted for ${venue.id}.`,
+  )
+  return {
+    case: caseName,
+    venueId: venue.id,
+    oldFacts,
+    newFacts,
+    factMatch: true,
   }
 }
 
@@ -269,6 +379,10 @@ function fieldRealReadout() {
       qualityGateStatus: stop.quality.qualityGateStatus,
       failureReasons: stop.failureReasons,
     })),
+    fieldFactProjection: [
+      assertFieldFactProjectionMatch('curated approved record', approved),
+      assertFieldFactProjectionMatch('curated suppressed record', suppressed),
+    ],
   }
 }
 
@@ -443,6 +557,7 @@ async function main(): Promise<void> {
     assert(anchorVenue, 'Paper Plane venue must exist.')
 
     const providerCases = []
+    const providerFieldFactProjection = []
     for (const scenario of [
       'role-diverse',
       'thin-world-provider-insufficient-role-diversity',
@@ -459,6 +574,13 @@ async function main(): Promise<void> {
         JSON.stringify(oldSummary) === JSON.stringify(observedSummary),
         `${scenario}: provider role review hours/source-quality failure summary drifted.`,
       )
+      if (result.opportunity) {
+        providerFieldFactProjection.push(
+          ...result.opportunity.nearbyCandidates.map((venue) =>
+            assertFieldFactProjectionMatch(`${scenario} provider admitted venue`, venue),
+          ),
+        )
+      }
       providerCases.push({
         case: scenario,
         consumer: 'buildProviderSourceOpportunity role eligibility diagnostics',
@@ -496,6 +618,7 @@ async function main(): Promise<void> {
             observedResult: fieldReal,
             match: true,
           },
+          providerFieldFactProjection,
           bearingsRuntimeHours: {
             case: 'San Jose static provider corpus',
             consumer: 'applyFieldCorpusRuntimeHoursAdmission',

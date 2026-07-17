@@ -3,7 +3,6 @@ import type { VenueSourceMetadata } from '../types/normalization'
 import type { Venue } from '../types/venue'
 import type {
   FieldRealAvailabilityEvidence,
-  FieldRealAvailabilityStatus,
   FieldRealFailureReason,
   FieldRealQualityEvidence,
   FieldRealStalenessStatus,
@@ -11,6 +10,7 @@ import type {
   FieldRealSuppressionStatus,
   FieldRealVerdict,
 } from './fieldRealVerdict'
+import { projectFieldSourceFacts, projectVenueSourceFacts } from './projectFieldSourceFacts'
 
 export interface FieldRealStopInput {
   role: string
@@ -30,65 +30,6 @@ function hasText(value: string | undefined): boolean {
 
 function isFinitePositive(value: number): boolean {
   return Number.isFinite(value) && value > 0
-}
-
-function hasStaleRecordSignal(source: VenueSourceMetadata): boolean {
-  const notes = [
-    ...source.qualityGateNotes,
-    ...source.approvalBlockers,
-    ...source.demotionReasons,
-    ...source.suppressionReasons,
-  ]
-
-  return notes.some((note) => /\b(stale|expired|outdated)\b/i.test(note))
-}
-
-function evaluateStaleness(source: VenueSourceMetadata): FieldRealStalenessStatus {
-  if (hasStaleRecordSignal(source)) {
-    return 'stale'
-  }
-
-  return 'current'
-}
-
-function evaluateSuppression(source: VenueSourceMetadata): FieldRealSuppressionStatus {
-  if (
-    source.qualityGateStatus === 'suppressed' ||
-    source.hoursSuppressionApplied ||
-    source.suppressionReasons.length > 0
-  ) {
-    return 'suppressed'
-  }
-
-  if (
-    source.qualityGateStatus === 'demoted' ||
-    source.hoursDemotionApplied ||
-    source.demotionReasons.length > 0
-  ) {
-    return 'demoted'
-  }
-
-  return 'not_suppressed'
-}
-
-function evaluateAvailability(source: VenueSourceMetadata): FieldRealAvailabilityStatus {
-  if (
-    source.businessStatus === 'closed-permanently' ||
-    source.businessStatus === 'temporarily-closed' ||
-    (source.openNow === false && source.hoursKnown && source.timeConfidence >= 0.86)
-  ) {
-    return 'unavailable_from_record'
-  }
-
-  if (
-    source.businessStatus === 'operational' ||
-    source.openNow === true ||
-    source.likelyOpenForCurrentWindow
-  ) {
-    return 'available_from_record'
-  }
-
-  return 'unknown_from_record'
 }
 
 function evaluateSourceUsable(source: VenueSourceMetadata): boolean {
@@ -116,32 +57,32 @@ function evaluateProvenanceValid(source: VenueSourceMetadata): boolean {
 }
 
 function buildAvailabilityEvidence(source: VenueSourceMetadata): FieldRealAvailabilityEvidence {
-  const availabilityStatus = evaluateAvailability(source)
+  const facts = projectVenueSourceFacts(source)
 
   return {
-    availabilityKnown: availabilityStatus !== 'unknown_from_record',
-    availabilityStatus,
-    openNow: source.openNow,
-    hoursKnown: source.hoursKnown,
-    likelyOpenForCurrentWindow: source.likelyOpenForCurrentWindow,
-    businessStatus: source.businessStatus,
-    timeConfidence: source.timeConfidence,
-    hoursPressureNotes: source.hoursPressureNotes,
+    availabilityKnown: facts.availability.availabilityKnown,
+    availabilityStatus: facts.availability.availabilityStatus,
+    openNow: facts.availability.openNow,
+    hoursKnown: facts.availability.hoursKnown,
+    likelyOpenForCurrentWindow: facts.availability.likelyOpenForCurrentWindow,
+    businessStatus: facts.availability.businessStatus,
+    timeConfidence: facts.availability.timeConfidence,
+    hoursPressureNotes: facts.availability.hoursPressureNotes,
   }
 }
 
 function buildQualityEvidence(venue: Venue): FieldRealQualityEvidence {
-  const source = venue.source
+  const facts = projectFieldSourceFacts(venue)
 
   return {
     isActive: venue.isActive,
-    qualityGateStatus: source.qualityGateStatus,
-    qualityGateNotes: source.qualityGateNotes,
-    approvalBlockers: source.approvalBlockers,
-    demotionReasons: source.demotionReasons,
-    suppressionReasons: source.suppressionReasons,
-    stalenessStatus: evaluateStaleness(source),
-    suppressionStatus: evaluateSuppression(source),
+    qualityGateStatus: facts.quality.qualityGateStatus,
+    qualityGateNotes: facts.quality.qualityGateNotes,
+    approvalBlockers: facts.quality.approvalBlockers,
+    demotionReasons: facts.quality.demotionReasons,
+    suppressionReasons: facts.quality.suppressionReasons,
+    stalenessStatus: facts.quality.stalenessStatus,
+    suppressionStatus: facts.quality.suppressionStatus,
   }
 }
 
