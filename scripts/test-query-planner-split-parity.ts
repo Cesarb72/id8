@@ -807,7 +807,13 @@ async function main(): Promise<void> {
       pageSize: generalLiveRow.fieldMaskPageSize.pageSize ?? 8,
       envelope: { maxProviderCalls: 3, maxQueryLabels: 3, maxCenters: 3 },
     })
+    const oldGeneralLivePlan = buildLiveQueryPlan(baseIntent({ mode: 'surprise' }))
     const curatePocketRow = await runCuratePocketMocked(fieldMask)
+    const oldCuratePocketPlan = buildLiveQueryPlan(
+      baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
+      findStarterPack('coffee-books'),
+      { locationLabelOverride: 'Query Parity Pocket, San Jose' },
+    )
     const curatePocketProjection = projectInterpretationSemanticLiveQueryProjection(
       buildCanonicalSemanticProjectionInput(
         baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
@@ -879,7 +885,7 @@ async function main(): Promise<void> {
       ),
       buildComparison(
         'general-live-retrieval-mocked-safe',
-        queryOutputFromSnapshotRow(generalLiveRow),
+        selectFirstDispatchOutput(oldGeneralLivePlan.slice(0, 3), ['core', 'north', 'east'], 3),
         selectFirstDispatchOutput(generalLiveProjection.entries.slice(0, 3), ['core', 'north', 'east'], 3),
         queryOutputFromProviderQueries(
           generalLiveFieldScaffold.queries,
@@ -888,7 +894,7 @@ async function main(): Promise<void> {
       ),
       buildComparison(
         'curate-coffee-books-pocket-mocked-safe',
-        queryOutputFromSnapshotRow(curatePocketRow),
+        selectFirstDispatchOutput(oldCuratePocketPlan, ['pocket'], 3),
         selectFirstDispatchOutput(curatePocketProjection.entries, ['pocket'], 3),
         queryOutputFromProviderQueries(
           curatePocketFieldScaffold.queries,

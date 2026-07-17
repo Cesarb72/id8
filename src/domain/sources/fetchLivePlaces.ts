@@ -1,8 +1,15 @@
-import { getTimeWindowSignal } from '../retrieval/getTimeWindowSignal'
 import { normalizeVenue } from '../normalize/normalizeVenue'
 import { searchPlaces } from '../providers/ProviderAdapter'
 import type { ProviderVenue } from '../providers/providerTypes'
-import { buildLiveQueryPlan, type LivePlaceKind } from './buildLiveQueryPlan'
+import { projectFieldMechanicalProviderTextSearchScaffold } from '../field/projectFieldMechanicalQueryScaffold'
+import { buildApplicationConciergeIntent } from '../interpretation/conciergeIntent/buildConciergeIntent'
+import {
+  projectInterpretationSemanticLiveQueryProjection,
+  type InterpretationSemanticQueryProjectionInput,
+} from '../interpretation/query/projectSemanticQueryProjection'
+import { getTimeWindowSignal } from '../retrieval/getTimeWindowSignal'
+import { buildWhenSignalProfile } from '../when/whenSignalProfile'
+import type { LivePlaceKind } from './buildLiveQueryPlan'
 import { getGooglePlacesConfig } from './getSourceMode'
 import {
   mapLivePlaceToRawPlaceWithDiagnostics,
@@ -401,6 +408,41 @@ function formatLocationLabel(intent: IntentProfile): string {
   return intent.neighborhood ? `${intent.neighborhood}, ${intent.city}` : intent.city
 }
 
+function buildFetchLivePlacesSemanticProjectionInput(
+  intent: IntentProfile,
+  starterPack: StarterPack | undefined,
+  options: { locationLabelOverride?: string; locationScope?: 'city' | 'pocket' } = {},
+): InterpretationSemanticQueryProjectionInput {
+  const timeSignal = getTimeWindowSignal(intent)
+  const persona = intent.persona ?? starterPack?.personaBias ?? 'romantic'
+  return {
+    conciergeIntent: buildApplicationConciergeIntent({
+      mode: intent.mode,
+      persona,
+      primaryVibe: intent.primaryAnchor,
+      city: intent.city,
+      starterPack,
+      anchor: intent.anchor,
+    }),
+    whenSignalProfile: buildWhenSignalProfile({
+      whenPosture: timeSignal.usesIntentWindow ? 'pick_a_time' : 'now_doable_tonight',
+      whenPostureSource: timeSignal.usesIntentWindow ? 'user_supplied' : 'defaulted',
+      startTime: timeSignal.label,
+      durationMinutes: null,
+      spatialMode: 'WALKABLE',
+    }),
+    placeContext: {
+      city: intent.city,
+      neighborhood: intent.neighborhood,
+      locationLabelOverride: options.locationLabelOverride,
+      locationScope: options.locationScope,
+      originPrecision: intent.originPrecision,
+      originSource: intent.originSource,
+    },
+    starterPack,
+  }
+}
+
 function gateStatusRank(status: QualityGateStatus): number {
   if (status === 'approved') {
     return 3
@@ -555,19 +597,6 @@ export async function fetchLivePlaces(
   const config = getGooglePlacesConfig()
   const pocketHint = starterPack?.id === 'coffee-books' ? options.pocketHint : undefined
   const queryLocationLabel = pocketHint?.locationLabel ?? formatLocationLabel(intent)
-  const allBaseQueryPlan = buildLiveQueryPlan(intent, starterPack, {
-    ...(pocketHint?.locationLabel ? { locationLabelOverride: pocketHint.locationLabel } : {}),
-  })
-  const allowedLabels = new Set(options.liveQueryLabels ?? [])
-  const baseQueryPlanBeforeEnvelope =
-    allowedLabels.size > 0
-      ? allBaseQueryPlan.filter((entry) => allowedLabels.has(entry.label))
-      : allBaseQueryPlan
-  const maxQueryLabels =
-    typeof options.envelope?.maxQueryLabels === 'number'
-      ? Math.max(0, options.envelope.maxQueryLabels)
-      : baseQueryPlanBeforeEnvelope.length
-  const baseQueryPlan = baseQueryPlanBeforeEnvelope.slice(0, maxQueryLabels)
   const queryCentersBeforeEnvelope = pocketHint
     ? [derivePocketQueryCenter(pocketHint)]
     : deriveQueryCenters(
@@ -580,38 +609,46 @@ export async function fetchLivePlaces(
       ? Math.max(0, options.maxQueryCenters)
       : queryCentersBeforeEnvelope.length
   const queryCenters = queryCentersBeforeEnvelope.slice(0, maxQueryCenters)
-  const maxProviderCalls =
-    typeof options.envelope?.maxProviderCalls === 'number'
-      ? Math.max(0, options.envelope.maxProviderCalls)
-      : Number.POSITIVE_INFINITY
   const queryRadiusM = getPocketQueryRadiusM(pocketHint, config.queryRadiusM)
-  const queryPlan: Array<
-    (typeof baseQueryPlan)[number] & {
-      center: QueryCenter
-      label: string
-      radiusM: number
+  const semanticProjection = projectInterpretationSemanticLiveQueryProjection(
+    buildFetchLivePlacesSemanticProjectionInput(intent, starterPack, {
+      ...(pocketHint?.locationLabel ? { locationLabelOverride: pocketHint.locationLabel } : {}),
+      locationScope: pocketHint ? 'pocket' : 'city',
+    }),
+  )
+  const fieldQueryScaffold = projectFieldMechanicalProviderTextSearchScaffold({
+    semanticProjection,
+    centers: queryCentersBeforeEnvelope,
+    radiusM: queryRadiusM,
+    fieldMask: googleFieldMask,
+    pageSize: config.pageSize,
+    envelope: {
+      maxProviderCalls: options.envelope?.maxProviderCalls,
+      maxQueryLabels: options.envelope?.maxQueryLabels,
+      maxCenters: maxQueryCenters,
+    },
+    liveQueryLabels: options.liveQueryLabels,
+  })
+  const labelsConsidered = fieldQueryScaffold.labelsConsidered
+  const baseQueryPlan = fieldQueryScaffold.admittedEntries
+  const queryCentersById = new Map(queryCenters.map((center) => [center.id, center]))
+  const entriesByLabel = new Map(baseQueryPlan.map((entry) => [entry.label, entry]))
+  const queryPlan = fieldQueryScaffold.queries.map((query) => {
+    const [entryLabel, centerId] = query.queryLabel.split('@')
+    const entry = entriesByLabel.get(entryLabel ?? '')
+    const center = queryCentersById.get(centerId ?? '')
+    if (!entry || !center) {
+      throw new Error(`Field query scaffold emitted an unknown query label: ${query.queryLabel}`)
     }
-  > = []
-  for (const entry of baseQueryPlan) {
-    for (const center of queryCenters) {
-      if (queryPlan.length >= maxProviderCalls) {
-        break
-      }
-      queryPlan.push({
-        ...entry,
-        label: `${entry.label}@${center.id}`,
-        center,
-        radiusM: queryRadiusM,
-      })
+    return {
+      ...entry,
+      ...query,
+      center,
+      label: query.queryLabel,
+      radiusM: queryRadiusM,
     }
-    if (queryPlan.length >= maxProviderCalls) {
-      break
-    }
-  }
-  const dispatchQueriesPlannedWithinCap =
-    typeof options.envelope?.maxProviderCalls === 'number'
-      ? queryPlan.length <= Math.max(0, options.envelope.maxProviderCalls)
-      : true
+  })
+  const dispatchQueriesPlannedWithinCap = fieldQueryScaffold.plannedWithinCap
   const queryTemplatesUsed = [...new Set(queryPlan.map((entry) => entry.template))]
   const queryLabelsUsed = queryPlan.map((entry) => entry.label)
   const roleIntentQueryNotes = [...new Set(baseQueryPlan.flatMap((entry) => entry.notes))]
@@ -672,10 +709,10 @@ export async function fetchLivePlaces(
       maxProviderCalls: options.envelope?.maxProviderCalls,
       maxQueryLabels: options.envelope?.maxQueryLabels,
       maxCenters: options.maxQueryCenters,
-      labelsConsidered: baseQueryPlanBeforeEnvelope.length,
-      labelsAdmitted: baseQueryPlan.length,
-      centersConsidered: queryCentersBeforeEnvelope.length,
-      centersAdmitted: queryCenters.length,
+      labelsConsidered,
+      labelsAdmitted: fieldQueryScaffold.labelsAdmitted,
+      centersConsidered: fieldQueryScaffold.centersConsidered,
+      centersAdmitted: fieldQueryScaffold.centersAdmitted,
       dispatchQueriesPlanned: queryPlan.length,
       dispatchQueriesAttempted,
       assertion: `dispatch queries planned <= ${options.envelope?.maxProviderCalls ?? 'unbounded'}`,
@@ -701,10 +738,10 @@ export async function fetchLivePlaces(
         pocketFilterDroppedCount: 0,
         requestedKinds: requestedKindsForPlan,
         queryCount: 0,
-        labelsConsidered: baseQueryPlanBeforeEnvelope.length,
-        labelsAdmitted: baseQueryPlan.length,
-        centersConsidered: queryCentersBeforeEnvelope.length,
-        centersAdmitted: queryCenters.length,
+        labelsConsidered,
+        labelsAdmitted: fieldQueryScaffold.labelsAdmitted,
+        centersConsidered: fieldQueryScaffold.centersConsidered,
+        centersAdmitted: fieldQueryScaffold.centersAdmitted,
         dispatchQueriesPlanned: queryPlan.length,
         dispatchQueriesAttempted,
         dispatchQueriesPlannedWithinCap,
@@ -842,10 +879,10 @@ export async function fetchLivePlaces(
       pocketFilterDroppedCount: pocketFiltered.droppedCount,
       requestedKinds: requestedKindsForPlan,
       queryCount: queryPlan.length,
-      labelsConsidered: baseQueryPlanBeforeEnvelope.length,
+      labelsConsidered,
       labelsAdmitted: baseQueryPlan.length,
-      centersConsidered: queryCentersBeforeEnvelope.length,
-      centersAdmitted: queryCenters.length,
+      centersConsidered: fieldQueryScaffold.centersConsidered,
+      centersAdmitted: fieldQueryScaffold.centersAdmitted,
       dispatchQueriesPlanned: queryPlan.length,
       dispatchQueriesAttempted,
       dispatchQueriesPlannedWithinCap,
