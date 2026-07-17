@@ -4,6 +4,7 @@ import {
 } from '../../domain/previewDistrictRecommendations'
 import {
   runGeneratePlan,
+  runGeneratePlanForGovernedRouteIngress,
   type GeneratePlanResult,
   type GenerationTrace,
   type RunGeneratePlanOptions,
@@ -38,6 +39,13 @@ export interface StepBCurateLiveSmokeCandidateSupplyGate {
 }
 
 const STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE: LiveProviderEnvelope = {
+  liveProviderAllowed: true,
+  maxProviderCalls: 3,
+  maxQueryLabels: 3,
+  maxCenters: 1,
+}
+
+const GOVERNED_ROUTE_FIELD_PROXY_ENVELOPE: LiveProviderEnvelope = {
   liveProviderAllowed: true,
   maxProviderCalls: 3,
   maxQueryLabels: 3,
@@ -81,6 +89,35 @@ export async function runPlanBuildWithLegacyPlaceRightFallback(
   options?: RunGeneratePlanOptions,
 ): Promise<GeneratePlanResult> {
   return runGeneratePlan(input, options)
+}
+
+export type GovernedFieldRoutePlanBuildOptions =
+  Omit<RunGeneratePlanOptions, 'sourceMode' | 'sourceModeOverrideApplied'> & {
+    sourceMode?: never
+    sourceModeOverrideApplied?: never
+    liveEnvelope?: never
+  }
+
+export async function runGovernedFieldProxyRoutePlanBuild(
+  input: IntentInput,
+  options: GovernedFieldRoutePlanBuildOptions = {},
+): Promise<GeneratePlanResult> {
+  const {
+    liveEnvelope: _ignoredCallerLiveEnvelope,
+    sourceMode: _ignoredCallerSourceMode,
+    sourceModeOverrideApplied: _ignoredCallerSourceModeOverrideApplied,
+    ...safeOptions
+  } = options as RunGeneratePlanOptions & {
+    liveEnvelope?: LiveProviderEnvelope
+    sourceModeOverrideApplied?: boolean
+  }
+
+  return runGeneratePlanForGovernedRouteIngress(input, {
+    ...safeOptions,
+    sourceMode: 'hybrid',
+    sourceModeOverrideApplied: false,
+    liveEnvelope: GOVERNED_ROUTE_FIELD_PROXY_ENVELOPE,
+  })
 }
 
 export function shouldApplyStepBCurateLiveSmokeCandidateSupply(

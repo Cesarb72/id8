@@ -17,7 +17,7 @@ const callSites: ProviderCallSiteClassification[] = [
     filePath: 'src/domain/sources/fetchLivePlaces.ts',
     functionName: 'fetchLivePlaces',
     callPurpose: 'retrieval_supply',
-    trigger: 'Step B Curate candidate supply through private live smoke wrapper',
+    trigger: 'Step B Curate candidate supply and governed route ingress through app-service-owned fixed envelopes',
     envelope: 'yes',
     pageRenderSurface: false,
     classification: 'intentionally-explicit-candidate-supply',
@@ -26,6 +26,7 @@ const callSites: ProviderCallSiteClassification[] = [
       'retrieveVenues forces curated retrieval unless liveEnvelope.liveProviderAllowed === true',
       'runGeneratePlan strips raw caller liveEnvelope before internal retrieval',
       'Step B Curate candidate-supply wrapper owns the private 3/3/1 envelope path',
+      'runGovernedFieldProxyRoutePlanBuild owns the governed route 3/3/1 envelope path',
       'fetchLivePlaces forwards options.envelope to ProviderAdapter.searchPlaces',
     ],
   },
@@ -129,7 +130,10 @@ function assertDirectSearchPlacesInventory(): void {
     providerAdapterSource,
     /export async function searchPlaces</g,
   )
-  const expectedCallCount = callSites.length + functionDefinitionCount
+  const providerAdapterBackedCallSites = callSites.filter(
+    (callSite) => callSite.functionName !== 'buildProviderSourceOpportunity',
+  )
+  const expectedCallCount = providerAdapterBackedCallSites.length + functionDefinitionCount
   assert(
     directSearchPlacesCalls === expectedCallCount,
     `Expected ${expectedCallCount} ProviderAdapter.searchPlaces references, found ${directSearchPlacesCalls}. Update the call-site inventory.`,
@@ -191,6 +195,21 @@ function assertStepBCuratePrivateEnvelopeBoundary(): void {
     'runGeneratePlan must strip raw caller liveEnvelope values.',
   )
   assert(
+    runGeneratePlanSource.includes('export async function runGeneratePlanForGovernedRouteIngress') &&
+      runGeneratePlanSource.includes('return runGeneratePlanInternal(input, options)'),
+    'Governed route ingress must reach runGeneratePlanInternal without changing public runGeneratePlan.',
+  )
+  const governedRouteIngressConsumers = listSourceFiles('src').filter(
+    (filePath) =>
+      filePath !== 'src\\domain\\runGeneratePlan.ts' &&
+      readFileSync(filePath, 'utf8').includes('runGeneratePlanForGovernedRouteIngress'),
+  )
+  assert(
+    governedRouteIngressConsumers.length === 1 &&
+      governedRouteIngressConsumers[0] === 'src\\app\\services\\arcApplicationService.ts',
+    `Governed route ingress must be consumed only by arcApplicationService; found ${governedRouteIngressConsumers.join(', ')}.`,
+  )
+  assert(
     !runGeneratePlanSource.includes('runStepBCurateLiveSmokeGeneratePlan') &&
       !runGeneratePlanSource.includes('STEP_B_CURATE_LIVE_SMOKE_ENVELOPE'),
     'Final-reveal Step B generation corridor must be retired.',
@@ -203,6 +222,18 @@ function assertStepBCuratePrivateEnvelopeBoundary(): void {
       appServiceSource.includes('maxQueryLabels: 3') &&
       appServiceSource.includes('maxCenters: 1'),
     'Step B Curate candidate-supply envelope must remain private and fixed at 3/3/1.',
+  )
+  assert(
+    appServiceSource.includes('const GOVERNED_ROUTE_FIELD_PROXY_ENVELOPE: LiveProviderEnvelope = {') &&
+      appServiceSource.includes('maxProviderCalls: 3') &&
+      appServiceSource.includes('maxQueryLabels: 3') &&
+      appServiceSource.includes('maxCenters: 1') &&
+      appServiceSource.includes('runGovernedFieldProxyRoutePlanBuild') &&
+      appServiceSource.includes('runGeneratePlanForGovernedRouteIngress') &&
+      appServiceSource.includes("sourceMode: 'hybrid'") &&
+      appServiceSource.includes('sourceModeOverrideApplied: false') &&
+      appServiceSource.includes('liveEnvelope: GOVERNED_ROUTE_FIELD_PROXY_ENVELOPE'),
+    'Governed route ingress must own a fixed 3/3/1 envelope and pass hybrid mode through the internal seam.',
   )
   assert(
     appServiceSource.includes('gate.environment === \'default\'') &&

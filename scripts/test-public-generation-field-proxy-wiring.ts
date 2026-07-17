@@ -16,6 +16,7 @@ import {
   resolveCurateStarterScenarioFamily,
 } from '../src/domain/curate/starterScenarioFamily.ts'
 import {
+  runGovernedFieldProxyRoutePlanBuild,
   runStepBCurateLiveSmokeCandidateSupply,
   shouldApplyStepBCurateLiveSmokeCandidateSupply,
   type StepBCurateLiveSmokeCandidateSupplyGate,
@@ -1643,6 +1644,60 @@ async function assertCallerSuppliedEnvelopeCannotActivateSupplySmoke(
   assert(board !== null, `${scenario.mode}: caller envelope dry fallback should still build a board.`)
   process.stdout.write(`${scenario.mode} caller-supplied liveEnvelope Field proxy calls: 0\n`)
   return 0
+}
+
+async function assertGovernedRouteIngressUsesFixedEnvelope(scenario: Scenario): Promise<number> {
+  resetEnv()
+  setPublicCurateRoute()
+  const calls: CapturedFieldRequest[] = []
+  globalThis.fetch = createFieldProxyFetch(calls)
+
+  const result = await runGovernedFieldProxyRoutePlanBuild(scenario.input, {
+    starterPack: scenario.starterPack,
+    liveEnvelope: {
+      liveProviderAllowed: true,
+      maxProviderCalls: 99,
+      maxQueryLabels: 99,
+      maxCenters: 99,
+    },
+    sourceMode: 'live',
+  } as Parameters<typeof runGovernedFieldProxyRoutePlanBuild>[1])
+
+  assert(
+    result.trace.retrievalDiagnostics.liveSource.liveFetchAttempted,
+    `${scenario.mode}: governed route ingress must attempt live Field retrieval.`,
+  )
+  assert(
+    result.trace.retrievalDiagnostics.liveSource.liveFetchSucceeded,
+    `${scenario.mode}: governed route ingress must receive mocked live Field inventory.`,
+  )
+  assert(
+    calls.length > 0 && calls.length <= 3,
+    `${scenario.mode}: governed route ingress must use maxProviderCalls=3; received ${calls.length}.`,
+  )
+  assert(
+    calls.every((call) => call.url === FIELD_PROXY_PATH),
+    `${scenario.mode}: governed route ingress must only call /api/field/text-search.`,
+  )
+  assert(
+    calls.every((call) => call.body.purpose === 'retrieval_supply'),
+    `${scenario.mode}: governed route ingress must request retrieval_supply.`,
+  )
+  const centerKeys = new Set(
+    calls.map((call) =>
+      call.body.center
+        ? `${call.body.center.lat.toFixed(5)},${call.body.center.lng.toFixed(5)}`
+        : 'none',
+    ),
+  )
+  assert(
+    centerKeys.size <= 1,
+    `${scenario.mode}: governed route ingress must use maxCenters=1; received ${centerKeys.size}.`,
+  )
+  process.stdout.write(
+    `${scenario.mode} governed route ingress Field proxy calls: ${calls.length} <= 3\n`,
+  )
+  return calls.length
 }
 
 function simulatePreparedRouteReview(params: {
@@ -3346,6 +3401,7 @@ async function main(): Promise<void> {
   let smokeOffSupplyProxyCalls = 0
   let smokeOnSupplyProxyCalls = 0
   let callerEnvelopeProxyCalls = 0
+  let governedRouteIngressProxyCalls = 0
   let reviewProxyCalls = 0
   let wrongSurfaceProxyCalls = 0
   for (const scenario of buildScenarios()) {
@@ -3355,6 +3411,7 @@ async function main(): Promise<void> {
       const smokeOnSupply = await assertPublicCurateCandidateSupplyUsesPrivateEnvelope(scenario)
       smokeOnSupplyProxyCalls += smokeOnSupply.fieldProxyCalls
       callerEnvelopeProxyCalls += await assertCallerSuppliedEnvelopeCannotActivateSupplySmoke(scenario)
+      governedRouteIngressProxyCalls += await assertGovernedRouteIngressUsesFixedEnvelope(scenario)
       reviewProxyCalls += await assertReviewThisRouteMakesNoAdditionalFieldProxyCalls(scenario)
       wrongSurfaceProxyCalls += await assertWrongSurfaceSupplyGateStaysDry(
         scenario,
@@ -3404,6 +3461,7 @@ async function main(): Promise<void> {
   process.stdout.write(
     `Caller-supplied liveEnvelope dry proxy calls: ${callerEnvelopeProxyCalls}\n`,
   )
+  process.stdout.write(`Governed route ingress proxy calls: ${governedRouteIngressProxyCalls}\n`)
   process.stdout.write(`Review this route additional proxy calls: ${reviewProxyCalls}\n`)
   process.stdout.write(`Wrong-surface supply gate proxy calls: ${wrongSurfaceProxyCalls}\n`)
   process.stdout.write('public generation Field proxy wiring: passed\n')

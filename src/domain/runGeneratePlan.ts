@@ -205,6 +205,10 @@ interface RunGeneratePlanInternalOptions extends RunGeneratePlanOptions {
   stepBCurateLiveSmokeActive?: boolean
 }
 
+export interface GovernedRouteIngressOptions extends RunGeneratePlanOptions {
+  liveEnvelope: LiveProviderEnvelope
+}
+
 function shouldBlockGovernedPlannerIngress(retrieval: RetrieveVenuesResult): boolean {
   const runtimeMode = retrieval.sourceMode.runtimeMode
   const activeMode = retrieval.sourceMode.effectiveMode
@@ -2708,6 +2712,13 @@ export async function runGeneratePlan(
     ...safeOptions
   } = options as RunGeneratePlanInternalOptions
   return runGeneratePlanInternal(input, safeOptions)
+}
+
+export async function runGeneratePlanForGovernedRouteIngress(
+  input: IntentInput,
+  options: GovernedRouteIngressOptions,
+): Promise<GeneratePlanResult> {
+  return runGeneratePlanInternal(input, options)
 }
 
 async function runGeneratePlanInternal(
