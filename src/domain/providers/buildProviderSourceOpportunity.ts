@@ -1,4 +1,8 @@
 import { curatedVenues } from '../../data/venues'
+import {
+  evaluateFieldSourceFactAdmission,
+  type BearingsFieldSourceFactAdmissionFailureReason,
+} from '../bearings/evaluateFieldSourceFactAdmission'
 import { normalizeRawPlace } from '../normalize/normalizeRawPlace'
 import { computeTasteRolePoolMeaningForVenue } from '../interpretation/taste/computeTasteRolePoolMeaningView'
 import { projectFieldSourceFacts } from '../field/projectFieldSourceFacts'
@@ -102,8 +106,7 @@ export type BuildProviderRoleFailureReason =
   | 'cooldown_below_threshold'
   | 'energy_above_threshold'
   | 'not_highlight_capable'
-  | 'quality_gate_not_approved'
-  | 'hours_suppressed'
+  | BearingsFieldSourceFactAdmissionFailureReason
 
 export interface BuildProviderRoleEligibilityDiagnostic {
   eligible: boolean
@@ -633,11 +636,11 @@ function deriveRoleCandidates(
     (venue) => {
       const evidence = getTasteRoleSuitabilityEvidence(venue, evidenceByVenueId)
       const fieldFacts = projectFieldSourceFacts(venue)
+      const admission = evaluateFieldSourceFactAdmission(fieldFacts)
       return (
         getTasteRoleSuitabilityScore(evidence, 'start') >= 0.6 &&
         venue.energyLevel <= 4 &&
-        fieldFacts.quality.qualityGateStatus === 'approved' &&
-        !fieldFacts.availability.hoursSuppressionApplied
+        admission.admitted
       )
     },
   )
@@ -645,11 +648,11 @@ function deriveRoleCandidates(
     (venue) => {
       const evidence = getTasteRoleSuitabilityEvidence(venue, evidenceByVenueId)
       const fieldFacts = projectFieldSourceFacts(venue)
+      const admission = evaluateFieldSourceFactAdmission(fieldFacts)
       return (
         venue.highlightCapable &&
         getTasteRoleSuitabilityScore(evidence, 'highlight') >= 0.7 &&
-        fieldFacts.quality.qualityGateStatus === 'approved' &&
-        !fieldFacts.availability.hoursSuppressionApplied
+        admission.admitted
       )
     },
   )
@@ -657,11 +660,11 @@ function deriveRoleCandidates(
     (venue) => {
       const evidence = getTasteRoleSuitabilityEvidence(venue, evidenceByVenueId)
       const fieldFacts = projectFieldSourceFacts(venue)
+      const admission = evaluateFieldSourceFactAdmission(fieldFacts)
       return (
         getTasteRoleSuitabilityScore(evidence, 'windDown') >= 0.58 &&
         venue.energyLevel <= 4 &&
-        fieldFacts.quality.qualityGateStatus === 'approved' &&
-        !fieldFacts.availability.hoursSuppressionApplied
+        admission.admitted
       )
     },
   )
@@ -688,18 +691,14 @@ function evaluateStartRoleEligibility(
 ): BuildProviderRoleEligibilityDiagnostic {
   const failedReasons: BuildProviderRoleFailureReason[] = []
   const fieldFacts = projectFieldSourceFacts(venue)
+  const fieldSourceAdmission = evaluateFieldSourceFactAdmission(fieldFacts)
   if (getTasteRoleSuitabilityScore(evidence, 'start') < 0.6) {
     failedReasons.push('warmup_below_threshold')
   }
   if (venue.energyLevel > 4) {
     failedReasons.push('energy_above_threshold')
   }
-  if (fieldFacts.quality.qualityGateStatus !== 'approved') {
-    failedReasons.push('quality_gate_not_approved')
-  }
-  if (fieldFacts.availability.hoursSuppressionApplied) {
-    failedReasons.push('hours_suppressed')
-  }
+  failedReasons.push(...fieldSourceAdmission.failureReasons)
   return buildRoleEligibilityDiagnostic(failedReasons)
 }
 
@@ -709,18 +708,14 @@ function evaluateHighlightRoleEligibility(
 ): BuildProviderRoleEligibilityDiagnostic {
   const failedReasons: BuildProviderRoleFailureReason[] = []
   const fieldFacts = projectFieldSourceFacts(venue)
+  const fieldSourceAdmission = evaluateFieldSourceFactAdmission(fieldFacts)
   if (!venue.highlightCapable) {
     failedReasons.push('not_highlight_capable')
   }
   if (getTasteRoleSuitabilityScore(evidence, 'highlight') < 0.7) {
     failedReasons.push('peak_below_threshold')
   }
-  if (fieldFacts.quality.qualityGateStatus !== 'approved') {
-    failedReasons.push('quality_gate_not_approved')
-  }
-  if (fieldFacts.availability.hoursSuppressionApplied) {
-    failedReasons.push('hours_suppressed')
-  }
+  failedReasons.push(...fieldSourceAdmission.failureReasons)
   return buildRoleEligibilityDiagnostic(failedReasons)
 }
 
@@ -730,18 +725,14 @@ function evaluateWindDownRoleEligibility(
 ): BuildProviderRoleEligibilityDiagnostic {
   const failedReasons: BuildProviderRoleFailureReason[] = []
   const fieldFacts = projectFieldSourceFacts(venue)
+  const fieldSourceAdmission = evaluateFieldSourceFactAdmission(fieldFacts)
   if (getTasteRoleSuitabilityScore(evidence, 'windDown') < 0.58) {
     failedReasons.push('cooldown_below_threshold')
   }
   if (venue.energyLevel > 4) {
     failedReasons.push('energy_above_threshold')
   }
-  if (fieldFacts.quality.qualityGateStatus !== 'approved') {
-    failedReasons.push('quality_gate_not_approved')
-  }
-  if (fieldFacts.availability.hoursSuppressionApplied) {
-    failedReasons.push('hours_suppressed')
-  }
+  failedReasons.push(...fieldSourceAdmission.failureReasons)
   return buildRoleEligibilityDiagnostic(failedReasons)
 }
 

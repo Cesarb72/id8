@@ -1,5 +1,6 @@
 import { curatedVenues } from '../src/data/venues'
 import { applyFieldCorpusRuntimeHoursAdmission } from '../src/domain/bearings/fieldCorpusRuntimeHoursAdmission'
+import { evaluateFieldSourceFactAdmission } from '../src/domain/bearings/evaluateFieldSourceFactAdmission'
 import { sanJoseProviderCorpusVenues } from '../src/domain/field/corpus/sanJoseProviderCorpus'
 import { computeFieldRealVerdict } from '../src/domain/field/computeFieldRealVerdict'
 import { projectFieldSourceFacts } from '../src/domain/field/projectFieldSourceFacts'
@@ -228,6 +229,37 @@ function assertFieldFactProjectionMatch(caseName: string, venue: Venue): {
   }
 }
 
+function assertBearingsAdmissionConsequenceMatch(caseName: string, venue: Venue): {
+  case: string
+  venueId: string
+  oldAdmissionFailureReasons: string[]
+  newAdmissionFailureReasons: string[]
+  admissionConsequenceMatch: true
+} {
+  const oldAdmissionFailureReasons: string[] = []
+  if (venue.source.qualityGateStatus !== 'approved') {
+    oldAdmissionFailureReasons.push('quality_gate_not_approved')
+  }
+  if (venue.source.hoursSuppressionApplied) {
+    oldAdmissionFailureReasons.push('hours_suppressed')
+  }
+  const newAdmissionFailureReasons = evaluateFieldSourceFactAdmission(
+    projectFieldSourceFacts(venue),
+  ).failureReasons
+  assert(
+    JSON.stringify(oldAdmissionFailureReasons) ===
+      JSON.stringify(newAdmissionFailureReasons),
+    `${caseName}: Bearings source-fact admission consequence drifted for ${venue.id}.`,
+  )
+  return {
+    case: caseName,
+    venueId: venue.id,
+    oldAdmissionFailureReasons,
+    newAdmissionFailureReasons,
+    admissionConsequenceMatch: true,
+  }
+}
+
 function summarizeReviewFailures(
   reviews: readonly BuildProviderRoleCandidateReviewSummary[],
 ): FailureSummary {
@@ -382,6 +414,10 @@ function fieldRealReadout() {
     fieldFactProjection: [
       assertFieldFactProjectionMatch('curated approved record', approved),
       assertFieldFactProjectionMatch('curated suppressed record', suppressed),
+    ],
+    bearingsAdmissionConsequence: [
+      assertBearingsAdmissionConsequenceMatch('curated approved record', approved),
+      assertBearingsAdmissionConsequenceMatch('curated suppressed record', suppressed),
     ],
   }
 }
@@ -558,6 +594,7 @@ async function main(): Promise<void> {
 
     const providerCases = []
     const providerFieldFactProjection = []
+    const providerBearingsAdmissionConsequence = []
     for (const scenario of [
       'role-diverse',
       'thin-world-provider-insufficient-role-diversity',
@@ -578,6 +615,14 @@ async function main(): Promise<void> {
         providerFieldFactProjection.push(
           ...result.opportunity.nearbyCandidates.map((venue) =>
             assertFieldFactProjectionMatch(`${scenario} provider admitted venue`, venue),
+          ),
+        )
+        providerBearingsAdmissionConsequence.push(
+          ...result.opportunity.nearbyCandidates.map((venue) =>
+            assertBearingsAdmissionConsequenceMatch(
+              `${scenario} provider admitted venue`,
+              venue,
+            ),
           ),
         )
       }
@@ -619,6 +664,7 @@ async function main(): Promise<void> {
             match: true,
           },
           providerFieldFactProjection,
+          providerBearingsAdmissionConsequence,
           bearingsRuntimeHours: {
             case: 'San Jose static provider corpus',
             consumer: 'applyFieldCorpusRuntimeHoursAdmission',
