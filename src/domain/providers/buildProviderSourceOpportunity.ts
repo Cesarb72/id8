@@ -5,6 +5,7 @@ import {
 } from '../bearings/evaluateFieldSourceFactAdmission'
 import { normalizeRawPlace } from '../normalize/normalizeRawPlace'
 import { computeTasteRolePoolMeaningForVenue } from '../interpretation/taste/computeTasteRolePoolMeaningView'
+import { executeFieldProviderTextSearch } from '../field/executeFieldProviderTextSearch'
 import { projectFieldSourceFacts } from '../field/projectFieldSourceFacts'
 import { coordinateBuildProviderSourceOpportunityOutcome } from '../waypoint/coordinateBuildProviderSourceOpportunityOutcome'
 import type { RolePoolMeaningEvidence } from '../interpretation/taste/computeRolePoolMeaningEvidence'
@@ -23,11 +24,7 @@ import {
   admitLiveVenueIdentity,
   type LiveVenueIdentityAdmissionResult,
 } from './admitLiveVenueIdentity'
-import {
-  searchPlaces,
-  type ProviderAdapterDiagnostics,
-  type ProviderTextSearchQuery,
-} from './ProviderAdapter'
+import type { ProviderAdapterDiagnostics, ProviderTextSearchQuery } from './ProviderAdapter'
 import {
   evaluateSupplyEquivalence,
   type SupplyEquivalenceResult,
@@ -863,7 +860,10 @@ export async function buildProviderSourceOpportunity(
   )
   const attemptedQueryLabels = attemptedProviderQueries.map((query) => query.queryLabel)
 
-  const providerSearch = await searchPlaces<BuildProviderMappedVenue, ProviderTextSearchQuery>({
+  const providerSearch = await executeFieldProviderTextSearch<
+    BuildProviderMappedVenue,
+    ProviderTextSearchQuery
+  >({
     callPurpose: 'build_anchor_nearby',
     mapPlace: (providerVenue, context) => ({
       providerVenue,
