@@ -1,5 +1,7 @@
 import { curatedVenues } from '../../data/venues'
 import { normalizeRawPlace } from '../normalize/normalizeRawPlace'
+import { computeTasteRolePoolMeaningForVenue } from '../interpretation/taste/computeTasteRolePoolMeaningView'
+import type { RolePoolMeaningEvidence } from '../interpretation/taste/computeRolePoolMeaningEvidence'
 import type { RawPlace } from '../types/rawPlace'
 import type { Venue } from '../types/venue'
 import {
@@ -218,6 +220,13 @@ interface AdmittedNearbyCandidateReview {
   primaryType?: string
   venue: Venue
 }
+
+type BuildProviderRoleName = keyof BuildProviderRoleCandidateCounts
+
+type BuildProviderRoleSuitabilityEvidenceByVenueId = Map<
+  string,
+  RolePoolMeaningEvidence
+>
 
 function getProcessEnvValue(key: string): string | undefined {
   const processEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
@@ -582,31 +591,75 @@ function dedupeVenuesById(venues: Venue[]): Venue[] {
   return deduped
 }
 
-function deriveRoleCandidates(venues: Venue[]): {
+function buildTasteRoleSuitabilityEvidenceByVenueId(
+  venues: Venue[],
+): BuildProviderRoleSuitabilityEvidenceByVenueId {
+  return new Map(
+    venues.map((venue) => [
+      venue.id,
+      computeTasteRolePoolMeaningForVenue({ venue }),
+    ]),
+  )
+}
+
+function getTasteRoleSuitabilityEvidence(
+  venue: Venue,
+  evidenceByVenueId: BuildProviderRoleSuitabilityEvidenceByVenueId,
+): RolePoolMeaningEvidence {
+  const evidence = evidenceByVenueId.get(venue.id)
+  if (evidence) {
+    return evidence
+  }
+  return computeTasteRolePoolMeaningForVenue({ venue })
+}
+
+function getTasteRoleSuitabilityScore(
+  evidence: RolePoolMeaningEvidence,
+  role: BuildProviderRoleName,
+): number {
+  return evidence.candidate.roleSuitability[role] ?? 0
+}
+
+function deriveRoleCandidates(
+  venues: Venue[],
+  evidenceByVenueId: BuildProviderRoleSuitabilityEvidenceByVenueId,
+): {
   highlight: Venue[]
   start: Venue[]
   windDown: Venue[]
 } {
   const start = venues.filter(
-    (venue) =>
-      venue.roleAffinity.warmup >= 0.6 &&
-      venue.energyLevel <= 4 &&
-      venue.source.qualityGateStatus === 'approved' &&
-      !venue.source.hoursSuppressionApplied,
+    (venue) => {
+      const evidence = getTasteRoleSuitabilityEvidence(venue, evidenceByVenueId)
+      return (
+        getTasteRoleSuitabilityScore(evidence, 'start') >= 0.6 &&
+        venue.energyLevel <= 4 &&
+        venue.source.qualityGateStatus === 'approved' &&
+        !venue.source.hoursSuppressionApplied
+      )
+    },
   )
   const highlight = venues.filter(
-    (venue) =>
-      venue.highlightCapable &&
-      venue.roleAffinity.peak >= 0.7 &&
-      venue.source.qualityGateStatus === 'approved' &&
-      !venue.source.hoursSuppressionApplied,
+    (venue) => {
+      const evidence = getTasteRoleSuitabilityEvidence(venue, evidenceByVenueId)
+      return (
+        venue.highlightCapable &&
+        getTasteRoleSuitabilityScore(evidence, 'highlight') >= 0.7 &&
+        venue.source.qualityGateStatus === 'approved' &&
+        !venue.source.hoursSuppressionApplied
+      )
+    },
   )
   const windDown = venues.filter(
-    (venue) =>
-      venue.roleAffinity.cooldown >= 0.58 &&
-      venue.energyLevel <= 4 &&
-      venue.source.qualityGateStatus === 'approved' &&
-      !venue.source.hoursSuppressionApplied,
+    (venue) => {
+      const evidence = getTasteRoleSuitabilityEvidence(venue, evidenceByVenueId)
+      return (
+        getTasteRoleSuitabilityScore(evidence, 'windDown') >= 0.58 &&
+        venue.energyLevel <= 4 &&
+        venue.source.qualityGateStatus === 'approved' &&
+        !venue.source.hoursSuppressionApplied
+      )
+    },
   )
 
   return {
@@ -627,9 +680,10 @@ function buildRoleEligibilityDiagnostic(
 
 function evaluateStartRoleEligibility(
   venue: Venue,
+  evidence: RolePoolMeaningEvidence,
 ): BuildProviderRoleEligibilityDiagnostic {
   const failedReasons: BuildProviderRoleFailureReason[] = []
-  if (venue.roleAffinity.warmup < 0.6) {
+  if (getTasteRoleSuitabilityScore(evidence, 'start') < 0.6) {
     failedReasons.push('warmup_below_threshold')
   }
   if (venue.energyLevel > 4) {
@@ -646,12 +700,13 @@ function evaluateStartRoleEligibility(
 
 function evaluateHighlightRoleEligibility(
   venue: Venue,
+  evidence: RolePoolMeaningEvidence,
 ): BuildProviderRoleEligibilityDiagnostic {
   const failedReasons: BuildProviderRoleFailureReason[] = []
   if (!venue.highlightCapable) {
     failedReasons.push('not_highlight_capable')
   }
-  if (venue.roleAffinity.peak < 0.7) {
+  if (getTasteRoleSuitabilityScore(evidence, 'highlight') < 0.7) {
     failedReasons.push('peak_below_threshold')
   }
   if (venue.source.qualityGateStatus !== 'approved') {
@@ -665,9 +720,10 @@ function evaluateHighlightRoleEligibility(
 
 function evaluateWindDownRoleEligibility(
   venue: Venue,
+  evidence: RolePoolMeaningEvidence,
 ): BuildProviderRoleEligibilityDiagnostic {
   const failedReasons: BuildProviderRoleFailureReason[] = []
-  if (venue.roleAffinity.cooldown < 0.58) {
+  if (getTasteRoleSuitabilityScore(evidence, 'windDown') < 0.58) {
     failedReasons.push('cooldown_below_threshold')
   }
   if (venue.energyLevel > 4) {
@@ -685,25 +741,31 @@ function evaluateWindDownRoleEligibility(
 function buildRoleCandidateReviewSummaries(
   admittedCandidates: AdmittedNearbyCandidateReview[],
 ): BuildProviderRoleCandidateReviewSummary[] {
-  return admittedCandidates.map(({ primaryType, venue }) => ({
-    providerRecordId: venue.source.providerRecordId ?? venue.id,
-    displayName: venue.name,
-    normalizedCategory: venue.category,
-    primaryType,
-    tags: venue.tags,
-    energyLevel: venue.energyLevel,
-    highlightCapable: venue.highlightCapable,
-    roleAffinity: {
-      warmup: venue.roleAffinity.warmup,
-      peak: venue.roleAffinity.peak,
-      cooldown: venue.roleAffinity.cooldown,
-    },
-    qualityGateStatus: venue.source.qualityGateStatus,
-    hoursSuppressionApplied: venue.source.hoursSuppressionApplied,
-    start: evaluateStartRoleEligibility(venue),
-    highlight: evaluateHighlightRoleEligibility(venue),
-    windDown: evaluateWindDownRoleEligibility(venue),
-  }))
+  const evidenceByVenueId = buildTasteRoleSuitabilityEvidenceByVenueId(
+    admittedCandidates.map(({ venue }) => venue),
+  )
+  return admittedCandidates.map(({ primaryType, venue }) => {
+    const evidence = getTasteRoleSuitabilityEvidence(venue, evidenceByVenueId)
+    return {
+      providerRecordId: venue.source.providerRecordId ?? venue.id,
+      displayName: venue.name,
+      normalizedCategory: venue.category,
+      primaryType,
+      tags: venue.tags,
+      energyLevel: venue.energyLevel,
+      highlightCapable: venue.highlightCapable,
+      roleAffinity: {
+        warmup: getTasteRoleSuitabilityScore(evidence, 'start'),
+        peak: getTasteRoleSuitabilityScore(evidence, 'highlight'),
+        cooldown: getTasteRoleSuitabilityScore(evidence, 'windDown'),
+      },
+      qualityGateStatus: venue.source.qualityGateStatus,
+      hoursSuppressionApplied: venue.source.hoursSuppressionApplied,
+      start: evaluateStartRoleEligibility(venue, evidence),
+      highlight: evaluateHighlightRoleEligibility(venue, evidence),
+      windDown: evaluateWindDownRoleEligibility(venue, evidence),
+    }
+  })
 }
 
 function buildRoleCounts(roleCandidates: {
@@ -979,7 +1041,12 @@ export async function buildProviderSourceOpportunity(
     })
   }
 
-  const roleCandidates = deriveRoleCandidates(admittedNearbyCandidates)
+  const tasteRoleSuitabilityEvidenceByVenueId =
+    buildTasteRoleSuitabilityEvidenceByVenueId(admittedNearbyCandidates)
+  const roleCandidates = deriveRoleCandidates(
+    admittedNearbyCandidates,
+    tasteRoleSuitabilityEvidenceByVenueId,
+  )
   const roleCandidateCounts = buildRoleCounts(roleCandidates)
   const roleCandidateReviewSummaries = buildRoleCandidateReviewSummaries(
     admittedNearbyCandidateReviews,
