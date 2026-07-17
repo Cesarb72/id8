@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs'
 import { starterPacks } from '../src/data/starterPacks.ts'
 import { curatedVenues } from '../src/data/venues.ts'
 import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
+import {
+  projectInterpretationBuildProviderSemanticQueryProjection,
+  projectInterpretationSemanticLiveQueryProjection,
+} from '../src/domain/interpretation/query/projectSemanticQueryProjection.ts'
 import { buildProviderPublicLiveEnvelope } from '../src/domain/providers/buildProviderPublicLiveWiring.ts'
 import {
   buildProviderSourceOpportunity,
@@ -20,6 +24,7 @@ type QuerySnapshotRow = {
   queryLabels: string[]
   textQueries: string[]
   sourceFamilyOrKind: string[]
+  provenanceTerms: string[][]
   centersRadius: Array<{ center: { lat: number; lng: number } | null; radiusMeters: number | null }>
   sourceMode: string
   envelopeCaps: {
@@ -34,6 +39,25 @@ type QuerySnapshotRow = {
   plannedCalls: number
   attemptedCalls: number
   providerCalls: number
+}
+
+type QueryOutputComparison = {
+  case: string
+  oldMixedQueryOutput: {
+    queryLabels: string[]
+    textQueries: string[]
+    sourceFamilyOrKind: string[]
+    provenanceTerms: string[][]
+  }
+  newInterpretationProjection: {
+    queryLabels: string[]
+    textQueries: string[]
+    sourceFamilyOrKind: string[]
+    provenanceTerms: string[][]
+  }
+  textQueryLabelsMatch: boolean
+  sourceFamilyMatch: boolean
+  provenanceTermsMatch: boolean
 }
 
 type RouteSnapshotRow = {
@@ -106,6 +130,7 @@ function summarizeLiveQueryEntries(
     queryLabels: entries.map((entry) => entry.label),
     textQueries: entries.map((entry) => entry.textQuery),
     sourceFamilyOrKind: entries.map((entry) => entry.kind),
+    provenanceTerms: entries.map((entry) => entry.queryTerms),
     centersRadius: [],
     sourceMode: 'not_dispatched',
     envelopeCaps: null,
@@ -155,6 +180,7 @@ function summarizeRequests(
     queryLabels: capturedRequests.map((request) => request.queryLabel),
     textQueries: capturedRequests.map((request) => request.textQuery),
     sourceFamilyOrKind: options.sourceFamilyOrKind,
+    provenanceTerms: capturedRequests.map((request) => tokenizeText(request.textQuery)),
     centersRadius: capturedRequests.map((request) => ({
       center: request.center ?? null,
       radiusMeters: request.radiusMeters ?? null,
@@ -169,6 +195,101 @@ function summarizeRequests(
     attemptedCalls: fieldProxyAttemptCount,
     providerCalls: countProviderCalls(),
   }
+}
+
+function queryOutputFromLiveEntries(entries: LiveQueryPlanEntry[]): QueryOutputComparison['oldMixedQueryOutput'] {
+  return {
+    queryLabels: entries.map((entry) => entry.label),
+    textQueries: entries.map((entry) => entry.textQuery),
+    sourceFamilyOrKind: entries.map((entry) => entry.kind),
+    provenanceTerms: entries.map((entry) => entry.queryTerms),
+  }
+}
+
+function queryOutputFromSnapshotRow(row: QuerySnapshotRow): QueryOutputComparison['oldMixedQueryOutput'] {
+  return {
+    queryLabels: row.queryLabels,
+    textQueries: row.textQueries,
+    sourceFamilyOrKind: row.sourceFamilyOrKind,
+    provenanceTerms: row.provenanceTerms,
+  }
+}
+
+function buildEmptyQueryOutput(): QueryOutputComparison['oldMixedQueryOutput'] {
+  return {
+    queryLabels: [],
+    textQueries: [],
+    sourceFamilyOrKind: [],
+    provenanceTerms: [],
+  }
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function buildComparison(
+  caseName: string,
+  oldMixedQueryOutput: QueryOutputComparison['oldMixedQueryOutput'],
+  newInterpretationProjection: QueryOutputComparison['newInterpretationProjection'],
+): QueryOutputComparison {
+  const textQueryLabelsMatch =
+    sameJson(oldMixedQueryOutput.queryLabels, newInterpretationProjection.queryLabels) &&
+    sameJson(oldMixedQueryOutput.textQueries, newInterpretationProjection.textQueries)
+  const sourceFamilyMatch = sameJson(
+    oldMixedQueryOutput.sourceFamilyOrKind,
+    newInterpretationProjection.sourceFamilyOrKind,
+  )
+  const provenanceTermsMatch = sameJson(
+    oldMixedQueryOutput.provenanceTerms,
+    newInterpretationProjection.provenanceTerms,
+  )
+
+  assert(textQueryLabelsMatch, `${caseName} text/query label parity failed.`)
+  assert(sourceFamilyMatch, `${caseName} source family parity failed.`)
+  assert(provenanceTermsMatch, `${caseName} provenance term parity failed.`)
+
+  return {
+    case: caseName,
+    oldMixedQueryOutput,
+    newInterpretationProjection,
+    textQueryLabelsMatch,
+    sourceFamilyMatch,
+    provenanceTermsMatch,
+  }
+}
+
+function tokenizeText(value: string): string[] {
+  return unique(
+    value
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length > 1),
+  )
+}
+
+function selectFirstDispatchOutput(
+  entries: LiveQueryPlanEntry[],
+  centerIds: string[],
+  maxProviderCalls: number,
+): QueryOutputComparison['newInterpretationProjection'] {
+  const output: QueryOutputComparison['newInterpretationProjection'] = {
+    queryLabels: [],
+    textQueries: [],
+    sourceFamilyOrKind: unique(entries.map((entry) => entry.kind)),
+    provenanceTerms: [],
+  }
+  for (const entry of entries) {
+    for (const centerId of centerIds) {
+      if (output.queryLabels.length >= maxProviderCalls) {
+        return output
+      }
+      output.queryLabels.push(`${entry.label}@${centerId}`)
+      output.textQueries.push(entry.textQuery)
+      output.provenanceTerms.push(tokenizeText(entry.textQuery))
+    }
+  }
+  return output
 }
 
 function buildMockProviderVenue(input: {
@@ -320,7 +441,7 @@ globalThis.fetch = (async (input, init) => {
   )
 }) as typeof fetch
 
-async function runGeneralNoProviderStatic(fieldMask: string[]): Promise<QuerySnapshotRow> {
+async function runGeneralNoProviderStatic(fieldMask: string): Promise<QuerySnapshotRow> {
   const caseName = 'general-live-retrieval-no-provider-static'
   resetFetchCapture(caseName)
   const result = await fetchLivePlaces(baseIntent({ mode: 'surprise' }), undefined, {
@@ -340,6 +461,7 @@ async function runGeneralNoProviderStatic(fieldMask: string[]): Promise<QuerySna
     queryLabels: result.diagnostics.liveQueryLabelsUsed,
     textQueries: [],
     sourceFamilyOrKind: result.diagnostics.requestedKinds,
+    provenanceTerms: [],
     centersRadius: result.diagnostics.queryCentersUsed.map((center) => ({
       center: { lat: center.lat, lng: center.lng },
       radiusMeters: result.diagnostics.queryRadiusM,
@@ -356,7 +478,7 @@ async function runGeneralNoProviderStatic(fieldMask: string[]): Promise<QuerySna
   }
 }
 
-async function runGeneralLiveMocked(fieldMask: string[]): Promise<QuerySnapshotRow> {
+async function runGeneralLiveMocked(fieldMask: string): Promise<QuerySnapshotRow> {
   const caseName = 'general-live-retrieval-mocked-safe'
   const envelope = { maxProviderCalls: 3, maxQueryLabels: 3, maxCenters: 3 }
   resetFetchCapture(caseName)
@@ -377,7 +499,7 @@ async function runGeneralLiveMocked(fieldMask: string[]): Promise<QuerySnapshotR
   })
 }
 
-async function runCuratePocketMocked(fieldMask: string[]): Promise<QuerySnapshotRow> {
+async function runCuratePocketMocked(fieldMask: string): Promise<QuerySnapshotRow> {
   const caseName = 'curate-coffee-books-pocket-mocked-safe'
   const envelope = { maxProviderCalls: 3, maxQueryLabels: 3, maxCenters: 1 }
   resetFetchCapture(caseName)
@@ -456,9 +578,35 @@ async function main(): Promise<void> {
   try {
     const fieldMask = extractGoogleFieldMaskFromSource()
     const surprisePlan = buildLiveQueryPlan(baseIntent({ mode: 'surprise' }))
+    const surpriseProjection = projectInterpretationSemanticLiveQueryProjection(
+      baseIntent({ mode: 'surprise' }),
+    )
     const curatePlan = buildLiveQueryPlan(
       baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
       findStarterPack('coffee-books'),
+    )
+    const curateProjection = projectInterpretationSemanticLiveQueryProjection(
+      baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
+      findStarterPack('coffee-books'),
+    )
+
+    const generalNoProviderRow = await runGeneralNoProviderStatic(fieldMask)
+    const generalLiveRow = await runGeneralLiveMocked(fieldMask)
+    const generalLiveProjection = projectInterpretationSemanticLiveQueryProjection(
+      baseIntent({ mode: 'surprise' }),
+    )
+    const curatePocketRow = await runCuratePocketMocked(fieldMask)
+    const curatePocketProjection = projectInterpretationSemanticLiveQueryProjection(
+      baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
+      findStarterPack('coffee-books'),
+      {
+        locationLabelOverride: 'Query Parity Pocket, San Jose',
+        locationScope: 'pocket',
+      },
+    )
+    const buildProvider = await runBuildProviderMocked()
+    const buildProviderProjection = projectInterpretationBuildProviderSemanticQueryProjection(
+      getPaperPlane(),
     )
 
     const queryRows: QuerySnapshotRow[] = [
@@ -472,12 +620,51 @@ async function main(): Promise<void> {
         'buildLiveQueryPlan(intent, starterPack)',
         curatePlan,
       ),
-      await runGeneralNoProviderStatic(fieldMask),
-      await runGeneralLiveMocked(fieldMask),
-      await runCuratePocketMocked(fieldMask),
+      generalNoProviderRow,
+      generalLiveRow,
+      curatePocketRow,
     ]
-    const buildProvider = await runBuildProviderMocked()
     queryRows.push(buildProvider.queryRow)
+
+    const projectionParityRows: QueryOutputComparison[] = [
+      buildComparison(
+        'surprise-buildLiveQueryPlan-direct',
+        queryOutputFromLiveEntries(surprisePlan),
+        queryOutputFromLiveEntries(surpriseProjection.entries),
+      ),
+      buildComparison(
+        'curate-coffee-books-buildLiveQueryPlan-direct',
+        queryOutputFromLiveEntries(curatePlan),
+        queryOutputFromLiveEntries(curateProjection.entries),
+      ),
+      buildComparison(
+        'general-live-retrieval-no-provider-static',
+        buildEmptyQueryOutput(),
+        buildEmptyQueryOutput(),
+      ),
+      buildComparison(
+        'general-live-retrieval-mocked-safe',
+        queryOutputFromSnapshotRow(generalLiveRow),
+        selectFirstDispatchOutput(generalLiveProjection.entries.slice(0, 3), ['core', 'north', 'east'], 3),
+      ),
+      buildComparison(
+        'curate-coffee-books-pocket-mocked-safe',
+        queryOutputFromSnapshotRow(curatePocketRow),
+        selectFirstDispatchOutput(curatePocketProjection.entries, ['pocket'], 3),
+      ),
+      buildComparison(
+        'build-provider-mocked-safe',
+        queryOutputFromSnapshotRow(buildProvider.queryRow),
+        {
+          queryLabels: buildProviderProjection.entries.map((entry) => entry.label),
+          textQueries: buildProviderProjection.entries.map((entry) => entry.textQuery),
+          sourceFamilyOrKind: unique(
+            buildProviderProjection.entries.map((entry) => entry.sourceFamily),
+          ),
+          provenanceTerms: buildProviderProjection.entries.map((entry) => entry.queryTerms),
+        },
+      ),
+    ]
 
     const routeRows: RouteSnapshotRow[] = [
       {
@@ -552,6 +739,21 @@ async function main(): Promise<void> {
             fieldFacetCompositionRequiredBefore2CClose: true,
             returnBefore2C6: true,
           },
+          interpretationProjection: {
+            owner: 'interpretation',
+            existingCarriersUsed: [
+              'IntentProfile',
+              'StarterPack',
+              'Venue anchor name/city',
+              'LiveQueryPlanEntry compatibility shape',
+            ],
+            newCanonicalArtifactCreated: false,
+            queryIntentCreated: false,
+            fieldQueryPlanCreated: false,
+            textQueryBridgeTemporary: true,
+            fieldReceivesProjectionIn2C2: false,
+          },
+          projectionParityRows,
           queryRows,
           routeRows,
           providerSafety: {
