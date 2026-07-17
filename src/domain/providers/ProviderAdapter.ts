@@ -14,6 +14,7 @@ import {
   type ProviderCallTrace,
 } from './providerCallTrace'
 import type { ProviderVenue } from './providerTypes'
+import type { GooglePlaceRecord } from '../field/googlePlaceRecord'
 import {
   getGooglePlacesConfig,
   isDevOrSandboxCloseoutFlow,
@@ -22,73 +23,6 @@ import { mapLivePlaceToRawPlace } from '../sources/mapLivePlaceToRawPlace'
 import type { LivePlaceKind } from '../sources/buildLiveQueryPlan'
 import type { SourceMode } from '../types/sourceMode'
 import type { Venue } from '../types/venue'
-
-interface GooglePlaceRecord {
-  id?: string
-  displayName?: {
-    text?: string
-  }
-  primaryType?: string
-  types?: string[]
-  liveMusic?: boolean
-  servesBeer?: boolean
-  servesWine?: boolean
-  goodForGroups?: boolean
-  goodForChildren?: boolean
-  allowsDogs?: boolean
-  servesVegetarianFood?: boolean
-  formattedAddress?: string
-  shortFormattedAddress?: string
-  addressComponents?: Array<{
-    longText?: string
-    shortText?: string
-    types?: string[]
-  }>
-  editorialSummary?: {
-    text?: string
-  }
-  businessStatus?: string
-  currentOpeningHours?: {
-    openNow?: boolean
-    weekdayDescriptions?: string[]
-    periods?: Array<{
-      open?: {
-        day?: number
-        hour?: number
-        minute?: number
-      }
-      close?: {
-        day?: number
-        hour?: number
-        minute?: number
-      }
-    }>
-  }
-  regularOpeningHours?: {
-    weekdayDescriptions?: string[]
-    periods?: Array<{
-      open?: {
-        day?: number
-        hour?: number
-        minute?: number
-      }
-      close?: {
-        day?: number
-        hour?: number
-        minute?: number
-      }
-    }>
-  }
-  priceLevel?: string
-  rating?: number
-  userRatingCount?: number
-  websiteUri?: string
-  utcOffsetMinutes?: number
-  location?: {
-    latitude?: number
-    longitude?: number
-  }
-}
 
 export interface ProviderAdapterDiagnostics {
   attempted: boolean

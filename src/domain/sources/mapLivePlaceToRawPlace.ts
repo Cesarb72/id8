@@ -1,88 +1,11 @@
 import type { LivePlaceKind } from './buildLiveQueryPlan'
-import type { HoursPeriod } from '../types/hours'
+import {
+  mapGoogleHoursPeriods,
+  type GooglePlaceRecord,
+} from '../field/googlePlaceRecord'
 import { createLiveGoogleVenueId } from '../providers/admitLiveVenueIdentity'
 import type { RawPlace } from '../types/rawPlace'
 import type { VenueCategory } from '../types/venue'
-
-interface GooglePlaceRecord {
-  id?: string
-  displayName?: {
-    text?: string
-  }
-  primaryType?: string
-  types?: string[]
-  liveMusic?: boolean
-  servesBeer?: boolean
-  servesWine?: boolean
-  goodForGroups?: boolean
-  goodForChildren?: boolean
-  allowsDogs?: boolean
-  servesVegetarianFood?: boolean
-  formattedAddress?: string
-  shortFormattedAddress?: string
-  addressComponents?: Array<{
-    longText?: string
-    shortText?: string
-    types?: string[]
-  }>
-  editorialSummary?: {
-    text?: string
-  }
-  businessStatus?: string
-  currentOpeningHours?: {
-    openNow?: boolean
-    weekdayDescriptions?: string[]
-    periods?: Array<{
-      open?: {
-        day?: number
-        hour?: number
-        minute?: number
-      }
-      close?: {
-        day?: number
-        hour?: number
-        minute?: number
-      }
-    }>
-  }
-  regularOpeningHours?: {
-    weekdayDescriptions?: string[]
-    periods?: Array<{
-      open?: {
-        day?: number
-        hour?: number
-        minute?: number
-      }
-      close?: {
-        day?: number
-        hour?: number
-        minute?: number
-      }
-    }>
-  }
-  priceLevel?: string
-  rating?: number
-  userRatingCount?: number
-  websiteUri?: string
-  utcOffsetMinutes?: number
-  location?: {
-    latitude?: number
-    longitude?: number
-  }
-}
-
-type GoogleHoursPeriod = {
-  open?: {
-    day?: number
-    hour?: number
-    minute?: number
-  }
-  close?: {
-    day?: number
-    hour?: number
-    minute?: number
-  }
-}
 
 interface MapLivePlaceContext {
   city: string
@@ -112,33 +35,6 @@ function normalizeValue(value: string): string {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)]
-}
-
-function mapHoursPeriods(
-  periods: GoogleHoursPeriod[] | undefined,
-): HoursPeriod[] | undefined {
-  if (!periods || periods.length === 0) {
-    return undefined
-  }
-
-  return periods
-    .map((period) => ({
-      open: period.open?.day === undefined || period.open.hour === undefined || period.open.minute === undefined
-        ? undefined
-        : {
-            day: period.open.day,
-            hour: period.open.hour,
-            minute: period.open.minute,
-          },
-      close: period.close?.day === undefined || period.close.hour === undefined || period.close.minute === undefined
-        ? undefined
-        : {
-            day: period.close.day,
-            hour: period.close.hour,
-            minute: period.close.minute,
-          },
-    }))
-    .filter((period) => period.open || period.close)
 }
 
 function getNormalizedTypes(place: GooglePlaceRecord): string[] {
@@ -578,8 +474,8 @@ export function mapLivePlaceToRawPlaceWithDiagnostics(
       openNow: place.currentOpeningHours?.openNow,
       businessStatus: place.businessStatus,
       hoursPeriods:
-        mapHoursPeriods(place.currentOpeningHours?.periods) ??
-        mapHoursPeriods(place.regularOpeningHours?.periods),
+        mapGoogleHoursPeriods(place.currentOpeningHours?.periods) ??
+        mapGoogleHoursPeriods(place.regularOpeningHours?.periods),
       currentOpeningHoursText: place.currentOpeningHours?.weekdayDescriptions,
       regularOpeningHoursText: place.regularOpeningHours?.weekdayDescriptions,
       utcOffsetMinutes: place.utcOffsetMinutes,
