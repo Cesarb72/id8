@@ -1,0 +1,582 @@
+import { readFileSync } from 'node:fs'
+import { starterPacks } from '../src/data/starterPacks.ts'
+import { curatedVenues } from '../src/data/venues.ts'
+import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
+import { buildProviderPublicLiveEnvelope } from '../src/domain/providers/buildProviderPublicLiveWiring.ts'
+import {
+  buildProviderSourceOpportunity,
+  buildProviderSourceOpportunityConfig,
+} from '../src/domain/providers/buildProviderSourceOpportunity.ts'
+import type { ProviderVenue } from '../src/domain/providers/providerTypes.ts'
+import { buildLiveQueryPlan, type LiveQueryPlanEntry } from '../src/domain/sources/buildLiveQueryPlan.ts'
+import { fetchLivePlaces } from '../src/domain/sources/fetchLivePlaces.ts'
+import type { IntentProfile } from '../src/domain/types/intent.ts'
+import type { StarterPack } from '../src/domain/types/starterPack.ts'
+import type { Venue } from '../src/domain/types/venue.ts'
+
+type QuerySnapshotRow = {
+  case: string
+  currentPath: string
+  queryLabels: string[]
+  textQueries: string[]
+  sourceFamilyOrKind: string[]
+  centersRadius: Array<{ center: { lat: number; lng: number } | null; radiusMeters: number | null }>
+  sourceMode: string
+  envelopeCaps: {
+    maxProviderCalls?: number
+    maxQueryLabels?: number
+    maxCenters?: number
+  } | null
+  fieldMaskPageSize: {
+    fieldMask: string[] | string | null
+    pageSize: number | null
+  }
+  plannedCalls: number
+  attemptedCalls: number
+  providerCalls: number
+}
+
+type RouteSnapshotRow = {
+  case: string
+  routePathExercised: boolean
+  downstreamRouteOutputCaptured: boolean
+  notes: string[]
+}
+
+const FIELD_PROXY_PATH = '/api/field/text-search'
+const originalFetch = globalThis.fetch
+const originalBuildProviderSupply = process.env.VITE_ID8_BUILD_PROVIDER_SUPPLY
+
+let activeMockCase = 'none'
+let directProviderFetchAttemptCount = 0
+let unexpectedFetchAttemptCount = 0
+let fieldProxyAttemptCount = 0
+let capturedRequests: FieldTextSearchRequest[] = []
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) {
+    throw new Error(message)
+  }
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)]
+}
+
+function baseIntent(patch: Partial<IntentProfile> = {}): IntentProfile {
+  return {
+    city: 'San Jose',
+    crew: 'romantic',
+    distanceMode: 'nearby',
+    mode: 'build',
+    persona: 'romantic',
+    personaSource: 'explicit',
+    planningMode: 'engine-led',
+    prefersHiddenGems: false,
+    primaryAnchor: 'cozy',
+    timeWindow: 'evening',
+    ...patch,
+  }
+}
+
+function findStarterPack(id: string): StarterPack {
+  const starterPack = starterPacks.find((candidate) => candidate.id === id)
+  assert(starterPack, `Expected starter pack ${id}.`)
+  return starterPack
+}
+
+function getPaperPlane(): Venue {
+  const venue = curatedVenues.find((candidate) => candidate.id === 'sj-paper-plane')
+  assert(venue, 'Expected Paper Plane in curated venues.')
+  assert(
+    typeof venue.source.latitude === 'number' && typeof venue.source.longitude === 'number',
+    'Paper Plane must carry provider-source coordinates for Build provider query parity.',
+  )
+  return venue
+}
+
+function summarizeLiveQueryEntries(
+  caseName: string,
+  currentPath: string,
+  entries: LiveQueryPlanEntry[],
+): QuerySnapshotRow {
+  return {
+    case: caseName,
+    currentPath,
+    queryLabels: entries.map((entry) => entry.label),
+    textQueries: entries.map((entry) => entry.textQuery),
+    sourceFamilyOrKind: entries.map((entry) => entry.kind),
+    centersRadius: [],
+    sourceMode: 'not_dispatched',
+    envelopeCaps: null,
+    fieldMaskPageSize: {
+      fieldMask: null,
+      pageSize: null,
+    },
+    plannedCalls: 0,
+    attemptedCalls: 0,
+    providerCalls: 0,
+  }
+}
+
+function extractGoogleFieldMaskFromSource(): string {
+  const source = readFileSync('src/domain/sources/fetchLivePlaces.ts', 'utf8')
+  const match = source.match(/const googleFieldMask = \[([\s\S]*?)\]\.join\(',?'\)/)
+  assert(match, 'Expected fetchLivePlaces googleFieldMask constant.')
+  return [...match[1].matchAll(/'([^']+)'/g)].map((entry) => entry[1]).join(',')
+}
+
+function resetFetchCapture(caseName: string): void {
+  activeMockCase = caseName
+  directProviderFetchAttemptCount = 0
+  unexpectedFetchAttemptCount = 0
+  fieldProxyAttemptCount = 0
+  capturedRequests = []
+}
+
+function countProviderCalls(): number {
+  return directProviderFetchAttemptCount + unexpectedFetchAttemptCount
+}
+
+function summarizeRequests(
+  caseName: string,
+  currentPath: string,
+  options: {
+    envelopeCaps: QuerySnapshotRow['envelopeCaps']
+    fieldMask: QuerySnapshotRow['fieldMaskPageSize']['fieldMask']
+    plannedCalls: number
+    sourceFamilyOrKind: string[]
+    sourceMode: string
+  },
+): QuerySnapshotRow {
+  return {
+    case: caseName,
+    currentPath,
+    queryLabels: capturedRequests.map((request) => request.queryLabel),
+    textQueries: capturedRequests.map((request) => request.textQuery),
+    sourceFamilyOrKind: options.sourceFamilyOrKind,
+    centersRadius: capturedRequests.map((request) => ({
+      center: request.center ?? null,
+      radiusMeters: request.radiusMeters ?? null,
+    })),
+    sourceMode: options.sourceMode,
+    envelopeCaps: options.envelopeCaps,
+    fieldMaskPageSize: {
+      fieldMask: options.fieldMask,
+      pageSize: capturedRequests[0]?.pageSize ?? null,
+    },
+    plannedCalls: options.plannedCalls,
+    attemptedCalls: fieldProxyAttemptCount,
+    providerCalls: countProviderCalls(),
+  }
+}
+
+function buildMockProviderVenue(input: {
+  displayName: string
+  latitude: number
+  longitude: number
+  primaryType: string
+  providerRecordId: string
+  queryLabel: string
+}): ProviderVenue {
+  return {
+    provider: 'google_places',
+    providerRecordId: input.providerRecordId,
+    displayName: input.displayName,
+    formattedAddress: `${input.displayName}, San Jose, CA`,
+    shortFormattedAddress: 'San Jose, CA',
+    primaryType: input.primaryType,
+    types: [input.primaryType, 'point_of_interest', 'establishment'],
+    liveMusic: false,
+    servesBeer: true,
+    servesWine: true,
+    goodForGroups: true,
+    goodForChildren: false,
+    allowsDogs: false,
+    servesVegetarianFood: false,
+    editorialSummary: `${input.displayName} mocked for query planner split parity.`,
+    businessStatus: 'OPERATIONAL',
+    currentOpeningHours: {
+      openNow: true,
+      weekdayDescriptions: ['Monday: 5:00 PM - 11:00 PM'],
+    },
+    regularOpeningHours: {
+      weekdayDescriptions: ['Monday: 5:00 PM - 11:00 PM'],
+    },
+    rating: 4.6,
+    userRatingCount: 120,
+    utcOffsetMinutes: -420,
+    websiteUri: 'https://example.test',
+    location: {
+      latitude: input.latitude,
+      longitude: input.longitude,
+    },
+    sourceMode: 'live',
+    rawPayloadAvailable: false,
+    fetchedAt: 1782691200000,
+    completenessHints: {
+      hasAddress: true,
+      hasHours: true,
+      hasLocation: true,
+      hasPrimaryType: true,
+      hasRating: true,
+    },
+  }
+}
+
+function buildMockResultsForRequest(request: FieldTextSearchRequest): ProviderVenue[] {
+  const center = request.center ?? { lat: 37.3382, lng: -121.8863 }
+
+  if (activeMockCase === 'build-provider-mocked-safe') {
+    if (request.queryLabel === 'build-provider-start') {
+      return [
+        buildMockProviderVenue({
+          displayName: 'Query Planner Parity Start',
+          latitude: 37.3307,
+          longitude: -121.8871,
+          primaryType: 'cafe',
+          providerRecordId: 'query-planner-parity-start',
+          queryLabel: request.queryLabel,
+        }),
+      ]
+    }
+    if (request.queryLabel === 'build-provider-highlight') {
+      return [
+        buildMockProviderVenue({
+          displayName: 'Query Planner Parity Highlight',
+          latitude: 37.3481,
+          longitude: -121.8944,
+          primaryType: 'restaurant',
+          providerRecordId: 'query-planner-parity-highlight',
+          queryLabel: request.queryLabel,
+        }),
+      ]
+    }
+    if (request.queryLabel === 'build-provider-winddown') {
+      return [
+        buildMockProviderVenue({
+          displayName: 'Query Planner Parity Wind Down',
+          latitude: 37.3359,
+          longitude: -121.8894,
+          primaryType: 'dessert',
+          providerRecordId: 'query-planner-parity-winddown',
+          queryLabel: request.queryLabel,
+        }),
+      ]
+    }
+  }
+
+  return [
+    buildMockProviderVenue({
+      displayName: `Query Planner Parity ${request.queryLabel}`,
+      latitude: center.lat,
+      longitude: center.lng,
+      primaryType: request.queryLabel.includes('bar') ? 'bar' : 'cafe',
+      providerRecordId: `query-planner-${request.queryLabel}`,
+      queryLabel: request.queryLabel,
+    }),
+  ]
+}
+
+globalThis.fetch = (async (input, init) => {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+  if (/googleapis|places\.google|maps\.google/i.test(url)) {
+    directProviderFetchAttemptCount += 1
+    throw new Error(`Direct provider fetch is forbidden in 2C-1 parity observer: ${url}`)
+  }
+  if (url !== FIELD_PROXY_PATH) {
+    unexpectedFetchAttemptCount += 1
+    throw new Error(`Unexpected fetch path in 2C-1 parity observer: ${url}`)
+  }
+
+  fieldProxyAttemptCount += 1
+  const request = JSON.parse(String(init?.body ?? '{}')) as FieldTextSearchRequest
+  capturedRequests.push(request)
+  const results = buildMockResultsForRequest(request)
+
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      cache: 'mocked',
+      budget: {
+        date: '2026-07-16',
+        cap: 32,
+        used: fieldProxyAttemptCount,
+        remaining: Math.max(0, 32 - fieldProxyAttemptCount),
+      },
+      results,
+      diagnostics: {
+        purpose: request.purpose,
+        queryHash: `query-planner-split-parity:${activeMockCase}:${request.queryLabel}`,
+        providerStatus: 'mocked_field_proxy',
+        resultCount: results.length,
+        callConsumed: false,
+      },
+    } satisfies FieldTextSearchResponse),
+    {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    },
+  )
+}) as typeof fetch
+
+async function runGeneralNoProviderStatic(fieldMask: string[]): Promise<QuerySnapshotRow> {
+  const caseName = 'general-live-retrieval-no-provider-static'
+  resetFetchCapture(caseName)
+  const result = await fetchLivePlaces(baseIntent({ mode: 'surprise' }), undefined, {
+    maxQueryCenters: 0,
+    sourceMode: 'curated',
+    envelope: {
+      maxProviderCalls: 0,
+      maxQueryLabels: 0,
+    },
+  })
+  assert(result.diagnostics.dispatchQueriesPlanned === 0, `${caseName} planned provider dispatch.`)
+  assert(result.diagnostics.dispatchQueriesAttempted === 0, `${caseName} attempted provider dispatch.`)
+  assert(fieldProxyAttemptCount === 0, `${caseName} hit the Field proxy.`)
+  return {
+    case: caseName,
+    currentPath: 'fetchLivePlaces -> ProviderAdapter curated block',
+    queryLabels: result.diagnostics.liveQueryLabelsUsed,
+    textQueries: [],
+    sourceFamilyOrKind: result.diagnostics.requestedKinds,
+    centersRadius: result.diagnostics.queryCentersUsed.map((center) => ({
+      center: { lat: center.lat, lng: center.lng },
+      radiusMeters: result.diagnostics.queryRadiusM,
+    })),
+    sourceMode: 'curated',
+    envelopeCaps: { maxProviderCalls: 0, maxQueryLabels: 0, maxCenters: 0 },
+    fieldMaskPageSize: {
+      fieldMask,
+      pageSize: null,
+    },
+    plannedCalls: result.diagnostics.dispatchQueriesPlanned,
+    attemptedCalls: result.diagnostics.dispatchQueriesAttempted,
+    providerCalls: countProviderCalls(),
+  }
+}
+
+async function runGeneralLiveMocked(fieldMask: string[]): Promise<QuerySnapshotRow> {
+  const caseName = 'general-live-retrieval-mocked-safe'
+  const envelope = { maxProviderCalls: 3, maxQueryLabels: 3, maxCenters: 3 }
+  resetFetchCapture(caseName)
+  const result = await fetchLivePlaces(baseIntent({ mode: 'surprise' }), undefined, {
+    maxQueryCenters: envelope.maxCenters,
+    sourceMode: 'live',
+    envelope,
+  })
+  assert(result.diagnostics.dispatchQueriesPlanned === 3, `${caseName} planned-call drift.`)
+  assert(result.diagnostics.dispatchQueriesAttempted === 3, `${caseName} attempted-call drift.`)
+  assert(fieldProxyAttemptCount === 3, `${caseName} proxy attempt drift.`)
+  return summarizeRequests(caseName, 'fetchLivePlaces -> ProviderAdapter mocked Field proxy', {
+    envelopeCaps: envelope,
+    fieldMask,
+    plannedCalls: result.diagnostics.dispatchQueriesPlanned,
+    sourceFamilyOrKind: result.diagnostics.requestedKinds,
+    sourceMode: 'live',
+  })
+}
+
+async function runCuratePocketMocked(fieldMask: string[]): Promise<QuerySnapshotRow> {
+  const caseName = 'curate-coffee-books-pocket-mocked-safe'
+  const envelope = { maxProviderCalls: 3, maxQueryLabels: 3, maxCenters: 1 }
+  resetFetchCapture(caseName)
+  const result = await fetchLivePlaces(
+    baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
+    findStarterPack('coffee-books'),
+    {
+      maxQueryCenters: envelope.maxCenters,
+      sourceMode: 'live',
+      envelope,
+      pocketHint: {
+        pocketId: 'query-parity-pocket',
+        pocketLabel: 'Query Parity Pocket',
+        centroid: { lat: 37.32123, lng: -121.91234 },
+        radiusM: 180,
+        source: 'district_intelligence',
+        city: 'San Jose',
+        locationLabel: 'Query Parity Pocket, San Jose',
+      },
+    },
+  )
+  assert(result.diagnostics.pocketCenteredRetrievalApplied, `${caseName} lost pocket centering.`)
+  assert(result.diagnostics.queryRadiusM === 650, `${caseName} pocket radius drift.`)
+  assert(fieldProxyAttemptCount === 3, `${caseName} proxy attempt drift.`)
+  return summarizeRequests(caseName, 'fetchLivePlaces coffee-books pocket -> mocked Field proxy', {
+    envelopeCaps: envelope,
+    fieldMask,
+    plannedCalls: result.diagnostics.dispatchQueriesPlanned,
+    sourceFamilyOrKind: result.diagnostics.requestedKinds,
+    sourceMode: 'live',
+  })
+}
+
+async function runBuildProviderMocked(): Promise<{
+  queryRow: QuerySnapshotRow
+  routeRow: RouteSnapshotRow
+}> {
+  const caseName = 'build-provider-mocked-safe'
+  const envelope = buildProviderPublicLiveEnvelope()
+  resetFetchCapture(caseName)
+  process.env.VITE_ID8_BUILD_PROVIDER_SUPPLY = 'true'
+  const result = await buildProviderSourceOpportunity({
+    anchorVenue: getPaperPlane(),
+    liveEnvelope: envelope,
+  })
+  assert(result.opportunity, `${caseName} did not emit a provider opportunity.`)
+  assert(fieldProxyAttemptCount === 3, `${caseName} proxy attempt drift.`)
+  return {
+    queryRow: summarizeRequests(caseName, 'buildProviderSourceOpportunity -> executeFieldProviderTextSearch', {
+      envelopeCaps: envelope,
+      fieldMask: buildProviderSourceOpportunityConfig.fieldMask,
+      plannedCalls: 3,
+      sourceFamilyOrKind: ['build_provider_nearby'],
+      sourceMode: 'live',
+    }),
+    routeRow: {
+      case: caseName,
+      routePathExercised: true,
+      downstreamRouteOutputCaptured: true,
+      notes: [
+        `emitted=${String(result.diagnostics.buildProviderSourceOpportunityEmitted)}`,
+        `blocked=${result.diagnostics.buildProviderSupplyBlockedReason ?? 'none'}`,
+        `roleCounts=${JSON.stringify(result.diagnostics.buildProviderRoleCandidateCounts)}`,
+        `selected=${[
+          ...result.opportunity.roleCandidates.start.map((venue) => venue.id),
+          result.opportunity.anchor.venue.id,
+          ...result.opportunity.roleCandidates.highlight.map((venue) => venue.id),
+          ...result.opportunity.roleCandidates.windDown.map((venue) => venue.id),
+        ].join('>')}`,
+      ],
+    },
+  }
+}
+
+async function main(): Promise<void> {
+  try {
+    const fieldMask = extractGoogleFieldMaskFromSource()
+    const surprisePlan = buildLiveQueryPlan(baseIntent({ mode: 'surprise' }))
+    const curatePlan = buildLiveQueryPlan(
+      baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
+      findStarterPack('coffee-books'),
+    )
+
+    const queryRows: QuerySnapshotRow[] = [
+      summarizeLiveQueryEntries(
+        'surprise-buildLiveQueryPlan-direct',
+        'buildLiveQueryPlan(intent)',
+        surprisePlan,
+      ),
+      summarizeLiveQueryEntries(
+        'curate-coffee-books-buildLiveQueryPlan-direct',
+        'buildLiveQueryPlan(intent, starterPack)',
+        curatePlan,
+      ),
+      await runGeneralNoProviderStatic(fieldMask),
+      await runGeneralLiveMocked(fieldMask),
+      await runCuratePocketMocked(fieldMask),
+    ]
+    const buildProvider = await runBuildProviderMocked()
+    queryRows.push(buildProvider.queryRow)
+
+    const routeRows: RouteSnapshotRow[] = [
+      {
+        case: 'surprise-buildLiveQueryPlan-direct',
+        routePathExercised: false,
+        downstreamRouteOutputCaptured: false,
+        notes: ['Direct query-plan snapshot only; route output not part of this path.'],
+      },
+      {
+        case: 'curate-coffee-books-buildLiveQueryPlan-direct',
+        routePathExercised: false,
+        downstreamRouteOutputCaptured: false,
+        notes: ['Direct starter query-plan snapshot only; route output not part of this path.'],
+      },
+      {
+        case: 'general-live-retrieval-no-provider-static',
+        routePathExercised: false,
+        downstreamRouteOutputCaptured: false,
+        notes: ['Closed/curated provider boundary exercised; no route generation requested.'],
+      },
+      {
+        case: 'general-live-retrieval-mocked-safe',
+        routePathExercised: false,
+        downstreamRouteOutputCaptured: false,
+        notes: ['Mocked retrieval dispatch exercised; downstream route output not requested.'],
+      },
+      {
+        case: 'curate-coffee-books-pocket-mocked-safe',
+        routePathExercised: false,
+        downstreamRouteOutputCaptured: false,
+        notes: ['Mocked Curate pocket dispatch exercised; downstream route output not requested.'],
+      },
+      buildProvider.routeRow,
+    ]
+
+    for (const row of queryRows) {
+      assert(row.providerCalls === 0, `${row.case} made provider/network calls.`)
+    }
+
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          observer: 'query_planner_split_parity',
+          proofType: 'observer_local_existing_carriers_no_provider',
+          canonicalOwnershipGate: [
+            {
+              proposedHelperView: 'Query planner split parity snapshot rows',
+              existingOwnerHome:
+                'observer-local view over buildLiveQueryPlan, LiveSourceDiagnostics, ProviderTextSearchQuery, LiveProviderEnvelope, SourceMode',
+              newArtifact: false,
+              whatTwoThingsRemoved: 'none; observer-local only',
+              allowed: true,
+            },
+            {
+              proposedHelperView: 'QueryIntent',
+              existingOwnerHome: 'ConciergeIntent / existing Interpretation intent carriers',
+              newArtifact: true,
+              whatTwoThingsRemoved: 'none',
+              allowed: false,
+            },
+            {
+              proposedHelperView: 'FieldQueryPlan',
+              existingOwnerHome:
+                'LiveQueryPlanEntry / LiveProviderEnvelope / ProviderTextSearchQuery / LiveSourceDiagnostics / SourceMode',
+              newArtifact: true,
+              whatTwoThingsRemoved: 'none in 2C-1',
+              allowed: false,
+            },
+          ],
+          definitionOfDoneAmendment: {
+            textQueryBridgeTemporary: true,
+            fieldFacetCompositionRequiredBefore2CClose: true,
+            returnBefore2C6: true,
+          },
+          queryRows,
+          routeRows,
+          providerSafety: {
+            directProviderFetchAttemptCount,
+            unexpectedFetchAttemptCount,
+            providerCalls: queryRows.reduce((sum, row) => sum + row.providerCalls, 0),
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    process.stdout.write('query planner split parity harness: passed\n')
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalBuildProviderSupply === undefined) {
+      delete process.env.VITE_ID8_BUILD_PROVIDER_SUPPLY
+    } else {
+      process.env.VITE_ID8_BUILD_PROVIDER_SUPPLY = originalBuildProviderSupply
+    }
+  }
+}
+
+main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.stack ?? error.message : String(error)
+  process.stderr.write(`${message}\n`)
+  process.exitCode = 1
+})
