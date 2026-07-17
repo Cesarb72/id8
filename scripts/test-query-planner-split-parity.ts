@@ -2,6 +2,13 @@ import { readFileSync } from 'node:fs'
 import { starterPacks } from '../src/data/starterPacks.ts'
 import { curatedVenues } from '../src/data/venues.ts'
 import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
+import {
+  projectFieldMechanicalBuildProviderTextSearchScaffold,
+  projectFieldMechanicalLiveQueryScaffold,
+  projectFieldMechanicalProviderTextSearchScaffold,
+  type FieldMechanicalBuildProviderTextSearchScaffold,
+  type FieldMechanicalProviderTextSearchScaffold,
+} from '../src/domain/field/projectFieldMechanicalQueryScaffold.ts'
 import { buildApplicationConciergeIntent } from '../src/domain/interpretation/conciergeIntent/buildConciergeIntent.ts'
 import {
   projectInterpretationBuildProviderSemanticQueryProjection,
@@ -57,9 +64,34 @@ type QueryOutputComparison = {
     sourceFamilyOrKind: string[]
     provenanceTerms: string[][]
   }
+  fieldMechanicalScaffold: {
+    queryLabels: string[]
+    textQueries: string[]
+    sourceFamilyOrKind: string[]
+    provenanceTerms: string[][]
+  }
   textQueryLabelsMatch: boolean
   sourceFamilyMatch: boolean
   provenanceTermsMatch: boolean
+  fieldTextQueryLabelsMatch: boolean
+  fieldSourceFamilyMatch: boolean
+  fieldProvenanceTermsMatch: boolean
+}
+
+type FieldMechanicalScaffoldRow = {
+  case: string
+  sourceMode: string
+  envelopeCaps: QuerySnapshotRow['envelopeCaps']
+  fieldMaskPageSize: QuerySnapshotRow['fieldMaskPageSize']
+  centersRadius: QuerySnapshotRow['centersRadius']
+  plannedCalls: number
+  attemptedCalls: number
+  providerCalls: number
+  labelsConsidered: number
+  labelsAdmitted: number
+  centersConsidered: number
+  centersAdmitted: number
+  plannedWithinCap: boolean
 }
 
 type RouteSnapshotRow = {
@@ -242,6 +274,18 @@ function queryOutputFromLiveEntries(entries: LiveQueryPlanEntry[]): QueryOutputC
   }
 }
 
+function queryOutputFromProviderQueries(
+  queries: Array<{ queryLabel: string; textQuery: string }>,
+  sourceFamilyOrKind: string[],
+): QueryOutputComparison['oldMixedQueryOutput'] {
+  return {
+    queryLabels: queries.map((query) => query.queryLabel),
+    textQueries: queries.map((query) => query.textQuery),
+    sourceFamilyOrKind,
+    provenanceTerms: queries.map((query) => tokenizeText(query.textQuery)),
+  }
+}
+
 function queryOutputFromSnapshotRow(row: QuerySnapshotRow): QueryOutputComparison['oldMixedQueryOutput'] {
   return {
     queryLabels: row.queryLabels,
@@ -268,6 +312,7 @@ function buildComparison(
   caseName: string,
   oldMixedQueryOutput: QueryOutputComparison['oldMixedQueryOutput'],
   newInterpretationProjection: QueryOutputComparison['newInterpretationProjection'],
+  fieldMechanicalScaffold: QueryOutputComparison['fieldMechanicalScaffold'],
 ): QueryOutputComparison {
   const textQueryLabelsMatch =
     sameJson(oldMixedQueryOutput.queryLabels, newInterpretationProjection.queryLabels) &&
@@ -280,18 +325,36 @@ function buildComparison(
     oldMixedQueryOutput.provenanceTerms,
     newInterpretationProjection.provenanceTerms,
   )
+  const fieldTextQueryLabelsMatch =
+    sameJson(oldMixedQueryOutput.queryLabels, fieldMechanicalScaffold.queryLabels) &&
+    sameJson(oldMixedQueryOutput.textQueries, fieldMechanicalScaffold.textQueries)
+  const fieldSourceFamilyMatch = sameJson(
+    oldMixedQueryOutput.sourceFamilyOrKind,
+    fieldMechanicalScaffold.sourceFamilyOrKind,
+  )
+  const fieldProvenanceTermsMatch = sameJson(
+    oldMixedQueryOutput.provenanceTerms,
+    fieldMechanicalScaffold.provenanceTerms,
+  )
 
   assert(textQueryLabelsMatch, `${caseName} text/query label parity failed.`)
   assert(sourceFamilyMatch, `${caseName} source family parity failed.`)
   assert(provenanceTermsMatch, `${caseName} provenance term parity failed.`)
+  assert(fieldTextQueryLabelsMatch, `${caseName} Field scaffold text/query label parity failed.`)
+  assert(fieldSourceFamilyMatch, `${caseName} Field scaffold source family parity failed.`)
+  assert(fieldProvenanceTermsMatch, `${caseName} Field scaffold provenance term parity failed.`)
 
   return {
     case: caseName,
     oldMixedQueryOutput,
     newInterpretationProjection,
+    fieldMechanicalScaffold,
     textQueryLabelsMatch,
     sourceFamilyMatch,
     provenanceTermsMatch,
+    fieldTextQueryLabelsMatch,
+    fieldSourceFamilyMatch,
+    fieldProvenanceTermsMatch,
   }
 }
 
@@ -326,6 +389,99 @@ function selectFirstDispatchOutput(
     }
   }
   return output
+}
+
+function centersFromSnapshotRow(row: QuerySnapshotRow): Array<{ id: string; lat: number; lng: number }> {
+  return row.centersRadius.map((entry, index) => {
+    assert(entry.center, `${row.case} expected captured center ${index}.`)
+    return {
+      id: row.queryLabels[index]?.split('@')[1] ?? `center-${index}`,
+      lat: entry.center.lat,
+      lng: entry.center.lng,
+    }
+  })
+}
+
+function summarizeFieldProviderScaffold(
+  row: QuerySnapshotRow,
+  scaffold: FieldMechanicalProviderTextSearchScaffold,
+): FieldMechanicalScaffoldRow {
+  const centersRadius = scaffold.queries.map((query) => ({
+    center: query.locationBias
+      ? {
+          lat: query.locationBias.circle.center.latitude,
+          lng: query.locationBias.circle.center.longitude,
+        }
+      : null,
+    radiusMeters: query.locationBias?.circle.radius ?? null,
+  }))
+  assert(sameJson(centersRadius, row.centersRadius), `${row.case} Field scaffold centers/radius drifted.`)
+  assert(scaffold.plannedCalls === row.plannedCalls, `${row.case} Field scaffold planned calls drifted.`)
+  assert(scaffold.queries.length === row.attemptedCalls, `${row.case} Field scaffold attempted calls drifted.`)
+  assert(
+    scaffold.queries.every((query) => query.fieldMask === row.fieldMaskPageSize.fieldMask),
+    `${row.case} Field scaffold field mask drifted.`,
+  )
+  assert(
+    scaffold.queries.every((query) => query.pageSize === row.fieldMaskPageSize.pageSize),
+    `${row.case} Field scaffold page size drifted.`,
+  )
+  return {
+    case: row.case,
+    sourceMode: row.sourceMode,
+    envelopeCaps: row.envelopeCaps,
+    fieldMaskPageSize: row.fieldMaskPageSize,
+    centersRadius,
+    plannedCalls: scaffold.plannedCalls,
+    attemptedCalls: scaffold.queries.length,
+    providerCalls: 0,
+    labelsConsidered: scaffold.labelsConsidered,
+    labelsAdmitted: scaffold.labelsAdmitted,
+    centersConsidered: scaffold.centersConsidered,
+    centersAdmitted: scaffold.centersAdmitted,
+    plannedWithinCap: scaffold.plannedWithinCap,
+  }
+}
+
+function summarizeFieldBuildProviderScaffold(
+  row: QuerySnapshotRow,
+  scaffold: FieldMechanicalBuildProviderTextSearchScaffold,
+): FieldMechanicalScaffoldRow {
+  const centersRadius = scaffold.queries.map((query) => ({
+    center: query.locationBias
+      ? {
+          lat: query.locationBias.circle.center.latitude,
+          lng: query.locationBias.circle.center.longitude,
+        }
+      : null,
+    radiusMeters: query.locationBias?.circle.radius ?? null,
+  }))
+  assert(sameJson(centersRadius, row.centersRadius), `${row.case} Field scaffold centers/radius drifted.`)
+  assert(scaffold.plannedCalls === row.plannedCalls, `${row.case} Field scaffold planned calls drifted.`)
+  assert(scaffold.queries.length === row.attemptedCalls, `${row.case} Field scaffold attempted calls drifted.`)
+  assert(
+    scaffold.queries.every((query) => query.fieldMask === row.fieldMaskPageSize.fieldMask),
+    `${row.case} Field scaffold field mask drifted.`,
+  )
+  assert(
+    scaffold.queries.every((query) => query.pageSize === row.fieldMaskPageSize.pageSize),
+    `${row.case} Field scaffold page size drifted.`,
+  )
+  return {
+    case: row.case,
+    sourceMode: row.sourceMode,
+    envelopeCaps: row.envelopeCaps,
+    fieldMaskPageSize: row.fieldMaskPageSize,
+    centersRadius,
+    plannedCalls: scaffold.plannedCalls,
+    attemptedCalls: scaffold.queries.length,
+    providerCalls: 0,
+    labelsConsidered: scaffold.labelsConsidered,
+    labelsAdmitted: scaffold.labelsAdmitted,
+    centersConsidered: row.centersRadius.length,
+    centersAdmitted: row.centersRadius.length > 0 ? 1 : 0,
+    plannedWithinCap: scaffold.plannedWithinCap,
+  }
 }
 
 function buildMockProviderVenue(input: {
@@ -617,6 +773,7 @@ async function main(): Promise<void> {
     const surpriseProjection = projectInterpretationSemanticLiveQueryProjection(
       buildCanonicalSemanticProjectionInput(baseIntent({ mode: 'surprise' })),
     )
+    const surpriseFieldScaffold = projectFieldMechanicalLiveQueryScaffold(surpriseProjection)
     const curatePlan = buildLiveQueryPlan(
       baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
       findStarterPack('coffee-books'),
@@ -627,12 +784,29 @@ async function main(): Promise<void> {
         findStarterPack('coffee-books'),
       ),
     )
+    const curateFieldScaffold = projectFieldMechanicalLiveQueryScaffold(curateProjection)
 
     const generalNoProviderRow = await runGeneralNoProviderStatic(fieldMask)
+    const generalNoProviderFieldScaffold = projectFieldMechanicalProviderTextSearchScaffold({
+      semanticProjection: surpriseProjection,
+      centers: [],
+      radiusM: 0,
+      fieldMask,
+      pageSize: 8,
+      envelope: { maxProviderCalls: 0, maxQueryLabels: 0, maxCenters: 0 },
+    })
     const generalLiveRow = await runGeneralLiveMocked(fieldMask)
     const generalLiveProjection = projectInterpretationSemanticLiveQueryProjection(
       buildCanonicalSemanticProjectionInput(baseIntent({ mode: 'surprise' })),
     )
+    const generalLiveFieldScaffold = projectFieldMechanicalProviderTextSearchScaffold({
+      semanticProjection: generalLiveProjection,
+      centers: centersFromSnapshotRow(generalLiveRow),
+      radiusM: generalLiveRow.centersRadius[0]?.radiusMeters ?? 0,
+      fieldMask,
+      pageSize: generalLiveRow.fieldMaskPageSize.pageSize ?? 8,
+      envelope: { maxProviderCalls: 3, maxQueryLabels: 3, maxCenters: 3 },
+    })
     const curatePocketRow = await runCuratePocketMocked(fieldMask)
     const curatePocketProjection = projectInterpretationSemanticLiveQueryProjection(
       buildCanonicalSemanticProjectionInput(
@@ -644,10 +818,28 @@ async function main(): Promise<void> {
         },
       ),
     )
+    const curatePocketFieldScaffold = projectFieldMechanicalProviderTextSearchScaffold({
+      semanticProjection: curatePocketProjection,
+      centers: centersFromSnapshotRow(curatePocketRow),
+      radiusM: curatePocketRow.centersRadius[0]?.radiusMeters ?? 0,
+      fieldMask,
+      pageSize: curatePocketRow.fieldMaskPageSize.pageSize ?? 8,
+      envelope: { maxProviderCalls: 3, maxQueryLabels: 3, maxCenters: 1 },
+    })
     const buildProvider = await runBuildProviderMocked()
     const buildProviderProjection = projectInterpretationBuildProviderSemanticQueryProjection(
       getPaperPlane(),
     )
+    const buildProviderCenter = buildProvider.queryRow.centersRadius[0]?.center
+    assert(buildProviderCenter, 'Expected Build provider field scaffold center.')
+    const buildProviderFieldScaffold = projectFieldMechanicalBuildProviderTextSearchScaffold({
+      semanticProjection: buildProviderProjection,
+      center: { latitude: buildProviderCenter.lat, longitude: buildProviderCenter.lng },
+      radiusM: buildProvider.queryRow.centersRadius[0]?.radiusMeters ?? 0,
+      fieldMask: buildProviderSourceOpportunityConfig.fieldMask,
+      pageSize: buildProvider.queryRow.fieldMaskPageSize.pageSize ?? 5,
+      envelope: buildProvider.queryRow.envelopeCaps ?? undefined,
+    })
 
     const queryRows: QuerySnapshotRow[] = [
       summarizeLiveQueryEntries(
@@ -671,26 +863,37 @@ async function main(): Promise<void> {
         'surprise-buildLiveQueryPlan-direct',
         queryOutputFromLiveEntries(surprisePlan),
         queryOutputFromLiveEntries(surpriseProjection.entries),
+        queryOutputFromLiveEntries(surpriseFieldScaffold.entries),
       ),
       buildComparison(
         'curate-coffee-books-buildLiveQueryPlan-direct',
         queryOutputFromLiveEntries(curatePlan),
         queryOutputFromLiveEntries(curateProjection.entries),
+        queryOutputFromLiveEntries(curateFieldScaffold.entries),
       ),
       buildComparison(
         'general-live-retrieval-no-provider-static',
         buildEmptyQueryOutput(),
         buildEmptyQueryOutput(),
+        queryOutputFromProviderQueries(generalNoProviderFieldScaffold.queries, []),
       ),
       buildComparison(
         'general-live-retrieval-mocked-safe',
         queryOutputFromSnapshotRow(generalLiveRow),
         selectFirstDispatchOutput(generalLiveProjection.entries.slice(0, 3), ['core', 'north', 'east'], 3),
+        queryOutputFromProviderQueries(
+          generalLiveFieldScaffold.queries,
+          unique(generalLiveFieldScaffold.admittedEntries.map((entry) => entry.kind)),
+        ),
       ),
       buildComparison(
         'curate-coffee-books-pocket-mocked-safe',
         queryOutputFromSnapshotRow(curatePocketRow),
         selectFirstDispatchOutput(curatePocketProjection.entries, ['pocket'], 3),
+        queryOutputFromProviderQueries(
+          curatePocketFieldScaffold.queries,
+          unique(curatePocketFieldScaffold.admittedEntries.map((entry) => entry.kind)),
+        ),
       ),
       buildComparison(
         'build-provider-mocked-safe',
@@ -703,7 +906,45 @@ async function main(): Promise<void> {
           ),
           provenanceTerms: buildProviderProjection.entries.map((entry) => entry.queryTerms),
         },
+        queryOutputFromProviderQueries(buildProviderFieldScaffold.queries, ['build_provider_nearby']),
       ),
+    ]
+
+    const fieldMechanicalScaffoldRows: FieldMechanicalScaffoldRow[] = [
+      {
+        case: 'surprise-buildLiveQueryPlan-direct',
+        sourceMode: 'not_dispatched',
+        envelopeCaps: null,
+        fieldMaskPageSize: { fieldMask: null, pageSize: null },
+        centersRadius: [],
+        plannedCalls: 0,
+        attemptedCalls: 0,
+        providerCalls: 0,
+        labelsConsidered: surpriseFieldScaffold.labelsConsidered,
+        labelsAdmitted: surpriseFieldScaffold.labelsAdmitted,
+        centersConsidered: 0,
+        centersAdmitted: 0,
+        plannedWithinCap: true,
+      },
+      {
+        case: 'curate-coffee-books-buildLiveQueryPlan-direct',
+        sourceMode: 'not_dispatched',
+        envelopeCaps: null,
+        fieldMaskPageSize: { fieldMask: null, pageSize: null },
+        centersRadius: [],
+        plannedCalls: 0,
+        attemptedCalls: 0,
+        providerCalls: 0,
+        labelsConsidered: curateFieldScaffold.labelsConsidered,
+        labelsAdmitted: curateFieldScaffold.labelsAdmitted,
+        centersConsidered: 0,
+        centersAdmitted: 0,
+        plannedWithinCap: true,
+      },
+      summarizeFieldProviderScaffold(generalNoProviderRow, generalNoProviderFieldScaffold),
+      summarizeFieldProviderScaffold(generalLiveRow, generalLiveFieldScaffold),
+      summarizeFieldProviderScaffold(curatePocketRow, curatePocketFieldScaffold),
+      summarizeFieldBuildProviderScaffold(buildProvider.queryRow, buildProviderFieldScaffold),
     ]
 
     const routeRows: RouteSnapshotRow[] = [
@@ -759,6 +1000,14 @@ async function main(): Promise<void> {
               allowed: true,
             },
             {
+              proposedHelperView: 'Field mechanical query scaffold',
+              existingOwnerHome:
+                'Field-owned mechanical view over LiveQueryPlanEntry, ProviderTextSearchQuery, LiveProviderEnvelope, LiveSourceDiagnostics, SourceMode',
+              newArtifact: false,
+              whatTwoThingsRemoved: 'none; scaffold-only over existing mechanical carriers',
+              allowed: true,
+            },
+            {
               proposedHelperView: 'QueryIntent',
               existingOwnerHome: 'ConciergeIntent / existing Interpretation intent carriers',
               newArtifact: true,
@@ -794,6 +1043,22 @@ async function main(): Promise<void> {
             fieldQueryPlanCreated: false,
             textQueryBridgeTemporary: true,
             fieldReceivesProjectionIn2C2: false,
+          },
+          fieldMechanicalScaffold: {
+            owner: 'field',
+            existingCarriersUsed: [
+              'LiveQueryPlanEntry compatibility shape',
+              'ProviderTextSearchQuery',
+              'LiveProviderEnvelope caps',
+              'LiveSourceDiagnostics-equivalent counters',
+              'SourceMode observer value',
+            ],
+            newCanonicalArtifactCreated: false,
+            fieldQueryPlanCreated: false,
+            textQueryBridgeTemporary: true,
+            branchesOnSemanticMeaning: false,
+            consumerMigrationIn2C3: false,
+            rows: fieldMechanicalScaffoldRows,
           },
           projectionParityRows,
           queryRows,
