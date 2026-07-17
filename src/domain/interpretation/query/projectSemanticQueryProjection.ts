@@ -1,8 +1,15 @@
-import { getTimeWindowSignal } from '../../retrieval/getTimeWindowSignal'
 import type { LivePlaceKind, LiveQueryPlanEntry, LiveQueryRoleHint } from '../../sources/buildLiveQueryPlan'
-import type { IntentProfile } from '../../types/intent'
+import type {
+  ConciergeIntent,
+  VibeAnchor,
+} from '../../types/intent'
+import type {
+  MovementOriginPrecision,
+  MovementOriginSource,
+} from '../../../engines/district/types/districtTypes'
 import type { StarterPack } from '../../types/starterPack'
 import type { Venue } from '../../types/venue'
+import type { WhenSignalProfile, WhenSignalTimePhase } from '../../when/whenSignalProfile'
 
 export type SemanticQuerySearchBreadth = 'focused' | 'balanced' | 'broad'
 export type SemanticQueryNoveltyPressure = 'low' | 'medium' | 'high'
@@ -56,6 +63,27 @@ export interface InterpretationBuildProviderSemanticQueryProjection {
   }
 }
 
+export interface InterpretationSemanticQueryPlaceContext {
+  city: string
+  neighborhood?: string
+  locationLabelOverride?: string
+  locationScope?: SemanticQueryLocationScope
+  originPrecision?: MovementOriginPrecision
+  originSource?: MovementOriginSource
+}
+
+export interface InterpretationSemanticQueryProjectionInput {
+  conciergeIntent: ConciergeIntent
+  whenSignalProfile: WhenSignalProfile
+  placeContext: InterpretationSemanticQueryPlaceContext
+  starterPack?: StarterPack
+}
+
+interface SemanticQueryTimeSignal {
+  phase: Exclude<WhenSignalTimePhase, 'unspecified'>
+  label: string
+}
+
 function normalizeTerm(value: string): string {
   return value.trim().toLowerCase().replace(/[_-]+/g, ' ')
 }
@@ -69,18 +97,21 @@ function pickStarterPackTerms(starterPack?: StarterPack): string[] {
   return unique(preferred.slice(0, 3).map(normalizeTerm).filter((value) => value.length >= 4))
 }
 
-function getPersonaTerms(intent: IntentProfile): string[] {
-  if (intent.crew === 'romantic') {
+function getPersonaTerms(conciergeIntent: ConciergeIntent): string[] {
+  if (conciergeIntent.experienceProfile.persona === 'romantic') {
     return ['intimate', 'date night', 'conversation']
   }
-  if (intent.crew === 'socialite') {
+  if (
+    conciergeIntent.experienceProfile.socialEnergy === 'high' ||
+    conciergeIntent.constraintPosture.structureRigidity === 'flexible'
+  ) {
     return ['social', 'cocktail', 'lively']
   }
   return ['welcoming', 'casual', 'comfortable']
 }
 
-function getVibeTerms(intent: IntentProfile): string[] {
-  const primary = intent.primaryAnchor
+function getVibeTerms(vibe: VibeAnchor): string[] {
+  const primary = vibe
   if (primary === 'cozy') {
     return ['cozy', 'quiet', 'warm']
   }
@@ -102,8 +133,13 @@ function getVibeTerms(intent: IntentProfile): string[] {
   return ['scenic', 'open air', 'local']
 }
 
-function buildLocationLabel(intent: IntentProfile): string {
-  return intent.neighborhood ? `${intent.neighborhood}, ${intent.city}` : intent.city
+function buildLocationLabel(placeContext: InterpretationSemanticQueryPlaceContext): string {
+  if (placeContext.locationLabelOverride?.trim()) {
+    return placeContext.locationLabelOverride.trim()
+  }
+  return placeContext.neighborhood
+    ? `${placeContext.neighborhood}, ${placeContext.city}`
+    : placeContext.city
 }
 
 function buildQueryText(kind: LivePlaceKind, descriptors: string[], locationLabel: string): string {
@@ -113,6 +149,36 @@ function buildQueryText(kind: LivePlaceKind, descriptors: string[], locationLabe
 
 function isCoffeeBooksStarter(starterPack?: StarterPack): boolean {
   return starterPack?.id === 'coffee-books'
+}
+
+function getTimeSignal(whenSignalProfile: WhenSignalProfile): SemanticQueryTimeSignal {
+  if (whenSignalProfile.timePhase !== 'unspecified') {
+    return {
+      phase: whenSignalProfile.timePhase,
+      label: whenSignalProfile.startTime?.trim() || whenSignalProfile.timePhase,
+    }
+  }
+  if (
+    whenSignalProfile.whenPosture === 'now_doable_tonight' ||
+    whenSignalProfile.whenPosture === 'later_tonight'
+  ) {
+    return {
+      phase: 'evening',
+      label: whenSignalProfile.whenPosture,
+    }
+  }
+  return {
+    phase: 'evening',
+    label: whenSignalProfile.whenPosture,
+  }
+}
+
+function usesSocialQueryPosture(conciergeIntent: ConciergeIntent): boolean {
+  return (
+    conciergeIntent.experienceProfile.socialEnergy === 'high' ||
+    conciergeIntent.constraintPosture.structureRigidity === 'flexible' ||
+    conciergeIntent.constraintPosture.swapTolerance === 'high'
+  )
 }
 
 function getSequencePurpose(roleHint: LiveQueryRoleHint): SemanticQuerySequencePurpose {
@@ -138,11 +204,20 @@ function getSearchBreadth(roleHint: LiveQueryRoleHint): SemanticQuerySearchBread
   return 'balanced'
 }
 
-function getNoveltyPressure(intent: IntentProfile, starterPack?: StarterPack): SemanticQueryNoveltyPressure {
-  if (intent.prefersHiddenGems || starterPack?.lensPreset?.discoveryBias === 'high') {
+function getNoveltyPressure(
+  intent: ConciergeIntent,
+  starterPack?: StarterPack,
+): SemanticQueryNoveltyPressure {
+  if (
+    intent.realityPosture.noveltyPriority === 'high' ||
+    starterPack?.lensPreset?.discoveryBias === 'high'
+  ) {
     return 'high'
   }
-  if (starterPack?.lensPreset?.discoveryBias === 'low') {
+  if (
+    intent.realityPosture.noveltyPriority === 'low' ||
+    starterPack?.lensPreset?.discoveryBias === 'low'
+  ) {
     return 'low'
   }
   return 'medium'
@@ -150,7 +225,7 @@ function getNoveltyPressure(intent: IntentProfile, starterPack?: StarterPack): S
 
 function projectLiveEntry(
   entry: LiveQueryPlanEntry,
-  intent: IntentProfile,
+  conciergeIntent: ConciergeIntent,
   starterPack: StarterPack | undefined,
   locationScope: SemanticQueryLocationScope,
 ): InterpretationSemanticLiveQueryProjectionEntry {
@@ -161,7 +236,7 @@ function projectLiveEntry(
       sourceFamily: entry.kind,
       requestedKind: entry.kind,
       searchBreadth: getSearchBreadth(entry.roleHint),
-      noveltyPressure: getNoveltyPressure(intent, starterPack),
+      noveltyPressure: getNoveltyPressure(conciergeIntent, starterPack),
       locationScope,
       timeWindowApplicability: 'current_window',
       sequencePurpose: getSequencePurpose(entry.roleHint),
@@ -170,37 +245,37 @@ function projectLiveEntry(
 }
 
 function buildProjectedEntries(
-  intent: IntentProfile,
-  starterPack?: StarterPack,
-  options: { locationLabelOverride?: string } = {},
+  input: InterpretationSemanticQueryProjectionInput,
 ): LiveQueryPlanEntry[] {
-  const locationLabel = options.locationLabelOverride?.trim() || buildLocationLabel(intent)
-  const timeSignal = getTimeWindowSignal(intent)
-  const personaTerms = getPersonaTerms(intent)
-  const vibeTerms = getVibeTerms(intent)
+  const { conciergeIntent, starterPack, whenSignalProfile, placeContext } = input
+  const locationLabel = buildLocationLabel(placeContext)
+  const timeSignal = getTimeSignal(whenSignalProfile)
+  const personaTerms = getPersonaTerms(conciergeIntent)
+  const vibe = conciergeIntent.experienceProfile.vibe
+  const vibeTerms = getVibeTerms(vibe)
   const starterPackTerms = pickStarterPackTerms(starterPack)
-  const dateOrSocialTerms =
-    intent.crew === 'romantic'
-      ? ['wine', 'dessert']
-      : intent.crew === 'socialite'
-        ? ['cocktail', 'group friendly']
-        : ['coffee', 'daytime']
+  const socialQueryPosture = usesSocialQueryPosture(conciergeIntent)
+  const dateOrSocialTerms = conciergeIntent.experienceProfile.persona === 'romantic'
+    ? ['wine', 'dessert']
+    : socialQueryPosture
+      ? ['cocktail', 'group friendly']
+      : ['coffee', 'daytime']
 
   const startKind: LivePlaceKind =
     timeSignal.phase === 'morning' || timeSignal.phase === 'afternoon' ? 'cafe' : 'restaurant'
   const highlightKind: LivePlaceKind =
     timeSignal.phase === 'late-night' ||
-    intent.primaryAnchor === 'lively' ||
-    intent.crew === 'socialite'
+    vibe === 'lively' ||
+    socialQueryPosture
       ? 'bar'
       : 'restaurant'
   const windDownKind: LivePlaceKind = timeSignal.phase === 'late-night' ? 'bar' : 'cafe'
   const cultureKind: LivePlaceKind =
-    intent.primaryAnchor === 'cultured' || intent.crew === 'curator'
+    vibe === 'cultured' || conciergeIntent.starterLineage.primaryAnchor === 'cultured'
       ? 'museum'
       : 'activity'
   const strollKind: LivePlaceKind =
-    intent.primaryAnchor === 'cozy' || intent.primaryAnchor === 'chill' ? 'park' : 'activity'
+    vibe === 'cozy' || vibe === 'chill' ? 'park' : 'activity'
 
   const coffeeBooksStarter = isCoffeeBooksStarter(starterPack)
   const plan: LiveQueryPlanEntry[] = coffeeBooksStarter
@@ -413,22 +488,22 @@ function buildProjectedEntries(
 }
 
 export function projectInterpretationSemanticLiveQueryProjection(
-  intent: IntentProfile,
-  starterPack?: StarterPack,
-  options: { locationLabelOverride?: string; locationScope?: SemanticQueryLocationScope } = {},
+  input: InterpretationSemanticQueryProjectionInput,
 ): InterpretationSemanticLiveQueryProjection {
-  const entries = buildProjectedEntries(intent, starterPack, options)
-  const locationScope = options.locationScope ?? (options.locationLabelOverride ? 'pocket' : 'city')
+  const entries = buildProjectedEntries(input)
+  const locationScope =
+    input.placeContext.locationScope ??
+    (input.placeContext.locationLabelOverride ? 'pocket' : 'city')
   return {
     entries,
     projectedEntries: entries.map((entry) =>
-      projectLiveEntry(entry, intent, starterPack, locationScope),
+      projectLiveEntry(entry, input.conciergeIntent, input.starterPack, locationScope),
     ),
     provenance: {
       owner: 'interpretation',
       compatibilityBridge: 'text_query_passthrough_until_2c_6',
       notes: [
-        'Projection is derived from existing Interpretation intent/starter carriers.',
+        'Projection is derived from canonical ConciergeIntent, WhenSignalProfile, place context, and starter carriers.',
         'textQuery passthrough preserves 2C parity only; Field facet composition is required before 2C closes.',
       ],
     },

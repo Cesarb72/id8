@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { starterPacks } from '../src/data/starterPacks.ts'
 import { curatedVenues } from '../src/data/venues.ts'
 import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
+import { buildApplicationConciergeIntent } from '../src/domain/interpretation/conciergeIntent/buildConciergeIntent.ts'
 import {
   projectInterpretationBuildProviderSemanticQueryProjection,
   projectInterpretationSemanticLiveQueryProjection,
@@ -17,6 +18,7 @@ import { fetchLivePlaces } from '../src/domain/sources/fetchLivePlaces.ts'
 import type { IntentProfile } from '../src/domain/types/intent.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
 import type { Venue } from '../src/domain/types/venue.ts'
+import { buildWhenSignalProfile } from '../src/domain/when/whenSignalProfile.ts'
 
 type QuerySnapshotRow = {
   case: string
@@ -100,6 +102,40 @@ function baseIntent(patch: Partial<IntentProfile> = {}): IntentProfile {
     primaryAnchor: 'cozy',
     timeWindow: 'evening',
     ...patch,
+  }
+}
+
+function buildCanonicalSemanticProjectionInput(
+  intent: IntentProfile,
+  starterPack?: StarterPack,
+  options: { locationLabelOverride?: string; locationScope?: 'city' | 'pocket' | 'anchor_nearby' } = {},
+): Parameters<typeof projectInterpretationSemanticLiveQueryProjection>[0] {
+  const persona = intent.persona ?? starterPack?.personaBias ?? 'romantic'
+  return {
+    conciergeIntent: buildApplicationConciergeIntent({
+      mode: intent.mode,
+      persona,
+      primaryVibe: intent.primaryAnchor,
+      city: intent.city,
+      starterPack,
+      anchor: intent.anchor,
+    }),
+    whenSignalProfile: buildWhenSignalProfile({
+      whenPosture: 'pick_a_time',
+      whenPostureSource: intent.timeWindow ? 'user_supplied' : 'defaulted',
+      startTime: intent.timeWindow,
+      durationMinutes: null,
+      spatialMode: 'WALKABLE',
+    }),
+    placeContext: {
+      city: intent.city,
+      neighborhood: intent.neighborhood,
+      locationLabelOverride: options.locationLabelOverride,
+      locationScope: options.locationScope,
+      originPrecision: intent.originPrecision,
+      originSource: intent.originSource,
+    },
+    starterPack,
   }
 }
 
@@ -579,30 +615,34 @@ async function main(): Promise<void> {
     const fieldMask = extractGoogleFieldMaskFromSource()
     const surprisePlan = buildLiveQueryPlan(baseIntent({ mode: 'surprise' }))
     const surpriseProjection = projectInterpretationSemanticLiveQueryProjection(
-      baseIntent({ mode: 'surprise' }),
+      buildCanonicalSemanticProjectionInput(baseIntent({ mode: 'surprise' })),
     )
     const curatePlan = buildLiveQueryPlan(
       baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
       findStarterPack('coffee-books'),
     )
     const curateProjection = projectInterpretationSemanticLiveQueryProjection(
-      baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
-      findStarterPack('coffee-books'),
+      buildCanonicalSemanticProjectionInput(
+        baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
+        findStarterPack('coffee-books'),
+      ),
     )
 
     const generalNoProviderRow = await runGeneralNoProviderStatic(fieldMask)
     const generalLiveRow = await runGeneralLiveMocked(fieldMask)
     const generalLiveProjection = projectInterpretationSemanticLiveQueryProjection(
-      baseIntent({ mode: 'surprise' }),
+      buildCanonicalSemanticProjectionInput(baseIntent({ mode: 'surprise' })),
     )
     const curatePocketRow = await runCuratePocketMocked(fieldMask)
     const curatePocketProjection = projectInterpretationSemanticLiveQueryProjection(
-      baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
-      findStarterPack('coffee-books'),
-      {
+      buildCanonicalSemanticProjectionInput(
+        baseIntent({ mode: 'curate', primaryAnchor: 'cultured' }),
+        findStarterPack('coffee-books'),
+        {
         locationLabelOverride: 'Query Parity Pocket, San Jose',
         locationScope: 'pocket',
-      },
+        },
+      ),
     )
     const buildProvider = await runBuildProviderMocked()
     const buildProviderProjection = projectInterpretationBuildProviderSemanticQueryProjection(
@@ -742,7 +782,9 @@ async function main(): Promise<void> {
           interpretationProjection: {
             owner: 'interpretation',
             existingCarriersUsed: [
-              'IntentProfile',
+              'ConciergeIntent',
+              'WhenSignalProfile',
+              'origin/place context',
               'StarterPack',
               'Venue anchor name/city',
               'LiveQueryPlanEntry compatibility shape',
