@@ -3,6 +3,7 @@ import type { VenueSourceMetadata } from '../types/normalization'
 import type { Venue } from '../types/venue'
 import type {
   FieldRealAvailabilityEvidence,
+  FieldRealAvailabilityStatus,
   FieldRealFailureReason,
   FieldRealQualityEvidence,
   FieldRealStalenessStatus,

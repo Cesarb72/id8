@@ -3146,6 +3146,7 @@ function pickRoleCandidates(
   return {
     candidates: limitedRanked,
     status: {
+      ...diagnosticsStatus,
       role,
       contractLabel: roleContract.label,
       contractStrength: roleContract.strength,
@@ -3167,7 +3168,6 @@ function pickRoleCandidates(
       preferredDiscoveryVenueHoursRelaxed: preferredAdmission.hoursRelaxed,
       preferredDiscoveryVenueHoursRelaxationReason:
         preferredAdmission.hoursRelaxationReason,
-      ...diagnosticsStatus,
     },
   }
 }

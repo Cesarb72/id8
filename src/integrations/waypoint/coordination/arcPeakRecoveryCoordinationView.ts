@@ -145,16 +145,13 @@ export type ArcPeakRecoveryBearingsSourceAccepted =
   AssertPeakRecoveryOwnerSource<'bearings'>
 
 // @ts-expect-error Waypoint coordinates owner-authored recovery signals; it cannot author them.
-export type ArcPeakRecoveryWaypointSourceRejected =
-  AssertPeakRecoveryOwnerSource<'waypoint'>
+export type ArcPeakRecoveryWaypointSourceRejected = AssertPeakRecoveryOwnerSource<'waypoint'>
 
 // @ts-expect-error Compatibility payloads are not owner-authored eligibility signals.
-export type ArcPeakRecoveryCompatSourceRejected =
-  AssertPeakRecoveryOwnerSource<'compat'>
+export type ArcPeakRecoveryCompatSourceRejected = AssertPeakRecoveryOwnerSource<'compat'>
 
 // @ts-expect-error Taste peak-worthiness signals require Taste provenance.
-export type ArcPeakRecoveryMissingTasteProvenanceRejected =
-  AssertPeakRecoveryTasteSignal<{
+export type ArcPeakRecoveryMissingTasteProvenanceRejected = AssertPeakRecoveryTasteSignal<{
     key: 'taste_peak_worthiness'
     value: true
     status: 'peak_worthy'
@@ -162,8 +159,7 @@ export type ArcPeakRecoveryMissingTasteProvenanceRejected =
   }>
 
 // @ts-expect-error Bearings peak feasibility signals require Bearings provenance.
-export type ArcPeakRecoveryMissingBearingsProvenanceRejected =
-  AssertPeakRecoveryBearingsSignal<{
+export type ArcPeakRecoveryMissingBearingsProvenanceRejected = AssertPeakRecoveryBearingsSignal<{
     key: 'bearings_peak_feasibility'
     value: true
     verdict: PeakCandidateFeasibilityVerdict & {
@@ -172,15 +168,13 @@ export type ArcPeakRecoveryMissingBearingsProvenanceRejected =
   }>
 
 // @ts-expect-error Missing Taste peak-worthiness makes a recovery candidate ineligible.
-export type ArcPeakRecoveryMissingTasteSignalRejected =
-  AssertPeakRecoveryEligibility<{
+export type ArcPeakRecoveryMissingTasteSignalRejected = AssertPeakRecoveryEligibility<{
     tasteCentralMomentQuality: ArcPeakRecoveryTasteCentralMomentQualitySignal
     bearingsPeakFeasibility: ArcPeakRecoveryBearingsFeasibilitySignal
   }>
 
 // @ts-expect-error Missing Bearings feasibility makes a recovery candidate ineligible.
-export type ArcPeakRecoveryMissingBearingsSignalRejected =
-  AssertPeakRecoveryEligibility<{
+export type ArcPeakRecoveryMissingBearingsSignalRejected = AssertPeakRecoveryEligibility<{
     tastePeakWorthiness: ArcPeakRecoveryTastePeakWorthinessSignal
     tasteCentralMomentQuality: ArcPeakRecoveryTasteCentralMomentQualitySignal
   }>
@@ -193,8 +187,7 @@ export type ArcPeakRecoveryRawScoreRejected = AssertPeakRecoveryCandidate<{
 }>
 
 // @ts-expect-error Recovery outcomes cannot be provided as eligibility truth.
-export type ArcPeakRecoveryOutcomeTruthRejected =
-  AssertPeakRecoveryEligibility<{
+export type ArcPeakRecoveryOutcomeTruthRejected = AssertPeakRecoveryEligibility<{
     tastePeakWorthiness: ArcPeakRecoveryTastePeakWorthinessSignal
     tasteCentralMomentQuality: ArcPeakRecoveryTasteCentralMomentQualitySignal
     bearingsPeakFeasibility: ArcPeakRecoveryBearingsFeasibilitySignal

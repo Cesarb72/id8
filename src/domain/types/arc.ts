@@ -171,7 +171,7 @@ export interface ArcScoreBreakdown {
   diversityScore: number
   repeatedCategoryCount?: number
   categoryDiversityPenalty?: number
-  categoryDiversityNotes?: string[]
+  categoryDiversityNotes?: readonly string[]
   geographyScore: number
   spatialCoherenceScore?: number
   spatialBonus?: number
@@ -254,7 +254,7 @@ export interface ArcScoreBreakdown {
   familyCompetitionScore?: number
   familyCompetitionPenalty?: number
   familyCompetitionActive?: boolean
-  familyCompetitionEligibleFamilies?: string[]
+  familyCompetitionEligibleFamilies?: readonly string[]
   familyCompetitionLeadingFamily?: string
   familyCompetitionTopSpread?: number
   familyCompetitionThreshold?: number
@@ -291,7 +291,7 @@ export interface ArcScoreBreakdown {
   activationMomentElevationApplied?: boolean
   activationMomentElevationReason?: string
   activationMomentElevationCandidateNames?: string[]
-  activationMomentElevationCandidateFamilies?: string[]
+  activationMomentElevationCandidateFamilies?: readonly string[]
   activationMomentElevationTopCandidateName?: string
   activationMomentElevationTopCandidatePotential?: number
   activationMomentElevationWinnerElevated?: boolean

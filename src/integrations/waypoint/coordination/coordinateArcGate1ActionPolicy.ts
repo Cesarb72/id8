@@ -9,6 +9,8 @@ import type {
   OwnerProvenancedGate1ActionSignal,
 } from './arcGate1ActionPolicyView'
 
+type AnyArcGate1ActionCandidate = ArcGate1ActionCandidate<ArcGate1ActionKind, unknown>
+
 function signalPassed(signal: OwnerProvenancedGate1ActionSignal): boolean {
   if (signal.value === false) {
     return false
@@ -26,7 +28,7 @@ function allSignalsPassed(
 }
 
 function hasFailedSignal(
-  candidate: ArcGate1ActionCandidate,
+  candidate: AnyArcGate1ActionCandidate,
   source: OwnerProvenancedGate1ActionSignal['source'],
   key?: string,
 ): boolean {
@@ -39,7 +41,7 @@ function hasFailedSignal(
 }
 
 function hasPassedSignal(
-  candidate: ArcGate1ActionCandidate,
+  candidate: AnyArcGate1ActionCandidate,
   source: OwnerProvenancedGate1ActionSignal['source'],
   key?: string,
 ): boolean {
@@ -52,7 +54,7 @@ function hasPassedSignal(
 }
 
 function fallbackRefusalReason(
-  candidate: ArcGate1ActionCandidate,
+  candidate: AnyArcGate1ActionCandidate,
 ): ArcGate1ActionRefusalReason {
   if (hasFailedSignal(candidate, 'taste')) {
     return 'fallback:would_mask_missing_meaning'
@@ -69,7 +71,7 @@ function fallbackRefusalReason(
   return 'fallback:no_owner_valid_candidate'
 }
 
-function preferredRoleAdmissionPassed(candidate: ArcGate1ActionCandidate): boolean {
+function preferredRoleAdmissionPassed(candidate: AnyArcGate1ActionCandidate): boolean {
   return (
     hasPassedSignal(candidate, 'taste', 'role_support') &&
     hasPassedSignal(candidate, 'taste', 'intent_support') &&
@@ -82,7 +84,7 @@ function preferredRoleAdmissionPassed(candidate: ArcGate1ActionCandidate): boole
 }
 
 function preferredRoleAdmissionRefusalReason(
-  candidate: ArcGate1ActionCandidate,
+  candidate: AnyArcGate1ActionCandidate,
 ): ArcGate1ActionRefusalReason {
   if (
     hasFailedSignal(candidate, 'taste', 'role_support') ||
@@ -109,7 +111,7 @@ function preferredRoleAdmissionRefusalReason(
   return 'preferred_role:owner_signal_failed'
 }
 
-function familyPreservationPassed(candidate: ArcGate1ActionCandidate): boolean {
+function familyPreservationPassed(candidate: AnyArcGate1ActionCandidate): boolean {
   return (
     hasPassedSignal(candidate, 'taste', 'family_fit') &&
     hasPassedSignal(candidate, 'taste', 'peak_support') &&
@@ -123,7 +125,7 @@ function familyPreservationPassed(candidate: ArcGate1ActionCandidate): boolean {
 }
 
 function familyPreservationRefusalReasons(
-  candidate: ArcGate1ActionCandidate,
+  candidate: AnyArcGate1ActionCandidate,
 ): readonly ArcGate1ActionRefusalReason[] {
   if (
     hasFailedSignal(candidate, 'taste', 'family_fit') ||
@@ -154,7 +156,7 @@ function familyPreservationRefusalReasons(
   return ['family_preservation:owner_signal_failed']
 }
 
-function contractPressurePassed(candidate: ArcGate1ActionCandidate): boolean {
+function contractPressurePassed(candidate: AnyArcGate1ActionCandidate): boolean {
   return (
     hasPassedSignal(candidate, 'taste', 'role_support') &&
     hasPassedSignal(candidate, 'taste', 'intent_support') &&
@@ -165,7 +167,7 @@ function contractPressurePassed(candidate: ArcGate1ActionCandidate): boolean {
 }
 
 function contractPressureRefusalReason(
-  candidate: ArcGate1ActionCandidate,
+  candidate: AnyArcGate1ActionCandidate,
 ): ArcGate1ActionRefusalReason {
   if (
     hasFailedSignal(candidate, 'taste', 'role_support') ||
@@ -191,7 +193,7 @@ function contractPressureRefusalReason(
 }
 
 function buildDecision(
-  candidate: ArcGate1ActionCandidate,
+  candidate: AnyArcGate1ActionCandidate,
   decision: ArcGate1ActionDecisionKind,
   reasons?: readonly ArcGate1ActionRefusalReason[],
 ): ArcGate1ActionDecision {
@@ -285,7 +287,7 @@ export function coordinateArcGate1ActionPolicy<TPayload = unknown>(
 }
 
 export function coordinateArcGate1ActionCandidate(
-  candidate: ArcGate1ActionCandidate,
+  candidate: AnyArcGate1ActionCandidate,
 ): ArcGate1ActionDecision {
   const passed = allSignalsPassed(candidate.ownerSignals)
 

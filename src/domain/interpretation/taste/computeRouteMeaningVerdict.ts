@@ -33,6 +33,21 @@ export interface TasteRouteMeaningStopEvidenceInput {
   vibeFitScore?: number
 }
 
+export type RouteMeaningRomanticHighlightArbitrationResult =
+  | 'romantic_highlight_won'
+  | 'generic_cozy_highlight_won'
+  | 'non_generic_highlight_won'
+  | 'no_romantic_alternative_available'
+
+export type RouteMeaningFamilyCompetitionWinnerMode =
+  | 'single_family_only'
+  | 'clear_family_lead'
+  | 'competitive_field_best_family_won'
+  | 'competitive_field_alternate_family_won'
+  | 'competitive_field_non_competing_family_won'
+
+export type RouteMeaningExpressionWidth = 'narrow' | 'moderate' | 'broad'
+
 export interface RouteMeaningCompatibilityValues {
   vibeCoherenceScore: number
   highlightVibeScore: number
@@ -60,7 +75,7 @@ export interface RouteMeaningCompatibilityValues {
   romanticContractSatisfied: boolean
   romanticContractFeasible: boolean
   romanticHighlightCandidatesFeasible: number
-  romanticHighlightArbitrationResult: string
+  romanticHighlightArbitrationResult: RouteMeaningRomanticHighlightArbitrationResult
   familyCompetitionScore: number
   familyCompetitionPenalty: number
   familyCompetitionActive: boolean
@@ -68,8 +83,8 @@ export interface RouteMeaningCompatibilityValues {
   familyCompetitionLeadingFamily?: string
   familyCompetitionTopSpread: number
   familyCompetitionThreshold: number
-  familyCompetitionWinnerMode: string
-  expressionWidth: string
+  familyCompetitionWinnerMode: RouteMeaningFamilyCompetitionWinnerMode
+  expressionWidth: RouteMeaningExpressionWidth
   expressionWidthReason: string
   expressionWidthFamilyCount: number
   expressionWidthCompetitiveFamilyCount: number
@@ -113,7 +128,7 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
 }
 
-function average(values: readonly Array<number | undefined>): number | undefined {
+function average(values: ReadonlyArray<number | undefined>): number | undefined {
   const numericValues = values.filter((value): value is number => typeof value === 'number')
 
   if (numericValues.length === 0) {
@@ -684,10 +699,11 @@ export function computeRouteMeaningVerdict(
     family: toScoreVerdict(familyFit),
   }
   const dominantPersona = input.requestedPersona ?? getDominantPersona(routeFitByPersona)
-  const dominantPersonaFit =
-    input.requestedPersona && routeFitByPersona[input.requestedPersona]
-      ? routeFitByPersona[input.requestedPersona]
-      : toScoreVerdict(undefined)
+  const requestedPersonaFit = input.requestedPersona
+    ? routeFitByPersona[input.requestedPersona]
+    : undefined
+  const dominantPersonaFit: TasteRouteMeaningScoreVerdict =
+    requestedPersonaFit ?? toScoreVerdict(undefined)
   const categoryMeaningScore = clamp01(
     compatibility.categoryDiversityScore +
       compatibility.categoryDiversityBonus +

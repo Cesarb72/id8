@@ -27,7 +27,7 @@ export interface TasteRouteMeaningProvenance {
 }
 
 export interface TasteRouteMeaningSignalComponent<
-  TValue extends TasteRouteMeaningComparableValue = number,
+  TValue extends TasteRouteMeaningComparableValue = TasteRouteMeaningComparableValue,
 > extends TasteRouteMeaningProvenance {
   value: TValue
   weight?: number

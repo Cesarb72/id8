@@ -70,6 +70,7 @@ import { scoreAnchoredRoleFit } from '../domain/arc/scoreAnchoredRoleFit'
 import {
   coordinateSteeringPrelockSwapProposals,
   projectSteeringSwapCandidateForCoordination,
+  type SteeringSwapCandidateProjection,
 } from '../integrations/waypoint/coordination/coordinateSteeringPrelockProposals'
 import type { SteeringPrelockAcceptedProposal } from '../integrations/waypoint/coordination/steeringPrelockProposal'
 import { inverseRoleProjection } from '../domain/config/roleProjection'
@@ -8908,14 +8909,7 @@ function getRoleAlternatives(
           value,
         ): value is {
           candidate: ScoredVenue
-          steeringCandidate: NonNullable<
-            ReturnType<typeof projectSteeringSwapCandidateForCoordination> extends {
-              status: 'projected'
-              candidate: infer TCandidate
-            }
-              ? TCandidate
-              : never
-          >
+          steeringCandidate: SteeringSwapCandidateProjection
         } => Boolean(value),
       )
 
@@ -11261,14 +11255,7 @@ export function SandboxConciergePage({
               value,
             ): value is {
               candidate: ScoredVenue
-              steeringCandidate: NonNullable<
-                ReturnType<typeof projectSteeringSwapCandidateForCoordination> extends {
-                  status: 'projected'
-                  candidate: infer TCandidate
-                }
-                  ? TCandidate
-                  : never
-              >
+              steeringCandidate: SteeringSwapCandidateProjection
             } => Boolean(value),
           )
         const currentStopIdentity = projectedCandidates[0]?.steeringCandidate.currentStopIdentity
@@ -18117,14 +18104,7 @@ export function SandboxConciergePage({
         .filter(
           (
             value,
-          ): value is NonNullable<
-            ReturnType<typeof projectSteeringSwapCandidateForCoordination> extends {
-              status: 'projected'
-              candidate: infer TCandidate
-            }
-              ? TCandidate
-              : never
-          > => Boolean(value),
+          ): value is SteeringSwapCandidateProjection => Boolean(value),
         )
 
       const currentStopIdentity = projectedCandidates[0]?.currentStopIdentity

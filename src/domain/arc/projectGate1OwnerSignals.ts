@@ -23,6 +23,7 @@ import type { VenueSourceMetadata } from '../types/normalization'
 import type { InternalRole } from '../types/venue'
 import type {
   ArcGate1ActionCandidate,
+  ArcGate1ActionEligibility,
   ArcGate1ActionKind,
   ArcGate1BearingsActionSignal,
   ArcGate1CompatibilityPayload,
@@ -48,9 +49,11 @@ export interface Gate1OwnerSignalProjection {
   missingOwnerSignals: readonly string[]
 }
 
-export interface ProjectGate1OwnerSignalsInput {
+export interface ProjectGate1OwnerSignalsInput<
+  TAction extends ArcGate1ActionKind = ArcGate1ActionKind,
+> {
   candidate: ScoredVenue
-  action: ArcGate1ActionKind
+  action: TAction
   role?: InternalRole
   intent?: IntentProfile
   routeCandidate?: ArcCandidate
@@ -58,8 +61,10 @@ export interface ProjectGate1OwnerSignalsInput {
   routeContext?: ArcGate1RouteContext
 }
 
-export interface ProjectGate1ActionCandidateInput
-  extends ProjectGate1OwnerSignalsInput {
+export interface ProjectGate1ActionCandidateInput<
+  TAction extends ArcGate1ActionKind = ArcGate1ActionKind,
+>
+  extends ProjectGate1OwnerSignalsInput<TAction> {
   id?: string
   deterministicTieBreakKey?: string
 }
@@ -446,8 +451,8 @@ export function projectGate1OwnerSignals(
     context: {
       mode: input.intent?.mode,
       persona: input.intent?.persona ?? null,
-      contractPersona: input.intent?.experienceContract?.persona,
-      contractVibe: input.intent?.experienceContract?.vibe,
+      contractPersona: undefined,
+      contractVibe: undefined,
       selectedDirectionContext: input.intent?.selectedDirectionContext,
     },
     candidate: toTasteRolePoolMeaningCandidateInput(input.candidate),
@@ -493,9 +498,11 @@ export function projectGate1OwnerSignals(
   }
 }
 
-export function projectGate1ActionCandidate(
-  input: ProjectGate1ActionCandidateInput,
-): ArcGate1ActionCandidate<ArcGate1ActionKind, ScoredVenue> {
+export function projectGate1ActionCandidate<
+  TAction extends ArcGate1ActionKind,
+>(
+  input: ProjectGate1ActionCandidateInput<TAction>,
+): ArcGate1ActionCandidate<TAction, ScoredVenue> {
   const projection = projectGate1OwnerSignals(input)
   const role = candidateRole(input)
   const id = input.id ?? input.candidate.candidateIdentity.candidateId
@@ -511,6 +518,12 @@ export function projectGate1ActionCandidate(
         : undefined,
   }
 
+  const eligibility = {
+    taste: projection.taste,
+    bearings: projection.bearings,
+    field: projection.field,
+  } as ArcGate1ActionEligibility<TAction>
+
   return {
     id,
     action: input.action,
@@ -523,18 +536,7 @@ export function projectGate1ActionCandidate(
     roleRouteContext,
     deterministicTieBreakKey:
       input.deterministicTieBreakKey ?? input.candidate.candidateIdentity.candidateId,
-    eligibility:
-      input.action === 'fallback'
-        ? {
-            taste: projection.taste,
-            bearings: projection.bearings,
-            field: projection.field,
-          }
-        : {
-            taste: projection.taste,
-            bearings: projection.bearings,
-            field: projection.field,
-          },
+    eligibility,
     ownerSignals: projection.ownerSignals,
     compatibility: input.compatibility,
   }

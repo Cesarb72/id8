@@ -3572,7 +3572,7 @@ async function runGeneratePlanInternal(
     categoryDiversityPenalty: roundToHundredths(
       selectedArc.scoreBreakdown.categoryDiversityPenalty ?? 0,
     ),
-    notes: selectedArc.scoreBreakdown.categoryDiversityNotes ?? [],
+    notes: [...(selectedArc.scoreBreakdown.categoryDiversityNotes ?? [])],
   }
   const boundaryDiagnostics: BoundaryDiagnostics = {
     boundaryInvoked: true,

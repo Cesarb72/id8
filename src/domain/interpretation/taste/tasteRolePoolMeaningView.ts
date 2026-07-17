@@ -98,25 +98,19 @@ export type TasteRolePoolMeaningCentralMomentQualityAccepted =
   AssertTasteRolePoolMeaningEvidenceKind<'central_moment_quality'>
 
 // @ts-expect-error Taste carries peak worthiness, not peak arbitration.
-export type TasteRolePoolMeaningRejectsArbitration =
-  AssertTasteRolePoolMeaningEvidenceKind<'peak_arbitration'>
+export type TasteRolePoolMeaningRejectsArbitration = AssertTasteRolePoolMeaningEvidenceKind<'peak_arbitration'>
 
 // @ts-expect-error Bearings owns feasibility evidence.
-export type TasteRolePoolMeaningRejectsFeasibility =
-  AssertTasteRolePoolMeaningEvidenceKind<'movement_feasibility'>
+export type TasteRolePoolMeaningRejectsFeasibility = AssertTasteRolePoolMeaningEvidenceKind<'movement_feasibility'>
 
 // @ts-expect-error Waypoint/coordination owns fallback selection.
-export type TasteRolePoolMeaningRejectsFallbackSelection =
-  AssertTasteRolePoolMeaningEvidenceKind<'fallback_selection'>
+export type TasteRolePoolMeaningRejectsFallbackSelection = AssertTasteRolePoolMeaningEvidenceKind<'fallback_selection'>
 
 // @ts-expect-error LCE/coordination owns preservation decisions, not Taste meaning.
-export type TasteRolePoolMeaningRejectsPreservationDecision =
-  AssertTasteRolePoolMeaningEvidenceKind<'preservation_decision'>
+export type TasteRolePoolMeaningRejectsPreservationDecision = AssertTasteRolePoolMeaningEvidenceKind<'preservation_decision'>
 
 // @ts-expect-error Field owns source record truth.
-export type TasteRolePoolMeaningRejectsRecordTruth =
-  AssertTasteRolePoolMeaningEvidenceKind<'source_record_truth'>
+export type TasteRolePoolMeaningRejectsRecordTruth = AssertTasteRolePoolMeaningEvidenceKind<'source_record_truth'>
 
 // @ts-expect-error Untyped generic evidence cannot bypass the Taste role-pool boundary.
-export type TasteRolePoolMeaningRejectsUntypedKind =
-  AssertTasteRolePoolMeaningEvidenceKind<string>
+export type TasteRolePoolMeaningRejectsUntypedKind = AssertTasteRolePoolMeaningEvidenceKind<string>

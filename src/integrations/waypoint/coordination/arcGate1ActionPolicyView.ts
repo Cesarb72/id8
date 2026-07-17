@@ -44,7 +44,7 @@ export interface OwnerProvenancedGate1ActionSignal<
   TSource extends ArcGate1ActionPolicyOwnerSignalSource =
     ArcGate1ActionPolicyOwnerSignalSource,
   TKind extends string = string,
-  TValue extends CoordinationComparableValue = boolean,
+  TValue extends CoordinationComparableValue = CoordinationComparableValue,
 > extends Omit<CoordinationSignalComponent<TValue>, 'source' | 'key'> {
   source: TSource
   key: TKind
@@ -53,12 +53,12 @@ export interface OwnerProvenancedGate1ActionSignal<
 
 export type ArcGate1TasteActionSignal<
   TKind extends ArcGate1TasteEvidenceKind = ArcGate1TasteEvidenceKind,
-  TValue extends CoordinationComparableValue = boolean,
+  TValue extends CoordinationComparableValue = CoordinationComparableValue,
 > = OwnerProvenancedGate1ActionSignal<'taste', TKind, TValue>
 
 export type ArcGate1BearingsActionSignal<
   TKind extends ArcGate1BearingsEvidenceKind = ArcGate1BearingsEvidenceKind,
-  TValue extends CoordinationComparableValue = boolean,
+  TValue extends CoordinationComparableValue = CoordinationComparableValue,
 > = OwnerProvenancedGate1ActionSignal<'bearings', TKind, TValue>
 
 export type ArcGate1FieldActionSignal<
@@ -275,8 +275,7 @@ export type ArcGate1BearingsSourceAccepted =
 export type ArcGate1FieldSourceAccepted = AssertGate1OwnerSource<'field'>
 
 // @ts-expect-error Waypoint coordinates owner-authored Gate 1 signals; it cannot author them.
-export type ArcGate1WaypointSourceRejected =
-  AssertGate1OwnerSource<'waypoint'>
+export type ArcGate1WaypointSourceRejected = AssertGate1OwnerSource<'waypoint'>
 
 // @ts-expect-error Compatibility payloads are optional legacy/debug data, not eligibility truth.
 export type ArcGate1CompatSourceRejected = AssertGate1OwnerSource<'compat'>
@@ -301,32 +300,27 @@ export type ArcGate1RawScoreRejected = AssertGate1Candidate<{
 }>
 
 // @ts-expect-error Fallback outcomes cannot be provided as eligibility truth.
-export type ArcGate1FallbackOutcomeTruthRejected =
-  AssertGate1Eligibility<{
+export type ArcGate1FallbackOutcomeTruthRejected = AssertGate1Eligibility<{
     fallbackOutcome: 'fallback'
   }>
 
 // @ts-expect-error Preservation outcomes cannot be provided as eligibility truth.
-export type ArcGate1PreservationOutcomeTruthRejected =
-  AssertGate1Eligibility<{
+export type ArcGate1PreservationOutcomeTruthRejected = AssertGate1Eligibility<{
     preservationOutcome: 'preserved'
   }>
 
 // @ts-expect-error Promotion outcomes cannot be provided as eligibility truth.
-export type ArcGate1PromotionOutcomeTruthRejected =
-  AssertGate1Eligibility<{
+export type ArcGate1PromotionOutcomeTruthRejected = AssertGate1Eligibility<{
     promotionOutcome: 'promoted_to_highlight'
   }>
 
 // @ts-expect-error Public/debug projections cannot become action-policy authority.
-export type ArcGate1PublicProjectionTruthRejected =
-  AssertGate1Eligibility<{
+export type ArcGate1PublicProjectionTruthRejected = AssertGate1Eligibility<{
     publicProjection: { score: 1 }
   }>
 
 // @ts-expect-error Missing Taste signal rejects actions that depend on Taste meaning.
-export type ArcGate1MissingTasteSignalRejected =
-  AssertGate1PreservationCandidate<{
+export type ArcGate1MissingTasteSignalRejected = AssertGate1PreservationCandidate<{
     id: 'candidate'
     action: 'preservation'
     identity: { candidateId: 'candidate' }
@@ -337,8 +331,7 @@ export type ArcGate1MissingTasteSignalRejected =
   }>
 
 // @ts-expect-error Missing Bearings signal rejects actions that depend on feasibility.
-export type ArcGate1MissingBearingsSignalRejected =
-  AssertGate1PreservationCandidate<{
+export type ArcGate1MissingBearingsSignalRejected = AssertGate1PreservationCandidate<{
     id: 'candidate'
     action: 'preservation'
     identity: { candidateId: 'candidate' }
@@ -349,8 +342,7 @@ export type ArcGate1MissingBearingsSignalRejected =
   }>
 
 // @ts-expect-error Missing Field Real signal rejects actions that depend on Real.
-export type ArcGate1MissingFieldRealSignalRejected =
-  AssertGate1PreservationCandidate<{
+export type ArcGate1MissingFieldRealSignalRejected = AssertGate1PreservationCandidate<{
     id: 'candidate'
     action: 'preservation'
     identity: { candidateId: 'candidate' }
@@ -361,8 +353,7 @@ export type ArcGate1MissingFieldRealSignalRejected =
   }>
 
 // @ts-expect-error Fallback actions still require owner-authored meaning and feasibility.
-export type ArcGate1FallbackMissingTasteRejected =
-  AssertGate1FallbackCandidate<{
+export type ArcGate1FallbackMissingTasteRejected = AssertGate1FallbackCandidate<{
     id: 'candidate'
     action: 'fallback'
     identity: { candidateId: 'candidate' }

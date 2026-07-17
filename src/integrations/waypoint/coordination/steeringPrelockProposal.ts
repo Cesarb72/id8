@@ -235,16 +235,13 @@ export type SteeringWaypointTraceSourceAccepted =
   AssertSteeringTraceSource<'waypoint'>
 
 // @ts-expect-error Waypoint ranks/proposes but cannot author owner evidence.
-export type SteeringWaypointOwnerEvidenceSourceRejected =
-  AssertSteeringOwnerSource<'waypoint'>
+export type SteeringWaypointOwnerEvidenceSourceRejected = AssertSteeringOwnerSource<'waypoint'>
 
 // @ts-expect-error Compatibility projections cannot become owner evidence.
-export type SteeringCompatOwnerEvidenceSourceRejected =
-  AssertSteeringOwnerSource<'compat'>
+export type SteeringCompatOwnerEvidenceSourceRejected = AssertSteeringOwnerSource<'compat'>
 
 // @ts-expect-error Taste role-fit evidence requires Taste provenance.
-export type SteeringMissingTasteProvenanceRejected =
-  AssertSteeringRoleFitEvidence<{
+export type SteeringMissingTasteProvenanceRejected = AssertSteeringRoleFitEvidence<{
     key: 'role_suitability'
     authority: 'owner_evidence'
     value: 0.8
@@ -253,8 +250,7 @@ export type SteeringMissingTasteProvenanceRejected =
   }>
 
 // @ts-expect-error Bearings feasibility evidence requires Bearings provenance.
-export type SteeringWrongFeasibilitySourceRejected =
-  AssertSteeringFeasibilityEvidence<{
+export type SteeringWrongFeasibilitySourceRejected = AssertSteeringFeasibilityEvidence<{
     source: 'taste'
     key: 'movement'
     authority: 'owner_evidence'
@@ -263,8 +259,7 @@ export type SteeringWrongFeasibilitySourceRejected =
   }>
 
 // @ts-expect-error Movement delta is Bearings-authored, not Waypoint-authored.
-export type SteeringWaypointMovementDeltaRejected =
-  AssertSteeringMovementDeltaEvidence<{
+export type SteeringWaypointMovementDeltaRejected = AssertSteeringMovementDeltaEvidence<{
     source: 'waypoint'
     key: 'movement_delta'
     authority: 'owner_evidence'
@@ -283,8 +278,7 @@ export type SteeringAppHydratedIdentityRejected = AssertSteeringIdentity<{
 }>
 
 // @ts-expect-error Accepted proposals require candidate identity.
-export type SteeringAcceptedMissingCandidateIdentityRejected =
-  AssertAcceptedProposal<{
+export type SteeringAcceptedMissingCandidateIdentityRejected = AssertAcceptedProposal<{
     status: 'proposed'
     action: 'swap_stop'
     targetRole: 'highlight'

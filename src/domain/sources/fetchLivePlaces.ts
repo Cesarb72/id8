@@ -636,7 +636,7 @@ export async function fetchLivePlaces(
   const queryPlan = fieldQueryScaffold.queries.map((query) => {
     const [entryLabel, centerId] = query.queryLabel.split('@')
     const entry = entriesByLabel.get(entryLabel ?? '')
-    const center = queryCentersById.get(centerId ?? '')
+    const center = queryCentersById.get((centerId ?? '') as QueryCenter['id'])
     if (!entry || !center) {
       throw new Error(`Field query scaffold emitted an unknown query label: ${query.queryLabel}`)
     }
@@ -682,22 +682,22 @@ export async function fetchLivePlaces(
         rawPlace: mapped.rawPlace,
       }
     },
-    queries: queryPlan.map((query) => ({
-      fieldMask: googleFieldMask,
-      locationBias: {
-        circle: {
-          center: {
-            latitude: query.center.lat,
-            longitude: query.center.lng,
+    queries: queryPlan.map((query) => {
+      const { center, label, radiusM, ...providerQuery } = query
+      return {
+        ...providerQuery,
+        locationBias: {
+          circle: {
+            center: {
+              latitude: center.lat,
+              longitude: center.lng,
+            },
+            radius: radiusM,
           },
-          radius: query.radiusM,
         },
-      },
-      pageSize: config.pageSize,
-      queryLabel: query.label,
-      rankPreference: 'RELEVANCE',
-      ...query,
-    })),
+        rankPreference: 'RELEVANCE',
+      }
+    }),
     mode: intent.mode,
     sourceMode: options.sourceMode,
     envelope: options.envelope,
