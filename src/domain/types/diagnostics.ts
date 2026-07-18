@@ -139,6 +139,48 @@ export interface LiveQueryCandidateDispositionDiagnostics {
   candidateBoardAdmission: boolean
   pocketFilter: 'admitted' | 'outside_pocket_envelope' | 'not_applicable' | 'unknown_drop_stage'
   dropReason?: string
+  sourceCategoryEvidence?: {
+    rawSourceTypes: string[]
+    normalizedSourceTypes: string[]
+  }
+  pocketProofDiagnostic?: {
+    diagnosticOnly: true
+    queryLabel: string
+    sourceQueryRadiusM: number
+    activePocketId?: string
+    activePocketLabel?: string
+    activePocketCenter?: { lat: number; lng: number }
+    activePocketHintRadiusM?: number
+    fieldAdmissionEnvelopeRadiusM?: number
+    candidateDistanceToPocketCenterM?: number
+    marginToFieldAdmissionEnvelopeM?: number
+    nearestDistrictEntityDistanceM?: null
+    fieldSourceDecision: {
+      owner: 'Field'
+      status: 'admitted' | 'rejected' | 'not_applicable' | 'unknown'
+      reason: string
+    }
+    bearingsAdmissibility: {
+      owner: 'Bearings'
+      status: 'not_evaluated_in_field_source_diagnostic'
+      reason: string
+    }
+    districtSpatialFact: {
+      owner: 'District'
+      status: 'not_evaluated_in_field_source_diagnostic'
+      reason: string
+    }
+    interpretationBoardAdmission: {
+      owner: 'Interpretation'
+      status: 'not_evaluated_at_field_source'
+      reason: string
+    }
+    candidateBoardAdmissionFalseSource:
+      | 'field_source_pocket_filter'
+      | 'normalization_or_dedupe'
+      | 'not_applicable'
+      | 'unknown'
+  }
 }
 
 export interface LiveQueryCandidateDiagnostics {

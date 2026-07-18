@@ -54,6 +54,48 @@ interface LiveCandidatesByQueryDiagnostics {
     candidateBoardAdmission: boolean
     pocketFilter: 'admitted' | 'outside_pocket_envelope' | 'not_applicable' | 'unknown_drop_stage'
     dropReason?: string
+    sourceCategoryEvidence?: {
+      rawSourceTypes: string[]
+      normalizedSourceTypes: string[]
+    }
+    pocketProofDiagnostic?: {
+      diagnosticOnly: true
+      queryLabel: string
+      sourceQueryRadiusM: number
+      activePocketId?: string
+      activePocketLabel?: string
+      activePocketCenter?: { lat: number; lng: number }
+      activePocketHintRadiusM?: number
+      fieldAdmissionEnvelopeRadiusM?: number
+      candidateDistanceToPocketCenterM?: number
+      marginToFieldAdmissionEnvelopeM?: number
+      nearestDistrictEntityDistanceM?: null
+      fieldSourceDecision: {
+        owner: 'Field'
+        status: 'admitted' | 'rejected' | 'not_applicable' | 'unknown'
+        reason: string
+      }
+      bearingsAdmissibility: {
+        owner: 'Bearings'
+        status: 'not_evaluated_in_field_source_diagnostic'
+        reason: string
+      }
+      districtSpatialFact: {
+        owner: 'District'
+        status: 'not_evaluated_in_field_source_diagnostic'
+        reason: string
+      }
+      interpretationBoardAdmission: {
+        owner: 'Interpretation'
+        status: 'not_evaluated_at_field_source'
+        reason: string
+      }
+      candidateBoardAdmissionFalseSource:
+        | 'field_source_pocket_filter'
+        | 'normalization_or_dedupe'
+        | 'not_applicable'
+        | 'unknown'
+    }
   }>
 }
 
@@ -385,6 +427,103 @@ function applyPocketFilter(venues: Venue[], hint: LiveRetrievalPocketHint | unde
     insideEnvelopeCount: insideEnvelope.length,
     coordinateClusterCount: coordinateCluster.length,
     droppedCount: venues.filter((venue) => !selectedIds.has(venue.id)).length,
+  }
+}
+
+function roundMeter(value: number): number {
+  return Number(value.toFixed(1))
+}
+
+function buildFieldPocketProofDiagnostic(params: {
+  queryLabel: string
+  queryRadiusM: number
+  pocketHint: LiveRetrievalPocketHint | undefined
+  normalizedVenue: Venue | undefined
+  normalizedResult: boolean
+  candidateBoardAdmission: boolean
+  pocketFilter: NonNullable<LiveCandidatesByQueryDiagnostics['candidates']>[number]['pocketFilter']
+}): NonNullable<LiveCandidatesByQueryDiagnostics['candidates']>[number]['pocketProofDiagnostic'] {
+  const fieldAdmissionEnvelopeRadiusM = params.pocketHint
+    ? getPocketQueryRadiusM(params.pocketHint, POCKET_QUERY_RADIUS_MIN_M)
+    : undefined
+  const coordinates = params.normalizedVenue ? getVenueCoordinates(params.normalizedVenue) : undefined
+  const candidateDistanceToPocketCenterM =
+    params.pocketHint && coordinates
+      ? roundMeter(distanceM(params.pocketHint.centroid, coordinates))
+      : undefined
+  const marginToFieldAdmissionEnvelopeM =
+    typeof candidateDistanceToPocketCenterM === 'number' &&
+    typeof fieldAdmissionEnvelopeRadiusM === 'number'
+      ? roundMeter(candidateDistanceToPocketCenterM - fieldAdmissionEnvelopeRadiusM)
+      : undefined
+  const fieldStatus =
+    params.pocketFilter === 'not_applicable'
+      ? 'not_applicable'
+      : params.candidateBoardAdmission
+        ? 'admitted'
+        : params.normalizedResult
+          ? 'rejected'
+          : 'unknown'
+  const fieldReason =
+    params.pocketFilter === 'not_applicable'
+      ? 'no_active_pocket_hint'
+      : params.candidateBoardAdmission
+        ? 'field_source_pocket_filter_admitted'
+        : params.normalizedResult
+          ? 'field_source_pocket_filter_outside_selected_envelope'
+          : 'normalization_or_dedupe_drop'
+  const candidateBoardAdmissionFalseSource =
+    params.candidateBoardAdmission
+      ? 'not_applicable'
+      : params.pocketFilter === 'outside_pocket_envelope'
+        ? 'field_source_pocket_filter'
+        : !params.normalizedResult
+          ? 'normalization_or_dedupe'
+          : params.pocketFilter === 'not_applicable'
+            ? 'not_applicable'
+            : 'unknown'
+
+  return {
+    diagnosticOnly: true,
+    queryLabel: params.queryLabel,
+    sourceQueryRadiusM: params.queryRadiusM,
+    ...(params.pocketHint
+      ? {
+          activePocketId: params.pocketHint.pocketId,
+          activePocketLabel: params.pocketHint.pocketLabel,
+          activePocketCenter: params.pocketHint.centroid,
+          activePocketHintRadiusM: params.pocketHint.radiusM,
+          fieldAdmissionEnvelopeRadiusM,
+        }
+      : {}),
+    ...(typeof candidateDistanceToPocketCenterM === 'number'
+      ? { candidateDistanceToPocketCenterM }
+      : {}),
+    ...(typeof marginToFieldAdmissionEnvelopeM === 'number'
+      ? { marginToFieldAdmissionEnvelopeM }
+      : {}),
+    nearestDistrictEntityDistanceM: null,
+    fieldSourceDecision: {
+      owner: 'Field',
+      status: fieldStatus,
+      reason: fieldReason,
+    },
+    bearingsAdmissibility: {
+      owner: 'Bearings',
+      status: 'not_evaluated_in_field_source_diagnostic',
+      reason: 'Bearings pocket admissibility is not authoritative at the Field source diagnostic seam.',
+    },
+    districtSpatialFact: {
+      owner: 'District',
+      status: 'not_evaluated_in_field_source_diagnostic',
+      reason: 'District nearest-entity facts are exposed by candidate-board geo diagnostics when available.',
+    },
+    interpretationBoardAdmission: {
+      owner: 'Interpretation',
+      status: 'not_evaluated_at_field_source',
+      reason: 'Interpretation board admission is evaluated after Field source filtering.',
+    },
+    candidateBoardAdmissionFalseSource,
   }
 }
 
@@ -840,10 +979,23 @@ export async function fetchLivePlaces(
         normalizedResult,
         candidateBoardAdmission,
         pocketFilter,
+        sourceCategoryEvidence: {
+          rawSourceTypes: rawPlace.sourceTypes ?? [],
+          normalizedSourceTypes: normalizedVenue?.source.sourceTypes ?? [],
+        },
+        pocketProofDiagnostic: buildFieldPocketProofDiagnostic({
+          queryLabel: query.label,
+          queryRadiusM,
+          pocketHint,
+          normalizedVenue,
+          normalizedResult,
+          candidateBoardAdmission,
+          pocketFilter,
+        }),
         ...(!normalizedResult && !normalizedVenueIds.has(rawPlace.id)
           ? { dropReason: 'normalization_or_dedupe_drop' }
           : pocketFilter === 'outside_pocket_envelope'
-            ? { dropReason: pocketFiltered.reason ?? 'outside_pocket_envelope' }
+            ? { dropReason: 'field_source_pocket_filter_outside_selected_envelope' }
             : {}),
       }
     })

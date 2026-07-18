@@ -218,10 +218,53 @@ function assertNoApprovedPayloadClassificationIsExplicit(): void {
   process.stdout.write('Step B no_approved_payload classification: passed\n')
 }
 
+function assertStepBPocketProofDiagnosticsSurfaceInObserverReport(): void {
+  const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
+  assert(
+    sandboxSource.includes('proofTargetParameters') &&
+      sandboxSource.includes('row1_step_b_coffee_books_representative') &&
+      sandboxSource.includes('admissionEnvelope') &&
+      sandboxSource.includes('materializationDiagnostics') &&
+      sandboxSource.includes('materializationRejectReason') &&
+      sandboxSource.includes('pocketProofDiagnostic') &&
+      sandboxSource.includes('sourceCategoryEvidence'),
+    'Step B Coffee & Books diagnostic report must expose proof target parameters, pocket math, and materialization reasons.',
+  )
+  assert(
+    sandboxSource.includes('diagnosticOnly: true') &&
+      sandboxSource.includes('field_live_source_pocket_filter') &&
+      sandboxSource.includes('selected-stop-backed book, reading, literary, library, or bookstore evidence'),
+    'Step B proof-target diagnostics must be explicitly non-authoritative and explain the current proof target.',
+  )
+
+  const fieldSource = readFileSync('src/domain/sources/fetchLivePlaces.ts', 'utf8')
+  assert(
+    fieldSource.includes('candidateDistanceToPocketCenterM') &&
+      fieldSource.includes('marginToFieldAdmissionEnvelopeM') &&
+      fieldSource.includes('fieldSourceDecision') &&
+      fieldSource.includes('bearingsAdmissibility') &&
+      fieldSource.includes('districtSpatialFact') &&
+      fieldSource.includes('interpretationBoardAdmission') &&
+      fieldSource.includes('candidateBoardAdmissionFalseSource') &&
+      fieldSource.includes('field_source_pocket_filter_outside_selected_envelope'),
+    'Field live candidate diagnostics must expose candidate distance/margin and owner-stamped rejection.',
+  )
+
+  const observerSource = readFileSync('scripts/observe-hosted-step-b-supply.ts', 'utf8')
+  assert(
+    observerSource.includes('step_b_coffee_books_diagnostics') &&
+      observerSource.includes('no_visible_route_card_after_candidate_supply') &&
+      observerSource.includes('persist('),
+    'Hosted observer must persist the full Step B Coffee & Books diagnostic report on no-card stops.',
+  )
+  process.stdout.write('Step B pocket/proof diagnostic visibility: passed\n')
+}
+
 async function main(): Promise<void> {
   await assertStepBRunFingerprintSharesInFlightPromise()
   assertObserverCapturesDiagnosticsAndHardStops()
   assertNoApprovedPayloadClassificationIsExplicit()
+  assertStepBPocketProofDiagnosticsSurfaceInObserverReport()
   process.stdout.write('Step B proof envelope guard: passed\n')
 }
 

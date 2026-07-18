@@ -14195,6 +14195,8 @@ export function SandboxConciergePage({
           candidateBoardAdmission: candidate.candidateBoardAdmission,
           pocketFilter: candidate.pocketFilter,
           dropReason: candidate.dropReason ?? null,
+          sourceCategoryEvidence: candidate.sourceCategoryEvidence ?? null,
+          pocketProofDiagnostic: candidate.pocketProofDiagnostic ?? null,
         })),
         seenInCandidateBoard: matches.length > 0,
         candidateBoardAdmission:
@@ -14389,6 +14391,124 @@ export function SandboxConciergePage({
           (model?.hasApprovedPayload ? null : 'no_approved_payload'),
       }
     })
+    const opportunityByScenarioNightId = new Map(
+      scenarioBackedVerifiedCityOpportunities
+        .filter((opportunity) => opportunity.scenarioNight)
+        .map((opportunity) => [opportunity.scenarioNight!.id, opportunity] as const),
+    )
+    const suppressedOpportunityReasonById = new Map(
+      suppressedScenarioBackedOpportunityAdmissions.map((entry) => [
+        entry.opportunity.id,
+        entry.reason,
+      ] as const),
+    )
+    const artifactByOpportunityId = new Map(
+      step2CandidateRouteArtifacts.map((artifact) => [artifact.sourceOpportunityId, artifact] as const),
+    )
+    const bridgeDiagnosticByOpportunityId = new Map(
+      (curateScenarioBackedArtifactBridge?.diagnostics ?? []).map((entry) => [
+        entry.opportunityId,
+        entry,
+      ] as const),
+    )
+    const materializationDiagnostics = scenarioBuiltNights.map((night) => {
+      const opportunity = opportunityByScenarioNightId.get(night.id)
+      const suppressedReason = opportunity
+        ? suppressedOpportunityReasonById.get(opportunity.id)
+        : undefined
+      const artifact = opportunity ? artifactByOpportunityId.get(opportunity.id) : undefined
+      const bridgeDiagnostic = opportunity
+        ? bridgeDiagnosticByOpportunityId.get(opportunity.id)
+        : undefined
+      const selectedStops = night.stops.map((stop) => ({
+        venueId: stop.venueId,
+        name: stop.name,
+        role: stop.position,
+        stopType: stop.stopType,
+        hasCoffeeBooksEvidence:
+          night.starterSemanticRepresentation?.matchedEvidence?.some(
+            (match) => match.stopVenueId === stop.venueId && match.admissible,
+          ) ?? false,
+      }))
+      const materializationStage =
+        !opportunity
+          ? 'before_contract_entry_artifact_enrichment'
+          : suppressedReason
+            ? 'direction_backing_admission'
+            : !artifact
+              ? 'contract_entry_artifact_enrichment'
+              : bridgeDiagnostic?.scenarioRouteBuildabilityStatus === 'rejected'
+                ? 'great_stop_or_card_gate'
+                : 'materialized'
+      const materializationRejectReason =
+        !opportunity
+          ? 'scenario_night_not_mapped_to_verified_opportunity'
+          : suppressedReason
+            ? `direction_backing_${suppressedReason}`
+            : !artifact
+              ? 'contract_entry_artifact_not_produced'
+              : bridgeDiagnostic?.scenarioRouteBuildabilityReason ??
+                (bridgeDiagnostic?.includedInCandidateArtifacts === false
+                  ? 'artifact_not_in_candidate_pool'
+                  : null)
+      return {
+        diagnosticOnly: true,
+        scenarioNightId: night.id,
+        scenarioEvaluationStatus:
+          night.evaluation?.passesGreatStopStandard === true
+            ? 'great_stop_pass'
+            : night.evaluation?.passesGreatStopStandard === false
+              ? 'great_stop_fail'
+              : 'not_evaluated',
+        opportunityCountContribution: opportunity ? 1 : 0,
+        step2CandidateRouteArtifactCountContribution: artifact ? 1 : 0,
+        selectedStopIds: night.stops.map((stop) => stop.venueId),
+        selectedRoles: night.stops.map((stop) => stop.position),
+        selectedStops,
+        selectedStopCoffeeBooksEvidencePresent: selectedStops.some(
+          (stop) => stop.hasCoffeeBooksEvidence,
+        ),
+        materializationPassed:
+          Boolean(opportunity && artifact) &&
+          bridgeDiagnostic?.scenarioRouteBuildabilityStatus !== 'rejected',
+        materializationStage,
+        materializationRejectReason,
+        contractEntryArtifactId: artifact?.id ?? null,
+        sourceOpportunityId: opportunity?.id ?? null,
+      }
+    })
+    const liveRetrieval = scenarioCandidateBoard?.debug?.liveRetrieval
+    const activePocketHint = liveRetrieval?.livePocketHint
+    const proofTargetParameters = {
+      diagnosticOnly: true,
+      proofTargetId: 'row1_step_b_coffee_books_representative',
+      proofTargetName: 'Governed Row 1 Build Step B Coffee & Books representative proof',
+      mode: 'curate',
+      surface: '/start/curate',
+      scenarioFamily: scenarioCandidateBoard?.scenarioFamily ?? resolvedScenarioFamily ?? null,
+      starterId: selectedStarterPack?.id ?? null,
+      expectedSemanticProof:
+        'selected-stop-backed book, reading, literary, library, or bookstore evidence',
+      expectedRoles: activeScenarioRequiredStopTypes,
+      expectedSelectedStopEvidence: true,
+      expectedActivePocketSource: 'district_intelligence',
+      maxProviderCalls: 3,
+      maxQueryLabels: 3,
+      maxCenters: 1,
+      queryRadiusM: liveRetrieval?.queryRadiusM ?? null,
+      admissionEnvelope: {
+        source: 'field_live_source_pocket_filter',
+        radiusM: liveRetrieval?.queryRadiusM ?? null,
+        activePocketId: activePocketHint?.pocketId ?? null,
+        activePocketLabel: activePocketHint?.pocketLabel ?? null,
+        activePocketCenter: activePocketHint?.centroid ?? null,
+        activePocketHintRadiusM: activePocketHint?.radiusM ?? null,
+      },
+      materializationRequirement:
+        'scenario night maps to VerifiedCityOpportunity, produces ContractEntryArtifact, passes card/Great Stop gates',
+      greatStopRequirement: 'approved payload required before visible route card',
+      reviewLockRequirement: 'qualified visible route card required before Review/Lock',
+    }
     const noCardStateClassification =
       curatePrimaryCardDisplay.models.length > 0
         ? 'route_cards_visible'
@@ -14414,6 +14534,7 @@ export function SandboxConciergePage({
         stopTypeDiagnostics,
         bookstoreCandidateDisposition,
       },
+      proofTargetParameters,
       scenarioBuilder: {
         scenarioNightCount: scenarioBuiltNights.length,
         scenarioBuiltCount,
@@ -14434,6 +14555,7 @@ export function SandboxConciergePage({
         unqualifiedDraftsHiddenCount: curatePrimaryCardDisplay.unqualifiedDraftsHiddenCount,
         hiddenRejectedFromPrimaryCount: curatePrimaryCardDisplay.hiddenRejectedFromPrimaryCount,
         artifactDiagnostics,
+        materializationDiagnostics,
       },
       publicNoCardState: {
         classification: noCardStateClassification,
@@ -14461,7 +14583,9 @@ export function SandboxConciergePage({
     resolvedScenarioFamily,
     scenarioBuiltNights,
     scenarioCandidateBoard,
+    scenarioBackedVerifiedCityOpportunities,
     selectedStarterPack?.id,
+    suppressedScenarioBackedOpportunityAdmissions,
     step2CandidateRouteArtifacts,
     step2PrimarySourceOpportunities.length,
     stepBCoffeeBooksDiagnosticsActive,

@@ -237,6 +237,32 @@ async function main(): Promise<void> {
     pocketResult.venues.every((venue) => venue.name.startsWith('Inside')),
     `Coffee & Books pocket-filtered venues must not include far-away records, received ${pocketResult.venues.map((venue) => venue.name).join(', ')}.`,
   )
+  const candidateDiagnostics = pocketResult.diagnostics.liveCandidatesByQuery.flatMap(
+    (query) => query.candidates ?? [],
+  )
+  const admittedDiagnostic = candidateDiagnostics.find((candidate) => candidate.pocketFilter === 'admitted')
+  const rejectedDiagnostic = candidateDiagnostics.find(
+    (candidate) => candidate.pocketFilter === 'outside_pocket_envelope',
+  )
+  assert(
+    admittedDiagnostic?.pocketProofDiagnostic?.activePocketId === 'raw-pocket-test' &&
+      admittedDiagnostic.pocketProofDiagnostic.sourceQueryRadiusM === 650 &&
+      admittedDiagnostic.pocketProofDiagnostic.fieldAdmissionEnvelopeRadiusM === 650 &&
+      typeof admittedDiagnostic.pocketProofDiagnostic.candidateDistanceToPocketCenterM === 'number' &&
+      typeof admittedDiagnostic.pocketProofDiagnostic.marginToFieldAdmissionEnvelopeM === 'number',
+    `Admitted pocket candidate diagnostic must expose proof target pocket math, received ${JSON.stringify(admittedDiagnostic)}`,
+  )
+  assert(
+    rejectedDiagnostic?.dropReason === 'field_source_pocket_filter_outside_selected_envelope' &&
+      rejectedDiagnostic.pocketProofDiagnostic?.fieldSourceDecision.owner === 'Field' &&
+      rejectedDiagnostic.pocketProofDiagnostic.fieldSourceDecision.status === 'rejected' &&
+      rejectedDiagnostic.pocketProofDiagnostic.bearingsAdmissibility.owner === 'Bearings' &&
+      rejectedDiagnostic.pocketProofDiagnostic.districtSpatialFact.owner === 'District' &&
+      rejectedDiagnostic.pocketProofDiagnostic.interpretationBoardAdmission.owner === 'Interpretation' &&
+      rejectedDiagnostic.pocketProofDiagnostic.candidateBoardAdmissionFalseSource ===
+        'field_source_pocket_filter',
+    `Rejected pocket candidate diagnostic must expose owner-stamped rejection, received ${JSON.stringify(rejectedDiagnostic)}`,
+  )
 
   process.stdout.write(
     [
