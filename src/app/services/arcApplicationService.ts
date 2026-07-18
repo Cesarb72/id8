@@ -137,10 +137,38 @@ export function shouldApplyStepBCurateLiveSmokeCandidateSupply(
   )
 }
 
-type StepBCurateLiveSmokeCandidateSupplyInput =
+export type StepBCurateLiveSmokeCandidateSupplyInput =
   Omit<BuildStopTypeCandidateBoardFromIntentInput, 'liveEnvelope'> & {
     liveEnvelope?: never
   }
+
+function normalizeStepBFingerprintValue(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null
+}
+
+export function buildStepBCurateLiveSmokeCandidateSupplyRunFingerprint(params: {
+  gate: StepBCurateLiveSmokeCandidateSupplyGate
+  input: StepBCurateLiveSmokeCandidateSupplyInput
+  starterPack: StarterPack | null
+}): string | null {
+  if (!shouldApplyStepBCurateLiveSmokeCandidateSupply(params.gate)) {
+    return null
+  }
+
+  return JSON.stringify({
+    proof: 'step_b_curate_candidate_supply',
+    path: normalizeStepBFingerprintValue(params.gate.pathname),
+    mode: params.gate.mode,
+    inputMode: params.gate.inputMode,
+    phase: params.gate.phase,
+    city: normalizeStepBFingerprintValue(params.input.city),
+    persona: normalizeStepBFingerprintValue(params.input.persona),
+    vibe: normalizeStepBFingerprintValue(params.input.vibe),
+    sourceMode: normalizeStepBFingerprintValue(params.input.sourceMode),
+    scenarioFamilyOverride: normalizeStepBFingerprintValue(params.input.scenarioFamilyOverride),
+    starterPackId: normalizeStepBFingerprintValue(params.starterPack?.id),
+  })
+}
 
 function countStopTypeBoardCandidates(board: StopTypeCandidateBoard | null): number {
   if (!board) {

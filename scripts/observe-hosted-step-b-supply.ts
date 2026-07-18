@@ -11,6 +11,7 @@ import {
 
 const defaultDebugPort = 9339
 const fieldProxyPath = '/api/field/text-search'
+const stepBFieldProxyPostLimit = 3
 const stepBSupplyTracePrefix = '[ID8 STEP B SUPPLY TRACE]'
 const providerPatterns = [
   'places.googleapis.com',
@@ -20,7 +21,7 @@ const providerPatterns = [
 ] as const
 
 type JsonPrimitive = string | number | boolean | null
-type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue }
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue }
 
 interface CdpClient {
   onOpen: Promise<void>
@@ -162,6 +163,24 @@ function findFirstValue(value: unknown, paths: string[][]): JsonValue {
   return null
 }
 
+function collectStringValuesByKey(value: unknown, targetKey: string, output: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectStringValuesByKey(entry, targetKey, output))
+    return output
+  }
+  if (!isRecord(value)) {
+    return output
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === targetKey && typeof entry === 'string' && entry.trim()) {
+      output.push(entry.trim())
+      continue
+    }
+    collectStringValuesByKey(entry, targetKey, output)
+  }
+  return Array.from(new Set(output))
+}
+
 function findStringValue(value: unknown, paths: string[][]): string | null {
   for (const path of paths) {
     const candidate = getNestedValue(value, path)
@@ -280,7 +299,7 @@ function extractQueryLabel(source: unknown): string | null {
   return null
 }
 
-function summarizeFieldProxyBody(body: string): Omit<
+export function summarizeFieldProxyBody(body: string): Omit<
   FieldProxyCallSummary,
   keyof NetworkRequestSummary
 > {
@@ -310,11 +329,13 @@ function summarizeFieldProxyBody(body: string): Omit<
     cache: findFirstValue(parsed, [['cache'], ['cached'], ['metadata', 'cache']]),
     callConsumed: findFirstValue(parsed, [
       ['callConsumed'],
+      ['diagnostics', 'callConsumed'],
       ['governance', 'callConsumed'],
       ['metadata', 'callConsumed'],
     ]),
     providerStatus: findFirstValue(parsed, [
       ['providerStatus'],
+      ['diagnostics', 'providerStatus'],
       ['provider', 'status'],
       ['metadata', 'providerStatus'],
     ]),
@@ -326,6 +347,104 @@ function summarizeFieldProxyBody(body: string): Omit<
     resultCount: sanitizeForEvidence(resultCount),
     responseQueryLabel: sanitizeForEvidence(extractQueryLabel(parsed)),
     candidateSummaries: extractCandidateSummaries(parsed),
+  }
+}
+
+export function summarizeStepBFieldProxyPostEnvelope(input: {
+  networkRequests: Array<Pick<NetworkRequestSummary, 'method' | 'isFieldProxy' | 'queryLabel' | 'status' | 'requestId'>>
+  fieldProxyCalls?: Array<
+    Pick<FieldProxyCallSummary, 'requestId' | 'queryLabel' | 'cache' | 'callConsumed' | 'providerStatus' | 'budget'>
+  >
+  maxPosts?: number
+}): {
+  maxPosts: number
+  postCount: number
+  exceeded: boolean
+  labels: string[]
+  completedCalls: Array<Record<string, JsonValue>>
+} {
+  const maxPosts = input.maxPosts ?? stepBFieldProxyPostLimit
+  const posts = input.networkRequests.filter(
+    (request) => request.isFieldProxy && request.method.toUpperCase() === 'POST',
+  )
+  return {
+    maxPosts,
+    postCount: posts.length,
+    exceeded: posts.length > maxPosts,
+    labels: posts.map((request) => request.queryLabel ?? 'missing'),
+    completedCalls: (input.fieldProxyCalls ?? []).map((call) => ({
+      requestId: call.requestId,
+      queryLabel: call.queryLabel ?? 'missing',
+      cache: call.cache,
+      callConsumed: call.callConsumed,
+      providerStatus: call.providerStatus,
+      budget: call.budget,
+    })),
+  }
+}
+
+export function formatStepBFieldProxyEnvelopeBreach(
+  summary: ReturnType<typeof summarizeStepBFieldProxyPostEnvelope>,
+): string {
+  const labels = summary.labels.length > 0 ? summary.labels.join(', ') : 'none'
+  const completed = summary.completedCalls
+    .map((call) => {
+      const budget = isRecord(call.budget) ? call.budget.used : null
+      return `${String(call.queryLabel)} cache=${String(call.cache)} callConsumed=${String(
+        call.callConsumed,
+      )} providerStatus=${String(call.providerStatus)} budget.used=${String(budget)}`
+    })
+    .join(' | ')
+  return [
+    `Step B Field proxy POST envelope breached: ${summary.postCount}/${summary.maxPosts}.`,
+    `labels=${labels}.`,
+    completed ? `completed=${completed}.` : 'completed=none.',
+  ].join(' ')
+}
+
+export function summarizeStepBNoCardDiagnostics(input: unknown): {
+  present: boolean
+  classification: string
+  primaryCardDisplayMode: JsonValue
+  qualifiedRouteCardCount: JsonValue
+  reviewCtaExpectedVisible: JsonValue
+  rejectionReasons: string[]
+  explicitFallbackReasons: string[]
+} {
+  const diagnostic = isRecord(input) && 'diagnostic' in input ? input.diagnostic : input
+  const present =
+    isRecord(input) && typeof input.present === 'boolean'
+      ? input.present
+      : isRecord(diagnostic)
+  const rejectionReasons = collectStringValuesByKey(diagnostic, 'rejectionReason')
+  const explicitFallbackReasons = collectStringValuesByKey(diagnostic, 'explicitFallbackReason')
+  const primaryCardDisplayMode = findFirstValue(diagnostic, [
+    ['artifactCardAdmission', 'primaryCardDisplayMode'],
+  ])
+  const qualifiedRouteCardCount = findFirstValue(diagnostic, [
+    ['artifactCardAdmission', 'qualifiedRouteCardCount'],
+  ])
+  const reviewCtaExpectedVisible = findFirstValue(diagnostic, [
+    ['publicNoCardState', 'reviewCtaExpectedVisible'],
+  ])
+  const greatStopRuntimeError = explicitFallbackReasons.some((reason) =>
+    reason.includes('GreatStopGateSelectionError'),
+  )
+  const noApprovedPayload = rejectionReasons.includes('no_approved_payload')
+  const classification =
+    greatStopRuntimeError && noApprovedPayload
+      ? 'great_stop_no_approved_payload'
+      : primaryCardDisplayMode === 'no_qualified_fallback'
+        ? 'no_qualified_route_card'
+        : 'unknown_no_card'
+  return {
+    present,
+    classification,
+    primaryCardDisplayMode,
+    qualifiedRouteCardCount,
+    reviewCtaExpectedVisible,
+    rejectionReasons,
+    explicitFallbackReasons,
   }
 }
 
@@ -1326,6 +1445,7 @@ async function runHostedObservation(): Promise<void> {
   let browser: Awaited<ReturnType<typeof launchChrome>> | null = null
   let targetId: string | null = null
   let cdp: CdpClient | null = null
+  let fieldProxyEnvelopeBreach: Error | null = null
 
   async function recordEvent(kind: string, payload: unknown): Promise<void> {
     const event = { timestamp: isoNow(), kind, payload: sanitizeForEvidence(payload) }
@@ -1365,6 +1485,12 @@ async function runHostedObservation(): Promise<void> {
 
   function scheduleNetworkWrite(promise: Promise<unknown>): void {
     pendingWrites.push(promise.catch((error: unknown) => recordEvent('capture_error', String(error))))
+  }
+
+  function assertNoFieldProxyEnvelopeBreach(): void {
+    if (fieldProxyEnvelopeBreach) {
+      throw fieldProxyEnvelopeBreach
+    }
   }
 
   try {
@@ -1455,6 +1581,20 @@ async function runHostedObservation(): Promise<void> {
       }
       requestById.set(requestId, summary)
       evidence.networkRequests.push(summary)
+      if (summary.isFieldProxy && summary.method.toUpperCase() === 'POST') {
+        const envelopeSummary = summarizeStepBFieldProxyPostEnvelope({
+          networkRequests: evidence.networkRequests,
+          fieldProxyCalls: evidence.fieldProxyCalls,
+        })
+        if (envelopeSummary.exceeded && !fieldProxyEnvelopeBreach) {
+          const message = formatStepBFieldProxyEnvelopeBreach(envelopeSummary)
+          fieldProxyEnvelopeBreach = new Error(message)
+          scheduleNetworkWrite(
+            recordEvent('field_proxy_post_envelope_breach', envelopeSummary)
+              .then(() => persist('field_proxy_post_envelope_breach')),
+          )
+        }
+      }
       for (const pattern of scanProviderPatterns(url)) {
         const hit = { timestamp: isoNow(), source: 'network-url', pattern, url }
         evidence.providerPatternHits.push(hit)
@@ -1515,6 +1655,7 @@ async function runHostedObservation(): Promise<void> {
     await checkpoint('before_open_start_curate')
     await cdp.send('Page.navigate', { url: targetUrl })
     await waitUntil('page body after opening /start/curate', async () => {
+      assertNoFieldProxyEnvelopeBreach()
       if (!cdp) {
         return false
       }
@@ -1558,6 +1699,7 @@ async function runHostedObservation(): Promise<void> {
     await persist('route_source_after_continue')
 
     await waitUntil('visible route cards or no-card diagnostics after candidate supply', async () => {
+      assertNoFieldProxyEnvelopeBreach()
       if (!cdp) {
         return false
       }
@@ -1588,6 +1730,7 @@ async function runHostedObservation(): Promise<void> {
       return true
     })
     await checkpoint('before_click_route_card')
+    assertNoFieldProxyEnvelopeBreach()
     evidence.routeCardsBeforeClick = await readRouteCards(cdp)
     await recordEvent('route_cards_before_click', evidence.routeCardsBeforeClick)
     await persist('route_cards_before_click')
@@ -1620,7 +1763,19 @@ async function runHostedObservation(): Promise<void> {
           'No visible route card found and Step B Coffee & Books diagnostics were missing after candidate supply.',
         )
       }
-      return
+      const noCardSummary = summarizeStepBNoCardDiagnostics(noCardDiagnostics)
+      await recordEvent('step_b_no_card_classification', noCardSummary)
+      throw new Error(
+        [
+          'No visible route card found after Step B candidate supply.',
+          `classification=${noCardSummary.classification}.`,
+          `primaryCardDisplayMode=${String(noCardSummary.primaryCardDisplayMode)}.`,
+          `qualifiedRouteCardCount=${String(noCardSummary.qualifiedRouteCardCount)}.`,
+          `reviewCtaExpectedVisible=${String(noCardSummary.reviewCtaExpectedVisible)}.`,
+          `rejectionReasons=${noCardSummary.rejectionReasons.join(',') || 'none'}.`,
+          `explicitFallbackReasons=${noCardSummary.explicitFallbackReasons.join(',') || 'none'}.`,
+        ].join(' '),
+      )
     }
     const selectedCardArtifactId =
       typeof selectedCard.artifactId === 'string' ? selectedCard.artifactId : null
@@ -1863,7 +2018,10 @@ async function main(): Promise<void> {
   await runHostedObservation()
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`)
-  process.exitCode = 1
-})
+const directScriptPath = process.argv[1]?.replaceAll('\\', '/') ?? ''
+if (directScriptPath.endsWith('/observe-hosted-step-b-supply.ts')) {
+  main().catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`)
+    process.exitCode = 1
+  })
+}

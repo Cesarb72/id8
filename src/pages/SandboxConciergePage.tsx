@@ -262,6 +262,7 @@ import {
   normalizePreviewField,
 } from '../domain/adapters/buildVenueCardStopRepresentation'
 import {
+  buildStepBCurateLiveSmokeCandidateSupplyRunFingerprint,
   previewDistrictRecommendationsForPlanBuild,
   runPlanBuildWithLegacyPlaceRightFallback,
   runStepBCurateLiveSmokeCandidateSupply,
@@ -10953,6 +10954,8 @@ export function SandboxConciergePage({
   const buildValidationAttemptRef = useRef<string | null>(null)
   const buildValidationCompletedAttemptRef = useRef<string | null>(null)
   const buildValidationRejectedAttemptRef = useRef<string | null>(null)
+  const stepBCurateLiveSmokeCandidateSupplyRunByFingerprintRef =
+    useRef<Record<string, Promise<StopTypeCandidateBoard | null>>>({})
   const curatePreviewCommitabilityAttemptRef = useRef<Record<string, string>>({})
   const curateQualificationInFlightRef = useRef<Record<string, true>>({})
   const curateCommittedRouteFallbackAttemptRef = useRef<string | null>(null)
@@ -11080,28 +11083,60 @@ export function SandboxConciergePage({
               }
             })()
           : undefined
-        const board = await runStepBCurateLiveSmokeCandidateSupply({
-          gate: {
-            environment: 'default',
-            pathname: currentPath,
-            isPublicSurface,
-            mode: isCurateWrapperActive ? 'curate' : isBuildWrapperActive ? 'build' : 'surprise',
-            inputMode: isCurateWrapperActive ? 'curate' : isBuildWrapperActive ? 'build' : 'surprise',
-            phase: 'candidate_supply',
-            selectedStarterPackPresent: Boolean(selectedStarterPack),
-            userSourceModeOverrideApplied: false,
-            smokeSwitchEnabled: readStepBCurateLiveSmokeEnabled(),
-          },
-          input: {
-            city: districtLocationQuery,
-            mode: 'curate',
-            persona,
-            vibe: primaryVibe,
-            sourceMode: 'curated',
-          },
-          starterPack: selectedStarterPack,
-          fieldDiscoveryContract: candidateSupplyFieldDiscoveryContract,
-        })
+        const stepBCandidateSupplyGate = {
+          environment: 'default' as const,
+          pathname: currentPath,
+          isPublicSurface,
+          mode: isCurateWrapperActive
+            ? 'curate' as const
+            : isBuildWrapperActive
+              ? 'build' as const
+              : 'surprise' as const,
+          inputMode: isCurateWrapperActive
+            ? 'curate' as const
+            : isBuildWrapperActive
+              ? 'build' as const
+              : 'surprise' as const,
+          phase: 'candidate_supply' as const,
+          selectedStarterPackPresent: Boolean(selectedStarterPack),
+          userSourceModeOverrideApplied: false,
+          smokeSwitchEnabled: readStepBCurateLiveSmokeEnabled(),
+        }
+        const stepBCandidateSupplyInput = {
+          city: districtLocationQuery,
+          mode: 'curate' as const,
+          persona,
+          vibe: primaryVibe,
+          sourceMode: 'curated' as const,
+        }
+        const stepBCandidateSupplyRunFingerprint =
+          buildStepBCurateLiveSmokeCandidateSupplyRunFingerprint({
+            gate: stepBCandidateSupplyGate,
+            input: stepBCandidateSupplyInput,
+            starterPack: selectedStarterPack,
+          })
+        const buildStepBCandidateSupplyBoard = () =>
+          runStepBCurateLiveSmokeCandidateSupply({
+            gate: stepBCandidateSupplyGate,
+            input: stepBCandidateSupplyInput,
+            starterPack: selectedStarterPack,
+            fieldDiscoveryContract: candidateSupplyFieldDiscoveryContract,
+          })
+        let stepBCandidateSupplyBoardPromise =
+          stepBCandidateSupplyRunFingerprint
+            ? stepBCurateLiveSmokeCandidateSupplyRunByFingerprintRef.current[
+                stepBCandidateSupplyRunFingerprint
+              ]
+            : undefined
+        if (!stepBCandidateSupplyBoardPromise) {
+          stepBCandidateSupplyBoardPromise = buildStepBCandidateSupplyBoard()
+          if (stepBCandidateSupplyRunFingerprint) {
+            stepBCurateLiveSmokeCandidateSupplyRunByFingerprintRef.current[
+              stepBCandidateSupplyRunFingerprint
+            ] = stepBCandidateSupplyBoardPromise
+          }
+        }
+        const board = await stepBCandidateSupplyBoardPromise
         if (cancelled) {
           return
         }
