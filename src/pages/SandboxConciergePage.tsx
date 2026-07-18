@@ -133,7 +133,10 @@ import {
   isCurateCommittedRouteFallbackArtifact,
   type CurateCommittedRouteFallbackRejectedReason,
 } from '../app/services/curate/buildCurateCommittedRouteFallback'
-import { buildCurateScenarioBackedArtifactBridge } from '../app/services/curate/buildCurateScenarioBackedArtifactBridge'
+import {
+  buildCurateScenarioBackedArtifactBridge,
+  evaluateCurateHardPocketProofTargetAssertion,
+} from '../app/services/curate/buildCurateScenarioBackedArtifactBridge'
 import { buildCurateScenarioHardCommitSeedVenues } from '../app/services/curate/buildCurateScenarioHardCommitSeedVenues'
 import { validatePublicCurateApprovedPayloadTruth } from '../app/services/curate/publicCurateCardTruthService'
 import {
@@ -11997,14 +12000,51 @@ export function SandboxConciergePage({
           directionCards,
           allDirectionCards,
         })
+        const proofTargetPocketLabel =
+          opportunity.selection.pocketId
+            ? districtDiscoveryCards.find((entry) => entry.id === opportunity.selection.pocketId)?.name ??
+              null
+            : null
+        const activePocketHint = scenarioCandidateBoard?.debug?.liveRetrieval?.livePocketHint
+        const proofTargetAssertion = evaluateCurateHardPocketProofTargetAssertion({
+          opportunity,
+          selection: opportunity.selection,
+          directionBacking,
+          starterPack: selectedStarterPack ?? null,
+          starterSemanticRepresentation: opportunity.starterSemanticRepresentation,
+          proofTarget:
+            isCurateWrapperActive && selectedStarterPack?.id === 'coffee-books'
+              ? {
+                  diagnosticOnly: true,
+                  proofTargetId: 'row1_step_b_coffee_books_representative',
+                  targetPocketId: opportunity.selection.pocketId ?? null,
+                  targetPocketLabel: proofTargetPocketLabel,
+                  activePocketId: activePocketHint?.pocketId ?? null,
+                  activePocketLabel: activePocketHint?.pocketLabel ?? null,
+                  crossPocketAllowed: false,
+                }
+              : undefined,
+        })
+        const proofTargetFailed = proofTargetAssertion.status === 'failed'
         return {
           opportunity,
           directionBacking,
-          admitted: directionBacking.status === 'backed',
-          reason: directionBacking.reason,
+          proofTargetAssertion,
+          admitted: directionBacking.status === 'backed' && !proofTargetFailed,
+          reason: proofTargetFailed
+            ? proofTargetAssertion.reason ?? 'proof_target_assertion_failed'
+            : directionBacking.reason,
         }
       }),
-    [allDirectionCards, directionCards, scenarioBackedVerifiedCityOpportunities],
+    [
+      allDirectionCards,
+      directionCards,
+      districtDiscoveryCards,
+      isCurateWrapperActive,
+      scenarioBackedVerifiedCityOpportunities,
+      scenarioCandidateBoard,
+      selectedStarterPack,
+    ],
   )
   const admittedScenarioBackedVerifiedCityOpportunities = useMemo(
     () =>
@@ -12439,6 +12479,18 @@ export function SandboxConciergePage({
       allDirectionCards,
       maxQualificationCandidateCount: 8,
       starterPack: selectedStarterPack ?? null,
+      proofTarget:
+        selectedStarterPack?.id === 'coffee-books'
+          ? {
+              diagnosticOnly: true,
+              proofTargetId: 'row1_step_b_coffee_books_representative',
+              activePocketId:
+                scenarioCandidateBoard?.debug?.liveRetrieval?.livePocketHint?.pocketId ?? null,
+              activePocketLabel:
+                scenarioCandidateBoard?.debug?.liveRetrieval?.livePocketHint?.pocketLabel ?? null,
+              crossPocketAllowed: false,
+            }
+          : undefined,
     })
   }, [
     admittedScenarioBackedVerifiedCityOpportunities,
@@ -12446,6 +12498,7 @@ export function SandboxConciergePage({
     directionCards,
     ecsState,
     isCurateWrapperActive,
+    scenarioCandidateBoard,
     selectedStarterPack,
     shouldUseScenarioBackedArtifacts,
     starterAwareRankedStep2SourceOpportunities,
@@ -14402,6 +14455,12 @@ export function SandboxConciergePage({
         entry.reason,
       ] as const),
     )
+    const suppressedProofTargetAssertionById = new Map(
+      suppressedScenarioBackedOpportunityAdmissions.map((entry) => [
+        entry.opportunity.id,
+        entry.proofTargetAssertion,
+      ] as const),
+    )
     const artifactByOpportunityId = new Map(
       step2CandidateRouteArtifacts.map((artifact) => [artifact.sourceOpportunityId, artifact] as const),
     )
@@ -14416,6 +14475,11 @@ export function SandboxConciergePage({
       const suppressedReason = opportunity
         ? suppressedOpportunityReasonById.get(opportunity.id)
         : undefined
+      const suppressedProofTargetAssertion = opportunity
+        ? suppressedProofTargetAssertionById.get(opportunity.id)
+        : undefined
+      const suppressedByProofTargetAssertion =
+        suppressedReason?.startsWith('proof_target_') === true
       const artifact = opportunity ? artifactByOpportunityId.get(opportunity.id) : undefined
       const bridgeDiagnostic = opportunity
         ? bridgeDiagnosticByOpportunityId.get(opportunity.id)
@@ -14434,7 +14498,9 @@ export function SandboxConciergePage({
         !opportunity
           ? 'before_contract_entry_artifact_enrichment'
           : suppressedReason
-            ? 'direction_backing_admission'
+            ? suppressedByProofTargetAssertion
+              ? 'proof_target_assertion'
+              : 'direction_backing_admission'
             : !artifact
               ? 'contract_entry_artifact_enrichment'
               : bridgeDiagnostic?.scenarioRouteBuildabilityStatus === 'rejected'
@@ -14444,7 +14510,9 @@ export function SandboxConciergePage({
         !opportunity
           ? 'scenario_night_not_mapped_to_verified_opportunity'
           : suppressedReason
-            ? `direction_backing_${suppressedReason}`
+            ? suppressedByProofTargetAssertion
+              ? suppressedReason
+              : `direction_backing_${suppressedReason}`
             : !artifact
               ? 'contract_entry_artifact_not_produced'
               : bridgeDiagnostic?.scenarioRouteBuildabilityReason ??
@@ -14473,6 +14541,8 @@ export function SandboxConciergePage({
           bridgeDiagnostic?.scenarioRouteBuildabilityStatus !== 'rejected',
         materializationStage,
         materializationRejectReason,
+        proofTargetAssertion:
+          suppressedProofTargetAssertion ?? bridgeDiagnostic?.proofTargetAssertion ?? null,
         contractEntryArtifactId: artifact?.id ?? null,
         sourceOpportunityId: opportunity?.id ?? null,
       }

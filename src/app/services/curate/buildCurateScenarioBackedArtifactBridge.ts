@@ -24,6 +24,7 @@ type CurateScenarioBuildabilityAdmissionReason =
   | 'scenario_route_mixed_di_fallback_scattered'
   | 'scenario_route_seed_projection_missing'
   | 'coffee_books_insufficient_in_pocket_literary_supply'
+  | CurateHardPocketProofTargetAssertionReason
 type CurateHardCommitFeasibilityFailureClass =
   | 'missing_seed_identity'
   | 'missing_discovery_preference_identity'
@@ -39,7 +40,44 @@ type CurateHardCommitFeasibilityFailureClass =
   | 'canonical_role_not_in_planner_pool'
   | 'canonical_exact_preservation_failed'
   | 'materialization_unresolved'
+  | 'proof_target_assertion_failed'
 type CurateHardCommitFeasibilityRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
+
+export type CurateHardPocketProofTargetAssertionReason =
+  | 'proof_target_selected_direction_missing'
+  | 'proof_target_selected_pocket_missing'
+  | 'proof_target_active_pocket_mismatch'
+  | 'proof_target_selected_stop_outside_pocket'
+  | 'proof_target_cross_pocket_not_allowed'
+  | 'proof_target_semantic_proof_missing'
+
+export interface CurateHardPocketProofTargetAssertionContext {
+  diagnosticOnly: true
+  proofTargetId: string
+  targetPocketId?: string | null
+  targetPocketLabel?: string | null
+  activePocketId?: string | null
+  activePocketLabel?: string | null
+  crossPocketAllowed?: boolean
+}
+
+export interface CurateHardPocketProofTargetAssertionResult {
+  diagnosticOnly: true
+  status: 'passed' | 'failed' | 'not_applicable'
+  reason: CurateHardPocketProofTargetAssertionReason | null
+  proofTargetId: string | null
+  crossPocketAllowed: boolean
+  selectedDirectionId: string | null
+  selectedPocketId: string | null
+  targetPocketId: string | null
+  targetPocketLabel: string | null
+  activePocketId: string | null
+  activePocketLabel: string | null
+  selectedProofStopId: string | null
+  selectedProofStopName: string | null
+  selectedProofStopPocketId: string | null
+  selectedProofStopPocketLabel: string | null
+}
 
 interface CurateHardCommitFeasibilityRoleDiagnostic {
   role: CurateHardCommitFeasibilityRole
@@ -86,6 +124,7 @@ export interface CurateScenarioBackedArtifactBridgeDiagnostic {
   scenarioRouteBuildabilityReason: CurateScenarioBuildabilityAdmissionReason | null
   scenarioRouteBuildabilityFailedRoles: Array<Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>>
   scenarioRouteBuildabilitySeedProjectionAvailable: boolean
+  proofTargetAssertion: CurateHardPocketProofTargetAssertionResult
   hardCommitFeasibility: CurateHardCommitFeasibilityDiagnostic
 }
 
@@ -134,6 +173,219 @@ const COFFEE_BOOKS_PUBLIC_EVIDENCE_TYPES = new Set<StarterSemanticEvidenceKind>(
   'library',
   'bookstore',
 ])
+
+function normalizeProofTargetToken(value: string | undefined | null): string {
+  return value?.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim() ?? ''
+}
+
+function proofTargetTokensMatch(left: string | undefined | null, right: string | undefined | null): boolean {
+  const normalizedLeft = normalizeProofTargetToken(left)
+  const normalizedRight = normalizeProofTargetToken(right)
+  return Boolean(
+    normalizedLeft &&
+      normalizedRight &&
+      (normalizedLeft === normalizedRight ||
+        normalizedLeft.includes(normalizedRight) ||
+        normalizedRight.includes(normalizedLeft)),
+  )
+}
+
+function findSelectedStopForCoffeeBooksProof(params: {
+  opportunity: VerifiedCityOpportunity
+  representation: StarterSemanticRepresentation | undefined
+}): BuiltScenarioStop | undefined {
+  const evidence = params.representation?.evidence.find(
+    (entry) =>
+      entry.source === 'selected_route_stop' &&
+      entry.evidenceTypes.some((type) => COFFEE_BOOKS_PUBLIC_EVIDENCE_TYPES.has(type)),
+  )
+  if (!evidence) {
+    return undefined
+  }
+  return (
+    findScenarioStopByVenueId(params.opportunity, evidence.venueId) ??
+    findScenarioStopByName(params.opportunity, evidence.name)
+  )
+}
+
+function selectedProofStopMatchesPocket(params: {
+  stop: BuiltScenarioStop
+  targetPocketId: string
+  targetPocketLabel?: string | null
+}): boolean {
+  if (proofTargetTokensMatch(params.stop.geoBucket, params.targetPocketId)) {
+    return true
+  }
+  if (!params.targetPocketLabel) {
+    return false
+  }
+  return (
+    proofTargetTokensMatch(params.stop.geoLabel, params.targetPocketLabel) ||
+    proofTargetTokensMatch(params.stop.district, params.targetPocketLabel) ||
+    proofTargetTokensMatch(params.stop.neighborhoodLabel, params.targetPocketLabel)
+  )
+}
+
+function buildProofTargetAssertionResult(params: {
+  proofTarget?: CurateHardPocketProofTargetAssertionContext
+  status: CurateHardPocketProofTargetAssertionResult['status']
+  reason: CurateHardPocketProofTargetAssertionReason | null
+  selectedDirectionId?: string | null
+  selectedPocketId?: string | null
+  targetPocketId?: string | null
+  targetPocketLabel?: string | null
+  selectedProofStop?: BuiltScenarioStop | null
+}): CurateHardPocketProofTargetAssertionResult {
+  return {
+    diagnosticOnly: true,
+    status: params.status,
+    reason: params.reason,
+    proofTargetId: params.proofTarget?.proofTargetId ?? null,
+    crossPocketAllowed: params.proofTarget?.crossPocketAllowed === true,
+    selectedDirectionId: params.selectedDirectionId ?? null,
+    selectedPocketId: params.selectedPocketId ?? null,
+    targetPocketId: params.targetPocketId ?? null,
+    targetPocketLabel: params.targetPocketLabel ?? null,
+    activePocketId: params.proofTarget?.activePocketId ?? null,
+    activePocketLabel: params.proofTarget?.activePocketLabel ?? null,
+    selectedProofStopId: params.selectedProofStop?.venueId ?? null,
+    selectedProofStopName: params.selectedProofStop?.name ?? null,
+    selectedProofStopPocketId: params.selectedProofStop?.geoBucket ?? null,
+    selectedProofStopPocketLabel:
+      params.selectedProofStop?.geoLabel ??
+      params.selectedProofStop?.district ??
+      params.selectedProofStop?.neighborhoodLabel ??
+      null,
+  }
+}
+
+export function evaluateCurateHardPocketProofTargetAssertion(params: {
+  opportunity: VerifiedCityOpportunity
+  selection: ContractEntryArtifact['selection']
+  directionBacking?: ContractEntryArtifact['directionBacking']
+  starterPack?: StarterPack | null
+  starterSemanticRepresentation?: StarterSemanticRepresentation
+  proofTarget?: CurateHardPocketProofTargetAssertionContext
+}): CurateHardPocketProofTargetAssertionResult {
+  const { proofTarget } = params
+  if (!proofTarget || params.starterPack?.id !== 'coffee-books') {
+    return buildProofTargetAssertionResult({
+      proofTarget,
+      status: 'not_applicable',
+      reason: null,
+      selectedDirectionId: params.selection.directionId ?? params.directionBacking?.directionId,
+      selectedPocketId: params.selection.pocketId ?? params.directionBacking?.pocketId,
+      targetPocketId: proofTarget?.targetPocketId ?? params.selection.pocketId,
+      targetPocketLabel: proofTarget?.targetPocketLabel,
+    })
+  }
+
+  const selectedDirectionId = params.selection.directionId ?? params.directionBacking?.directionId ?? null
+  const selectedPocketId = params.selection.pocketId ?? params.directionBacking?.pocketId ?? null
+  const targetPocketId = proofTarget.targetPocketId ?? selectedPocketId
+  const targetPocketLabel = proofTarget.targetPocketLabel ?? null
+  const representation =
+    params.starterSemanticRepresentation ??
+    params.opportunity.starterSemanticRepresentation
+  const selectedProofStop = findSelectedStopForCoffeeBooksProof({
+    opportunity: params.opportunity,
+    representation,
+  })
+
+  if (!selectedDirectionId?.trim()) {
+    return buildProofTargetAssertionResult({
+      proofTarget,
+      status: 'failed',
+      reason: 'proof_target_selected_direction_missing',
+      selectedDirectionId,
+      selectedPocketId,
+      targetPocketId,
+      targetPocketLabel,
+      selectedProofStop,
+    })
+  }
+  if (!selectedPocketId?.trim() || !targetPocketId?.trim()) {
+    return buildProofTargetAssertionResult({
+      proofTarget,
+      status: 'failed',
+      reason: 'proof_target_selected_pocket_missing',
+      selectedDirectionId,
+      selectedPocketId,
+      targetPocketId,
+      targetPocketLabel,
+      selectedProofStop,
+    })
+  }
+  if (
+    proofTarget.activePocketId &&
+    !proofTarget.crossPocketAllowed &&
+    proofTarget.activePocketId !== targetPocketId
+  ) {
+    return buildProofTargetAssertionResult({
+      proofTarget,
+      status: 'failed',
+      reason: 'proof_target_active_pocket_mismatch',
+      selectedDirectionId,
+      selectedPocketId,
+      targetPocketId,
+      targetPocketLabel,
+      selectedProofStop,
+    })
+  }
+  if (params.directionBacking?.status === 'unbacked' && !proofTarget.crossPocketAllowed) {
+    return buildProofTargetAssertionResult({
+      proofTarget,
+      status: 'failed',
+      reason: 'proof_target_cross_pocket_not_allowed',
+      selectedDirectionId,
+      selectedPocketId,
+      targetPocketId,
+      targetPocketLabel,
+      selectedProofStop,
+    })
+  }
+  if (!selectedProofStop) {
+    return buildProofTargetAssertionResult({
+      proofTarget,
+      status: 'failed',
+      reason: 'proof_target_semantic_proof_missing',
+      selectedDirectionId,
+      selectedPocketId,
+      targetPocketId,
+      targetPocketLabel,
+      selectedProofStop,
+    })
+  }
+  if (
+    !selectedProofStopMatchesPocket({
+      stop: selectedProofStop,
+      targetPocketId,
+      targetPocketLabel,
+    })
+  ) {
+    return buildProofTargetAssertionResult({
+      proofTarget,
+      status: 'failed',
+      reason: 'proof_target_selected_stop_outside_pocket',
+      selectedDirectionId,
+      selectedPocketId,
+      targetPocketId,
+      targetPocketLabel,
+      selectedProofStop,
+    })
+  }
+
+  return buildProofTargetAssertionResult({
+    proofTarget,
+    status: 'passed',
+    reason: null,
+    selectedDirectionId,
+    selectedPocketId,
+    targetPocketId,
+    targetPocketLabel,
+    selectedProofStop,
+  })
+}
 
 function starterSemanticRepresentationHasPublicCoffeeBooksEvidence(
   representation: StarterSemanticRepresentation | undefined,
@@ -305,15 +557,17 @@ function assessCoffeeBooksScenarioBuildability(params: {
   opportunity: VerifiedCityOpportunity
   artifact: ContractEntryArtifact | null
   starterPack?: StarterPack | null
+  proofTarget?: CurateHardPocketProofTargetAssertionContext
 }): {
   allowed: boolean
   status: CurateScenarioBuildabilityAdmissionStatus
   reason: CurateScenarioBuildabilityAdmissionReason | null
   failedRoles: Array<Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>>
   seedProjectionAvailable: boolean
+  proofTargetAssertion: CurateHardPocketProofTargetAssertionResult
   hardCommitFeasibility: CurateHardCommitFeasibilityDiagnostic
 } {
-  const { opportunity, artifact, starterPack } = params
+  const { opportunity, artifact, starterPack, proofTarget } = params
   const buildFeasibility = (overrides: Partial<CurateHardCommitFeasibilityDiagnostic> = {}) => {
     const roles = ['start', 'highlight', 'windDown'] as const
     const roleDiagnostics = roles.map((role) => {
@@ -377,12 +631,33 @@ function assessCoffeeBooksScenarioBuildability(params: {
     opportunity.scenarioNight?.geoCoherence?.rejectionReason ===
     'scenario_route_mixed_di_fallback_scattered'
   ) {
+    const proofTargetAssertion = artifact
+      ? evaluateCurateHardPocketProofTargetAssertion({
+          opportunity,
+          selection: artifact.selection,
+          directionBacking: artifact.directionBacking,
+          starterPack,
+          starterSemanticRepresentation:
+            artifact.enrichment?.starterSemanticRepresentation ??
+            opportunity.starterSemanticRepresentation,
+          proofTarget,
+        })
+      : buildProofTargetAssertionResult({
+          proofTarget,
+          status: proofTarget ? 'failed' : 'not_applicable',
+          reason: proofTarget ? 'proof_target_selected_direction_missing' : null,
+          selectedDirectionId: opportunity.selection.directionId,
+          selectedPocketId: opportunity.selection.pocketId,
+          targetPocketId: proofTarget?.targetPocketId ?? opportunity.selection.pocketId,
+          targetPocketLabel: proofTarget?.targetPocketLabel,
+        })
     return {
       allowed: false,
       status: 'rejected',
       reason: 'scenario_route_mixed_di_fallback_scattered',
       failedRoles: [],
       seedProjectionAvailable: false,
+      proofTargetAssertion,
       hardCommitFeasibility: buildFeasibility({
         status: 'failed',
         failureClass: 'planner_inventory_mismatch',
@@ -390,15 +665,51 @@ function assessCoffeeBooksScenarioBuildability(params: {
     }
   }
   if (!artifact || !opportunity.scenarioNight) {
+    const proofTargetAssertion = buildProofTargetAssertionResult({
+      proofTarget,
+      status: proofTarget ? 'failed' : 'not_applicable',
+      reason: proofTarget ? 'proof_target_selected_direction_missing' : null,
+      selectedDirectionId: opportunity.selection.directionId,
+      selectedPocketId: opportunity.selection.pocketId,
+      targetPocketId: proofTarget?.targetPocketId ?? opportunity.selection.pocketId,
+      targetPocketLabel: proofTarget?.targetPocketLabel,
+    })
     return {
       allowed: false,
       status: 'rejected',
       reason: 'scenario_route_seed_projection_missing',
       failedRoles: ['start', 'highlight', 'windDown'],
       seedProjectionAvailable: false,
+      proofTargetAssertion,
       hardCommitFeasibility: buildFeasibility({
         status: 'failed',
         failureClass: 'missing_seed_identity',
+      }),
+    }
+  }
+
+  const proofTargetAssertion = evaluateCurateHardPocketProofTargetAssertion({
+    opportunity,
+    selection: artifact.selection,
+    directionBacking: artifact.directionBacking,
+    starterPack,
+    starterSemanticRepresentation:
+      artifact.enrichment?.starterSemanticRepresentation ??
+      opportunity.starterSemanticRepresentation,
+    proofTarget,
+  })
+  if (proofTargetAssertion.status === 'failed') {
+    return {
+      allowed: false,
+      status: 'rejected',
+      reason: proofTargetAssertion.reason,
+      failedRoles: ['highlight'],
+      seedProjectionAvailable: Boolean(artifact),
+      proofTargetAssertion,
+      hardCommitFeasibility: buildFeasibility({
+        status: 'failed',
+        failureClass: 'proof_target_assertion_failed',
+        failedRole: 'highlight',
       }),
     }
   }
@@ -416,6 +727,7 @@ function assessCoffeeBooksScenarioBuildability(params: {
       reason: 'coffee_books_insufficient_in_pocket_literary_supply',
       failedRoles: ['highlight'],
       seedProjectionAvailable: true,
+      proofTargetAssertion,
       hardCommitFeasibility: buildFeasibility({
         status: 'failed',
         failureClass: 'semantic_contract_failed',
@@ -443,6 +755,7 @@ function assessCoffeeBooksScenarioBuildability(params: {
       reason: 'scenario_route_seed_projection_missing',
       failedRoles: [...missingRoles],
       seedProjectionAvailable: false,
+      proofTargetAssertion,
       hardCommitFeasibility: buildFeasibility({
         status: 'failed',
         failureClass: 'missing_seed_identity',
@@ -457,6 +770,7 @@ function assessCoffeeBooksScenarioBuildability(params: {
     reason: null,
     failedRoles: [],
     seedProjectionAvailable: true,
+    proofTargetAssertion,
     hardCommitFeasibility: buildFeasibility(),
   }
 }
@@ -468,6 +782,7 @@ function buildArtifactsForPool(params: {
   directionCards: RealityDirectionCard[]
   allDirectionCards: RealityDirectionCard[]
   starterPack?: StarterPack | null
+  proofTarget?: CurateHardPocketProofTargetAssertionContext
 }): {
   artifacts: ContractEntryArtifact[]
   diagnostics: CurateScenarioBackedArtifactBridgeDiagnostic[]
@@ -492,6 +807,7 @@ function buildArtifactsForPool(params: {
       opportunity,
       artifact,
       starterPack: params.starterPack,
+      proofTarget: params.proofTarget,
     })
     if (artifact && admission.allowed) {
       artifacts.push(artifact)
@@ -522,6 +838,7 @@ function buildArtifactsForPool(params: {
       scenarioRouteBuildabilityReason: admission.reason,
       scenarioRouteBuildabilityFailedRoles: admission.failedRoles,
       scenarioRouteBuildabilitySeedProjectionAvailable: admission.seedProjectionAvailable,
+      proofTargetAssertion: admission.proofTargetAssertion,
       hardCommitFeasibility: admission.hardCommitFeasibility,
     })
   })
@@ -540,6 +857,7 @@ export function buildCurateScenarioBackedArtifactBridge(params: {
   allDirectionCards: RealityDirectionCard[]
   maxQualificationCandidateCount?: number
   starterPack?: StarterPack | null
+  proofTarget?: CurateHardPocketProofTargetAssertionContext
 }): CurateScenarioBackedArtifactBridgeResult {
   const primary = buildArtifactsForPool({
     opportunities: params.primaryOpportunities,
@@ -548,6 +866,7 @@ export function buildCurateScenarioBackedArtifactBridge(params: {
     directionCards: params.directionCards,
     allDirectionCards: params.allDirectionCards,
     starterPack: params.starterPack,
+    proofTarget: params.proofTarget,
   })
   const fallback = buildArtifactsForPool({
     opportunities: params.fallbackOpportunities,
@@ -556,6 +875,7 @@ export function buildCurateScenarioBackedArtifactBridge(params: {
     directionCards: params.directionCards,
     allDirectionCards: params.allDirectionCards,
     starterPack: params.starterPack,
+    proofTarget: params.proofTarget,
   })
   const primaryPartition = partitionContractEntryArtifactsByDirectionBacking(primary.artifacts)
   const fallbackPartition = partitionContractEntryArtifactsByDirectionBacking(fallback.artifacts)
