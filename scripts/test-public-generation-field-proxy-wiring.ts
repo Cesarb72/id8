@@ -2178,20 +2178,22 @@ function assertCoffeeBooksScenarioBackedBuildabilityAdmission(starterPack: Start
     starterPack,
   })
   assert(
-    semanticRejectedBridge.candidateArtifacts.length > 0 &&
-      semanticRejectedBridge.displayBackedArtifacts.length > 0 &&
-      semanticRejectedBridge.qualificationCandidateArtifacts.length > 0,
-    'Coffee & Books scenario-backed route without explicit book/library/literary evidence must remain eligible when family contract passes.',
+    semanticRejectedBridge.candidateArtifacts.length === 0 &&
+      semanticRejectedBridge.displayBackedArtifacts.length === 0 &&
+      semanticRejectedBridge.qualificationCandidateArtifacts.length === 0,
+    'Coffee & Books scenario-backed route without explicit book/library/literary selected-stop evidence must not enter qualification.',
   )
   assert(
     semanticRejectedBridge.diagnostics.some(
       (entry) =>
-        entry.scenarioRouteBuildabilityStatus === 'passed' &&
-        entry.scenarioRouteBuildabilityReason === null &&
-        entry.hardCommitFeasibility.status === 'passed' &&
-        entry.includedInQualificationCandidateArtifacts,
+        entry.scenarioRouteBuildabilityStatus === 'rejected' &&
+        entry.scenarioRouteBuildabilityReason ===
+          'coffee_books_insufficient_in_pocket_literary_supply' &&
+        entry.hardCommitFeasibility.status === 'failed' &&
+        entry.hardCommitFeasibility.failureClass === 'semantic_contract_failed' &&
+        !entry.includedInQualificationCandidateArtifacts,
     ),
-    'Coffee & Books missing semantic representation must remain diagnostic instead of a hardCommitFeasibility failure class.',
+    'Coffee & Books missing semantic representation must fail early with insufficient selected-stop literary supply diagnostics.',
   )
 
   const validBridge = buildCurateScenarioBackedArtifactBridge({

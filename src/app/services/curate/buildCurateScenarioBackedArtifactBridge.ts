@@ -23,6 +23,7 @@ type CurateScenarioBuildabilityAdmissionReason =
   | 'scenario_route_buildability_mismatch'
   | 'scenario_route_mixed_di_fallback_scattered'
   | 'scenario_route_seed_projection_missing'
+  | 'coffee_books_insufficient_in_pocket_literary_supply'
 type CurateHardCommitFeasibilityFailureClass =
   | 'missing_seed_identity'
   | 'missing_discovery_preference_identity'
@@ -398,6 +399,27 @@ function assessCoffeeBooksScenarioBuildability(params: {
       hardCommitFeasibility: buildFeasibility({
         status: 'failed',
         failureClass: 'missing_seed_identity',
+      }),
+    }
+  }
+
+  if (
+    starterPack?.id === 'coffee-books' &&
+    !starterSemanticRepresentationHasPublicCoffeeBooksEvidence(
+      artifact.enrichment?.starterSemanticRepresentation ??
+        opportunity.starterSemanticRepresentation,
+    )
+  ) {
+    return {
+      allowed: false,
+      status: 'rejected',
+      reason: 'coffee_books_insufficient_in_pocket_literary_supply',
+      failedRoles: ['highlight'],
+      seedProjectionAvailable: true,
+      hardCommitFeasibility: buildFeasibility({
+        status: 'failed',
+        failureClass: 'semantic_contract_failed',
+        failedRole: 'highlight',
       }),
     }
   }

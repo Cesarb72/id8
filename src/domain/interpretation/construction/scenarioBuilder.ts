@@ -589,6 +589,15 @@ function withCoffeeBooksSemanticRepresentation(night: CandidateNight): Candidate
   }
 }
 
+function hasSelectedStopBackedCoffeeBooksSemanticEvidence(night: CandidateNight): boolean {
+  return Boolean(
+    night.starterSemanticRepresentation?.status === 'represented' &&
+      night.starterSemanticRepresentation.evidence.some(
+        (entry) => entry.source === 'selected_route_stop',
+      ),
+  )
+}
+
 function mapCategoryToVenueTypeLabel(category?: VenueCategory, subcategory?: string): string | undefined {
   const normalizedSubcategory = normalizeToken(subcategory ?? '')
   if (normalizedSubcategory.includes('jazz')) return 'jazz lounge'
@@ -2069,9 +2078,17 @@ export function buildScenarioNightsFromCandidateBoard(
       },
     ]
   }
-  const coherentCandidates = geoCoherentCandidates.filter((night) => night.districtPlausibility >= 0.66)
+  const coffeeBooksRepresentedCandidates =
+    board.starterPack?.id === 'coffee-books'
+      ? geoCoherentCandidates.filter(hasSelectedStopBackedCoffeeBooksSemanticEvidence)
+      : []
+  const geoCoherentSelectionCandidates =
+    coffeeBooksRepresentedCandidates.length > 0
+      ? coffeeBooksRepresentedCandidates
+      : geoCoherentCandidates
+  const coherentCandidates = geoCoherentSelectionCandidates.filter((night) => night.districtPlausibility >= 0.66)
   const rankingPool =
-    coherentCandidates.length >= Math.max(2, minNights) ? coherentCandidates : geoCoherentCandidates
+    coherentCandidates.length >= Math.max(2, minNights) ? coherentCandidates : geoCoherentSelectionCandidates
   const rankedCandidates = rankingPool
     .slice()
     .sort((left, right) => right.score - left.score || getHighlightStopName(left).localeCompare(getHighlightStopName(right)))
