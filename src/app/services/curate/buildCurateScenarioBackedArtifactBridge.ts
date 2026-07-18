@@ -58,6 +58,9 @@ export interface CurateHardPocketProofTargetAssertionContext {
   targetPocketLabel?: string | null
   activePocketId?: string | null
   activePocketLabel?: string | null
+  activePocketCenter?: { lat: number; lng: number } | null
+  activePocketHintRadiusM?: number | null
+  activeFieldAdmissionEnvelopeRadiusM?: number | null
   crossPocketAllowed?: boolean
 }
 
@@ -73,6 +76,9 @@ export interface CurateHardPocketProofTargetAssertionResult {
   targetPocketLabel: string | null
   activePocketId: string | null
   activePocketLabel: string | null
+  activePocketCenter: { lat: number; lng: number } | null
+  activePocketHintRadiusM: number | null
+  activeFieldAdmissionEnvelopeRadiusM: number | null
   selectedProofStopId: string | null
   selectedProofStopName: string | null
   selectedProofStopPocketId: string | null
@@ -248,6 +254,10 @@ function buildProofTargetAssertionResult(params: {
     targetPocketLabel: params.targetPocketLabel ?? null,
     activePocketId: params.proofTarget?.activePocketId ?? null,
     activePocketLabel: params.proofTarget?.activePocketLabel ?? null,
+    activePocketCenter: params.proofTarget?.activePocketCenter ?? null,
+    activePocketHintRadiusM: params.proofTarget?.activePocketHintRadiusM ?? null,
+    activeFieldAdmissionEnvelopeRadiusM:
+      params.proofTarget?.activeFieldAdmissionEnvelopeRadiusM ?? null,
     selectedProofStopId: params.selectedProofStop?.venueId ?? null,
     selectedProofStopName: params.selectedProofStop?.name ?? null,
     selectedProofStopPocketId: params.selectedProofStop?.geoBucket ?? null,

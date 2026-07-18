@@ -2275,6 +2275,8 @@ export async function buildStopTypeCandidateBoardFromContract(
     ? input.canonicalInterpretationBundle.strategyFamily
     : null
   const starterScenarioFamily = resolveCurateStarterScenarioFamily(input.starterPack)
+  const starterProofTargetRequiresScenarioFamily =
+    input.starterPack?.id === 'coffee-books' ? starterScenarioFamily : null
   const fallbackScenarioFamily = resolveScenarioFamily({
     city,
     persona,
@@ -2282,6 +2284,7 @@ export async function buildStopTypeCandidateBoardFromContract(
   })
   const scenarioFamily =
     input.scenarioFamilyOverride ??
+    starterProofTargetRequiresScenarioFamily ??
     canonicalScenarioFamily ??
     starterScenarioFamily ??
     fallbackScenarioFamily
@@ -2306,13 +2309,15 @@ export async function buildStopTypeCandidateBoardFromContract(
       compatibilityIntentProjected: true,
       scenarioFamilySource: input.scenarioFamilyOverride
         ? 'override'
-        : canonicalScenarioFamily
-          ? 'canonical_interpretation_bundle'
-          : starterScenarioFamily
-            ? 'starter_lineage_compatibility'
-            : fallbackScenarioFamily
-              ? 'raw_persona_vibe_city_compatibility'
-              : 'unresolved',
+        : starterProofTargetRequiresScenarioFamily
+          ? 'starter_lineage_compatibility'
+          : canonicalScenarioFamily
+            ? 'canonical_interpretation_bundle'
+            : starterScenarioFamily
+              ? 'starter_lineage_compatibility'
+              : fallbackScenarioFamily
+                ? 'raw_persona_vibe_city_compatibility'
+                : 'unresolved',
       canonicalIntentId: normalizedIntent.id,
       contractConstraintsId: input.contractConstraints.id,
       contractGateWorldPresent: input.contractGateWorld.debug.contractGateWorldPresent,

@@ -345,6 +345,43 @@ function readStepBCurateLiveSmokeEnabled(): boolean {
   return env.VITE_ID8_STEP_B_CURATE_LIVE_SMOKE === '1'
 }
 
+type CurateProofTargetActivePocketDiagnostic = {
+  activePocketId: string | null
+  activePocketLabel: string | null
+  activePocketCenter: { lat: number; lng: number } | null
+  activePocketHintRadiusM: number | null
+  activeFieldAdmissionEnvelopeRadiusM: number | null
+}
+
+function resolveCurateProofTargetActivePocketDiagnostic(
+  board: StopTypeCandidateBoard | null,
+): CurateProofTargetActivePocketDiagnostic {
+  const livePocketHint = board?.debug?.liveRetrieval?.livePocketHint
+  if (livePocketHint) {
+    return {
+      activePocketId: livePocketHint.pocketId,
+      activePocketLabel: livePocketHint.pocketLabel,
+      activePocketCenter: livePocketHint.centroid,
+      activePocketHintRadiusM: livePocketHint.radiusM,
+      activeFieldAdmissionEnvelopeRadiusM: null,
+    }
+  }
+
+  const fieldPocketProofDiagnostic = board?.debug?.liveRetrieval?.liveCandidatesByQuery
+    ?.flatMap((entry) => entry.candidates ?? [])
+    .map((candidate) => candidate.pocketProofDiagnostic)
+    .find((diagnostic) => Boolean(diagnostic?.activePocketId))
+
+  return {
+    activePocketId: fieldPocketProofDiagnostic?.activePocketId ?? null,
+    activePocketLabel: fieldPocketProofDiagnostic?.activePocketLabel ?? null,
+    activePocketCenter: fieldPocketProofDiagnostic?.activePocketCenter ?? null,
+    activePocketHintRadiusM: fieldPocketProofDiagnostic?.activePocketHintRadiusM ?? null,
+    activeFieldAdmissionEnvelopeRadiusM:
+      fieldPocketProofDiagnostic?.fieldAdmissionEnvelopeRadiusM ?? null,
+  }
+}
+
 function readSessionStorageValue(key: string): string | null {
   if (typeof window === 'undefined') {
     return null
@@ -11082,6 +11119,7 @@ export function SandboxConciergePage({
                 }),
                 locationQuery: districtLocationQuery,
                 sourceMode: 'curated' as const,
+                scenarioFamilyOverride: resolvedScenarioFamily,
                 starterPack: selectedStarterPack ?? undefined,
               }
             })()
@@ -11111,6 +11149,7 @@ export function SandboxConciergePage({
           persona,
           vibe: primaryVibe,
           sourceMode: 'curated' as const,
+          scenarioFamilyOverride: resolvedScenarioFamily,
         }
         const stepBCandidateSupplyRunFingerprint =
           buildStepBCurateLiveSmokeCandidateSupplyRunFingerprint({
@@ -12005,7 +12044,8 @@ export function SandboxConciergePage({
             ? districtDiscoveryCards.find((entry) => entry.id === opportunity.selection.pocketId)?.name ??
               null
             : null
-        const activePocketHint = scenarioCandidateBoard?.debug?.liveRetrieval?.livePocketHint
+        const activePocketDiagnostic =
+          resolveCurateProofTargetActivePocketDiagnostic(scenarioCandidateBoard)
         const proofTargetAssertion = evaluateCurateHardPocketProofTargetAssertion({
           opportunity,
           selection: opportunity.selection,
@@ -12019,8 +12059,12 @@ export function SandboxConciergePage({
                   proofTargetId: 'row1_step_b_coffee_books_representative',
                   targetPocketId: opportunity.selection.pocketId ?? null,
                   targetPocketLabel: proofTargetPocketLabel,
-                  activePocketId: activePocketHint?.pocketId ?? null,
-                  activePocketLabel: activePocketHint?.pocketLabel ?? null,
+                  activePocketId: activePocketDiagnostic.activePocketId,
+                  activePocketLabel: activePocketDiagnostic.activePocketLabel,
+                  activePocketCenter: activePocketDiagnostic.activePocketCenter,
+                  activePocketHintRadiusM: activePocketDiagnostic.activePocketHintRadiusM,
+                  activeFieldAdmissionEnvelopeRadiusM:
+                    activePocketDiagnostic.activeFieldAdmissionEnvelopeRadiusM,
                   crossPocketAllowed: false,
                 }
               : undefined,
@@ -12481,15 +12525,21 @@ export function SandboxConciergePage({
       starterPack: selectedStarterPack ?? null,
       proofTarget:
         selectedStarterPack?.id === 'coffee-books'
-          ? {
-              diagnosticOnly: true,
-              proofTargetId: 'row1_step_b_coffee_books_representative',
-              activePocketId:
-                scenarioCandidateBoard?.debug?.liveRetrieval?.livePocketHint?.pocketId ?? null,
-              activePocketLabel:
-                scenarioCandidateBoard?.debug?.liveRetrieval?.livePocketHint?.pocketLabel ?? null,
-              crossPocketAllowed: false,
-            }
+          ? (() => {
+              const activePocketDiagnostic =
+                resolveCurateProofTargetActivePocketDiagnostic(scenarioCandidateBoard)
+              return {
+                diagnosticOnly: true,
+                proofTargetId: 'row1_step_b_coffee_books_representative',
+                activePocketId: activePocketDiagnostic.activePocketId,
+                activePocketLabel: activePocketDiagnostic.activePocketLabel,
+                activePocketCenter: activePocketDiagnostic.activePocketCenter,
+                activePocketHintRadiusM: activePocketDiagnostic.activePocketHintRadiusM,
+                activeFieldAdmissionEnvelopeRadiusM:
+                  activePocketDiagnostic.activeFieldAdmissionEnvelopeRadiusM,
+                crossPocketAllowed: false,
+              }
+            })()
           : undefined,
     })
   }, [
@@ -14548,7 +14598,8 @@ export function SandboxConciergePage({
       }
     })
     const liveRetrieval = scenarioCandidateBoard?.debug?.liveRetrieval
-    const activePocketHint = liveRetrieval?.livePocketHint
+    const activePocketDiagnostic =
+      resolveCurateProofTargetActivePocketDiagnostic(scenarioCandidateBoard)
     const proofTargetParameters = {
       diagnosticOnly: true,
       proofTargetId: 'row1_step_b_coffee_books_representative',
@@ -14569,10 +14620,12 @@ export function SandboxConciergePage({
       admissionEnvelope: {
         source: 'field_live_source_pocket_filter',
         radiusM: liveRetrieval?.queryRadiusM ?? null,
-        activePocketId: activePocketHint?.pocketId ?? null,
-        activePocketLabel: activePocketHint?.pocketLabel ?? null,
-        activePocketCenter: activePocketHint?.centroid ?? null,
-        activePocketHintRadiusM: activePocketHint?.radiusM ?? null,
+        activePocketId: activePocketDiagnostic.activePocketId,
+        activePocketLabel: activePocketDiagnostic.activePocketLabel,
+        activePocketCenter: activePocketDiagnostic.activePocketCenter,
+        activePocketHintRadiusM: activePocketDiagnostic.activePocketHintRadiusM,
+        activeFieldAdmissionEnvelopeRadiusM:
+          activePocketDiagnostic.activeFieldAdmissionEnvelopeRadiusM,
       },
       materializationRequirement:
         'scenario night maps to VerifiedCityOpportunity, produces ContractEntryArtifact, passes card/Great Stop gates',
