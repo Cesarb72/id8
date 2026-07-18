@@ -82,6 +82,57 @@ async function handleFieldTextSearchRequest(
     environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? 'local',
     request: validation.request,
   })
+
+  async function readBudgetSnapshot(): Promise<typeof budget | null> {
+    try {
+      return await store.getBudgetSnapshot(budget.date, budget.cap)
+    } catch {
+      return null
+    }
+  }
+
+  const providerActivation = createFieldTextSearchProviderActivationFromEnv()
+  if (providerActivation.status === 'inactive') {
+    const budgetSnapshot = await readBudgetSnapshot()
+    if (!budgetSnapshot) {
+      response.status(503).json(
+        buildFieldProxyBlockedResponse({
+          request: validation.request,
+          reason: 'durable_store_unavailable',
+        }),
+      )
+      return
+    }
+    response.status(503).json(
+      buildFieldProxyBlockedResponse({
+        request: validation.request,
+        reason: 'field_proxy_not_activated',
+        budget: budgetSnapshot,
+      }),
+    )
+    return
+  }
+  if (providerActivation.status === 'missing_key') {
+    const budgetSnapshot = await readBudgetSnapshot()
+    if (!budgetSnapshot) {
+      response.status(503).json(
+        buildFieldProxyBlockedResponse({
+          request: validation.request,
+          reason: 'durable_store_unavailable',
+        }),
+      )
+      return
+    }
+    response.status(503).json(
+      buildFieldProxyBlockedResponse({
+        request: validation.request,
+        reason: providerActivation.errorCode,
+        budget: budgetSnapshot,
+      }),
+    )
+    return
+  }
+
   let cacheResult: Awaited<ReturnType<typeof readFieldCachedResponse>>
   try {
     cacheResult = await readFieldCachedResponse({
@@ -106,28 +157,6 @@ async function handleFieldTextSearchRequest(
 
   if (cacheResult.status === 'hit') {
     response.status(200).json(cacheResult.response)
-    return
-  }
-
-  const providerActivation = createFieldTextSearchProviderActivationFromEnv()
-  if (providerActivation.status === 'inactive') {
-    response.status(503).json(
-      buildFieldProxyBlockedResponse({
-        request: validation.request,
-        reason: 'field_proxy_not_activated',
-        budget: cacheResult.budget,
-      }),
-    )
-    return
-  }
-  if (providerActivation.status === 'missing_key') {
-    response.status(503).json(
-      buildFieldProxyBlockedResponse({
-        request: validation.request,
-        reason: providerActivation.errorCode,
-        budget: cacheResult.budget,
-      }),
-    )
     return
   }
 

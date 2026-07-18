@@ -313,12 +313,68 @@ async function assertHostedStyleProviderInactiveWithKv(): Promise<void> {
     'Hosted-style inactive provider must report no provider call consumed.',
   )
   assert(
-    mockUpstash.commands.filter((command) => command[0] === 'GET').length >= 2 &&
+    mockUpstash.commands.some((command) => String(command[0]).toUpperCase() === 'GET') &&
+      !mockUpstash.commands.some((command) => String(command[1]).includes(':cache:')) &&
       !mockUpstash.commands.some((command) => command[0] === 'EVAL') &&
       !mockUpstash.commands.some((command) => command[0] === 'RPUSH'),
-    'Hosted-style inactive provider must read cache/budget without reserving or logging a provider call.',
+    'Hosted-style inactive provider must read budget without reading cache, reserving, or logging a provider call.',
   )
   process.stdout.write('hosted-style KV provider inactive response: passed\n')
+}
+
+async function assertInactiveProviderBlocksCachedSuccess(): Promise<void> {
+  const mockUpstash = createMockUpstashFetch()
+  process.env.KV_REST_API_URL = 'https://example-upstash.invalid/'
+  process.env.KV_REST_API_TOKEN = 'test-token-not-a-provider-key'
+  process.env.VERCEL_ENV = 'preview'
+  delete process.env.GOOGLE_PLACES_API_KEY
+  delete process.env.ID8_FIELD_PROVIDER
+  globalThis.fetch = mockUpstash.fetchImpl as typeof fetch
+
+  const store = new UpstashFieldLedgerStore({
+    fetchImpl: mockUpstash.fetchImpl,
+    token: 'test-token-not-a-provider-key',
+    url: 'https://example-upstash.invalid/',
+  })
+  const cacheKey = buildFieldTextSearchCacheKey({
+    date: new Date().toISOString().slice(0, 10),
+    environment: 'preview',
+    request,
+  })
+  await store.setCachedResponse(cacheKey, {
+    response: buildCachedResponse(),
+    expiresAt: Date.now() + fieldLedgerStoreConfig.cacheTtlMs,
+  })
+  mockUpstash.commands.length = 0
+
+  const response = createResponse()
+  await fieldTextSearchHandler(
+    {
+      method: 'POST',
+      body: request,
+    },
+    response,
+  )
+
+  assert(response.statusCode === 503, 'Inactive provider must block cached provider success.')
+  assert(response.payload?.ok === false, 'Inactive provider cache block must return ok:false.')
+  assert(
+    response.payload?.diagnostics.blockedReason === 'field_proxy_not_activated',
+    'Inactive provider cache block must use field_proxy_not_activated.',
+  )
+  assert(
+    response.payload?.diagnostics.callConsumed === false,
+    'Inactive provider cache block must not consume a provider call.',
+  )
+  assert(
+    !mockUpstash.commands.some((command) => String(command[1]).includes(':cache:')),
+    'Inactive provider must not read durable provider cache before activation.',
+  )
+  assert(
+    !mockUpstash.commands.some((command) => ['EVAL', 'RPUSH'].includes(String(command[0]).toUpperCase())),
+    'Inactive provider cache block must not reserve budget or log a provider call.',
+  )
+  process.stdout.write('inactive provider blocks cached success: passed\n')
 }
 
 function assertStoreFactoryRuntimeGuards(): void {
@@ -413,6 +469,7 @@ async function main(): Promise<void> {
   assertStoreFactoryRuntimeGuards()
   await assertRealStoreFactoryAndRestBehavior()
   await assertHostedStyleProviderInactiveWithKv()
+  await assertInactiveProviderBlocksCachedSuccess()
 
   assert(fetchCallCount === 0, `Expected provider silence, fetch called ${fetchCallCount} time(s).`)
   process.stdout.write('field proxy ledger/cache: passed\n')

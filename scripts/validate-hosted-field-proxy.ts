@@ -76,6 +76,19 @@ function assertStructuredFailClosed(response: {
   text: string
   json: FieldProxySmokeResponse
 }): void {
+  process.stdout.write(
+    [
+      `hosted field proxy probe status=${response.status}`,
+      `ok=${String(response.json.ok)}`,
+      `cache=${String(response.json.cache)}`,
+      `blockedReason=${String(response.json.diagnostics?.blockedReason ?? 'none')}`,
+      `errorCode=${String(response.json.diagnostics?.errorCode ?? 'none')}`,
+      `callConsumed=${String(response.json.diagnostics?.callConsumed ?? 'missing')}`,
+      `resultCount=${String(response.json.diagnostics?.resultCount ?? 'missing')}`,
+      `budget.used=${String(response.json.budget?.used ?? 'missing')}`,
+      `body=${response.text.slice(0, 1200)}`,
+    ].join(' ') + '\n',
+  )
   assert(response.status !== 401, 'Preview protection bypass failed.')
   assert(
     !(response.status >= 500 && response.text.trim() === ''),
