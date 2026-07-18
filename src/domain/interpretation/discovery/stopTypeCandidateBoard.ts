@@ -1392,6 +1392,44 @@ function hasCoffeeBooksExplicitScenarioEvidence(params: {
   )
 }
 
+function hasCoffeeBooksRequiredScenarioEvidence(params: {
+  corpus: string
+  tokens: Set<string>
+}): boolean {
+  const { corpus, tokens } = params
+  return hasAnyTokenOrPhrase(tokens, corpus, [
+    'book',
+    'books',
+    'bookstore',
+    'book store',
+    'bookshop',
+    'book shop',
+    'book_store',
+    'library',
+    'literary',
+    'reading',
+  ])
+}
+
+function hasCoffeeBooksRequiredCandidateEvidence(candidate: StopTypeCandidate): boolean {
+  const corpus = [
+    candidate.name,
+    candidate.venueCategory,
+    candidate.venueSubcategory,
+    ...(candidate.venueTags ?? []),
+    ...(candidate.sourceTypes ?? []),
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const tokens = new Set(
+    normalizeToken(corpus)
+      .split(' ')
+      .map((token) => token.trim())
+      .filter(Boolean),
+  )
+  return hasCoffeeBooksRequiredScenarioEvidence({ corpus, tokens })
+}
+
 function getCoffeeBooksScenarioRoleCompatibilityBoost(params: {
   scoredVenue: ScoredVenue
   stopType: StopType
@@ -1410,21 +1448,32 @@ function getCoffeeBooksScenarioRoleCompatibilityBoost(params: {
     corpus,
     tokens,
   })
+  const requiredEvidence = hasCoffeeBooksRequiredScenarioEvidence({
+    corpus,
+    tokens,
+  })
   const lowEnergyLanding =
     venue.energyLevel <= 2 ||
     venue.category === 'cafe' ||
     venue.category === 'dessert' ||
     hasAnyTokenOrPhrase(tokens, corpus, ['quiet', 'calm', 'reading', 'tea', 'coffee'])
   if (
-    stopType === 'thoughtful_wine_or_lunch' &&
-    explicitEvidence &&
-    (venue.category === 'museum' || venue.category === 'cafe' || venue.category === 'dessert')
+    stopType === 'cultural_institution' &&
+    requiredEvidence
   ) {
-    return { boost: 0.42, reason: 'Coffee & Books highlight semantic compatibility' }
+    return { boost: 0.52, reason: 'Coffee & Books bookstore/library selected-stop compatibility' }
+  }
+  if (
+    stopType === 'thoughtful_wine_or_lunch' &&
+    requiredEvidence &&
+    venue.category !== 'bar' &&
+    venue.category !== 'live_music'
+  ) {
+    return { boost: 0.56, reason: 'Coffee & Books literary/bookstore selected-stop compatibility' }
   }
   if (
     stopType === 'performance_or_fine_dining' &&
-    explicitEvidence &&
+    (requiredEvidence || explicitEvidence) &&
     lowEnergyLanding &&
     venue.category !== 'bar' &&
     venue.category !== 'live_music'
@@ -1685,6 +1734,7 @@ function toCandidateReasons(params: {
 
 function asRecordByStopType(
   board: Record<StopType, Array<StopTypeCandidate & { __rankScore: number }>>,
+  starterPack?: StarterPack,
 ): Record<StopType, StopTypeCandidate[]> {
   const next = {} as Record<StopType, StopTypeCandidate[]>
   const fixtureIds = new Set(devGreatStopFixtureVenueIds)
@@ -1719,6 +1769,29 @@ function asRecordByStopType(
       }
       if (fixtureJustOutsideTopFive && replaceableIndex >= 0) {
         selected[replaceableIndex] = fixtureJustOutsideTopFive
+      }
+    }
+    if (
+      starterPack?.id === 'coffee-books' &&
+      !selected.some((candidate) => hasCoffeeBooksRequiredCandidateEvidence(candidate))
+    ) {
+      const requiredEvidenceJustOutsideTopFive = ranked
+        .slice(5, 8)
+        .find((candidate) => hasCoffeeBooksRequiredCandidateEvidence(candidate))
+      let replaceableIndex = -1
+      for (let index = selected.length - 1; index >= 0; index -= 1) {
+        const candidate = selected[index]
+        if (
+          candidate &&
+          !fixtureIds.has(candidate.venueId) &&
+          !hasCoffeeBooksRequiredCandidateEvidence(candidate)
+        ) {
+          replaceableIndex = index
+          break
+        }
+      }
+      if (requiredEvidenceJustOutsideTopFive && replaceableIndex >= 0) {
+        selected[replaceableIndex] = requiredEvidenceJustOutsideTopFive
       }
     }
     next[stopType] = selected.map(({ __rankScore, ...candidate }) => candidate)
@@ -1802,13 +1875,12 @@ export function buildStopTypeCandidateBoard(
               ? 0.18
               : 0) +
             (input.starterPack?.id === 'coffee-books' &&
-            stopType === 'thoughtful_wine_or_lunch' &&
-            hasCoffeeBooksExplicitScenarioEvidence({
-              venueCategory: scoredVenue.venue.category,
+            (stopType === 'thoughtful_wine_or_lunch' || stopType === 'cultural_institution') &&
+            hasCoffeeBooksRequiredScenarioEvidence({
               corpus,
               tokens,
             })
-              ? 0.24
+              ? 0.34
               : 0),
         ),
         windDown: clamp01(
@@ -1819,8 +1891,7 @@ export function buildStopTypeCandidateBoard(
               : 0) +
             (input.starterPack?.id === 'coffee-books' &&
             (stopType === 'performance_or_fine_dining' || stopType === 'atmospheric_nightcap') &&
-            hasCoffeeBooksExplicitScenarioEvidence({
-              venueCategory: scoredVenue.venue.category,
+            hasCoffeeBooksRequiredScenarioEvidence({
               corpus,
               tokens,
             })
@@ -1894,7 +1965,7 @@ export function buildStopTypeCandidateBoard(
     }
   }
 
-  const orderedBoard = asRecordByStopType(rankedBoard)
+  const orderedBoard = asRecordByStopType(rankedBoard, input.starterPack)
   requiredStopTypes.forEach((stopType) => {
     candidatesByStopType[stopType] = orderedBoard[stopType]
   })
