@@ -32,6 +32,70 @@ You are legible. You explain what you found before you change anything. You flag
 
 ---
 
+## SYSTEM-LEVEL ROOT CAUSE RULE - NO CAVE DIVING
+
+Before implementation, Codex must perform one focused system-level root-cause pass.
+
+Do not start inside the failing file or failing test. Start from the system:
+
+1. **Identify the active MVP tracker gate or proof row.** Name the gate, proof row, lifecycle checkpoint, or regression surface that is actually failing.
+2. **Identify engine ownership.** Use the current engine map:
+   - Field = retrieval, current reality, query mechanics, provider harness
+   - Interpretation = meaning, semantic evidence, intent and taste interpretation
+   - Bearings = constraints, admissibility, feasibility, pocket/geo/timing rules
+   - Waypoint = coordination and sequence
+   - Great Stop = approval and lockability
+   - Application = lifecycle and rendering, not truth
+3. **Trace the connection wire.** Follow the handoff chain before opening the local implementation: input -> engine handoff -> artifact/carrier -> approval gate -> UI/lifecycle surface.
+4. **Map connected surfaces.** Include modes, artifacts, route authority, provider path, Great Stop, Review/Lock, tests, compatibility wrappers, public UI surfaces, and any lifecycle gate that consumes the output.
+5. **Classify the failure.** Examples include missing carrier, wrong owner, stale wrapper, query-as-proof risk, candidate-as-proof risk, user-search-as-proof risk, admission/selection gap, materialization gap, provider-envelope issue, and hosted/runtime mismatch.
+6. **Define the correct seam.** State what Field should own, what Interpretation should own, what Bearings should own, what Waypoint should own, what Great Stop should own, and what Application should own for the failing path.
+7. **Only then zoom into code.** Propose the smallest safe fix after the problem statement, owner, seam, connected surfaces, stop conditions, and verification plan are clear.
+
+If new evidence reveals a different seam, stop and reclassify before continuing. Do not keep digging in the first file just because it is where the symptom appeared.
+
+### Phase Types
+
+- **PHASE: SYSTEM-LEVEL ROOT CAUSE AUDIT** - default mode is read-only. No code changes unless the prompt explicitly authorizes implementation after root cause is proven.
+- **PHASE: APPROVED IMPLEMENTATION AFTER AUDIT** - implementation must reference the prior root-cause finding, engine owner, seam, and approved fix scope.
+- **PHASE: VERIFICATION / PROOF ONLY** - run only the approved verification or proof. Do not repair while proving unless explicitly instructed to stop and report.
+
+### Implementation Report Requirements
+
+Every implementation report must include:
+- root cause class
+- engine owner
+- seam changed
+- behavior changed?
+- scoring/ranking changed?
+- provider governance changed?
+- artifact shape changed?
+- Great Stop weakened?
+- candidate masquerading reopened?
+- connected tests run
+- stop conditions still active
+
+### Selection / Admission Seam Rule
+
+Any change that admits, preserves, promotes, ranks, or selects candidates must explicitly report:
+- whether it is an Interpretation, Bearings, Waypoint, or Application decision
+- whether it is policy or scoring
+- whether it is scenario-specific or reusable
+- whether it preserves Bearings/pocket constraints
+- whether it uses actual selected-stop evidence rather than query terms
+- whether it changes route behavior
+- which local test proves the behavior
+
+### Canonical Artifact Rule
+
+Audit against the current canonical spine:
+
+`ContractEntryArtifact -> RuntimeRouteArtifact`
+
+`SelectedRouteArtifact` and `CurateRefinementEntryPayload` are legacy/projection/compatibility residue unless explicitly proven otherwise. They must not be treated as lock authority.
+
+---
+
 ## WHAT WE ARE DOING (the context you need, not the whole history)
 
 Arc is a **deterministic coordination kernel** â€” six engines that turn intent + reality + constraints into a well-sequenced, constraint-satisfying plan. ID.8 is the first vertical (a San Jose nightlife concierge) proving the kernel works with real data.
