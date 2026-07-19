@@ -9,6 +9,9 @@ export type StepBPreSupplyHoldReason =
   | 'pre_supply_selected_direction_id_missing'
   | 'pre_supply_selected_pocket_id_missing'
   | 'pre_supply_live_pocket_hint_missing'
+  | 'pre_supply_selected_direction_unavailable_for_target_pocket'
+  | 'pre_supply_selected_pocket_unavailable_for_target'
+  | 'pre_supply_live_pocket_hint_unavailable_for_target'
   | 'pre_supply_cross_pocket_policy_missing'
   | 'pre_supply_provider_envelope_missing'
   | 'pre_supply_provider_valve_readiness_missing'
@@ -53,6 +56,7 @@ export function evaluateStepBPreSupplyReadiness(params: {
   envelope?: Pick<LiveProviderEnvelope, 'maxProviderCalls' | 'maxQueryLabels' | 'maxCenters'> | null
   providerValveExpectedMode?: string | null
   providerValveReady?: boolean
+  carrierResolutionHoldReason?: StepBPreSupplyHoldReason | null
 }): StepBPreSupplyReadiness {
   const proofTargetId = params.proofTargetId?.trim() || null
   const scenarioFamily = params.scenarioFamily?.trim() || null
@@ -68,17 +72,21 @@ export function evaluateStepBPreSupplyReadiness(params: {
     envelope.maxCenters === 1
   const providerValveExpectedMode = params.providerValveExpectedMode?.trim() || null
   const providerValveReady = params.providerValveReady === true
+  const carrierResolutionHoldReason = params.carrierResolutionHoldReason ?? null
   const holdReason: StepBPreSupplyHoldReason | null =
     !proofTargetId
       ? 'pre_supply_proof_target_id_missing'
       : !scenarioFamily || !starterPackId
         ? 'pre_supply_scenario_starter_family_missing'
         : !selectedDirectionId
-          ? 'pre_supply_selected_direction_id_missing'
+          ? carrierResolutionHoldReason ??
+            'pre_supply_selected_direction_id_missing'
           : !selectedPocketId
-            ? 'pre_supply_selected_pocket_id_missing'
+            ? carrierResolutionHoldReason ??
+              'pre_supply_selected_pocket_id_missing'
             : !livePocketHint
-              ? 'pre_supply_live_pocket_hint_missing'
+              ? carrierResolutionHoldReason ??
+                'pre_supply_live_pocket_hint_missing'
               : !crossPocketPolicyAvailable
                 ? 'pre_supply_cross_pocket_policy_missing'
                 : !envelopeReady

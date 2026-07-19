@@ -9,6 +9,10 @@ import {
   evaluateStepBPreSupplyReadiness,
 } from '../src/app/services/curate/stepBProofGate.ts'
 import {
+  ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID,
+  resolveCurateHardPocketProofTarget,
+} from '../src/app/services/curate/row1CoffeeBooksProofTarget.ts'
+import {
   formatStepBFieldProxyEnvelopeBreach,
   summarizeFieldProxyBody,
   summarizeStepBFieldProxyPostEnvelope,
@@ -74,6 +78,196 @@ function buildPreSupplyReadinessInput(overrides: Parameters<typeof evaluateStepB
     providerValveReady: true,
     ...overrides,
   }
+}
+
+function buildRow1DirectionCard(params: {
+  directionId: string
+  pocketId: string
+  pocketLabel?: string
+  confidence?: number
+}) {
+  return {
+    id: params.directionId,
+    cluster: 'chill',
+    card: {
+      title: params.pocketLabel ?? params.pocketId,
+      subtitle: 'Existing Direction carrier',
+      whyNow: 'Existing Direction carrier',
+      whyYou: 'Existing Direction carrier',
+      proofLine: 'Existing Direction carrier',
+      liveSignals: { title: 'Existing Direction carrier', items: [] },
+      confirmation: 'Existing Direction carrier',
+    },
+    debugMeta: {
+      pocketId: params.pocketId,
+      pocketLabel: params.pocketLabel,
+      archetype: 'cultured',
+      confidence: params.confidence ?? 0.9,
+      directionDistrictSupportSummary: params.pocketLabel,
+    },
+  } as never
+}
+
+function assertRow1DirectionDistrictCarrierResolution(): void {
+  const resolution = resolveCurateHardPocketProofTarget({
+    starterPackId: 'coffee-books',
+    city: 'San Jose',
+    districts: [
+      {
+        id: 'sj-willow-glen-core',
+        name: 'Willow Glen Pocket',
+        centroid: { lat: 37.309, lng: -121.9 },
+        radiusM: 650,
+      },
+    ],
+    allDirectionCards: [
+      buildRow1DirectionCard({
+        directionId: 'direction-willow-glen-reading',
+        pocketId: 'sj-willow-glen-core',
+        pocketLabel: 'Willow Glen Pocket',
+      }),
+    ],
+  })
+
+  assert(resolution.target !== null, 'Row 1 must resolve from existing Direction/District carriers.')
+  assert(
+    resolution.target.selectedDirectionId === 'direction-willow-glen-reading',
+    'Row 1 selectedDirectionId must come from the matching RealityDirectionCard.',
+  )
+  assert(
+    resolution.target.selectedPocketId === 'sj-willow-glen-core',
+    'Row 1 selectedPocketId must come from the matching District pocket carrier.',
+  )
+  assert(
+    resolution.target.livePocketHint.pocketId === 'sj-willow-glen-core' &&
+      resolution.target.livePocketHint.source === 'district_intelligence',
+    'Row 1 livePocketHint must come from the selected District pocket before Field supply.',
+  )
+  assert(
+    resolution.target.crossPocketAllowed === false,
+    'Row 1 carrier wiring must preserve hard-pocket, no cross-pocket reselection.',
+  )
+  assert(
+    resolution.diagnostics.matchingDirectionCarrierExists &&
+      resolution.diagnostics.matchingPocketCarrierExists &&
+      resolution.diagnostics.matchingLivePocketHintCarrierExists,
+    'Row 1 diagnostics must report the matching Direction/District carrier state.',
+  )
+
+  const readiness = evaluateStepBPreSupplyReadiness({
+    proofTargetId: resolution.target.proofTargetId,
+    scenarioFamily: 'romantic_cultured',
+    starterPackId: 'coffee-books',
+    selectedDirectionId: resolution.target.selectedDirectionId,
+    selectedPocketId: resolution.target.selectedPocketId,
+    livePocketHint: resolution.target.livePocketHint,
+    crossPocketAllowed: resolution.target.crossPocketAllowed,
+    envelope: {
+      maxProviderCalls: 3,
+      maxQueryLabels: 3,
+      maxCenters: 1,
+    },
+    providerValveExpectedMode: 'preview_field_proxy_expected_armed',
+    providerValveReady: true,
+  })
+  assert(readiness.status === 'ready', 'Pre-supply readiness must become ready with only carrier inputs.')
+  assert(
+    readiness.notRequiredBeforeSupply.includes('selected_proof_stop') &&
+      readiness.notRequiredBeforeSupply.includes('starterSemanticRepresentation'),
+    'Pre-supply readiness must not require post-supply semantic proof or selected proof stop.',
+  )
+  process.stdout.write('Row 1 Direction/District carrier resolution: passed\n')
+}
+
+function assertRow1MissingDirectionCarrierHoldsPrecisely(): void {
+  const resolution = resolveCurateHardPocketProofTarget({
+    starterPackId: 'coffee-books',
+    city: 'San Jose',
+    districts: [
+      {
+        id: 'sj-willow-glen-core',
+        name: 'Willow Glen Pocket',
+        centroid: { lat: 37.309, lng: -121.9 },
+        radiusM: 650,
+      },
+    ],
+    allDirectionCards: [
+      buildRow1DirectionCard({
+        directionId: 'direction-downtown',
+        pocketId: 'downtown',
+        pocketLabel: 'Downtown',
+      }),
+    ],
+  })
+
+  assert(resolution.target === null, 'Row 1 must not fake a selected direction when no matching carrier exists.')
+  assert(
+    resolution.diagnostics.reason === 'pre_supply_selected_direction_unavailable_for_target_pocket',
+    `Expected precise missing-direction reason, received ${resolution.diagnostics.reason}.`,
+  )
+  assert(
+    resolution.diagnostics.selectedPocketIdAvailable &&
+      resolution.diagnostics.livePocketHintAvailable &&
+      !resolution.diagnostics.selectedDirectionIdAvailable,
+    'Row 1 diagnostics must distinguish resolved pocket/hint from missing selectedDirectionId.',
+  )
+
+  const readiness = evaluateStepBPreSupplyReadiness({
+    proofTargetId: ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID,
+    scenarioFamily: 'romantic_cultured',
+    starterPackId: 'coffee-books',
+    selectedDirectionId: null,
+    selectedPocketId: null,
+    livePocketHint: null,
+    crossPocketAllowed: null,
+    envelope: {
+      maxProviderCalls: 3,
+      maxQueryLabels: 3,
+      maxCenters: 1,
+    },
+    providerValveExpectedMode: 'preview_field_proxy_expected_armed',
+    providerValveReady: true,
+    carrierResolutionHoldReason: resolution.diagnostics.preSupplyHoldReason,
+  })
+  assert(
+    readiness.status === 'held' &&
+      readiness.holdReason === 'pre_supply_selected_direction_unavailable_for_target_pocket',
+    'Field supply must stay held with the precise missing Direction carrier reason.',
+  )
+  process.stdout.write('Row 1 missing Direction carrier hold: passed\n')
+}
+
+function assertRow1MissingPocketHintHoldsPrecisely(): void {
+  const resolution = resolveCurateHardPocketProofTarget({
+    starterPackId: 'coffee-books',
+    city: 'San Jose',
+    districts: [
+      {
+        id: 'sj-willow-glen-core',
+        name: 'Willow Glen Pocket',
+      },
+    ],
+    allDirectionCards: [
+      buildRow1DirectionCard({
+        directionId: 'direction-willow',
+        pocketId: 'sj-willow-glen-core',
+        pocketLabel: 'Willow Glen Pocket',
+      }),
+    ],
+  })
+
+  assert(resolution.target === null, 'Row 1 must not fake a livePocketHint when District geometry is missing.')
+  assert(
+    resolution.diagnostics.reason === 'pre_supply_live_pocket_hint_unavailable_for_target',
+    `Expected precise missing-hint reason, received ${resolution.diagnostics.reason}.`,
+  )
+  assert(
+    resolution.diagnostics.matchingDirectionCarrierExists &&
+      resolution.diagnostics.matchingPocketCarrierExists &&
+      !resolution.diagnostics.matchingLivePocketHintCarrierExists,
+    'Row 1 diagnostics must distinguish matching carriers from missing livePocketHint geometry.',
+  )
+  process.stdout.write('Row 1 missing livePocketHint hold: passed\n')
 }
 
 function assertStepBPreSupplyPostSupplyGateSplit(): void {
@@ -377,11 +571,12 @@ function assertNoApprovedPayloadClassificationIsExplicit(): void {
 
 function assertStepBPocketProofDiagnosticsSurfaceInObserverReport(): void {
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
+  const row1ResolverSource = readFileSync('src/app/services/curate/row1CoffeeBooksProofTarget.ts', 'utf8')
   assert(
     sandboxSource.includes('proofTargetParameters') &&
-      sandboxSource.includes('row1_step_b_coffee_books_representative') &&
+      row1ResolverSource.includes('row1_step_b_coffee_books_representative') &&
       sandboxSource.includes('ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL') &&
-      sandboxSource.includes('resolveCurateHardPocketProofTargetInstance') &&
+      row1ResolverSource.includes('resolveCurateHardPocketProofTargetInstance') &&
       sandboxSource.includes('livePocketHint: row1CoffeeBooksProofTarget.livePocketHint') &&
       sandboxSource.includes('selectedDirectionId: row1CoffeeBooksProofTarget?.selectedDirectionId') &&
       sandboxSource.includes('selectedPocketId: row1CoffeeBooksProofTarget?.selectedPocketId') &&
@@ -395,8 +590,28 @@ function assertStepBPocketProofDiagnosticsSurfaceInObserverReport(): void {
   assert(
     sandboxSource.includes('diagnosticOnly: true') &&
       sandboxSource.includes('field_live_source_pocket_filter') &&
-      sandboxSource.includes('selected-stop-backed book, reading, literary, library, or bookstore evidence'),
+      row1ResolverSource.includes('selected-stop-backed book, reading, literary, library, or bookstore evidence'),
     'Step B proof-target diagnostics must be explicitly non-authoritative and explain the current proof target.',
+  )
+  assert(
+    row1ResolverSource.includes('availableDirectionCardIds') &&
+      row1ResolverSource.includes('availableDirectionPocketCarriers') &&
+      row1ResolverSource.includes('availableDistrictPocketCarriers') &&
+      row1ResolverSource.includes('selectedDirectionResolutionReason') &&
+      row1ResolverSource.includes('pre_supply_selected_direction_unavailable_for_target_pocket'),
+    'Row 1 proof-target resolver must report available carriers and precise pre-supply hold reasons.',
+  )
+  assert(
+    !row1ResolverSource.includes('ProviderAdapter') &&
+      !row1ResolverSource.includes('/api/field/text-search') &&
+      !row1ResolverSource.includes('GOOGLE_PLACES'),
+    'Row 1 proof-target resolver must not introduce Field/provider ownership.',
+  )
+  assert(
+    !row1ResolverSource.includes('ProofTargetArtifact') &&
+      !row1ResolverSource.includes('query terms satisfy') &&
+      !row1ResolverSource.includes('user search terms satisfy'),
+    'Row 1 proof-target resolver must not create a canonical artifact or copy query/user terms into proof.',
   )
 
   const fieldSource = readFileSync('src/domain/sources/fetchLivePlaces.ts', 'utf8')
@@ -423,6 +638,9 @@ function assertStepBPocketProofDiagnosticsSurfaceInObserverReport(): void {
 }
 
 async function main(): Promise<void> {
+  assertRow1DirectionDistrictCarrierResolution()
+  assertRow1MissingDirectionCarrierHoldsPrecisely()
+  assertRow1MissingPocketHintHoldsPrecisely()
   assertStepBPreSupplyPostSupplyGateSplit()
   await assertStepBRunFingerprintSharesInFlightPromise()
   assertObserverCapturesDiagnosticsAndHardStops()

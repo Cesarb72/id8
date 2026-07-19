@@ -148,6 +148,14 @@ import {
   evaluateStepBPostSupplyProofGate,
   evaluateStepBPreSupplyReadiness,
 } from '../app/services/curate/stepBProofGate'
+import {
+  ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID,
+  ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL,
+  ROW_1_COFFEE_BOOKS_REQUIRED_SEMANTIC_PROOF,
+  ROW_1_STEP_B_PRE_SUPPLY_ENVELOPE,
+  resolveCurateHardPocketProofTarget,
+  type CurateHardPocketProofTargetInstance,
+} from '../app/services/curate/row1CoffeeBooksProofTarget'
 import { findScoredVenueForStopWithPolicy } from '../app/services/build/finalRouteDetailCopyTruth'
 import { buildRouteRecommendationLifecycleDiagnostics } from '../app/services/routeRecommendationLifecycle'
 import { buildGreatStopRecoverySurfaceModel } from '../app/services/greatStopRecoverySurface'
@@ -252,10 +260,7 @@ import {
 import { isDevOrSandboxCloseoutFlow } from '../domain/sources/getSourceMode'
 import { resolveCurateProofSourceMode } from '../domain/providers/providerProofGate'
 import { resolveCurateStarterScenarioFamily } from '../domain/curate/starterScenarioFamily'
-import {
-  CLOSED_PREVIEW_LIVE_ENVELOPE,
-  type LiveRetrievalPocketHint,
-} from '../domain/retrieval/liveEnvelope'
+import { CLOSED_PREVIEW_LIVE_ENVELOPE } from '../domain/retrieval/liveEnvelope'
 import { mapVenueToTasteInput } from '../domain/interpretation/taste/mapVenueToTasteInput'
 import { interpretVenueTaste } from '../domain/interpretation/taste/interpretVenueTaste'
 import { resolveVibeTasteProfile } from '../domain/taste/resolveVibeTasteProfile'
@@ -344,16 +349,6 @@ const DEV_CLOSEOUT_BUILD_QUERY_KEY = 'id8.dev.closeout.buildQuery'
 const DEV_CLOSEOUT_BUILD_LOCATION_CLASS_KEY = 'id8.dev.closeout.buildLocationClass'
 const PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED = false
 const PUBLIC_CURATE_COMMITTED_ROUTE_FALLBACK_ENABLED: boolean = false
-const ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID = 'row1_step_b_coffee_books_representative'
-const ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL = 'Willow Glen'
-const ROW_1_COFFEE_BOOKS_REQUIRED_SEMANTIC_PROOF =
-  'selected-stop-backed book, reading, literary, library, or bookstore evidence'
-const ROW_1_STEP_B_PRE_SUPPLY_ENVELOPE = {
-  maxProviderCalls: 3,
-  maxQueryLabels: 3,
-  maxCenters: 1,
-}
-
 function readStepBCurateLiveSmokeEnabled(): boolean {
   const env = (import.meta as ImportMeta & {
     env?: Record<string, string | undefined>
@@ -367,195 +362,6 @@ type CurateProofTargetActivePocketDiagnostic = {
   activePocketCenter: { lat: number; lng: number } | null
   activePocketHintRadiusM: number | null
   activeFieldAdmissionEnvelopeRadiusM: number | null
-}
-
-type CurateProofTargetDistrictCarrier = {
-  id: string
-  name: string
-  centroid?: { lat: number; lng: number }
-  radiusM?: number
-}
-
-type CurateHardPocketProofTargetInstance = {
-  proofTargetId: string
-  requiredSemanticProof: string
-  selectedDirectionId: string
-  selectedPocketId: string
-  selectedPocketLabel: string
-  livePocketHint: LiveRetrievalPocketHint
-  crossPocketAllowed: false
-}
-
-type CurateHardPocketProofTargetResolutionReason =
-  | 'not_configured'
-  | 'proof_target_resolution_pending'
-  | 'proof_target_selected_pocket_missing'
-  | 'proof_target_live_pocket_hint_missing'
-  | 'proof_target_selected_direction_missing'
-
-type CurateHardPocketProofTargetResolutionDiagnostics = {
-  diagnosticOnly: true
-  configured: boolean
-  status: 'not_configured' | 'pending' | 'resolved'
-  reason: CurateHardPocketProofTargetResolutionReason | null
-  selectedDirectionIdAvailable: boolean
-  selectedPocketIdAvailable: boolean
-  livePocketHintAvailable: boolean
-  selectedProofStopEvidenceAvailable: boolean
-  selectedProofStopPocketAvailable: boolean
-  activeProofPocketMismatch: boolean
-  resolverRanBeforeRequiredCarriers: boolean
-  targetPocketId: string | null
-  targetPocketLabel: string | null
-  matchedDirectionId: string | null
-  matchedDirectionPocketId: string | null
-  matchedDirectionPocketLabel: string | null
-}
-
-type CurateHardPocketProofTargetResolution = {
-  target: CurateHardPocketProofTargetInstance | null
-  diagnostics: CurateHardPocketProofTargetResolutionDiagnostics
-}
-
-function directionCardMatchesProofTargetDistrict(params: {
-  card: RealityDirectionCard
-  targetDistrict: CurateProofTargetDistrictCarrier
-}): boolean {
-  const targetKeys = buildDistrictLookupKeys(`${params.targetDistrict.id} ${params.targetDistrict.name}`)
-  const cardKeys = buildDistrictLookupKeys(
-    [
-      getDirectionResolverPocketKey(params.card),
-      params.card.debugMeta?.pocketLabel,
-      params.card.debugMeta?.directionDistrictSupportSummary,
-      params.card.card.title,
-      params.card.card.subtitle,
-    ]
-      .filter((value): value is string => Boolean(value))
-      .join(' '),
-  )
-  return cardKeys.some((key) => targetKeys.includes(key))
-}
-
-function resolveCurateHardPocketProofTarget(params: {
-  starterPackId?: string | null
-  city: string
-  districts: CurateProofTargetDistrictCarrier[]
-  allDirectionCards: RealityDirectionCard[]
-}): CurateHardPocketProofTargetResolution {
-  const buildDiagnostics = (
-    overrides: Partial<CurateHardPocketProofTargetResolutionDiagnostics>,
-  ): CurateHardPocketProofTargetResolutionDiagnostics => ({
-    diagnosticOnly: true,
-    configured: params.starterPackId === 'coffee-books',
-    status: params.starterPackId === 'coffee-books' ? 'pending' : 'not_configured',
-    reason: params.starterPackId === 'coffee-books' ? 'proof_target_resolution_pending' : 'not_configured',
-    selectedDirectionIdAvailable: false,
-    selectedPocketIdAvailable: false,
-    livePocketHintAvailable: false,
-    selectedProofStopEvidenceAvailable: false,
-    selectedProofStopPocketAvailable: false,
-    activeProofPocketMismatch: false,
-    resolverRanBeforeRequiredCarriers: params.districts.length === 0 || params.allDirectionCards.length === 0,
-    targetPocketId: null,
-    targetPocketLabel: null,
-    matchedDirectionId: null,
-    matchedDirectionPocketId: null,
-    matchedDirectionPocketLabel: null,
-    ...overrides,
-  })
-  if (params.starterPackId !== 'coffee-books') {
-    return {
-      target: null,
-      diagnostics: buildDiagnostics({
-        status: 'not_configured',
-        reason: 'not_configured',
-        resolverRanBeforeRequiredCarriers: false,
-      }),
-    }
-  }
-  const targetKeys = buildDistrictLookupKeys(ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL)
-  const targetDistrict =
-    params.districts.find((district) =>
-      buildDistrictLookupKeys(`${district.id} ${district.name}`).some((key) =>
-        targetKeys.includes(key),
-      ),
-    ) ?? null
-  if (!targetDistrict?.centroid || typeof targetDistrict.radiusM !== 'number') {
-    return {
-      target: null,
-      diagnostics: buildDiagnostics({
-        reason: targetDistrict
-          ? 'proof_target_live_pocket_hint_missing'
-          : 'proof_target_selected_pocket_missing',
-        selectedPocketIdAvailable: Boolean(targetDistrict?.id),
-        targetPocketId: targetDistrict?.id ?? null,
-        targetPocketLabel: targetDistrict?.name ?? null,
-        resolverRanBeforeRequiredCarriers: params.districts.length === 0,
-      }),
-    }
-  }
-  const targetDirection = rankDirectionResolverCards(
-    params.allDirectionCards.filter((card) =>
-      directionCardMatchesProofTargetDistrict({ card, targetDistrict }),
-    ),
-  )[0]
-  if (!targetDirection) {
-    return {
-      target: null,
-      diagnostics: buildDiagnostics({
-        reason: 'proof_target_selected_direction_missing',
-        selectedPocketIdAvailable: true,
-        livePocketHintAvailable: true,
-        targetPocketId: targetDistrict.id,
-        targetPocketLabel: targetDistrict.name,
-        resolverRanBeforeRequiredCarriers: params.allDirectionCards.length === 0,
-      }),
-    }
-  }
-  const target: CurateHardPocketProofTargetInstance = {
-    proofTargetId: ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID,
-    requiredSemanticProof: ROW_1_COFFEE_BOOKS_REQUIRED_SEMANTIC_PROOF,
-    selectedDirectionId: targetDirection.id,
-    selectedPocketId: targetDistrict.id,
-    selectedPocketLabel: targetDistrict.name,
-    livePocketHint: {
-      pocketId: targetDistrict.id,
-      pocketLabel: targetDistrict.name,
-      centroid: targetDistrict.centroid,
-      radiusM: targetDistrict.radiusM,
-      source: 'district_intelligence',
-      city: params.city,
-      locationLabel: `${targetDistrict.name}, ${params.city}`,
-    },
-    crossPocketAllowed: false,
-  }
-  return {
-    target,
-    diagnostics: buildDiagnostics({
-      status: 'resolved',
-      reason: null,
-      selectedDirectionIdAvailable: true,
-      selectedPocketIdAvailable: true,
-      livePocketHintAvailable: true,
-      selectedProofStopEvidenceAvailable: false,
-      selectedProofStopPocketAvailable: false,
-      resolverRanBeforeRequiredCarriers: false,
-      targetPocketId: targetDistrict.id,
-      targetPocketLabel: targetDistrict.name,
-      matchedDirectionId: targetDirection.id,
-      matchedDirectionPocketId: targetDirection.debugMeta?.pocketId ?? targetDirection.id,
-      matchedDirectionPocketLabel: targetDirection.debugMeta?.pocketLabel ?? null,
-    }),
-  }
-}
-
-function resolveCurateHardPocketProofTargetInstance(params: {
-  starterPackId?: string | null
-  city: string
-  districts: CurateProofTargetDistrictCarrier[]
-  allDirectionCards: RealityDirectionCard[]
-}): CurateHardPocketProofTargetInstance | null {
-  return resolveCurateHardPocketProofTarget(params).target
 }
 
 function resolveCurateProofTargetActivePocketDiagnostic(
@@ -11902,6 +11708,7 @@ export function SandboxConciergePage({
           ? 'preview_field_proxy_expected_armed'
           : null,
         providerValveReady: stepBCurateLiveSmokeEnabled,
+        carrierResolutionHoldReason: row1CoffeeBooksProofTargetDiagnostics.preSupplyHoldReason,
       }),
     [
       resolvedScenarioFamily,

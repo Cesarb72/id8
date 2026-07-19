@@ -410,15 +410,16 @@ function assertQueryTermsRemainNonProof(): void {
 
 function assertPageWiresFieldPocketDiagnosticsIntoProofTarget(): void {
   const source = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
+  const resolverSource = readFileSync('src/app/services/curate/row1CoffeeBooksProofTarget.ts', 'utf8')
   assert(
     source.includes('resolveCurateProofTargetActivePocketDiagnostic'),
     'Page must compose proof-target active pocket diagnostics through the local helper.',
   )
   assert(
     source.includes('resolveCurateHardPocketProofTarget') &&
-      source.includes('directionCardMatchesProofTargetDistrict') &&
+      resolverSource.includes('directionCardMatchesProofTargetDistrict') &&
       source.includes('resolutionDiagnostics') &&
-      source.includes('resolverRanBeforeRequiredCarriers') &&
+      resolverSource.includes('resolverRanBeforeRequiredCarriers') &&
       source.includes('activeProofPocketMismatch'),
     'Page must expose non-authoritative Row 1 proof-target resolution diagnostics.',
   )
@@ -431,16 +432,16 @@ function assertPageWiresFieldPocketDiagnosticsIntoProofTarget(): void {
     'Proof-target context must carry Field admission envelope diagnostics.',
   )
   assert(
-    source.includes('resolveCurateHardPocketProofTargetInstance') &&
+    resolverSource.includes('resolveCurateHardPocketProofTargetInstance') &&
       source.includes('ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL') &&
-      source.includes('selectedDirectionId: targetDirection.id') &&
-      source.includes('selectedPocketId: targetDistrict.id') &&
-      source.includes('livePocketHint') &&
-      source.includes('source: \'district_intelligence\''),
+      resolverSource.includes('selectedDirectionId: targetDirection.id') &&
+      resolverSource.includes('selectedPocketId: targetDistrict.id') &&
+      resolverSource.includes('livePocketHint') &&
+      resolverSource.includes('source: \'district_intelligence\''),
     'Row 1 proof target must resolve selected direction/pocket from existing District and Direction carriers.',
   )
   assert(
-    source.includes("ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL = 'Willow Glen'") &&
+    resolverSource.includes("ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL = 'Willow Glen'") &&
       source.includes('livePocketHint: row1CoffeeBooksProofTarget.livePocketHint') &&
       source.includes('row1CoffeeBooksPreSupplyReadiness.status !== \'ready\'') &&
       source.includes('preSupplyReadiness') &&
