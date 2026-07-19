@@ -377,14 +377,92 @@ type CurateHardPocketProofTargetInstance = {
   crossPocketAllowed: false
 }
 
-function resolveCurateHardPocketProofTargetInstance(params: {
+type CurateHardPocketProofTargetResolutionReason =
+  | 'not_configured'
+  | 'proof_target_resolution_pending'
+  | 'proof_target_selected_pocket_missing'
+  | 'proof_target_live_pocket_hint_missing'
+  | 'proof_target_selected_direction_missing'
+
+type CurateHardPocketProofTargetResolutionDiagnostics = {
+  diagnosticOnly: true
+  configured: boolean
+  status: 'not_configured' | 'pending' | 'resolved'
+  reason: CurateHardPocketProofTargetResolutionReason | null
+  selectedDirectionIdAvailable: boolean
+  selectedPocketIdAvailable: boolean
+  livePocketHintAvailable: boolean
+  selectedProofStopEvidenceAvailable: boolean
+  selectedProofStopPocketAvailable: boolean
+  activeProofPocketMismatch: boolean
+  resolverRanBeforeRequiredCarriers: boolean
+  targetPocketId: string | null
+  targetPocketLabel: string | null
+  matchedDirectionId: string | null
+  matchedDirectionPocketId: string | null
+  matchedDirectionPocketLabel: string | null
+}
+
+type CurateHardPocketProofTargetResolution = {
+  target: CurateHardPocketProofTargetInstance | null
+  diagnostics: CurateHardPocketProofTargetResolutionDiagnostics
+}
+
+function directionCardMatchesProofTargetDistrict(params: {
+  card: RealityDirectionCard
+  targetDistrict: CurateProofTargetDistrictCarrier
+}): boolean {
+  const targetKeys = buildDistrictLookupKeys(`${params.targetDistrict.id} ${params.targetDistrict.name}`)
+  const cardKeys = buildDistrictLookupKeys(
+    [
+      getDirectionResolverPocketKey(params.card),
+      params.card.debugMeta?.pocketLabel,
+      params.card.debugMeta?.directionDistrictSupportSummary,
+      params.card.card.title,
+      params.card.card.subtitle,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(' '),
+  )
+  return cardKeys.some((key) => targetKeys.includes(key))
+}
+
+function resolveCurateHardPocketProofTarget(params: {
   starterPackId?: string | null
   city: string
   districts: CurateProofTargetDistrictCarrier[]
   allDirectionCards: RealityDirectionCard[]
-}): CurateHardPocketProofTargetInstance | null {
+}): CurateHardPocketProofTargetResolution {
+  const buildDiagnostics = (
+    overrides: Partial<CurateHardPocketProofTargetResolutionDiagnostics>,
+  ): CurateHardPocketProofTargetResolutionDiagnostics => ({
+    diagnosticOnly: true,
+    configured: params.starterPackId === 'coffee-books',
+    status: params.starterPackId === 'coffee-books' ? 'pending' : 'not_configured',
+    reason: params.starterPackId === 'coffee-books' ? 'proof_target_resolution_pending' : 'not_configured',
+    selectedDirectionIdAvailable: false,
+    selectedPocketIdAvailable: false,
+    livePocketHintAvailable: false,
+    selectedProofStopEvidenceAvailable: false,
+    selectedProofStopPocketAvailable: false,
+    activeProofPocketMismatch: false,
+    resolverRanBeforeRequiredCarriers: params.districts.length === 0 || params.allDirectionCards.length === 0,
+    targetPocketId: null,
+    targetPocketLabel: null,
+    matchedDirectionId: null,
+    matchedDirectionPocketId: null,
+    matchedDirectionPocketLabel: null,
+    ...overrides,
+  })
   if (params.starterPackId !== 'coffee-books') {
-    return null
+    return {
+      target: null,
+      diagnostics: buildDiagnostics({
+        status: 'not_configured',
+        reason: 'not_configured',
+        resolverRanBeforeRequiredCarriers: false,
+      }),
+    }
   }
   const targetKeys = buildDistrictLookupKeys(ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL)
   const targetDistrict =
@@ -394,17 +472,38 @@ function resolveCurateHardPocketProofTargetInstance(params: {
       ),
     ) ?? null
   if (!targetDistrict?.centroid || typeof targetDistrict.radiusM !== 'number') {
-    return null
+    return {
+      target: null,
+      diagnostics: buildDiagnostics({
+        reason: targetDistrict
+          ? 'proof_target_live_pocket_hint_missing'
+          : 'proof_target_selected_pocket_missing',
+        selectedPocketIdAvailable: Boolean(targetDistrict?.id),
+        targetPocketId: targetDistrict?.id ?? null,
+        targetPocketLabel: targetDistrict?.name ?? null,
+        resolverRanBeforeRequiredCarriers: params.districts.length === 0,
+      }),
+    }
   }
   const targetDirection = rankDirectionResolverCards(
-    params.allDirectionCards.filter(
-      (card) => getDirectionResolverPocketKey(card) === targetDistrict.id,
+    params.allDirectionCards.filter((card) =>
+      directionCardMatchesProofTargetDistrict({ card, targetDistrict }),
     ),
   )[0]
   if (!targetDirection) {
-    return null
+    return {
+      target: null,
+      diagnostics: buildDiagnostics({
+        reason: 'proof_target_selected_direction_missing',
+        selectedPocketIdAvailable: true,
+        livePocketHintAvailable: true,
+        targetPocketId: targetDistrict.id,
+        targetPocketLabel: targetDistrict.name,
+        resolverRanBeforeRequiredCarriers: params.allDirectionCards.length === 0,
+      }),
+    }
   }
-  return {
+  const target: CurateHardPocketProofTargetInstance = {
     proofTargetId: ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID,
     requiredSemanticProof: ROW_1_COFFEE_BOOKS_REQUIRED_SEMANTIC_PROOF,
     selectedDirectionId: targetDirection.id,
@@ -421,6 +520,33 @@ function resolveCurateHardPocketProofTargetInstance(params: {
     },
     crossPocketAllowed: false,
   }
+  return {
+    target,
+    diagnostics: buildDiagnostics({
+      status: 'resolved',
+      reason: null,
+      selectedDirectionIdAvailable: true,
+      selectedPocketIdAvailable: true,
+      livePocketHintAvailable: true,
+      selectedProofStopEvidenceAvailable: false,
+      selectedProofStopPocketAvailable: false,
+      resolverRanBeforeRequiredCarriers: false,
+      targetPocketId: targetDistrict.id,
+      targetPocketLabel: targetDistrict.name,
+      matchedDirectionId: targetDirection.id,
+      matchedDirectionPocketId: targetDirection.debugMeta?.pocketId ?? targetDirection.id,
+      matchedDirectionPocketLabel: targetDirection.debugMeta?.pocketLabel ?? null,
+    }),
+  }
+}
+
+function resolveCurateHardPocketProofTargetInstance(params: {
+  starterPackId?: string | null
+  city: string
+  districts: CurateProofTargetDistrictCarrier[]
+  allDirectionCards: RealityDirectionCard[]
+}): CurateHardPocketProofTargetInstance | null {
+  return resolveCurateHardPocketProofTarget(params).target
 }
 
 function resolveCurateProofTargetActivePocketDiagnostic(
@@ -11162,215 +11288,6 @@ export function SandboxConciergePage({
     routeVersionRef.current = routeVersion
   }, [routeVersion])
   useEffect(() => {
-    let cancelled = false
-    const loadScenarioBuilderArtifacts = async () => {
-      if (!resolvedScenarioFamily) {
-        setScenarioCandidateBoard(null)
-        setScenarioBuiltNights([])
-        setScenarioContrastCandidateBoard(null)
-        setScenarioContrastBuiltNights([])
-        setScenarioCrossPersonaCandidateBoard(null)
-        setScenarioCrossPersonaBuiltNights([])
-        return
-      }
-      try {
-        const candidateSupplyFieldDiscoveryContract = isCurateWrapperActive
-          ? (() => {
-              const conciergeIntent = buildApplicationConciergeIntent({
-                mode: 'curate',
-                persona,
-                primaryVibe,
-                city: districtLocationQuery,
-                objectiveOccasion: 'connect',
-                starterPack: selectedStarterPack,
-              })
-              const canonicalInterpretationBundle = buildCanonicalInterpretationBundle({
-                conciergeIntent,
-                interpretationSource: 'app.sandbox.candidateSupply.conciergeIntentAdapter',
-              })
-              return {
-                conciergeIntent,
-                canonicalInterpretationBundle,
-                contractConstraints: canonicalInterpretationBundle.contractConstraints,
-                contractGateWorld: buildContractGateWorldFromCanonical({
-                  ranked: districtPreviewResult?.ranked ?? [],
-                  canonicalInterpretationBundle,
-                  source: 'page.sandbox.candidateSupply.contractGateWorld',
-                }),
-                locationQuery: districtLocationQuery,
-                sourceMode: 'curated' as const,
-                scenarioFamilyOverride: resolvedScenarioFamily,
-                starterPack: selectedStarterPack ?? undefined,
-                ...(row1CoffeeBooksProofTarget
-                  ? { livePocketHint: row1CoffeeBooksProofTarget.livePocketHint }
-                  : {}),
-              }
-            })()
-          : undefined
-        const stepBCandidateSupplyGate = {
-          environment: 'default' as const,
-          pathname: currentPath,
-          isPublicSurface,
-          mode: isCurateWrapperActive
-            ? 'curate' as const
-            : isBuildWrapperActive
-              ? 'build' as const
-              : 'surprise' as const,
-          inputMode: isCurateWrapperActive
-            ? 'curate' as const
-            : isBuildWrapperActive
-              ? 'build' as const
-              : 'surprise' as const,
-          phase: 'candidate_supply' as const,
-          selectedStarterPackPresent: Boolean(selectedStarterPack),
-          userSourceModeOverrideApplied: false,
-          smokeSwitchEnabled: readStepBCurateLiveSmokeEnabled(),
-        }
-        const stepBCandidateSupplyInput = {
-          city: districtLocationQuery,
-          mode: 'curate' as const,
-          persona,
-          vibe: primaryVibe,
-          sourceMode: 'curated' as const,
-          scenarioFamilyOverride: resolvedScenarioFamily,
-          ...(row1CoffeeBooksProofTarget
-            ? { livePocketHint: row1CoffeeBooksProofTarget.livePocketHint }
-            : {}),
-        }
-        const stepBCandidateSupplyRunFingerprint =
-          buildStepBCurateLiveSmokeCandidateSupplyRunFingerprint({
-            gate: stepBCandidateSupplyGate,
-            input: stepBCandidateSupplyInput,
-            starterPack: selectedStarterPack,
-          })
-        const buildStepBCandidateSupplyBoard = () =>
-          runStepBCurateLiveSmokeCandidateSupply({
-            gate: stepBCandidateSupplyGate,
-            input: stepBCandidateSupplyInput,
-            starterPack: selectedStarterPack,
-            fieldDiscoveryContract: candidateSupplyFieldDiscoveryContract,
-          })
-        let stepBCandidateSupplyBoardPromise =
-          stepBCandidateSupplyRunFingerprint
-            ? stepBCurateLiveSmokeCandidateSupplyRunByFingerprintRef.current[
-                stepBCandidateSupplyRunFingerprint
-              ]
-            : undefined
-        if (!stepBCandidateSupplyBoardPromise) {
-          stepBCandidateSupplyBoardPromise = buildStepBCandidateSupplyBoard()
-          if (stepBCandidateSupplyRunFingerprint) {
-            stepBCurateLiveSmokeCandidateSupplyRunByFingerprintRef.current[
-              stepBCandidateSupplyRunFingerprint
-            ] = stepBCandidateSupplyBoardPromise
-          }
-        }
-        const board = await stepBCandidateSupplyBoardPromise
-        if (cancelled) {
-          return
-        }
-        if (!board) {
-          setScenarioCandidateBoard(null)
-          setScenarioBuiltNights([])
-          setScenarioContrastCandidateBoard(null)
-          setScenarioContrastBuiltNights([])
-          setScenarioCrossPersonaCandidateBoard(null)
-          setScenarioCrossPersonaBuiltNights([])
-          return
-        }
-        const builtNights = buildScenarioNightsFromCandidateBoard(board)
-        let contrastBoard: StopTypeCandidateBoard | null = null
-        let contrastBuiltNights: BuiltScenarioNight[] = []
-        let crossPersonaBoard: StopTypeCandidateBoard | null = null
-        let crossPersonaBuiltNights: BuiltScenarioNight[] = []
-        if (
-          isSurpriseWrapperActive &&
-          surpriseContrastScenarioFamily &&
-          surpriseContrastScenarioFamily !== resolvedScenarioFamily
-        ) {
-          const contrastVibe = getScenarioFamilyVibeAnchor(surpriseContrastScenarioFamily)
-          if (contrastVibe) {
-            contrastBoard = await buildStopTypeCandidateBoardFromIntent({
-              city: districtLocationQuery,
-              persona,
-              vibe: contrastVibe,
-              sourceMode: 'curated',
-              liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
-            })
-            if (cancelled) {
-              return
-            }
-            if (contrastBoard) {
-              contrastBuiltNights = buildScenarioNightsFromCandidateBoard(contrastBoard)
-            }
-          }
-        }
-        if (
-          isSurpriseWrapperActive &&
-          surpriseCrossPersonaScenarioFamily &&
-          surpriseCrossPersonaScenarioFamily !== resolvedScenarioFamily &&
-          surpriseCrossPersonaScenarioFamily !== surpriseContrastScenarioFamily
-        ) {
-          try {
-            crossPersonaBoard = await buildStopTypeCandidateBoardFromIntent({
-              city: districtLocationQuery,
-              persona,
-              vibe: primaryVibe,
-              scenarioFamilyOverride: surpriseCrossPersonaScenarioFamily,
-              sourceMode: 'curated',
-              liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
-            })
-            if (cancelled) {
-              return
-            }
-            if (crossPersonaBoard) {
-              crossPersonaBuiltNights = buildScenarioNightsFromCandidateBoard(crossPersonaBoard)
-            }
-          } catch {
-            if (cancelled) {
-              return
-            }
-            crossPersonaBoard = null
-            crossPersonaBuiltNights = []
-          }
-        }
-        setScenarioCandidateBoard(board)
-        setScenarioBuiltNights(builtNights)
-        setScenarioContrastCandidateBoard(contrastBoard)
-        setScenarioContrastBuiltNights(contrastBuiltNights)
-        setScenarioCrossPersonaCandidateBoard(crossPersonaBoard)
-        setScenarioCrossPersonaBuiltNights(crossPersonaBuiltNights)
-      } catch {
-        if (cancelled) {
-          return
-        }
-        setScenarioCandidateBoard(null)
-        setScenarioBuiltNights([])
-        setScenarioContrastCandidateBoard(null)
-        setScenarioContrastBuiltNights([])
-        setScenarioCrossPersonaCandidateBoard(null)
-        setScenarioCrossPersonaBuiltNights([])
-      }
-    }
-    void loadScenarioBuilderArtifacts()
-    return () => {
-      cancelled = true
-    }
-  }, [
-    districtLocationQuery,
-    currentPath,
-    districtPreviewResult,
-    isBuildWrapperActive,
-    isCurateWrapperActive,
-    isPublicSurface,
-    isSurpriseWrapperActive,
-    persona,
-    primaryVibe,
-    selectedStarterPack,
-    surpriseCrossPersonaScenarioFamily,
-    resolvedScenarioFamily,
-    surpriseContrastScenarioFamily,
-  ])
-  useEffect(() => {
     setSwapCanonicalIdentityByVenueId({})
     setSwapCanonicalIdentityMissingByVenueId({})
   }, [plan?.itinerary.id])
@@ -11944,9 +11861,9 @@ export function SandboxConciergePage({
     }
   }, [activeDistrictPocketId, allDirectionCards, districtDiscoveryCards])
   const directionCards = directionView.cards
-  const row1CoffeeBooksProofTarget = useMemo(
+  const row1CoffeeBooksProofTargetResolution = useMemo(
     () =>
-      resolveCurateHardPocketProofTargetInstance({
+      resolveCurateHardPocketProofTarget({
         starterPackId: selectedStarterPack?.id ?? null,
         city: districtLocationQuery,
         districts: districtDiscoveryCards,
@@ -11954,6 +11871,223 @@ export function SandboxConciergePage({
       }),
     [allDirectionCards, districtDiscoveryCards, districtLocationQuery, selectedStarterPack?.id],
   )
+  const row1CoffeeBooksProofTarget = row1CoffeeBooksProofTargetResolution.target
+  const row1CoffeeBooksProofTargetDiagnostics = row1CoffeeBooksProofTargetResolution.diagnostics
+  useEffect(() => {
+    let cancelled = false
+    const clearScenarioBuilderArtifacts = () => {
+      setScenarioCandidateBoard(null)
+      setScenarioBuiltNights([])
+      setScenarioContrastCandidateBoard(null)
+      setScenarioContrastBuiltNights([])
+      setScenarioCrossPersonaCandidateBoard(null)
+      setScenarioCrossPersonaBuiltNights([])
+    }
+    const loadScenarioBuilderArtifacts = async () => {
+      if (!resolvedScenarioFamily) {
+        clearScenarioBuilderArtifacts()
+        return
+      }
+      if (
+        isCurateWrapperActive &&
+        selectedStarterPack?.id === 'coffee-books' &&
+        row1CoffeeBooksProofTargetDiagnostics.status !== 'resolved'
+      ) {
+        clearScenarioBuilderArtifacts()
+        return
+      }
+      try {
+        const candidateSupplyFieldDiscoveryContract = isCurateWrapperActive
+          ? (() => {
+              const conciergeIntent = buildApplicationConciergeIntent({
+                mode: 'curate',
+                persona,
+                primaryVibe,
+                city: districtLocationQuery,
+                objectiveOccasion: 'connect',
+                starterPack: selectedStarterPack,
+              })
+              const canonicalInterpretationBundle = buildCanonicalInterpretationBundle({
+                conciergeIntent,
+                interpretationSource: 'app.sandbox.candidateSupply.conciergeIntentAdapter',
+              })
+              return {
+                conciergeIntent,
+                canonicalInterpretationBundle,
+                contractConstraints: canonicalInterpretationBundle.contractConstraints,
+                contractGateWorld: buildContractGateWorldFromCanonical({
+                  ranked: districtPreviewResult?.ranked ?? [],
+                  canonicalInterpretationBundle,
+                  source: 'page.sandbox.candidateSupply.contractGateWorld',
+                }),
+                locationQuery: districtLocationQuery,
+                sourceMode: 'curated' as const,
+                scenarioFamilyOverride: resolvedScenarioFamily,
+                starterPack: selectedStarterPack ?? undefined,
+                ...(row1CoffeeBooksProofTarget
+                  ? { livePocketHint: row1CoffeeBooksProofTarget.livePocketHint }
+                  : {}),
+              }
+            })()
+          : undefined
+        const stepBCandidateSupplyGate = {
+          environment: 'default' as const,
+          pathname: currentPath,
+          isPublicSurface,
+          mode: isCurateWrapperActive
+            ? 'curate' as const
+            : isBuildWrapperActive
+              ? 'build' as const
+              : 'surprise' as const,
+          inputMode: isCurateWrapperActive
+            ? 'curate' as const
+            : isBuildWrapperActive
+              ? 'build' as const
+              : 'surprise' as const,
+          phase: 'candidate_supply' as const,
+          selectedStarterPackPresent: Boolean(selectedStarterPack),
+          userSourceModeOverrideApplied: false,
+          smokeSwitchEnabled: readStepBCurateLiveSmokeEnabled(),
+        }
+        const stepBCandidateSupplyInput = {
+          city: districtLocationQuery,
+          mode: 'curate' as const,
+          persona,
+          vibe: primaryVibe,
+          sourceMode: 'curated' as const,
+          scenarioFamilyOverride: resolvedScenarioFamily,
+          ...(row1CoffeeBooksProofTarget
+            ? { livePocketHint: row1CoffeeBooksProofTarget.livePocketHint }
+            : {}),
+        }
+        const stepBCandidateSupplyRunFingerprint =
+          buildStepBCurateLiveSmokeCandidateSupplyRunFingerprint({
+            gate: stepBCandidateSupplyGate,
+            input: stepBCandidateSupplyInput,
+            starterPack: selectedStarterPack,
+          })
+        const buildStepBCandidateSupplyBoard = () =>
+          runStepBCurateLiveSmokeCandidateSupply({
+            gate: stepBCandidateSupplyGate,
+            input: stepBCandidateSupplyInput,
+            starterPack: selectedStarterPack,
+            fieldDiscoveryContract: candidateSupplyFieldDiscoveryContract,
+          })
+        let stepBCandidateSupplyBoardPromise =
+          stepBCandidateSupplyRunFingerprint
+            ? stepBCurateLiveSmokeCandidateSupplyRunByFingerprintRef.current[
+                stepBCandidateSupplyRunFingerprint
+              ]
+            : undefined
+        if (!stepBCandidateSupplyBoardPromise) {
+          stepBCandidateSupplyBoardPromise = buildStepBCandidateSupplyBoard()
+          if (stepBCandidateSupplyRunFingerprint) {
+            stepBCurateLiveSmokeCandidateSupplyRunByFingerprintRef.current[
+              stepBCandidateSupplyRunFingerprint
+            ] = stepBCandidateSupplyBoardPromise
+          }
+        }
+        const board = await stepBCandidateSupplyBoardPromise
+        if (cancelled) {
+          return
+        }
+        if (!board) {
+          clearScenarioBuilderArtifacts()
+          return
+        }
+        const builtNights = buildScenarioNightsFromCandidateBoard(board)
+        let contrastBoard: StopTypeCandidateBoard | null = null
+        let contrastBuiltNights: BuiltScenarioNight[] = []
+        let crossPersonaBoard: StopTypeCandidateBoard | null = null
+        let crossPersonaBuiltNights: BuiltScenarioNight[] = []
+        if (
+          isSurpriseWrapperActive &&
+          surpriseContrastScenarioFamily &&
+          surpriseContrastScenarioFamily !== resolvedScenarioFamily
+        ) {
+          const contrastVibe = getScenarioFamilyVibeAnchor(surpriseContrastScenarioFamily)
+          if (contrastVibe) {
+            contrastBoard = await buildStopTypeCandidateBoardFromIntent({
+              city: districtLocationQuery,
+              persona,
+              vibe: contrastVibe,
+              sourceMode: 'curated',
+              liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
+            })
+            if (cancelled) {
+              return
+            }
+            if (contrastBoard) {
+              contrastBuiltNights = buildScenarioNightsFromCandidateBoard(contrastBoard)
+            }
+          }
+        }
+        if (
+          isSurpriseWrapperActive &&
+          surpriseCrossPersonaScenarioFamily &&
+          surpriseCrossPersonaScenarioFamily !== resolvedScenarioFamily &&
+          surpriseCrossPersonaScenarioFamily !== surpriseContrastScenarioFamily
+        ) {
+          try {
+            crossPersonaBoard = await buildStopTypeCandidateBoardFromIntent({
+              city: districtLocationQuery,
+              persona,
+              vibe: primaryVibe,
+              scenarioFamilyOverride: surpriseCrossPersonaScenarioFamily,
+              sourceMode: 'curated',
+              liveEnvelope: CLOSED_PREVIEW_LIVE_ENVELOPE,
+            })
+            if (cancelled) {
+              return
+            }
+            if (crossPersonaBoard) {
+              crossPersonaBuiltNights = buildScenarioNightsFromCandidateBoard(crossPersonaBoard)
+            }
+          } catch {
+            if (cancelled) {
+              return
+            }
+            crossPersonaBoard = null
+            crossPersonaBuiltNights = []
+          }
+        }
+        setScenarioCandidateBoard(board)
+        setScenarioBuiltNights(builtNights)
+        setScenarioContrastCandidateBoard(contrastBoard)
+        setScenarioContrastBuiltNights(contrastBuiltNights)
+        setScenarioCrossPersonaCandidateBoard(crossPersonaBoard)
+        setScenarioCrossPersonaBuiltNights(crossPersonaBuiltNights)
+      } catch {
+        if (cancelled) {
+          return
+        }
+        clearScenarioBuilderArtifacts()
+      }
+    }
+    void loadScenarioBuilderArtifacts()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    allDirectionCards,
+    currentPath,
+    districtDiscoveryCards,
+    districtLocationQuery,
+    districtPreviewResult,
+    isBuildWrapperActive,
+    isCurateWrapperActive,
+    isPublicSurface,
+    isSurpriseWrapperActive,
+    persona,
+    primaryVibe,
+    row1CoffeeBooksProofTarget,
+    row1CoffeeBooksProofTargetDiagnostics.reason,
+    row1CoffeeBooksProofTargetDiagnostics.status,
+    selectedStarterPack,
+    surpriseCrossPersonaScenarioFamily,
+    resolvedScenarioFamily,
+    surpriseContrastScenarioFamily,
+  ])
 
   const surpriseContrastOpportunityRepairEntries = useMemo(
     () => {
@@ -14731,6 +14865,21 @@ export function SandboxConciergePage({
         scenarioCandidateBoard,
         row1CoffeeBooksProofTarget,
       )
+    const selectedProofStopEvidenceAvailable = materializationDiagnostics.some((entry) =>
+      Boolean(entry.selectedStopCoffeeBooksEvidencePresent),
+    )
+    const selectedProofStopPocketAvailable = materializationDiagnostics.some((entry) =>
+      Boolean(entry.proofTargetAssertion?.selectedProofStopPocketId),
+    )
+    const activeProofPocketMismatch =
+      Boolean(
+        row1CoffeeBooksProofTarget?.selectedPocketId &&
+          activePocketDiagnostic.activePocketId &&
+          activePocketDiagnostic.activePocketId !== row1CoffeeBooksProofTarget.selectedPocketId,
+      ) &&
+      !buildDistrictLookupKeys(activePocketDiagnostic.activePocketLabel ?? undefined).some((key) =>
+        buildDistrictLookupKeys(row1CoffeeBooksProofTarget?.selectedPocketLabel).includes(key),
+      )
     const proofTargetParameters = {
       diagnosticOnly: true,
       proofTargetId:
@@ -14746,6 +14895,12 @@ export function SandboxConciergePage({
       selectedDirectionId: row1CoffeeBooksProofTarget?.selectedDirectionId ?? null,
       selectedPocketId: row1CoffeeBooksProofTarget?.selectedPocketId ?? null,
       selectedPocketLabel: row1CoffeeBooksProofTarget?.selectedPocketLabel ?? null,
+      resolutionDiagnostics: {
+        ...row1CoffeeBooksProofTargetDiagnostics,
+        selectedProofStopEvidenceAvailable,
+        selectedProofStopPocketAvailable,
+        activeProofPocketMismatch,
+      },
       expectedRoles: activeScenarioRequiredStopTypes,
       expectedSelectedStopEvidence: true,
       expectedActivePocketSource: 'district_intelligence',
@@ -14844,6 +14999,7 @@ export function SandboxConciergePage({
     scenarioCandidateBoard,
     scenarioBackedVerifiedCityOpportunities,
     row1CoffeeBooksProofTarget,
+    row1CoffeeBooksProofTargetDiagnostics,
     selectedStarterPack?.id,
     suppressedScenarioBackedOpportunityAdmissions,
     step2CandidateRouteArtifacts,

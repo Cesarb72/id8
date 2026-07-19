@@ -415,6 +415,14 @@ function assertPageWiresFieldPocketDiagnosticsIntoProofTarget(): void {
     'Page must compose proof-target active pocket diagnostics through the local helper.',
   )
   assert(
+    source.includes('resolveCurateHardPocketProofTarget') &&
+      source.includes('directionCardMatchesProofTargetDistrict') &&
+      source.includes('resolutionDiagnostics') &&
+      source.includes('resolverRanBeforeRequiredCarriers') &&
+      source.includes('activeProofPocketMismatch'),
+    'Page must expose non-authoritative Row 1 proof-target resolution diagnostics.',
+  )
+  assert(
     source.includes('candidate.pocketProofDiagnostic'),
     'Proof-target helper must fall back to Field candidate pocket diagnostics.',
   )
@@ -432,10 +440,22 @@ function assertPageWiresFieldPocketDiagnosticsIntoProofTarget(): void {
     'Row 1 proof target must resolve selected direction/pocket from existing District and Direction carriers.',
   )
   assert(
+    source.includes("ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL = 'Willow Glen'") &&
+      source.includes('livePocketHint: row1CoffeeBooksProofTarget.livePocketHint') &&
+      source.includes('row1CoffeeBooksProofTargetDiagnostics.status !== \'resolved\'') &&
+      source.includes('crossPocketAllowed: false'),
+    'Coffee Books Row 1 must gate supply on the resolved Willow Glen hard-pocket target before passing livePocketHint.',
+  )
+  assert(
     source.includes('requiredSemanticProof') &&
       source.includes('ROW_1_COFFEE_BOOKS_REQUIRED_SEMANTIC_PROOF') &&
       !source.includes('ProofTargetArtifact'),
     'Coffee Books proof-view wiring must stay a portable assertion instance, not a new canonical artifact.',
+  )
+  assert(
+    !source.includes('query terms satisfy Coffee Books proof') &&
+      !source.includes('user search terms satisfy Coffee Books proof'),
+    'Coffee Books proof target must not copy query terms or user search terms into proof.',
   )
   process.stdout.write('page proof-target Field diagnostics wiring: passed\n')
 }

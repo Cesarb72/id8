@@ -107,6 +107,27 @@ async function assertStepBRunFingerprintSharesInFlightPromise(): Promise<void> {
       sandboxSource.includes('stepBCandidateSupplyBoardPromise'),
     'Sandbox Step B candidate supply must share in-flight work by fingerprint.',
   )
+  assert(
+    sandboxSource.includes("row1CoffeeBooksProofTargetDiagnostics.status !== 'resolved'") &&
+      sandboxSource.includes('clearScenarioBuilderArtifacts()') &&
+      sandboxSource.indexOf("row1CoffeeBooksProofTargetDiagnostics.status !== 'resolved'") <
+        sandboxSource.indexOf('runStepBCurateLiveSmokeCandidateSupply({'),
+    'Coffee Books Row 1 Step B supply must hold before Field when the proof target is unresolved.',
+  )
+  assert(
+    sandboxSource.includes('proof_target_resolution_pending') &&
+      sandboxSource.includes('proof_target_selected_direction_missing') &&
+      sandboxSource.includes('proof_target_selected_pocket_missing') &&
+      sandboxSource.includes('proof_target_live_pocket_hint_missing'),
+    'Unresolved Coffee Books Row 1 proof targets must report clear local diagnostic reasons.',
+  )
+  assert(
+    sandboxSource.includes('allDirectionCards,') &&
+      sandboxSource.includes('districtDiscoveryCards,') &&
+      sandboxSource.includes('row1CoffeeBooksProofTargetDiagnostics.reason') &&
+      sandboxSource.includes('row1CoffeeBooksProofTargetDiagnostics.status'),
+    'Step B candidate supply effect must depend on proof-target carrier inputs and diagnostics.',
+  )
   const serviceSource = readFileSync('src/app/services/arcApplicationService.ts', 'utf8')
   assert(
     serviceSource.includes('livePocketHint: params.input.livePocketHint') &&
