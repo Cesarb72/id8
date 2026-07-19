@@ -80,12 +80,39 @@ async function assertStepBRunFingerprintSharesInFlightPromise(): Promise<void> {
   await runGuarded(nextFingerprint)
   assert(runCount === 2, 'Legitimate new Step B input must still be allowed to run.')
 
+  const pocketFingerprint = buildStepBCurateLiveSmokeCandidateSupplyRunFingerprint({
+    gate,
+    input: buildInput({
+      livePocketHint: {
+        pocketId: 'raw-pocket-willow',
+        pocketLabel: 'Willow Glen Pocket',
+        centroid: { lat: 37.309, lng: -121.9 },
+        radiusM: 650,
+        source: 'district_intelligence',
+        city: 'San Jose',
+        locationLabel: 'Willow Glen Pocket, San Jose',
+      },
+    }),
+    starterPack,
+  })
+  assert(
+    pocketFingerprint && pocketFingerprint !== fingerprint,
+    'Step B proof target pocket hint must participate in the run fingerprint.',
+  )
+
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   assert(
     sandboxSource.includes('stepBCurateLiveSmokeCandidateSupplyRunByFingerprintRef') &&
       sandboxSource.includes('buildStepBCurateLiveSmokeCandidateSupplyRunFingerprint') &&
       sandboxSource.includes('stepBCandidateSupplyBoardPromise'),
     'Sandbox Step B candidate supply must share in-flight work by fingerprint.',
+  )
+  const serviceSource = readFileSync('src/app/services/arcApplicationService.ts', 'utf8')
+  assert(
+    serviceSource.includes('livePocketHint: params.input.livePocketHint') &&
+      serviceSource.includes('livePocketHint: input.livePocketHint ?? params.fieldDiscoveryContract.livePocketHint') &&
+      serviceSource.includes('livePocketHint: input.livePocketHint ?? safeInput.livePocketHint'),
+    'Step B candidate supply must carry the proof target pocket hint through fingerprint and board construction.',
   )
   process.stdout.write('Step B run-once/in-flight fingerprint guard: passed\n')
 }
@@ -223,6 +250,11 @@ function assertStepBPocketProofDiagnosticsSurfaceInObserverReport(): void {
   assert(
     sandboxSource.includes('proofTargetParameters') &&
       sandboxSource.includes('row1_step_b_coffee_books_representative') &&
+      sandboxSource.includes('ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL') &&
+      sandboxSource.includes('resolveCurateHardPocketProofTargetInstance') &&
+      sandboxSource.includes('livePocketHint: row1CoffeeBooksProofTarget.livePocketHint') &&
+      sandboxSource.includes('selectedDirectionId: row1CoffeeBooksProofTarget?.selectedDirectionId') &&
+      sandboxSource.includes('selectedPocketId: row1CoffeeBooksProofTarget?.selectedPocketId') &&
       sandboxSource.includes('admissionEnvelope') &&
       sandboxSource.includes('materializationDiagnostics') &&
       sandboxSource.includes('materializationRejectReason') &&

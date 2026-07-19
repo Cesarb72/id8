@@ -422,6 +422,21 @@ function assertPageWiresFieldPocketDiagnosticsIntoProofTarget(): void {
     source.includes('activeFieldAdmissionEnvelopeRadiusM'),
     'Proof-target context must carry Field admission envelope diagnostics.',
   )
+  assert(
+    source.includes('resolveCurateHardPocketProofTargetInstance') &&
+      source.includes('ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL') &&
+      source.includes('selectedDirectionId: targetDirection.id') &&
+      source.includes('selectedPocketId: targetDistrict.id') &&
+      source.includes('livePocketHint') &&
+      source.includes('source: \'district_intelligence\''),
+    'Row 1 proof target must resolve selected direction/pocket from existing District and Direction carriers.',
+  )
+  assert(
+    source.includes('requiredSemanticProof') &&
+      source.includes('ROW_1_COFFEE_BOOKS_REQUIRED_SEMANTIC_PROOF') &&
+      !source.includes('ProofTargetArtifact'),
+    'Coffee Books proof-view wiring must stay a portable assertion instance, not a new canonical artifact.',
+  )
   process.stdout.write('page proof-target Field diagnostics wiring: passed\n')
 }
 

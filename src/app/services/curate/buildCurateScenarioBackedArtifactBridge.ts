@@ -232,6 +232,26 @@ function selectedProofStopMatchesPocket(params: {
   )
 }
 
+function proofTargetPocketIdentitiesMatch(params: {
+  leftPocketId?: string | null
+  leftPocketLabel?: string | null
+  rightPocketId?: string | null
+  rightPocketLabel?: string | null
+}): boolean {
+  if (
+    params.leftPocketId &&
+    params.rightPocketId &&
+    params.leftPocketId === params.rightPocketId
+  ) {
+    return true
+  }
+  return (
+    proofTargetTokensMatch(params.leftPocketLabel, params.rightPocketLabel) ||
+    proofTargetTokensMatch(params.leftPocketId, params.rightPocketLabel) ||
+    proofTargetTokensMatch(params.leftPocketLabel, params.rightPocketId)
+  )
+}
+
 function buildProofTargetAssertionResult(params: {
   proofTarget?: CurateHardPocketProofTargetAssertionContext
   status: CurateHardPocketProofTargetAssertionResult['status']
@@ -329,7 +349,12 @@ export function evaluateCurateHardPocketProofTargetAssertion(params: {
   if (
     proofTarget.activePocketId &&
     !proofTarget.crossPocketAllowed &&
-    proofTarget.activePocketId !== targetPocketId
+    !proofTargetPocketIdentitiesMatch({
+      leftPocketId: proofTarget.activePocketId,
+      leftPocketLabel: proofTarget.activePocketLabel,
+      rightPocketId: targetPocketId,
+      rightPocketLabel: targetPocketLabel,
+    })
   ) {
     return buildProofTargetAssertionResult({
       proofTarget,

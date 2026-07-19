@@ -300,6 +300,41 @@ function assertHardPocketAssertionRejectsMismatchedActivePocket(): void {
   process.stdout.write('hard-pocket assertion fail test: passed\n')
 }
 
+function assertEquivalentPocketLabelsRemainHardPocketConsistent(): void {
+  const opportunity = buildOpportunity({
+    pocketId: 'raw-pocket-willow-selection',
+    pocketLabel: 'Willow Glen Pocket',
+    directionId: 'direction-willow',
+    proofStopPocketId: 'raw-pocket-willow-proof',
+    proofStopPocketLabel: 'Willow Glen Pocket',
+  })
+  const result = evaluateCurateHardPocketProofTargetAssertion({
+    opportunity,
+    selection: opportunity.selection,
+    starterPack: coffeeBooksStarterPack,
+    starterSemanticRepresentation: opportunity.starterSemanticRepresentation,
+    proofTarget: {
+      diagnosticOnly: true,
+      proofTargetId: 'row1_step_b_coffee_books_representative',
+      targetPocketId: 'raw-pocket-willow-selection',
+      targetPocketLabel: 'Willow Glen Pocket',
+      activePocketId: 'raw-pocket-willow-field',
+      activePocketLabel: 'Willow Glen Pocket',
+      crossPocketAllowed: false,
+    },
+  })
+  assert(
+    result.status === 'passed',
+    `Equivalent Willow Glen pocket labels must remain hard-pocket consistent, received ${result.reason}.`,
+  )
+  assert(
+    result.selectedDirectionId === 'direction-willow' &&
+      result.selectedPocketId === 'raw-pocket-willow-selection',
+    'Selected direction and selected pocket must reach the assertion from existing carriers.',
+  )
+  process.stdout.write('hard-pocket equivalent-label assertion test: passed\n')
+}
+
 function assertSelectedProofStopMustBeInsideTargetPocket(): void {
   const opportunity = buildOpportunity({
     pocketId: 'downtown-pocket',
@@ -388,6 +423,7 @@ function assertCompatibilityWrappersRemainNonAuthority(): void {
 function main(): void {
   assertHardPocketAssertionPassesAndMaterializes()
   assertHardPocketAssertionRejectsMismatchedActivePocket()
+  assertEquivalentPocketLabelsRemainHardPocketConsistent()
   assertSelectedProofStopMustBeInsideTargetPocket()
   assertQueryTermsDoNotSatisfyProof()
   assertCompatibilityWrappersRemainNonAuthority()

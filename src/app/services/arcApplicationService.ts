@@ -16,7 +16,7 @@ import {
   type FieldDiscoveryContractInput,
   type StopTypeCandidateBoard,
 } from '../../domain/interpretation/discovery/stopTypeCandidateBoard'
-import type { LiveProviderEnvelope } from '../../domain/retrieval/liveEnvelope'
+import type { LiveProviderEnvelope, LiveRetrievalPocketHint } from '../../domain/retrieval/liveEnvelope'
 import {
   searchAnchorVenues,
   type AnchorSearchChip,
@@ -167,6 +167,16 @@ export function buildStepBCurateLiveSmokeCandidateSupplyRunFingerprint(params: {
     sourceMode: normalizeStepBFingerprintValue(params.input.sourceMode),
     scenarioFamilyOverride: normalizeStepBFingerprintValue(params.input.scenarioFamilyOverride),
     starterPackId: normalizeStepBFingerprintValue(params.starterPack?.id),
+    livePocketHint: params.input.livePocketHint
+      ? {
+          pocketId: normalizeStepBFingerprintValue(params.input.livePocketHint.pocketId),
+          pocketLabel: normalizeStepBFingerprintValue(params.input.livePocketHint.pocketLabel),
+          city: normalizeStepBFingerprintValue(params.input.livePocketHint.city),
+          locationLabel: normalizeStepBFingerprintValue(params.input.livePocketHint.locationLabel),
+          radiusM: params.input.livePocketHint.radiusM,
+          centroid: params.input.livePocketHint.centroid,
+        }
+      : null,
   })
 }
 
@@ -194,12 +204,14 @@ export async function runStepBCurateLiveSmokeCandidateSupply(params: {
   const buildBoard = (input: {
     sourceMode: NonNullable<BuildStopTypeCandidateBoardFromIntentInput['sourceMode']>
     liveEnvelope?: LiveProviderEnvelope
+    livePocketHint?: LiveRetrievalPocketHint
   }): Promise<StopTypeCandidateBoard | null> => {
     if (params.fieldDiscoveryContract) {
       return buildStopTypeCandidateBoardFromContract({
         ...params.fieldDiscoveryContract,
         sourceMode: input.sourceMode,
         liveEnvelope: input.liveEnvelope,
+        livePocketHint: input.livePocketHint ?? params.fieldDiscoveryContract.livePocketHint,
         starterPack: params.starterPack ?? params.fieldDiscoveryContract.starterPack,
       })
     }
@@ -207,6 +219,7 @@ export async function runStepBCurateLiveSmokeCandidateSupply(params: {
       ...safeInput,
       sourceMode: input.sourceMode,
       liveEnvelope: input.liveEnvelope,
+      livePocketHint: input.livePocketHint ?? safeInput.livePocketHint,
       starterPack: params.starterPack ?? safeInput.starterPack,
     })
   }
@@ -214,6 +227,7 @@ export async function runStepBCurateLiveSmokeCandidateSupply(params: {
   if (!shouldApply) {
     return buildBoard({
       sourceMode: callerSourceMode ?? 'curated',
+      livePocketHint: safeInput.livePocketHint,
     })
   }
 
@@ -238,6 +252,7 @@ export async function runStepBCurateLiveSmokeCandidateSupply(params: {
   const board = await buildBoard({
     sourceMode: 'hybrid',
     liveEnvelope: STEP_B_CURATE_LIVE_SMOKE_CANDIDATE_SUPPLY_ENVELOPE,
+    livePocketHint: safeInput.livePocketHint,
   })
 
   // P0-G diagnostic-only: remove after hosted Step B candidate-supply audit is complete.

@@ -248,7 +248,10 @@ import {
 import { isDevOrSandboxCloseoutFlow } from '../domain/sources/getSourceMode'
 import { resolveCurateProofSourceMode } from '../domain/providers/providerProofGate'
 import { resolveCurateStarterScenarioFamily } from '../domain/curate/starterScenarioFamily'
-import { CLOSED_PREVIEW_LIVE_ENVELOPE } from '../domain/retrieval/liveEnvelope'
+import {
+  CLOSED_PREVIEW_LIVE_ENVELOPE,
+  type LiveRetrievalPocketHint,
+} from '../domain/retrieval/liveEnvelope'
 import { mapVenueToTasteInput } from '../domain/interpretation/taste/mapVenueToTasteInput'
 import { interpretVenueTaste } from '../domain/interpretation/taste/interpretVenueTaste'
 import { resolveVibeTasteProfile } from '../domain/taste/resolveVibeTasteProfile'
@@ -337,6 +340,10 @@ const DEV_CLOSEOUT_BUILD_QUERY_KEY = 'id8.dev.closeout.buildQuery'
 const DEV_CLOSEOUT_BUILD_LOCATION_CLASS_KEY = 'id8.dev.closeout.buildLocationClass'
 const PUBLIC_CONCIERGE_CARD_PREVIEW_ENABLED = false
 const PUBLIC_CURATE_COMMITTED_ROUTE_FALLBACK_ENABLED: boolean = false
+const ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID = 'row1_step_b_coffee_books_representative'
+const ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL = 'Willow Glen'
+const ROW_1_COFFEE_BOOKS_REQUIRED_SEMANTIC_PROOF =
+  'selected-stop-backed book, reading, literary, library, or bookstore evidence'
 
 function readStepBCurateLiveSmokeEnabled(): boolean {
   const env = (import.meta as ImportMeta & {
@@ -353,9 +360,82 @@ type CurateProofTargetActivePocketDiagnostic = {
   activeFieldAdmissionEnvelopeRadiusM: number | null
 }
 
+type CurateProofTargetDistrictCarrier = {
+  id: string
+  name: string
+  centroid?: { lat: number; lng: number }
+  radiusM?: number
+}
+
+type CurateHardPocketProofTargetInstance = {
+  proofTargetId: string
+  requiredSemanticProof: string
+  selectedDirectionId: string
+  selectedPocketId: string
+  selectedPocketLabel: string
+  livePocketHint: LiveRetrievalPocketHint
+  crossPocketAllowed: false
+}
+
+function resolveCurateHardPocketProofTargetInstance(params: {
+  starterPackId?: string | null
+  city: string
+  districts: CurateProofTargetDistrictCarrier[]
+  allDirectionCards: RealityDirectionCard[]
+}): CurateHardPocketProofTargetInstance | null {
+  if (params.starterPackId !== 'coffee-books') {
+    return null
+  }
+  const targetKeys = buildDistrictLookupKeys(ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL)
+  const targetDistrict =
+    params.districts.find((district) =>
+      buildDistrictLookupKeys(`${district.id} ${district.name}`).some((key) =>
+        targetKeys.includes(key),
+      ),
+    ) ?? null
+  if (!targetDistrict?.centroid || typeof targetDistrict.radiusM !== 'number') {
+    return null
+  }
+  const targetDirection = rankDirectionResolverCards(
+    params.allDirectionCards.filter(
+      (card) => getDirectionResolverPocketKey(card) === targetDistrict.id,
+    ),
+  )[0]
+  if (!targetDirection) {
+    return null
+  }
+  return {
+    proofTargetId: ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID,
+    requiredSemanticProof: ROW_1_COFFEE_BOOKS_REQUIRED_SEMANTIC_PROOF,
+    selectedDirectionId: targetDirection.id,
+    selectedPocketId: targetDistrict.id,
+    selectedPocketLabel: targetDistrict.name,
+    livePocketHint: {
+      pocketId: targetDistrict.id,
+      pocketLabel: targetDistrict.name,
+      centroid: targetDistrict.centroid,
+      radiusM: targetDistrict.radiusM,
+      source: 'district_intelligence',
+      city: params.city,
+      locationLabel: `${targetDistrict.name}, ${params.city}`,
+    },
+    crossPocketAllowed: false,
+  }
+}
+
 function resolveCurateProofTargetActivePocketDiagnostic(
   board: StopTypeCandidateBoard | null,
+  proofTarget?: CurateHardPocketProofTargetInstance | null,
 ): CurateProofTargetActivePocketDiagnostic {
+  if (proofTarget) {
+    return {
+      activePocketId: proofTarget.livePocketHint.pocketId,
+      activePocketLabel: proofTarget.livePocketHint.pocketLabel,
+      activePocketCenter: proofTarget.livePocketHint.centroid,
+      activePocketHintRadiusM: proofTarget.livePocketHint.radiusM,
+      activeFieldAdmissionEnvelopeRadiusM: null,
+    }
+  }
   const livePocketHint = board?.debug?.liveRetrieval?.livePocketHint
   if (livePocketHint) {
     return {
@@ -11121,6 +11201,9 @@ export function SandboxConciergePage({
                 sourceMode: 'curated' as const,
                 scenarioFamilyOverride: resolvedScenarioFamily,
                 starterPack: selectedStarterPack ?? undefined,
+                ...(row1CoffeeBooksProofTarget
+                  ? { livePocketHint: row1CoffeeBooksProofTarget.livePocketHint }
+                  : {}),
               }
             })()
           : undefined
@@ -11150,6 +11233,9 @@ export function SandboxConciergePage({
           vibe: primaryVibe,
           sourceMode: 'curated' as const,
           scenarioFamilyOverride: resolvedScenarioFamily,
+          ...(row1CoffeeBooksProofTarget
+            ? { livePocketHint: row1CoffeeBooksProofTarget.livePocketHint }
+            : {}),
         }
         const stepBCandidateSupplyRunFingerprint =
           buildStepBCurateLiveSmokeCandidateSupplyRunFingerprint({
@@ -11647,6 +11733,8 @@ export function SandboxConciergePage({
         tasteAggregation: aggregation,
         tasteBridgeArtifact,
         tasteBridgeLine: getTasteBridgeLine(tasteBridgeArtifact),
+        centroid: profile.centroid,
+        radiusM: profile.radiusM,
       }
     })
   }, [
@@ -11856,6 +11944,16 @@ export function SandboxConciergePage({
     }
   }, [activeDistrictPocketId, allDirectionCards, districtDiscoveryCards])
   const directionCards = directionView.cards
+  const row1CoffeeBooksProofTarget = useMemo(
+    () =>
+      resolveCurateHardPocketProofTargetInstance({
+        starterPackId: selectedStarterPack?.id ?? null,
+        city: districtLocationQuery,
+        districts: districtDiscoveryCards,
+        allDirectionCards,
+      }),
+    [allDirectionCards, districtDiscoveryCards, districtLocationQuery, selectedStarterPack?.id],
+  )
 
   const surpriseContrastOpportunityRepairEntries = useMemo(
     () => {
@@ -12005,6 +12103,17 @@ export function SandboxConciergePage({
         }),
       )
       .filter((entry): entry is VerifiedCityOpportunity => Boolean(entry))
+      .map((opportunity) =>
+        row1CoffeeBooksProofTarget
+          ? {
+              ...opportunity,
+              selection: {
+                pocketId: row1CoffeeBooksProofTarget.selectedPocketId,
+                directionId: row1CoffeeBooksProofTarget.selectedDirectionId,
+              },
+            }
+          : opportunity,
+      )
     if (
       surpriseContrastOpportunityRepairEntries.length === 0 &&
       surpriseCrossPersonaOpportunityRepairEntries.length === 0
@@ -12022,6 +12131,7 @@ export function SandboxConciergePage({
     districtDiscoveryCards,
     isBuildWrapperActive,
     isCurateWrapperActive,
+    row1CoffeeBooksProofTarget,
     resolvedScenarioFamily,
     scenarioBuiltNights,
     scenarioCandidateBoard,
@@ -12040,12 +12150,16 @@ export function SandboxConciergePage({
           allDirectionCards,
         })
         const proofTargetPocketLabel =
-          opportunity.selection.pocketId
+          row1CoffeeBooksProofTarget?.selectedPocketLabel ??
+          (opportunity.selection.pocketId
             ? districtDiscoveryCards.find((entry) => entry.id === opportunity.selection.pocketId)?.name ??
               null
-            : null
+            : null)
         const activePocketDiagnostic =
-          resolveCurateProofTargetActivePocketDiagnostic(scenarioCandidateBoard)
+          resolveCurateProofTargetActivePocketDiagnostic(
+            scenarioCandidateBoard,
+            row1CoffeeBooksProofTarget,
+          )
         const proofTargetAssertion = evaluateCurateHardPocketProofTargetAssertion({
           opportunity,
           selection: opportunity.selection,
@@ -12056,8 +12170,13 @@ export function SandboxConciergePage({
             isCurateWrapperActive && selectedStarterPack?.id === 'coffee-books'
               ? {
                   diagnosticOnly: true,
-                  proofTargetId: 'row1_step_b_coffee_books_representative',
-                  targetPocketId: opportunity.selection.pocketId ?? null,
+                  proofTargetId:
+                    row1CoffeeBooksProofTarget?.proofTargetId ??
+                    ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID,
+                  targetPocketId:
+                    row1CoffeeBooksProofTarget?.selectedPocketId ??
+                    opportunity.selection.pocketId ??
+                    null,
                   targetPocketLabel: proofTargetPocketLabel,
                   activePocketId: activePocketDiagnostic.activePocketId,
                   activePocketLabel: activePocketDiagnostic.activePocketLabel,
@@ -12085,6 +12204,7 @@ export function SandboxConciergePage({
       directionCards,
       districtDiscoveryCards,
       isCurateWrapperActive,
+      row1CoffeeBooksProofTarget,
       scenarioBackedVerifiedCityOpportunities,
       scenarioCandidateBoard,
       selectedStarterPack,
@@ -12527,10 +12647,17 @@ export function SandboxConciergePage({
         selectedStarterPack?.id === 'coffee-books'
           ? (() => {
               const activePocketDiagnostic =
-                resolveCurateProofTargetActivePocketDiagnostic(scenarioCandidateBoard)
+                resolveCurateProofTargetActivePocketDiagnostic(
+                  scenarioCandidateBoard,
+                  row1CoffeeBooksProofTarget,
+                )
               return {
                 diagnosticOnly: true,
-                proofTargetId: 'row1_step_b_coffee_books_representative',
+                proofTargetId:
+                  row1CoffeeBooksProofTarget?.proofTargetId ??
+                  ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID,
+                targetPocketId: row1CoffeeBooksProofTarget?.selectedPocketId ?? null,
+                targetPocketLabel: row1CoffeeBooksProofTarget?.selectedPocketLabel ?? null,
                 activePocketId: activePocketDiagnostic.activePocketId,
                 activePocketLabel: activePocketDiagnostic.activePocketLabel,
                 activePocketCenter: activePocketDiagnostic.activePocketCenter,
@@ -12550,6 +12677,7 @@ export function SandboxConciergePage({
     isCurateWrapperActive,
     scenarioCandidateBoard,
     selectedStarterPack,
+    row1CoffeeBooksProofTarget,
     shouldUseScenarioBackedArtifacts,
     starterAwareRankedStep2SourceOpportunities,
     starterAwareStep2SourceOpportunities,
@@ -14599,17 +14727,25 @@ export function SandboxConciergePage({
     })
     const liveRetrieval = scenarioCandidateBoard?.debug?.liveRetrieval
     const activePocketDiagnostic =
-      resolveCurateProofTargetActivePocketDiagnostic(scenarioCandidateBoard)
+      resolveCurateProofTargetActivePocketDiagnostic(
+        scenarioCandidateBoard,
+        row1CoffeeBooksProofTarget,
+      )
     const proofTargetParameters = {
       diagnosticOnly: true,
-      proofTargetId: 'row1_step_b_coffee_books_representative',
+      proofTargetId:
+        row1CoffeeBooksProofTarget?.proofTargetId ?? ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID,
       proofTargetName: 'Governed Row 1 Build Step B Coffee & Books representative proof',
       mode: 'curate',
       surface: '/start/curate',
       scenarioFamily: scenarioCandidateBoard?.scenarioFamily ?? resolvedScenarioFamily ?? null,
       starterId: selectedStarterPack?.id ?? null,
       expectedSemanticProof:
-        'selected-stop-backed book, reading, literary, library, or bookstore evidence',
+        row1CoffeeBooksProofTarget?.requiredSemanticProof ??
+        ROW_1_COFFEE_BOOKS_REQUIRED_SEMANTIC_PROOF,
+      selectedDirectionId: row1CoffeeBooksProofTarget?.selectedDirectionId ?? null,
+      selectedPocketId: row1CoffeeBooksProofTarget?.selectedPocketId ?? null,
+      selectedPocketLabel: row1CoffeeBooksProofTarget?.selectedPocketLabel ?? null,
       expectedRoles: activeScenarioRequiredStopTypes,
       expectedSelectedStopEvidence: true,
       expectedActivePocketSource: 'district_intelligence',
@@ -14707,6 +14843,7 @@ export function SandboxConciergePage({
     scenarioBuiltNights,
     scenarioCandidateBoard,
     scenarioBackedVerifiedCityOpportunities,
+    row1CoffeeBooksProofTarget,
     selectedStarterPack?.id,
     suppressedScenarioBackedOpportunityAdmissions,
     step2CandidateRouteArtifacts,
