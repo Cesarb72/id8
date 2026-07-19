@@ -702,6 +702,21 @@ function assertNoApprovedPayloadClassificationIsExplicit(): void {
           {
             qualificationStatus: 'runtime_error',
             explicitFallbackReason: 'curate_preflight_runtime_error:GreatStopGateSelectionError',
+            greatStopGateSelectionDiagnostics: {
+              status: 'FAIL',
+              stage: 'pre_selection_gate',
+              evaluatedCandidateCount: 2,
+              passingCandidateCount: 0,
+              failedTopCandidateCriteria: ['place_right'],
+              failureReasons: ['place_right:cluster_escape_structure'],
+              bestFailingCandidateSummary: {
+                candidateId: 'candidate-culture-bookstore-loop',
+                failedCriteria: ['place_right'],
+                reasons: ['place_right:cluster_escape_structure'],
+                requiredAnchorPreserved: true,
+                requiredAnchorRoleCorrect: true,
+              },
+            },
           },
         ],
       },
@@ -720,11 +735,21 @@ function assertNoApprovedPayloadClassificationIsExplicit(): void {
     noCardSummary.reviewCtaExpectedVisible === false,
     'Great Stop honest-fail must continue suppressing Review/Lock.',
   )
+  assert(
+    typeof noCardSummary.greatStopGateSelectionDiagnostics === 'object' &&
+      noCardSummary.greatStopGateSelectionDiagnostics !== null &&
+      !Array.isArray(noCardSummary.greatStopGateSelectionDiagnostics) &&
+      noCardSummary.greatStopGateSelectionDiagnostics.status === 'FAIL' &&
+      noCardSummary.greatStopGateSelectionDiagnostics.evaluatedCandidateCount === 2,
+    'Observer no-card summary must expose preserved Great Stop selection diagnostics.',
+  )
 
   const observerSource = readFileSync('scripts/observe-hosted-step-b-supply.ts', 'utf8')
   assert(
     observerSource.includes('step_b_no_card_classification') &&
       observerSource.includes('No visible route card found after Step B candidate supply.') &&
+      observerSource.includes('greatStopGateSelectionDiagnostics') &&
+      observerSource.includes('selectedQualificationDiagnostic?.greatStopGateSelectionDiagnostics') &&
       !observerSource.includes('return\n    }\n    const selectedCardArtifactId'),
     'Hosted observer must not mask a no-card proof failure behind finalError:null.',
   )

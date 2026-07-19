@@ -16,6 +16,7 @@ import type { StarterPack } from '../../../domain/types/starterPack'
 import type { ConciergeIntent, ContractConstraints, ExperienceContract, IntentInput, PersonaMode, ResolvedDirectionContext, RouteShapeContract, VibeAnchor } from '../../../domain/types/intent'
 import type { UserStopRole } from '../../../domain/types/itinerary'
 import type { Venue } from '../../../domain/types/venue'
+import type { GreatStopGateSelectionDiagnostics } from '../../../domain/types/greatStopGate'
 import type { RankedPocket } from '../../../engines/district/types/districtTypes'
 import { validatePublicCurateApprovedPayloadTruth } from '../curate/publicCurateCardTruthService'
 import type {
@@ -334,6 +335,17 @@ function getSelectedStarterPackForApprovedPayloadTruth(
   }
   const id = (value as { id?: unknown }).id
   return typeof id === 'string' && id.trim() ? (value as StarterPack) : null
+}
+
+function getGreatStopGateSelectionDiagnostics(
+  error: unknown,
+): GreatStopGateSelectionDiagnostics | null {
+  const diagnostics = (error as { greatStopGateSelectionDiagnostics?: unknown })
+    ?.greatStopGateSelectionDiagnostics
+  if (!diagnostics || typeof diagnostics !== 'object') {
+    return null
+  }
+  return diagnostics as GreatStopGateSelectionDiagnostics
 }
 
 function getApprovedPayloadTruthFailureReason(params: {
@@ -903,6 +915,8 @@ export async function runCuratePreviewQualificationAttempt<
       preflightError instanceof PostPlannerCommitParityValidationError
     const errorName = dependencies.getErrorName(preflightError)
     const errorMessageRaw = dependencies.getErrorMessageRaw(preflightError)
+    const greatStopGateSelectionDiagnostics =
+      getGreatStopGateSelectionDiagnostics(preflightError)
     const hardCommitMaterializationFailed =
       curateCommitSemantics === 'approved_route_hard_commit' &&
       isKnownHardCommitMaterializationError({
@@ -924,6 +938,7 @@ export async function runCuratePreviewQualificationAttempt<
           failedCheck: approvedPayloadRouteMaterializationUnavailableReason,
           errorName,
           errorMessageRaw,
+          greatStopGateSelectionDiagnostics,
           curateCommitSemantics,
           hardCommitRequired: true,
           hardCommitFeasibility: buildFailedCuratePreviewHardCommitFeasibility({
@@ -969,6 +984,7 @@ export async function runCuratePreviewQualificationAttempt<
         failedCheck: isValidationFailure ? preflightError.failedCheck : null,
         errorName,
         errorMessageRaw,
+        greatStopGateSelectionDiagnostics,
         curateCommitSemantics,
         hardCommitRequired: curateCommitSemantics === 'approved_route_hard_commit',
         failedRoles: [],

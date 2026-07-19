@@ -1,5 +1,6 @@
 import type { DirectionContractBuildability } from '../../../domain/bearings/assessDirectionContractBuildability'
 import type { CurateHardCommitDiagnostics } from '../../../domain/types/diagnostics'
+import type { GreatStopGateSelectionDiagnostics } from '../../../domain/types/greatStopGate'
 
 type CurateFailureKind = 'structural_infeasibility' | 'validation_failure' | 'runtime_error'
 type CurateRepairQualificationStatus = 'committable' | 'infeasible'
@@ -38,6 +39,7 @@ export interface CuratePreviewCommitabilityStateLike<
   failedCheck?: string | null
   errorName?: string | null
   errorMessageRaw?: string | null
+  greatStopGateSelectionDiagnostics?: GreatStopGateSelectionDiagnostics | null
   curateCommitSemantics?: CurateCommitSemantics
   hardCommitRequired?: boolean
   hardCommitFeasibility?: CurateHardCommitDiagnostics['hardCommitFeasibility']

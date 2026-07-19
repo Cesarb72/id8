@@ -46,6 +46,10 @@ import {
 } from '../src/domain/interpretation/verifiedCityOpportunity.ts'
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
 import type { GeneratePlanResult } from '../src/domain/runGeneratePlan.ts'
+import {
+  GreatStopGateSelectionError,
+  type GreatStopGateSelectionDiagnostics,
+} from '../src/domain/types/greatStopGate.ts'
 import type { RuntimeRouteArtifact } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
 import type { FieldTextSearchRequest, FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
 import type { ProviderVenue } from '../src/domain/providers/providerTypes.ts'
@@ -3249,6 +3253,62 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
     'Known hard-commit fallback recovery errors must preserve canonical ids and avoid defaulting unknown failures to start.',
   )
 
+  const failedGreatStopDiagnostics: GreatStopGateSelectionDiagnostics = {
+    status: 'FAIL',
+    stage: 'pre_selection_gate',
+    rankedCandidateCount: 2,
+    evaluatedCandidateCount: 2,
+    fullEvaluatedCandidateCount: 2,
+    skippedMissingRequiredAnchorCount: 0,
+    anchorPreservingCandidateCount: 2,
+    evaluatedAnchorPreservingCandidateCount: 2,
+    passingCandidateCount: 0,
+    failedTopCandidateCriteria: ['place_right', 'moment_right'],
+    failureReasons: [
+      'place_right:cluster_escape_structure',
+      'moment_right:no_strong_main_moment',
+    ],
+    bestFailingCandidateSummary: {
+      candidateId: 'candidate-culture-bookstore-loop',
+      rank: 1,
+      signature:
+        'start:aligned-scenario-backed_start_venue|highlight:aligned-scenario-backed_highlight_venue|windDown:aligned-scenario-backed_windDown_venue',
+      stopVenueIdsByRole: {
+        start: 'aligned-scenario-backed_start_venue',
+        highlight: 'aligned-scenario-backed_highlight_venue',
+        windDown: 'aligned-scenario-backed_windDown_venue',
+      },
+      requiredAnchorPreserved: true,
+      requiredAnchorRoleCorrect: true,
+      failedCriteria: ['place_right', 'moment_right'],
+      reasons: [
+        'place_right:cluster_escape_structure',
+        'moment_right:no_strong_main_moment',
+      ],
+    },
+  }
+  const greatStopSelectionAttempt = await runAttempt(alignedRoute, {
+    throwFromPlanBuild: new GreatStopGateSelectionError(failedGreatStopDiagnostics),
+  })
+  assert(
+    greatStopSelectionAttempt.result.kind === 'unexpectedFailure' &&
+      greatStopSelectionAttempt.approvedPayloadBuildCount === 0 &&
+      greatStopSelectionAttempt.observedCurateCommitSemantics ===
+        'approved_route_hard_commit' &&
+      greatStopSelectionAttempt.result.state.failureKind === 'runtime_error' &&
+      greatStopSelectionAttempt.result.state.explicitFallbackReason ===
+        'curate_preflight_runtime_error:GreatStopGateSelectionError' &&
+      greatStopSelectionAttempt.result.state.approvedRefinementEntryPayload ===
+        undefined &&
+      greatStopSelectionAttempt.result.state.greatStopGateSelectionDiagnostics ===
+        failedGreatStopDiagnostics &&
+      greatStopSelectionAttempt.result.state.greatStopGateSelectionDiagnostics
+        ?.failedTopCandidateCriteria?.includes('place_right') &&
+      greatStopSelectionAttempt.result.state.greatStopGateSelectionDiagnostics
+        ?.bestFailingCandidateSummary?.requiredAnchorRoleCorrect === true,
+    'Curate preflight must preserve GreatStopGateSelectionDiagnostics while keeping approved payload creation fail-closed.',
+  )
+
   const unexpectedAttempt = await runAttempt(alignedRoute, {
     throwFromPlanBuild: new Error('unexpected planner failure'),
   })
@@ -3274,6 +3334,8 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
       serviceSource.includes('isKnownHardCommitMaterializationError') &&
       serviceSource.includes('scenarioHardCommitSeedVenues') &&
       serviceSource.includes('getMissingScenarioHardCommitSeedRoles') &&
+      serviceSource.includes('getGreatStopGateSelectionDiagnostics') &&
+      serviceSource.includes('greatStopGateSelectionDiagnostics') &&
       serviceSource.includes('baseCommitParitySucceeded && !approvedPayloadTruthFailureReason') &&
       serviceSource.includes('materialization_unresolved') &&
       serviceSource.includes("failedRole: 'unknown'"),

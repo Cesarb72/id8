@@ -181,6 +181,31 @@ function collectStringValuesByKey(value: unknown, targetKey: string, output: str
   return Array.from(new Set(output))
 }
 
+function findFirstValueByKey(value: unknown, targetKey: string): JsonValue {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = findFirstValueByKey(entry, targetKey)
+      if (found !== null) {
+        return found
+      }
+    }
+    return null
+  }
+  if (!isRecord(value)) {
+    return null
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === targetKey) {
+      return sanitizeForEvidence(entry)
+    }
+    const found = findFirstValueByKey(entry, targetKey)
+    if (found !== null) {
+      return found
+    }
+  }
+  return null
+}
+
 function findStringValue(value: unknown, paths: string[][]): string | null {
   for (const path of paths) {
     const candidate = getNestedValue(value, path)
@@ -410,6 +435,7 @@ export function summarizeStepBNoCardDiagnostics(input: unknown): {
   reviewCtaExpectedVisible: JsonValue
   rejectionReasons: string[]
   explicitFallbackReasons: string[]
+  greatStopGateSelectionDiagnostics: JsonValue
 } {
   const diagnostic = isRecord(input) && 'diagnostic' in input ? input.diagnostic : input
   const present =
@@ -418,6 +444,10 @@ export function summarizeStepBNoCardDiagnostics(input: unknown): {
       : isRecord(diagnostic)
   const rejectionReasons = collectStringValuesByKey(diagnostic, 'rejectionReason')
   const explicitFallbackReasons = collectStringValuesByKey(diagnostic, 'explicitFallbackReason')
+  const greatStopGateSelectionDiagnostics = findFirstValueByKey(
+    diagnostic,
+    'greatStopGateSelectionDiagnostics',
+  )
   const primaryCardDisplayMode = findFirstValue(diagnostic, [
     ['artifactCardAdmission', 'primaryCardDisplayMode'],
   ])
@@ -445,6 +475,7 @@ export function summarizeStepBNoCardDiagnostics(input: unknown): {
     reviewCtaExpectedVisible,
     rejectionReasons,
     explicitFallbackReasons,
+    greatStopGateSelectionDiagnostics,
   }
 }
 
@@ -937,6 +968,8 @@ async function readDownstreamHandoffDiagnostics(
           availability: stepBDiagnostic?.availability || null,
           selectedVisibleCardDiagnostic,
           selectedQualificationDiagnostic,
+          greatStopGateSelectionDiagnostics:
+            selectedQualificationDiagnostic?.greatStopGateSelectionDiagnostics ?? null,
           approvedPayloadPresent:
             selectedQualificationDiagnostic?.approvedPayloadPresent ??
             selectedVisibleCardDiagnostic?.approvedPayloadPresent ??
@@ -1774,6 +1807,7 @@ async function runHostedObservation(): Promise<void> {
           `reviewCtaExpectedVisible=${String(noCardSummary.reviewCtaExpectedVisible)}.`,
           `rejectionReasons=${noCardSummary.rejectionReasons.join(',') || 'none'}.`,
           `explicitFallbackReasons=${noCardSummary.explicitFallbackReasons.join(',') || 'none'}.`,
+          `greatStopGateSelectionDiagnostics=${noCardSummary.greatStopGateSelectionDiagnostics ? 'present' : 'missing'}.`,
         ].join(' '),
       )
     }

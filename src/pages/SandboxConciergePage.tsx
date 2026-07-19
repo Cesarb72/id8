@@ -679,6 +679,7 @@ interface CuratePreviewCommitabilityState {
   failedCheck?: string | null
   errorName?: string | null
   errorMessageRaw?: string | null
+  greatStopGateSelectionDiagnostics?: GreatStopGateSelectionDiagnostics | null
   curateCommitSemantics?: 'seed_guided' | 'approved_route_hard_commit' | null
   hardCommitRequired?: boolean
   hardCommitFeasibility?: CuratePreviewCommitabilityStateLike<
@@ -17141,6 +17142,7 @@ export function SandboxConciergePage({
                 failedCheck: null,
                 errorName: null,
                 errorMessageRaw: null,
+                greatStopGateSelectionDiagnostics: null,
                 curateCommitSemantics: 'seed_guided',
                 hardCommitRequired: false,
                 windDownRepairAttempted,
@@ -24168,6 +24170,9 @@ export function SandboxConciergePage({
             approvedFinalRoutePresent: Boolean(preflight?.approvedRefinementEntryPayload?.finalRoute),
             failedCheck: preflight?.failedCheck ?? null,
             explicitFallbackReason: preflight?.explicitFallbackReason ?? null,
+            errorName: preflight?.errorName ?? null,
+            greatStopGateSelectionDiagnostics:
+              preflight?.greatStopGateSelectionDiagnostics ?? null,
           }
         }),
         visibleCardDiagnostics,
