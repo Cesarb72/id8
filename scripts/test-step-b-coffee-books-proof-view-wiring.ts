@@ -442,9 +442,11 @@ function assertPageWiresFieldPocketDiagnosticsIntoProofTarget(): void {
   assert(
     source.includes("ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL = 'Willow Glen'") &&
       source.includes('livePocketHint: row1CoffeeBooksProofTarget.livePocketHint') &&
-      source.includes('row1CoffeeBooksProofTargetDiagnostics.status !== \'resolved\'') &&
+      source.includes('row1CoffeeBooksPreSupplyReadiness.status !== \'ready\'') &&
+      source.includes('preSupplyReadiness') &&
+      source.includes('postSupplyProof') &&
       source.includes('crossPocketAllowed: false'),
-    'Coffee Books Row 1 must gate supply on the resolved Willow Glen hard-pocket target before passing livePocketHint.',
+    'Coffee Books Row 1 must gate supply on pre-supply readiness before passing livePocketHint.',
   )
   assert(
     source.includes('requiredSemanticProof') &&

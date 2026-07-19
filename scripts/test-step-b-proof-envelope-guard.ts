@@ -5,6 +5,10 @@ import {
   type StepBCurateLiveSmokeCandidateSupplyInput,
 } from '../src/app/services/arcApplicationService.ts'
 import {
+  evaluateStepBPostSupplyProofGate,
+  evaluateStepBPreSupplyReadiness,
+} from '../src/app/services/curate/stepBProofGate.ts'
+import {
   formatStepBFieldProxyEnvelopeBreach,
   summarizeFieldProxyBody,
   summarizeStepBFieldProxyPostEnvelope,
@@ -42,6 +46,111 @@ function buildInput(overrides: Partial<StepBCurateLiveSmokeCandidateSupplyInput>
     sourceMode: 'curated',
     ...overrides,
   }
+}
+
+function buildPreSupplyReadinessInput(overrides: Parameters<typeof evaluateStepBPreSupplyReadiness>[0] = {}) {
+  return {
+    proofTargetId: 'row1_step_b_coffee_books_representative',
+    scenarioFamily: 'romantic_cultured',
+    starterPackId: 'coffee-books',
+    selectedDirectionId: 'direction-willow',
+    selectedPocketId: 'raw-pocket-willow',
+    livePocketHint: {
+      pocketId: 'raw-pocket-willow',
+      pocketLabel: 'Willow Glen',
+      centroid: { lat: 37.309, lng: -121.9 },
+      radiusM: 650,
+      source: 'district_intelligence' as const,
+      city: 'San Jose',
+      locationLabel: 'Willow Glen, San Jose',
+    },
+    crossPocketAllowed: false,
+    envelope: {
+      maxProviderCalls: 3,
+      maxQueryLabels: 3,
+      maxCenters: 1,
+    },
+    providerValveExpectedMode: 'preview_field_proxy_expected_armed',
+    providerValveReady: true,
+    ...overrides,
+  }
+}
+
+function assertStepBPreSupplyPostSupplyGateSplit(): void {
+  const missingDirection = evaluateStepBPreSupplyReadiness(
+    buildPreSupplyReadinessInput({ selectedDirectionId: null }),
+  )
+  assert(
+    missingDirection.status === 'held' &&
+      missingDirection.holdReason === 'pre_supply_selected_direction_id_missing',
+    'Pre-supply gate must hold when selectedDirectionId is missing.',
+  )
+
+  const missingPocket = evaluateStepBPreSupplyReadiness(
+    buildPreSupplyReadinessInput({ selectedPocketId: null }),
+  )
+  assert(
+    missingPocket.status === 'held' &&
+      missingPocket.holdReason === 'pre_supply_selected_pocket_id_missing',
+    'Pre-supply gate must hold when selectedPocketId is missing.',
+  )
+
+  const missingPocketHint = evaluateStepBPreSupplyReadiness(
+    buildPreSupplyReadinessInput({ livePocketHint: null }),
+  )
+  assert(
+    missingPocketHint.status === 'held' &&
+      missingPocketHint.holdReason === 'pre_supply_live_pocket_hint_missing',
+    'Pre-supply gate must hold when livePocketHint is missing.',
+  )
+
+  const ready = evaluateStepBPreSupplyReadiness(buildPreSupplyReadinessInput())
+  assert(ready.status === 'ready', 'Pre-supply gate must become ready when only pre-supply carriers exist.')
+  assert(
+    ready.notRequiredBeforeSupply.includes('selected_proof_stop') &&
+      ready.notRequiredBeforeSupply.includes('starterSemanticRepresentation'),
+    'Pre-supply gate must explicitly exclude selected proof stop and starterSemanticRepresentation.',
+  )
+  assert(
+    ready.envelopeReady &&
+      ready.envelope?.maxProviderCalls === 3 &&
+      ready.envelope.maxQueryLabels === 3 &&
+      ready.envelope.maxCenters === 1,
+    'Ready pre-supply gate must preserve the existing 3/3/1 envelope.',
+  )
+
+  const beforeSupply = evaluateStepBPostSupplyProofGate({
+    fieldSupplyStatus: 'not_started',
+    bearingsDistrictAdmissionStatus: 'not_run',
+  })
+  assert(
+    beforeSupply.status === 'pending' &&
+      beforeSupply.stage === 'before_supply' &&
+      beforeSupply.failureReason === 'field_supply_not_started',
+    'Post-supply proof gate must classify the before-supply phase separately.',
+  )
+
+  const passedPostSupply = evaluateStepBPostSupplyProofGate({
+    fieldSupplyStatus: 'returned',
+    bearingsDistrictAdmissionStatus: 'ran',
+    selectedProofStopPresent: true,
+    selectedProofStopPocketId: 'raw-pocket-willow',
+    starterSemanticRepresentationStatus: 'represented',
+    contractEntryArtifactMaterialized: true,
+    hardPocketAssertionStatus: 'passed',
+    greatStopStatus: 'approved',
+    reviewLockEligible: true,
+  })
+  assert(passedPostSupply.status === 'passed', 'Post-supply proof gate must pass only after proof and lockability.')
+
+  const gateSource = readFileSync('src/app/services/curate/stepBProofGate.ts', 'utf8')
+  assert(
+    !gateSource.includes('coffee') &&
+      !gateSource.includes('bookstore') &&
+      !gateSource.includes('literary'),
+    'Step B gate helper must not introduce Field or kernel meaning ownership.',
+  )
+  process.stdout.write('Step B pre-supply/post-supply gate split: passed\n')
 }
 
 async function assertStepBRunFingerprintSharesInFlightPromise(): Promise<void> {
@@ -108,25 +217,25 @@ async function assertStepBRunFingerprintSharesInFlightPromise(): Promise<void> {
     'Sandbox Step B candidate supply must share in-flight work by fingerprint.',
   )
   assert(
-    sandboxSource.includes("row1CoffeeBooksProofTargetDiagnostics.status !== 'resolved'") &&
+    sandboxSource.includes("row1CoffeeBooksPreSupplyReadiness.status !== 'ready'") &&
       sandboxSource.includes('clearScenarioBuilderArtifacts()') &&
-      sandboxSource.indexOf("row1CoffeeBooksProofTargetDiagnostics.status !== 'resolved'") <
+      sandboxSource.indexOf("row1CoffeeBooksPreSupplyReadiness.status !== 'ready'") <
         sandboxSource.indexOf('runStepBCurateLiveSmokeCandidateSupply({'),
-    'Coffee Books Row 1 Step B supply must hold before Field when the proof target is unresolved.',
+    'Coffee Books Row 1 Step B supply must hold before Field when pre-supply readiness is held.',
   )
   assert(
-    sandboxSource.includes('proof_target_resolution_pending') &&
-      sandboxSource.includes('proof_target_selected_direction_missing') &&
-      sandboxSource.includes('proof_target_selected_pocket_missing') &&
-      sandboxSource.includes('proof_target_live_pocket_hint_missing'),
-    'Unresolved Coffee Books Row 1 proof targets must report clear local diagnostic reasons.',
+    sandboxSource.includes('preSupplyReadiness') &&
+      sandboxSource.includes('postSupplyProof') &&
+      sandboxSource.includes('evaluateStepBPostSupplyProofGate') &&
+      sandboxSource.includes('evaluateStepBPreSupplyReadiness'),
+    'Coffee Books Row 1 diagnostics must split pre-supply readiness from post-supply proof.',
   )
   assert(
     sandboxSource.includes('allDirectionCards,') &&
       sandboxSource.includes('districtDiscoveryCards,') &&
-      sandboxSource.includes('row1CoffeeBooksProofTargetDiagnostics.reason') &&
-      sandboxSource.includes('row1CoffeeBooksProofTargetDiagnostics.status'),
-    'Step B candidate supply effect must depend on proof-target carrier inputs and diagnostics.',
+      sandboxSource.includes('row1CoffeeBooksPreSupplyReadiness.status') &&
+      sandboxSource.includes('ROW_1_STEP_B_PRE_SUPPLY_ENVELOPE'),
+    'Step B candidate supply effect must depend on pre-supply carrier inputs and diagnostics.',
   )
   const serviceSource = readFileSync('src/app/services/arcApplicationService.ts', 'utf8')
   assert(
@@ -314,6 +423,7 @@ function assertStepBPocketProofDiagnosticsSurfaceInObserverReport(): void {
 }
 
 async function main(): Promise<void> {
+  assertStepBPreSupplyPostSupplyGateSplit()
   await assertStepBRunFingerprintSharesInFlightPromise()
   assertObserverCapturesDiagnosticsAndHardStops()
   assertNoApprovedPayloadClassificationIsExplicit()

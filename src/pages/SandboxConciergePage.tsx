@@ -144,6 +144,10 @@ import {
   coffeeBooksSemanticRepresentationMissingReason,
 } from '../app/services/curate/coffeeBooksSemanticRepresentation'
 import { buildCuratePreviewCommitabilityCacheKey } from '../app/services/curate/curatePreviewCommitabilityCache'
+import {
+  evaluateStepBPostSupplyProofGate,
+  evaluateStepBPreSupplyReadiness,
+} from '../app/services/curate/stepBProofGate'
 import { findScoredVenueForStopWithPolicy } from '../app/services/build/finalRouteDetailCopyTruth'
 import { buildRouteRecommendationLifecycleDiagnostics } from '../app/services/routeRecommendationLifecycle'
 import { buildGreatStopRecoverySurfaceModel } from '../app/services/greatStopRecoverySurface'
@@ -344,6 +348,11 @@ const ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID = 'row1_step_b_coffee_books_representat
 const ROW_1_COFFEE_BOOKS_PROOF_TARGET_POCKET_LABEL = 'Willow Glen'
 const ROW_1_COFFEE_BOOKS_REQUIRED_SEMANTIC_PROOF =
   'selected-stop-backed book, reading, literary, library, or bookstore evidence'
+const ROW_1_STEP_B_PRE_SUPPLY_ENVELOPE = {
+  maxProviderCalls: 3,
+  maxQueryLabels: 3,
+  maxCenters: 1,
+}
 
 function readStepBCurateLiveSmokeEnabled(): boolean {
   const env = (import.meta as ImportMeta & {
@@ -11873,6 +11882,35 @@ export function SandboxConciergePage({
   )
   const row1CoffeeBooksProofTarget = row1CoffeeBooksProofTargetResolution.target
   const row1CoffeeBooksProofTargetDiagnostics = row1CoffeeBooksProofTargetResolution.diagnostics
+  const stepBCurateLiveSmokeEnabled = readStepBCurateLiveSmokeEnabled()
+  const row1CoffeeBooksPreSupplyReadiness = useMemo(
+    () =>
+      evaluateStepBPreSupplyReadiness({
+        proofTargetId:
+          row1CoffeeBooksProofTarget?.proofTargetId ??
+          (row1CoffeeBooksProofTargetDiagnostics.configured
+            ? ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID
+            : null),
+        scenarioFamily: resolvedScenarioFamily,
+        starterPackId: selectedStarterPack?.id ?? null,
+        selectedDirectionId: row1CoffeeBooksProofTarget?.selectedDirectionId ?? null,
+        selectedPocketId: row1CoffeeBooksProofTarget?.selectedPocketId ?? null,
+        livePocketHint: row1CoffeeBooksProofTarget?.livePocketHint ?? null,
+        crossPocketAllowed: row1CoffeeBooksProofTarget?.crossPocketAllowed ?? null,
+        envelope: ROW_1_STEP_B_PRE_SUPPLY_ENVELOPE,
+        providerValveExpectedMode: stepBCurateLiveSmokeEnabled
+          ? 'preview_field_proxy_expected_armed'
+          : null,
+        providerValveReady: stepBCurateLiveSmokeEnabled,
+      }),
+    [
+      resolvedScenarioFamily,
+      row1CoffeeBooksProofTarget,
+      row1CoffeeBooksProofTargetDiagnostics.configured,
+      selectedStarterPack?.id,
+      stepBCurateLiveSmokeEnabled,
+    ],
+  )
   useEffect(() => {
     let cancelled = false
     const clearScenarioBuilderArtifacts = () => {
@@ -11891,7 +11929,8 @@ export function SandboxConciergePage({
       if (
         isCurateWrapperActive &&
         selectedStarterPack?.id === 'coffee-books' &&
-        row1CoffeeBooksProofTargetDiagnostics.status !== 'resolved'
+        stepBCurateLiveSmokeEnabled &&
+        row1CoffeeBooksPreSupplyReadiness.status !== 'ready'
       ) {
         clearScenarioBuilderArtifacts()
         return
@@ -11947,7 +11986,7 @@ export function SandboxConciergePage({
           phase: 'candidate_supply' as const,
           selectedStarterPackPresent: Boolean(selectedStarterPack),
           userSourceModeOverrideApplied: false,
-          smokeSwitchEnabled: readStepBCurateLiveSmokeEnabled(),
+          smokeSwitchEnabled: stepBCurateLiveSmokeEnabled,
         }
         const stepBCandidateSupplyInput = {
           city: districtLocationQuery,
@@ -12081,9 +12120,9 @@ export function SandboxConciergePage({
     persona,
     primaryVibe,
     row1CoffeeBooksProofTarget,
-    row1CoffeeBooksProofTargetDiagnostics.reason,
-    row1CoffeeBooksProofTargetDiagnostics.status,
+    row1CoffeeBooksPreSupplyReadiness.status,
     selectedStarterPack,
+    stepBCurateLiveSmokeEnabled,
     surpriseCrossPersonaScenarioFamily,
     resolvedScenarioFamily,
     surpriseContrastScenarioFamily,
@@ -14435,7 +14474,7 @@ export function SandboxConciergePage({
       isCurateWrapperActive &&
       currentPath.toLowerCase() === '/start/curate' &&
       selectedStarterPack?.id === 'coffee-books' &&
-      readStepBCurateLiveSmokeEnabled(),
+      stepBCurateLiveSmokeEnabled,
   )
   const stepBCoffeeBooksCandidateDiagnostics = useMemo(() => {
     if (!stepBCoffeeBooksDiagnosticsActive) {
@@ -14923,6 +14962,40 @@ export function SandboxConciergePage({
       greatStopRequirement: 'approved payload required before visible route card',
       reviewLockRequirement: 'qualified visible route card required before Review/Lock',
     }
+    const hardPocketAssertionStatus =
+      materializationDiagnostics.find(
+        (entry) => entry.proofTargetAssertion?.status === 'passed',
+      )?.proofTargetAssertion?.status ??
+      materializationDiagnostics.find((entry) => entry.proofTargetAssertion)
+        ?.proofTargetAssertion?.status ??
+      null
+    const selectedProofStopPocketId =
+      materializationDiagnostics.find((entry) =>
+        Boolean(entry.proofTargetAssertion?.selectedProofStopPocketId),
+      )?.proofTargetAssertion?.selectedProofStopPocketId ?? null
+    const starterSemanticRepresentationStatus =
+      scenarioBuiltNights.find(
+        (night) => night.starterSemanticRepresentation?.status === 'represented',
+      )?.starterSemanticRepresentation?.status ??
+      scenarioBuiltNights.find((night) => night.starterSemanticRepresentation?.status)
+        ?.starterSemanticRepresentation?.status ??
+      null
+    const postSupplyProof = evaluateStepBPostSupplyProofGate({
+      fieldSupplyStatus: scenarioCandidateBoard ? 'returned' : 'not_started',
+      bearingsDistrictAdmissionStatus: scenarioBuiltNights.length > 0 ? 'ran' : 'not_run',
+      selectedProofStopPresent: selectedProofStopEvidenceAvailable,
+      selectedProofStopPocketId,
+      starterSemanticRepresentationStatus,
+      contractEntryArtifactMaterialized: materializationDiagnostics.some((entry) =>
+        Boolean(entry.contractEntryArtifactId),
+      ),
+      hardPocketAssertionStatus,
+      greatStopStatus:
+        curatePrimaryCardDisplay.qualifiedRouteCardCount > 0 ? 'approved' : null,
+      reviewLockEligible:
+        curatePrimaryCardDisplay.models.length > 0 &&
+        curatePrimaryCardDisplay.qualifiedRouteCardCount > 0,
+    })
     const noCardStateClassification =
       curatePrimaryCardDisplay.models.length > 0
         ? 'route_cards_visible'
@@ -14941,6 +15014,8 @@ export function SandboxConciergePage({
       starterRoleCompatibilityProbe: stepBStarterRoleCompatibilityProbe,
       oneStarterVsSystemicClassification:
         stepBStarterRoleCompatibilityProbe.systemicClassification,
+      preSupplyReadiness: row1CoffeeBooksPreSupplyReadiness,
+      postSupplyProof,
       candidateBoard: {
         boardPresent: Boolean(scenarioCandidateBoard),
         districtIntelligence: scenarioCandidateBoard?.debug?.districtIntelligence ?? null,
@@ -14998,6 +15073,7 @@ export function SandboxConciergePage({
     scenarioBuiltNights,
     scenarioCandidateBoard,
     scenarioBackedVerifiedCityOpportunities,
+    row1CoffeeBooksPreSupplyReadiness,
     row1CoffeeBooksProofTarget,
     row1CoffeeBooksProofTargetDiagnostics,
     selectedStarterPack?.id,
@@ -24157,6 +24233,16 @@ export function SandboxConciergePage({
         selectedCurateVisibleCardModel?.hasApprovedPayload &&
         selectedCurateVisibleCardModel.approvedPayloadTruthAllowed,
     )
+    const fallbackPostSupplyProof = evaluateStepBPostSupplyProofGate({
+      fieldSupplyStatus: scenarioCandidateBoard ? 'returned' : 'not_started',
+      bearingsDistrictAdmissionStatus: scenarioBuiltNights.length > 0 ? 'ran' : 'not_run',
+      selectedProofStopPresent: false,
+      starterSemanticRepresentationStatus: null,
+      contractEntryArtifactMaterialized: step2CandidateRouteArtifacts.length > 0,
+      hardPocketAssertionStatus: null,
+      greatStopStatus: curatePrimaryCardDisplay.qualifiedRouteCardCount > 0 ? 'approved' : null,
+      reviewLockEligible: reviewCtaVisible,
+    })
     return {
       diagnosticMount: 'always_mounted_public_curate_page_level',
       diagnosticVersion: 'p1h_candidate_to_card_always_mounted_v1',
@@ -24186,6 +24272,11 @@ export function SandboxConciergePage({
         stepBCoffeeBooksCandidateDiagnostics?.scenarioRoleCompatibility ?? null,
       oneStarterVsSystemicClassification:
         stepBCoffeeBooksCandidateDiagnostics?.oneStarterVsSystemicClassification ?? null,
+      preSupplyReadiness:
+        stepBCoffeeBooksCandidateDiagnostics?.preSupplyReadiness ??
+        row1CoffeeBooksPreSupplyReadiness,
+      postSupplyProof:
+        stepBCoffeeBooksCandidateDiagnostics?.postSupplyProof ?? fallbackPostSupplyProof,
       candidateBoard:
         stepBCoffeeBooksCandidateDiagnostics?.candidateBoard ?? {
           boardPresent: Boolean(scenarioCandidateBoard),
@@ -24286,6 +24377,7 @@ export function SandboxConciergePage({
     curateVisibleCardModels,
     getCuratePreviewCommitability,
     renderedCommittedRouteSummarySource,
+    row1CoffeeBooksPreSupplyReadiness,
     scenarioBuiltNights,
     scenarioCandidateBoard,
     selectedCurateVisibleCardModel,
