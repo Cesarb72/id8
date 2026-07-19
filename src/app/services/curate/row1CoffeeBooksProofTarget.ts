@@ -12,6 +12,13 @@ export const ROW_1_STEP_B_PRE_SUPPLY_ENVELOPE = {
   maxCenters: 1,
 }
 
+export type Row1CoffeeBooksProofPolicy =
+  | 'curate_hard_pocket'
+  | 'surprise_hard_pocket'
+  | 'build_required_anchor_soft_geography'
+
+export type Row1CoffeeBooksGeographyPolicy = 'hard_block' | 'soft_penalty'
+
 export type CurateProofTargetDistrictCarrier = {
   id: string
   name: string
@@ -26,7 +33,7 @@ export type CurateHardPocketProofTargetInstance = {
   selectedPocketId: string
   selectedPocketLabel: string
   livePocketHint: LiveRetrievalPocketHint
-  crossPocketAllowed: false
+  crossPocketAllowed: boolean
 }
 
 export type CurateHardPocketProofTargetResolutionReason =
@@ -50,6 +57,17 @@ export type CurateHardPocketProofTargetResolutionDiagnostics = {
   selectedProofStopEvidenceAvailable: boolean
   selectedProofStopPocketAvailable: boolean
   activeProofPocketMismatch: boolean
+  proofPolicy: Row1CoffeeBooksProofPolicy
+  proofMode: 'curate_or_surprise' | 'build_required_anchor'
+  requiredAnchorPresent: boolean
+  geographyPolicy: Row1CoffeeBooksGeographyPolicy
+  selectedDirectionPocketId: string | null
+  selectedDirectionPocketLabel: string | null
+  anchorProofPocketId: string | null
+  anchorProofPocketLabel: string | null
+  pocketMismatchReason: string | null
+  pocketMismatchAllowed: boolean
+  pocketMismatchAllowedReason: string | null
   resolverRanBeforeRequiredCarriers: boolean
   targetPocketId: string | null
   targetPocketLabel: string | null
@@ -183,7 +201,16 @@ export function resolveCurateHardPocketProofTarget(params: {
   city: string
   districts: CurateProofTargetDistrictCarrier[]
   allDirectionCards: RealityDirectionCard[]
+  proofPolicy?: Row1CoffeeBooksProofPolicy
+  requiredAnchorPresent?: boolean
 }): CurateHardPocketProofTargetResolution {
+  const proofPolicy = params.proofPolicy ?? 'curate_hard_pocket'
+  const buildSoftGeographyEligible =
+    proofPolicy === 'build_required_anchor_soft_geography' &&
+    params.requiredAnchorPresent === true
+  const geographyPolicy: Row1CoffeeBooksGeographyPolicy = buildSoftGeographyEligible
+    ? 'soft_penalty'
+    : 'hard_block'
   const availableDirectionCardIds = params.allDirectionCards.map((card) => card.id)
   const availableDirectionPocketCarriers = params.allDirectionCards.map(summarizeDirectionPocketCarrier)
   const availableDistrictPocketCarriers = params.districts.map(summarizeDistrictPocketCarrier)
@@ -209,6 +236,17 @@ export function resolveCurateHardPocketProofTarget(params: {
       selectedProofStopEvidenceAvailable: false,
       selectedProofStopPocketAvailable: false,
       activeProofPocketMismatch: false,
+      proofPolicy,
+      proofMode: buildSoftGeographyEligible ? 'build_required_anchor' : 'curate_or_surprise',
+      requiredAnchorPresent: params.requiredAnchorPresent === true,
+      geographyPolicy,
+      selectedDirectionPocketId: null,
+      selectedDirectionPocketLabel: null,
+      anchorProofPocketId: null,
+      anchorProofPocketLabel: null,
+      pocketMismatchReason: null,
+      pocketMismatchAllowed: false,
+      pocketMismatchAllowedReason: null,
       resolverRanBeforeRequiredCarriers: params.districts.length === 0 || params.allDirectionCards.length === 0,
       targetPocketId: null,
       targetPocketLabel: null,
@@ -262,7 +300,27 @@ export function resolveCurateHardPocketProofTarget(params: {
       directionCardMatchesProofTargetDistrict({ card, targetDistrict }),
     ),
   )
-  const targetDirection = matchingDirectionCards[0] ?? null
+  const matchingTargetDirection = matchingDirectionCards[0] ?? null
+  const softGeographyFallbackDirection =
+    buildSoftGeographyEligible && !matchingTargetDirection
+      ? rankDirectionResolverCards(params.allDirectionCards)[0] ?? null
+      : null
+  const targetDirection = matchingTargetDirection ?? softGeographyFallbackDirection
+  const targetDirectionPocketId = targetDirection ? getDirectionResolverPocketKey(targetDirection) : null
+  const targetDirectionPocketLabel = targetDirection?.debugMeta?.pocketLabel ?? null
+  const directionPocketDiffersFromTarget =
+    Boolean(
+      softGeographyFallbackDirection &&
+        targetDirectionPocketId &&
+        targetDirectionPocketId !== targetDistrict.id,
+    ) &&
+    !proofTargetKeysOverlap(
+      buildProofTargetLookupKeys(targetDirectionPocketLabel ?? targetDirectionPocketId ?? undefined),
+      buildDistrictCarrierKeys(targetDistrict),
+    )
+  const pocketMismatchReason = directionPocketDiffersFromTarget
+    ? 'selected_direction_pocket_differs_from_required_anchor_pocket'
+    : null
   const targetPocketCarrierAvailable = Boolean(targetDistrict.id)
   const targetLiveHintAvailable =
     Boolean(targetDistrict.centroid) && typeof targetDistrict.radiusM === 'number'
@@ -276,14 +334,22 @@ export function resolveCurateHardPocketProofTarget(params: {
         livePocketHintAvailable: false,
         targetPocketId: targetDistrict.id,
         targetPocketLabel: targetDistrict.name,
-        matchingDirectionCarrierExists: Boolean(targetDirection),
+        matchingDirectionCarrierExists: Boolean(matchingTargetDirection),
         matchingPocketCarrierExists: targetPocketCarrierAvailable,
         matchingLivePocketHintCarrierExists: false,
         matchedDirectionId: targetDirection?.id ?? null,
-        matchedDirectionPocketId: targetDirection
-          ? getDirectionResolverPocketKey(targetDirection)
-          : null,
-        matchedDirectionPocketLabel: targetDirection?.debugMeta?.pocketLabel ?? null,
+        matchedDirectionPocketId: targetDirectionPocketId,
+        matchedDirectionPocketLabel: targetDirectionPocketLabel,
+        selectedDirectionPocketId: targetDirectionPocketId,
+        selectedDirectionPocketLabel: targetDirectionPocketLabel,
+        anchorProofPocketId: targetDistrict.id,
+        anchorProofPocketLabel: targetDistrict.name,
+        pocketMismatchReason,
+        pocketMismatchAllowed: Boolean(pocketMismatchReason && buildSoftGeographyEligible),
+        pocketMismatchAllowedReason:
+          pocketMismatchReason && buildSoftGeographyEligible
+            ? 'build_required_anchor_geography_soft_penalty'
+            : null,
         resolverRanBeforeRequiredCarriers: params.districts.length === 0,
         selectedPocketResolutionReason: targetPocketCarrierAvailable
           ? 'target_pocket_carrier_resolved'
@@ -306,9 +372,22 @@ export function resolveCurateHardPocketProofTarget(params: {
         selectedPocketIdAvailable: targetPocketCarrierAvailable,
         targetPocketId: targetDistrict.id,
         targetPocketLabel: targetDistrict.name,
-        matchingDirectionCarrierExists: Boolean(targetDirection),
+        matchingDirectionCarrierExists: Boolean(matchingTargetDirection),
         matchingPocketCarrierExists: targetPocketCarrierAvailable,
         matchingLivePocketHintCarrierExists: false,
+        matchedDirectionId: targetDirection?.id ?? null,
+        matchedDirectionPocketId: targetDirectionPocketId,
+        matchedDirectionPocketLabel: targetDirectionPocketLabel,
+        selectedDirectionPocketId: targetDirectionPocketId,
+        selectedDirectionPocketLabel: targetDirectionPocketLabel,
+        anchorProofPocketId: targetDistrict.id,
+        anchorProofPocketLabel: targetDistrict.name,
+        pocketMismatchReason,
+        pocketMismatchAllowed: Boolean(pocketMismatchReason && buildSoftGeographyEligible),
+        pocketMismatchAllowedReason:
+          pocketMismatchReason && buildSoftGeographyEligible
+            ? 'build_required_anchor_geography_soft_penalty'
+            : null,
         selectedPocketResolutionReason: targetPocketCarrierAvailable
           ? 'target_pocket_carrier_resolved'
           : 'target_pocket_carrier_missing',
@@ -332,6 +411,8 @@ export function resolveCurateHardPocketProofTarget(params: {
         matchingDirectionCarrierExists: false,
         matchingPocketCarrierExists: true,
         matchingLivePocketHintCarrierExists: true,
+        anchorProofPocketId: targetDistrict.id,
+        anchorProofPocketLabel: targetDistrict.name,
         resolverRanBeforeRequiredCarriers: params.allDirectionCards.length === 0,
         selectedPocketResolutionReason: 'target_pocket_carrier_resolved',
         livePocketHintResolutionReason: 'target_pocket_hint_resolved',
@@ -354,7 +435,7 @@ export function resolveCurateHardPocketProofTarget(params: {
       city: params.city,
       locationLabel: `${targetDistrict.name}, ${params.city}`,
     },
-    crossPocketAllowed: false,
+    crossPocketAllowed: buildSoftGeographyEligible && Boolean(pocketMismatchReason),
   }
   return {
     target,
@@ -371,12 +452,24 @@ export function resolveCurateHardPocketProofTarget(params: {
       targetPocketId: targetDistrict.id,
       targetPocketLabel: targetDistrict.name,
       matchedDirectionId: targetDirection.id,
-      matchedDirectionPocketId: getDirectionResolverPocketKey(targetDirection),
-      matchedDirectionPocketLabel: targetDirection.debugMeta?.pocketLabel ?? null,
-      matchingDirectionCarrierExists: true,
+      matchedDirectionPocketId: targetDirectionPocketId,
+      matchedDirectionPocketLabel: targetDirectionPocketLabel,
+      matchingDirectionCarrierExists: Boolean(matchingTargetDirection),
       matchingPocketCarrierExists: true,
       matchingLivePocketHintCarrierExists: true,
-      selectedDirectionResolutionReason: 'target_direction_carrier_resolved',
+      selectedDirectionPocketId: targetDirectionPocketId,
+      selectedDirectionPocketLabel: targetDirectionPocketLabel,
+      anchorProofPocketId: targetDistrict.id,
+      anchorProofPocketLabel: targetDistrict.name,
+      pocketMismatchReason,
+      pocketMismatchAllowed: Boolean(pocketMismatchReason && buildSoftGeographyEligible),
+      pocketMismatchAllowedReason:
+        pocketMismatchReason && buildSoftGeographyEligible
+          ? 'build_required_anchor_geography_soft_penalty'
+          : null,
+      selectedDirectionResolutionReason: matchingTargetDirection
+        ? 'target_direction_carrier_resolved'
+        : 'build_soft_geography_direction_pocket_mismatch_allowed',
       selectedPocketResolutionReason: 'target_pocket_carrier_resolved',
       livePocketHintResolutionReason: 'target_pocket_hint_resolved',
     }),

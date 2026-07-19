@@ -446,8 +446,10 @@ function assertPageWiresFieldPocketDiagnosticsIntoProofTarget(): void {
       source.includes('row1CoffeeBooksPreSupplyReadiness.status !== \'ready\'') &&
       source.includes('preSupplyReadiness') &&
       source.includes('postSupplyProof') &&
-      source.includes('crossPocketAllowed: false'),
-    'Coffee Books Row 1 must gate supply on pre-supply readiness before passing livePocketHint.',
+      source.includes('row1CoffeeBooksProofPolicy') &&
+      source.includes('build_required_anchor_soft_geography') &&
+      source.includes('crossPocketAllowed: row1CoffeeBooksProofTarget?.crossPocketAllowed ?? false'),
+    'Coffee Books Row 1 must gate supply on pre-supply readiness before passing livePocketHint and resolver-owned proof policy.',
   )
   assert(
     source.includes('requiredSemanticProof') &&

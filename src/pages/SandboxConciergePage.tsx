@@ -11676,6 +11676,8 @@ export function SandboxConciergePage({
     }
   }, [activeDistrictPocketId, allDirectionCards, districtDiscoveryCards])
   const directionCards = directionView.cards
+  const row1CoffeeBooksProofPolicy = 'build_required_anchor_soft_geography' as const
+  const row1CoffeeBooksBuildRequiredAnchorPresent = selectedStarterPack?.id === 'coffee-books'
   const row1CoffeeBooksProofTargetResolution = useMemo(
     () =>
       resolveCurateHardPocketProofTarget({
@@ -11683,8 +11685,16 @@ export function SandboxConciergePage({
         city: districtLocationQuery,
         districts: districtDiscoveryCards,
         allDirectionCards,
+        proofPolicy: row1CoffeeBooksProofPolicy,
+        requiredAnchorPresent: row1CoffeeBooksBuildRequiredAnchorPresent,
       }),
-    [allDirectionCards, districtDiscoveryCards, districtLocationQuery, selectedStarterPack?.id],
+    [
+      allDirectionCards,
+      districtDiscoveryCards,
+      districtLocationQuery,
+      row1CoffeeBooksBuildRequiredAnchorPresent,
+      selectedStarterPack?.id,
+    ],
   )
   const row1CoffeeBooksProofTarget = row1CoffeeBooksProofTargetResolution.target
   const row1CoffeeBooksProofTargetDiagnostics = row1CoffeeBooksProofTargetResolution.diagnostics
@@ -11697,10 +11707,23 @@ export function SandboxConciergePage({
           (row1CoffeeBooksProofTargetDiagnostics.configured
             ? ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID
             : null),
+        proofPolicy: row1CoffeeBooksProofTargetDiagnostics.proofPolicy,
+        proofMode: row1CoffeeBooksProofTargetDiagnostics.proofMode,
         scenarioFamily: resolvedScenarioFamily,
         starterPackId: selectedStarterPack?.id ?? null,
+        requiredAnchorPresent: row1CoffeeBooksProofTargetDiagnostics.requiredAnchorPresent,
         selectedDirectionId: row1CoffeeBooksProofTarget?.selectedDirectionId ?? null,
         selectedPocketId: row1CoffeeBooksProofTarget?.selectedPocketId ?? null,
+        selectedDirectionPocketId: row1CoffeeBooksProofTargetDiagnostics.selectedDirectionPocketId,
+        selectedDirectionPocketLabel:
+          row1CoffeeBooksProofTargetDiagnostics.selectedDirectionPocketLabel,
+        anchorProofPocketId: row1CoffeeBooksProofTargetDiagnostics.anchorProofPocketId,
+        anchorProofPocketLabel: row1CoffeeBooksProofTargetDiagnostics.anchorProofPocketLabel,
+        geographyPolicy: row1CoffeeBooksProofTargetDiagnostics.geographyPolicy,
+        pocketMismatchReason: row1CoffeeBooksProofTargetDiagnostics.pocketMismatchReason,
+        pocketMismatchAllowed: row1CoffeeBooksProofTargetDiagnostics.pocketMismatchAllowed,
+        pocketMismatchAllowedReason:
+          row1CoffeeBooksProofTargetDiagnostics.pocketMismatchAllowedReason,
         livePocketHint: row1CoffeeBooksProofTarget?.livePocketHint ?? null,
         crossPocketAllowed: row1CoffeeBooksProofTarget?.crossPocketAllowed ?? null,
         envelope: ROW_1_STEP_B_PRE_SUPPLY_ENVELOPE,
@@ -11713,7 +11736,7 @@ export function SandboxConciergePage({
     [
       resolvedScenarioFamily,
       row1CoffeeBooksProofTarget,
-      row1CoffeeBooksProofTargetDiagnostics.configured,
+      row1CoffeeBooksProofTargetDiagnostics,
       selectedStarterPack?.id,
       stepBCurateLiveSmokeEnabled,
     ],
@@ -12164,7 +12187,7 @@ export function SandboxConciergePage({
                   activePocketHintRadiusM: activePocketDiagnostic.activePocketHintRadiusM,
                   activeFieldAdmissionEnvelopeRadiusM:
                     activePocketDiagnostic.activeFieldAdmissionEnvelopeRadiusM,
-                  crossPocketAllowed: false,
+                  crossPocketAllowed: row1CoffeeBooksProofTarget?.crossPocketAllowed ?? false,
                 }
               : undefined,
         })
@@ -12644,7 +12667,7 @@ export function SandboxConciergePage({
                 activePocketHintRadiusM: activePocketDiagnostic.activePocketHintRadiusM,
                 activeFieldAdmissionEnvelopeRadiusM:
                   activePocketDiagnostic.activeFieldAdmissionEnvelopeRadiusM,
-                crossPocketAllowed: false,
+                crossPocketAllowed: row1CoffeeBooksProofTarget?.crossPocketAllowed ?? false,
               }
             })()
           : undefined,
@@ -14731,7 +14754,20 @@ export function SandboxConciergePage({
       proofTargetId:
         row1CoffeeBooksProofTarget?.proofTargetId ?? ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID,
       proofTargetName: 'Governed Row 1 Build Step B Coffee & Books representative proof',
-      mode: 'curate',
+      mode: 'build',
+      proofPolicy: row1CoffeeBooksProofTargetDiagnostics.proofPolicy,
+      proofMode: row1CoffeeBooksProofTargetDiagnostics.proofMode,
+      requiredAnchorPresent: row1CoffeeBooksProofTargetDiagnostics.requiredAnchorPresent,
+      geographyPolicy: row1CoffeeBooksProofTargetDiagnostics.geographyPolicy,
+      selectedDirectionPocketId: row1CoffeeBooksProofTargetDiagnostics.selectedDirectionPocketId,
+      selectedDirectionPocketLabel:
+        row1CoffeeBooksProofTargetDiagnostics.selectedDirectionPocketLabel,
+      anchorProofPocketId: row1CoffeeBooksProofTargetDiagnostics.anchorProofPocketId,
+      anchorProofPocketLabel: row1CoffeeBooksProofTargetDiagnostics.anchorProofPocketLabel,
+      pocketMismatchReason: row1CoffeeBooksProofTargetDiagnostics.pocketMismatchReason,
+      pocketMismatchAllowed: row1CoffeeBooksProofTargetDiagnostics.pocketMismatchAllowed,
+      pocketMismatchAllowedReason:
+        row1CoffeeBooksProofTargetDiagnostics.pocketMismatchAllowedReason,
       surface: '/start/curate',
       scenarioFamily: scenarioCandidateBoard?.scenarioFamily ?? resolvedScenarioFamily ?? null,
       starterId: selectedStarterPack?.id ?? null,

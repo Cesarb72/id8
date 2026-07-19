@@ -21,11 +21,22 @@ export type StepBPreSupplyReadiness = {
   status: 'ready' | 'held'
   holdReason: StepBPreSupplyHoldReason | null
   proofTargetId: string | null
+  proofPolicy: string | null
+  proofMode: 'curate_or_surprise' | 'build_required_anchor' | null
   scenarioFamily: string | null
   starterPackId: string | null
   scenarioStarterFamilyAvailable: boolean
+  requiredAnchorPresent: boolean
   selectedDirectionId: string | null
   selectedPocketId: string | null
+  selectedDirectionPocketId: string | null
+  selectedDirectionPocketLabel: string | null
+  anchorProofPocketId: string | null
+  anchorProofPocketLabel: string | null
+  geographyPolicy: 'hard_block' | 'soft_penalty' | null
+  pocketMismatchReason: string | null
+  pocketMismatchAllowed: boolean
+  pocketMismatchAllowedReason: string | null
   livePocketHint: LiveRetrievalPocketHint | null
   livePocketHintAvailable: boolean
   crossPocketAllowed: boolean | null
@@ -47,10 +58,21 @@ export type StepBPreSupplyReadiness = {
 
 export function evaluateStepBPreSupplyReadiness(params: {
   proofTargetId?: string | null
+  proofPolicy?: string | null
+  proofMode?: 'curate_or_surprise' | 'build_required_anchor' | null
   scenarioFamily?: string | null
   starterPackId?: string | null
+  requiredAnchorPresent?: boolean
   selectedDirectionId?: string | null
   selectedPocketId?: string | null
+  selectedDirectionPocketId?: string | null
+  selectedDirectionPocketLabel?: string | null
+  anchorProofPocketId?: string | null
+  anchorProofPocketLabel?: string | null
+  geographyPolicy?: 'hard_block' | 'soft_penalty' | null
+  pocketMismatchReason?: string | null
+  pocketMismatchAllowed?: boolean
+  pocketMismatchAllowedReason?: string | null
   livePocketHint?: LiveRetrievalPocketHint | null
   crossPocketAllowed?: boolean | null
   envelope?: Pick<LiveProviderEnvelope, 'maxProviderCalls' | 'maxQueryLabels' | 'maxCenters'> | null
@@ -59,10 +81,21 @@ export function evaluateStepBPreSupplyReadiness(params: {
   carrierResolutionHoldReason?: StepBPreSupplyHoldReason | null
 }): StepBPreSupplyReadiness {
   const proofTargetId = params.proofTargetId?.trim() || null
+  const proofPolicy = params.proofPolicy?.trim() || null
+  const proofMode = params.proofMode ?? null
   const scenarioFamily = params.scenarioFamily?.trim() || null
   const starterPackId = params.starterPackId?.trim() || null
+  const requiredAnchorPresent = params.requiredAnchorPresent === true
   const selectedDirectionId = params.selectedDirectionId?.trim() || null
   const selectedPocketId = params.selectedPocketId?.trim() || null
+  const selectedDirectionPocketId = params.selectedDirectionPocketId?.trim() || null
+  const selectedDirectionPocketLabel = params.selectedDirectionPocketLabel?.trim() || null
+  const anchorProofPocketId = params.anchorProofPocketId?.trim() || null
+  const anchorProofPocketLabel = params.anchorProofPocketLabel?.trim() || null
+  const geographyPolicy = params.geographyPolicy ?? null
+  const pocketMismatchReason = params.pocketMismatchReason?.trim() || null
+  const pocketMismatchAllowed = params.pocketMismatchAllowed === true
+  const pocketMismatchAllowedReason = params.pocketMismatchAllowedReason?.trim() || null
   const livePocketHint = params.livePocketHint ?? null
   const crossPocketPolicyAvailable = typeof params.crossPocketAllowed === 'boolean'
   const envelope = params.envelope ?? null
@@ -100,11 +133,22 @@ export function evaluateStepBPreSupplyReadiness(params: {
     status: holdReason ? 'held' : 'ready',
     holdReason,
     proofTargetId,
+    proofPolicy,
+    proofMode,
     scenarioFamily,
     starterPackId,
     scenarioStarterFamilyAvailable: Boolean(scenarioFamily && starterPackId),
+    requiredAnchorPresent,
     selectedDirectionId,
     selectedPocketId,
+    selectedDirectionPocketId,
+    selectedDirectionPocketLabel,
+    anchorProofPocketId,
+    anchorProofPocketLabel,
+    geographyPolicy,
+    pocketMismatchReason,
+    pocketMismatchAllowed,
+    pocketMismatchAllowedReason,
     livePocketHint,
     livePocketHintAvailable: Boolean(livePocketHint),
     crossPocketAllowed: crossPocketPolicyAvailable ? params.crossPocketAllowed ?? null : null,

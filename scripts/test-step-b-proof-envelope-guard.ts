@@ -202,6 +202,11 @@ function assertRow1MissingDirectionCarrierHoldsPrecisely(): void {
 
   assert(resolution.target === null, 'Row 1 must not fake a selected direction when no matching carrier exists.')
   assert(
+    resolution.diagnostics.proofPolicy === 'curate_hard_pocket' &&
+      resolution.diagnostics.geographyPolicy === 'hard_block',
+    'Default Row 1 proof policy must remain Curate hard-pocket.',
+  )
+  assert(
     resolution.diagnostics.reason === 'pre_supply_selected_direction_unavailable_for_target_pocket',
     `Expected precise missing-direction reason, received ${resolution.diagnostics.reason}.`,
   )
@@ -235,6 +240,160 @@ function assertRow1MissingDirectionCarrierHoldsPrecisely(): void {
     'Field supply must stay held with the precise missing Direction carrier reason.',
   )
   process.stdout.write('Row 1 missing Direction carrier hold: passed\n')
+}
+
+function assertBuildRequiredAnchorSoftGeographyAllowsDirectionPocketMismatch(): void {
+  const resolution = resolveCurateHardPocketProofTarget({
+    starterPackId: 'coffee-books',
+    city: 'San Jose',
+    proofPolicy: 'build_required_anchor_soft_geography',
+    requiredAnchorPresent: true,
+    districts: [
+      {
+        id: 'sj-willow-glen-core',
+        name: 'Willow Glen Pocket',
+        centroid: { lat: 37.309, lng: -121.9 },
+        radiusM: 650,
+      },
+    ],
+    allDirectionCards: [
+      buildRow1DirectionCard({
+        directionId: 'direction-downtown',
+        pocketId: 'downtown',
+        pocketLabel: 'Downtown',
+      }),
+    ],
+  })
+
+  assert(
+    resolution.target !== null,
+    'Build required-anchor soft geography must not hard-hold solely on direction/pocket mismatch.',
+  )
+  assert(
+    resolution.target.selectedDirectionId === 'direction-downtown' &&
+      resolution.target.selectedPocketId === 'sj-willow-glen-core',
+    'Build soft-geography path must carry selected direction and required anchor/proof pocket separately.',
+  )
+  assert(
+    resolution.target.crossPocketAllowed === true,
+    'Build required-anchor soft geography must explicitly allow the pre-supply pocket mismatch.',
+  )
+  assert(
+    !resolution.diagnostics.matchingDirectionCarrierExists &&
+      resolution.diagnostics.matchingPocketCarrierExists &&
+      resolution.diagnostics.matchingLivePocketHintCarrierExists,
+    'Build soft-geography diagnostics must preserve carrier mismatch evidence.',
+  )
+  assert(
+    resolution.diagnostics.proofPolicy === 'build_required_anchor_soft_geography' &&
+      resolution.diagnostics.proofMode === 'build_required_anchor' &&
+      resolution.diagnostics.requiredAnchorPresent &&
+      resolution.diagnostics.geographyPolicy === 'soft_penalty',
+    'Build path must expose proof policy, required-anchor presence, and soft geography policy.',
+  )
+  assert(
+    resolution.diagnostics.selectedDirectionPocketId === 'downtown' &&
+      resolution.diagnostics.anchorProofPocketId === 'sj-willow-glen-core' &&
+      resolution.diagnostics.pocketMismatchReason ===
+        'selected_direction_pocket_differs_from_required_anchor_pocket' &&
+      resolution.diagnostics.pocketMismatchAllowed &&
+      resolution.diagnostics.pocketMismatchAllowedReason ===
+        'build_required_anchor_geography_soft_penalty',
+    'Build soft-geography diagnostics must expose the pocket mismatch and allowed reason.',
+  )
+
+  const readiness = evaluateStepBPreSupplyReadiness({
+    proofTargetId: resolution.target.proofTargetId,
+    proofPolicy: resolution.diagnostics.proofPolicy,
+    proofMode: resolution.diagnostics.proofMode,
+    scenarioFamily: 'romantic_cultured',
+    starterPackId: 'coffee-books',
+    requiredAnchorPresent: resolution.diagnostics.requiredAnchorPresent,
+    selectedDirectionId: resolution.target.selectedDirectionId,
+    selectedPocketId: resolution.target.selectedPocketId,
+    selectedDirectionPocketId: resolution.diagnostics.selectedDirectionPocketId,
+    selectedDirectionPocketLabel: resolution.diagnostics.selectedDirectionPocketLabel,
+    anchorProofPocketId: resolution.diagnostics.anchorProofPocketId,
+    anchorProofPocketLabel: resolution.diagnostics.anchorProofPocketLabel,
+    geographyPolicy: resolution.diagnostics.geographyPolicy,
+    pocketMismatchReason: resolution.diagnostics.pocketMismatchReason,
+    pocketMismatchAllowed: resolution.diagnostics.pocketMismatchAllowed,
+    pocketMismatchAllowedReason: resolution.diagnostics.pocketMismatchAllowedReason,
+    livePocketHint: resolution.target.livePocketHint,
+    crossPocketAllowed: resolution.target.crossPocketAllowed,
+    envelope: {
+      maxProviderCalls: 3,
+      maxQueryLabels: 3,
+      maxCenters: 1,
+    },
+    providerValveExpectedMode: 'preview_field_proxy_expected_armed',
+    providerValveReady: true,
+  })
+  assert(
+    readiness.status === 'ready' &&
+      readiness.geographyPolicy === 'soft_penalty' &&
+      readiness.pocketMismatchAllowed,
+    'Build soft-geography readiness must become ready while preserving mismatch diagnostics.',
+  )
+
+  const missingProviderValve = evaluateStepBPreSupplyReadiness({
+    proofTargetId: resolution.target.proofTargetId,
+    proofPolicy: resolution.diagnostics.proofPolicy,
+    proofMode: resolution.diagnostics.proofMode,
+    scenarioFamily: 'romantic_cultured',
+    starterPackId: 'coffee-books',
+    requiredAnchorPresent: resolution.diagnostics.requiredAnchorPresent,
+    selectedDirectionId: resolution.target.selectedDirectionId,
+    selectedPocketId: resolution.target.selectedPocketId,
+    livePocketHint: resolution.target.livePocketHint,
+    crossPocketAllowed: resolution.target.crossPocketAllowed,
+    envelope: {
+      maxProviderCalls: 3,
+      maxQueryLabels: 3,
+      maxCenters: 1,
+    },
+    providerValveExpectedMode: null,
+    providerValveReady: false,
+  })
+  assert(
+    missingProviderValve.status === 'held' &&
+      missingProviderValve.holdReason === 'pre_supply_provider_valve_readiness_missing',
+    'Build soft geography must still hold when non-geography provider readiness is missing.',
+  )
+  process.stdout.write('Build required-anchor soft geography pre-supply mismatch: passed\n')
+}
+
+function assertSurpriseHardPocketPolicyStillBlocksDirectionPocketMismatch(): void {
+  const resolution = resolveCurateHardPocketProofTarget({
+    starterPackId: 'coffee-books',
+    city: 'San Jose',
+    proofPolicy: 'surprise_hard_pocket',
+    districts: [
+      {
+        id: 'sj-willow-glen-core',
+        name: 'Willow Glen Pocket',
+        centroid: { lat: 37.309, lng: -121.9 },
+        radiusM: 650,
+      },
+    ],
+    allDirectionCards: [
+      buildRow1DirectionCard({
+        directionId: 'direction-downtown',
+        pocketId: 'downtown',
+        pocketLabel: 'Downtown',
+      }),
+    ],
+  })
+
+  assert(resolution.target === null, 'Surprise hard-pocket policy must not inherit Build soft geography.')
+  assert(
+    resolution.diagnostics.proofPolicy === 'surprise_hard_pocket' &&
+      resolution.diagnostics.geographyPolicy === 'hard_block' &&
+      resolution.diagnostics.preSupplyHoldReason ===
+        'pre_supply_selected_direction_unavailable_for_target_pocket',
+    'Surprise hard-pocket mismatch must remain a pre-supply hard hold.',
+  )
+  process.stdout.write('Surprise hard-pocket mismatch remains blocked: passed\n')
 }
 
 function assertRow1MissingPocketHintHoldsPrecisely(): void {
@@ -420,9 +579,12 @@ async function assertStepBRunFingerprintSharesInFlightPromise(): Promise<void> {
   assert(
     sandboxSource.includes('preSupplyReadiness') &&
       sandboxSource.includes('postSupplyProof') &&
+      sandboxSource.includes('row1CoffeeBooksProofPolicy') &&
+      sandboxSource.includes('build_required_anchor_soft_geography') &&
+      sandboxSource.includes('pocketMismatchAllowedReason') &&
       sandboxSource.includes('evaluateStepBPostSupplyProofGate') &&
       sandboxSource.includes('evaluateStepBPreSupplyReadiness'),
-    'Coffee Books Row 1 diagnostics must split pre-supply readiness from post-supply proof.',
+    'Coffee Books Row 1 diagnostics must split pre-supply readiness from post-supply proof and expose Build soft-geography policy.',
   )
   assert(
     sandboxSource.includes('allDirectionCards,') &&
@@ -597,9 +759,12 @@ function assertStepBPocketProofDiagnosticsSurfaceInObserverReport(): void {
     row1ResolverSource.includes('availableDirectionCardIds') &&
       row1ResolverSource.includes('availableDirectionPocketCarriers') &&
       row1ResolverSource.includes('availableDistrictPocketCarriers') &&
+      row1ResolverSource.includes('build_required_anchor_soft_geography') &&
+      row1ResolverSource.includes('build_required_anchor_geography_soft_penalty') &&
+      row1ResolverSource.includes('selected_direction_pocket_differs_from_required_anchor_pocket') &&
       row1ResolverSource.includes('selectedDirectionResolutionReason') &&
       row1ResolverSource.includes('pre_supply_selected_direction_unavailable_for_target_pocket'),
-    'Row 1 proof-target resolver must report available carriers and precise pre-supply hold reasons.',
+    'Row 1 proof-target resolver must report carrier state, soft-geography diagnostics, and precise pre-supply hold reasons.',
   )
   assert(
     !row1ResolverSource.includes('ProviderAdapter') &&
@@ -609,9 +774,10 @@ function assertStepBPocketProofDiagnosticsSurfaceInObserverReport(): void {
   )
   assert(
     !row1ResolverSource.includes('ProofTargetArtifact') &&
+      !row1ResolverSource.includes('GreatStop') &&
       !row1ResolverSource.includes('query terms satisfy') &&
       !row1ResolverSource.includes('user search terms satisfy'),
-    'Row 1 proof-target resolver must not create a canonical artifact or copy query/user terms into proof.',
+    'Row 1 proof-target resolver must not create a canonical artifact, touch Great Stop, or copy query/user terms into proof.',
   )
 
   const fieldSource = readFileSync('src/domain/sources/fetchLivePlaces.ts', 'utf8')
@@ -640,6 +806,8 @@ function assertStepBPocketProofDiagnosticsSurfaceInObserverReport(): void {
 async function main(): Promise<void> {
   assertRow1DirectionDistrictCarrierResolution()
   assertRow1MissingDirectionCarrierHoldsPrecisely()
+  assertBuildRequiredAnchorSoftGeographyAllowsDirectionPocketMismatch()
+  assertSurpriseHardPocketPolicyStillBlocksDirectionPocketMismatch()
   assertRow1MissingPocketHintHoldsPrecisely()
   assertStepBPreSupplyPostSupplyGateSplit()
   await assertStepBRunFingerprintSharesInFlightPromise()
