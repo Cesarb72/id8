@@ -239,6 +239,150 @@ function buildDirectionCard(params: { directionId: string; pocketId: string }) {
   } as never
 }
 
+function buildSupportReselectionOpportunity(params: {
+  includeCompactAlternatives: boolean
+  selectionPocketId?: string
+  selectionPocketLabel?: string
+  directionId?: string
+}): VerifiedCityOpportunity {
+  const staleStart = buildStop({
+    position: 'start',
+    stopType: 'cultural_institution',
+    venueId: 'fixture-rose-garden-walk',
+    name: 'Rose Garden Twilight Walk',
+    category: 'park',
+    geoBucket: 'raw-pocket-rose-garden',
+    geoLabel: 'Rose Garden Pocket',
+    sourceTypes: ['park'],
+  })
+  const proofStop = buildStop({
+    position: 'highlight',
+    stopType: 'thoughtful_wine_or_lunch',
+    venueId: 'sj-willow-glen-bookhouse',
+    name: 'Willow Glen Bookhouse',
+    category: 'cafe',
+    subcategory: 'bookstore',
+    geoBucket: 'raw-pocket-willow',
+    geoLabel: 'Willow Glen Pocket',
+    tags: ['bookstore', 'literary', 'reading'],
+    sourceTypes: ['book_store'],
+  })
+  const staleWindDown = buildStop({
+    position: 'windDown',
+    stopType: 'atmospheric_nightcap',
+    venueId: 'fixture-japantown-kissaten',
+    name: 'Japantown Matcha Kissaten',
+    category: 'cafe',
+    geoBucket: 'raw-pocket-japantown',
+    geoLabel: 'Japantown Pocket',
+    sourceTypes: ['cafe'],
+  })
+  const compactStart = buildStop({
+    position: 'mid',
+    stopType: 'cultural_institution',
+    venueId: 'sj-willow-glen-tea-atelier',
+    name: 'Willow Glen Tea Atelier',
+    category: 'cafe',
+    geoBucket: 'raw-pocket-willow',
+    geoLabel: 'Willow Glen Pocket',
+    sourceTypes: ['cafe'],
+  })
+  const compactWindDown = buildStop({
+    position: 'closer',
+    stopType: 'atmospheric_nightcap',
+    venueId: 'sj-willow-glen-bakehouse',
+    name: 'Willow Glen Bakehouse',
+    category: 'dessert',
+    geoBucket: 'raw-pocket-willow',
+    geoLabel: 'Willow Glen Pocket',
+    sourceTypes: ['dessert'],
+  })
+  const stops = params.includeCompactAlternatives
+    ? [staleStart, compactStart, proofStop, staleWindDown, compactWindDown]
+    : [staleStart, proofStop, staleWindDown]
+  const starterSemanticRepresentation = buildSemanticRepresentation({
+    stop: proofStop,
+  })
+  const scenarioNight: BuiltScenarioNight = {
+    id: 'support-reselection-fixture',
+    city: 'San Jose',
+    persona: 'romantic',
+    vibe: 'cultured',
+    scenarioFamily: 'romantic_cultured',
+    title: 'Support reselection fixture',
+    flavorLine: 'Support reselection fixture',
+    stops,
+    whyThisWorks: 'The original route keeps stale support stops around a Willow Glen proof anchor.',
+    complete: true,
+    starterSemanticRepresentation,
+  }
+  return {
+    id: `support-reselection-${params.includeCompactAlternatives ? 'with' : 'without'}-alternatives`,
+    sourceMode: 'live',
+    flavor: scenarioNight.flavorLine,
+    anchor: {
+      venueId: proofStop.venueId,
+      name: proofStop.name,
+      district: proofStop.district ?? 'Willow Glen Pocket',
+      verificationReasons: ['selected-stop bookstore proof'],
+    },
+    starts: [{ venueId: staleStart.venueId, name: staleStart.name, reason: staleStart.whyThisStop }],
+    closes: [{ venueId: staleWindDown.venueId, name: staleWindDown.name, reason: staleWindDown.whyThisStop }],
+    nearbyHappenings: [],
+    districtContext: { primaryDistrict: params.selectionPocketLabel ?? 'Downtown Pocket' },
+    fit: {
+      persona: 'romantic',
+      vibe: 'cultured',
+      confidenceLine: 'Selected proof anchor is Willow Glen; support starts stale.',
+      matchLine: 'Coffee & Books support reselection fixture',
+    },
+    storySpine: {
+      start: staleStart.name,
+      highlight: proofStop.name,
+      windDown: staleWindDown.name,
+    },
+    selection: {
+      pocketId: params.selectionPocketId ?? 'raw-pocket-downtown',
+      directionId: params.directionId ?? 'direction-downtown',
+    },
+    survivorSignals: {
+      whyTonightStrength: 0.72,
+      cozyAuthorityStrength: 0.74,
+      highWhyTonight: true,
+      highCozyAuthority: true,
+    },
+    excellence: {
+      score: 0.78,
+      threshold: 0.62,
+      passes: true,
+      anchorStrength: 0.78,
+      startQuality: 0.72,
+      windDownQuality: 0.72,
+      supportCoherence: 0.62,
+      scenarioAlignment: 0.82,
+      experienceAlignment: 0.82,
+      localAuthority: 0.78,
+      modeExcellence: 0.8,
+    },
+    starterSemanticRepresentation,
+    scenarioNight,
+  } as VerifiedCityOpportunity
+}
+
+function buildBuildRequiredAnchorProofTarget() {
+  return {
+    diagnosticOnly: true,
+    proofTargetId: 'row1_step_b_coffee_books_representative',
+    proofPolicy: 'build_required_anchor_soft_geography' as const,
+    proofMode: 'build_required_anchor' as const,
+    targetPocketId: 'raw-pocket-willow',
+    targetPocketLabel: 'Willow Glen Pocket',
+    activePocketId: 'raw-pocket-willow',
+    activePocketLabel: 'Willow Glen Pocket',
+    crossPocketAllowed: true,
+  }
+}
+
 function assertHardPocketAssertionPassesAndMaterializes(): void {
   const opportunity = buildOpportunity({
     pocketId: 'willow-pocket',
@@ -366,6 +510,172 @@ function assertSelectedProofStopMustBeInsideTargetPocket(): void {
   process.stdout.write('Coffee & Books pocket-consistent target test: passed\n')
 }
 
+function assertBuildRequiredAnchorSupportSelectionReselectsStaleSupports(): void {
+  const opportunity = buildSupportReselectionOpportunity({
+    includeCompactAlternatives: true,
+  })
+  const directions = [buildDirectionCard({ directionId: 'direction-downtown', pocketId: 'raw-pocket-downtown' })]
+  const first = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [opportunity],
+    fallbackOpportunities: [],
+    ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
+    directionCards: directions,
+    allDirectionCards: directions,
+    starterPack: coffeeBooksStarterPack,
+    proofTarget: buildBuildRequiredAnchorProofTarget(),
+  })
+  const second = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [opportunity],
+    fallbackOpportunities: [],
+    ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
+    directionCards: directions,
+    allDirectionCards: directions,
+    starterPack: coffeeBooksStarterPack,
+    proofTarget: buildBuildRequiredAnchorProofTarget(),
+  })
+  const artifact = first.candidateArtifacts[0]
+  const diagnostic = first.diagnostics[0]?.buildRequiredAnchorSupportSelection
+  assert(artifact, 'Build required-anchor support reselection must still materialize an artifact.')
+  assert(diagnostic?.status === 'passed', `Support selection must pass, received ${diagnostic?.status}.`)
+  assert(
+    diagnostic.reason === 'anchor_centered_support_selection_applied',
+    `Expected anchor-centered applied reason, received ${diagnostic.reason}.`,
+  )
+  assert(
+    artifact.anchorVenueId === 'sj-willow-glen-bookhouse' &&
+      artifact.storySpine.highlight === 'Willow Glen Bookhouse',
+    'Required anchor must be preserved with its highlight role.',
+  )
+  assert(
+    artifact.storySpine.start === 'Willow Glen Tea Atelier' &&
+      artifact.storySpine.windDown === 'Willow Glen Bakehouse',
+    `Stale support stops must be replaced around the required anchor pocket. route=${JSON.stringify(artifact.storySpine)} diagnostics=${JSON.stringify(diagnostic)}`,
+  )
+  assert(
+    artifact.storySpine.highlight === 'Willow Glen Bookhouse',
+    'Replacement must preserve start/highlight/windDown route shape.',
+  )
+  assert(
+    second.candidateArtifacts[0]?.storySpine.start === artifact.storySpine.start &&
+      second.candidateArtifacts[0]?.storySpine.windDown === artifact.storySpine.windDown,
+    'Support replacement must be deterministic for the same inputs.',
+  )
+  assert(
+    diagnostic.replacementSupportStops.some(
+      (entry) =>
+        entry.replaced &&
+        entry.reason === 'support_stop_replaced_for_route_compactness' &&
+        entry.replacementPocketLabel === 'Willow Glen Pocket',
+    ),
+    'Support replacement diagnostics must emit reason codes and replacement pockets.',
+  )
+  assert(
+    diagnostic.movementTotalBefore !== null &&
+      diagnostic.movementTotalAfter !== null &&
+      diagnostic.movementTotalAfter < diagnostic.movementTotalBefore,
+    'Anchor-centered support selection must improve route movement before Great Stop.',
+  )
+  assert(
+    diagnostic.neighborhoodsAfter.length === 1 &&
+      diagnostic.neighborhoodsAfter[0] === 'Willow Glen Pocket' &&
+      diagnostic.anchorCentered &&
+      diagnostic.greatStopInputUsesReplacedSupports,
+    'Diagnostics must show the Great Stop input route is anchor-centered with replaced supports.',
+  )
+  assert(
+    !artifact.qualification?.approvedRefinementEntryPayload,
+    'Support replacement alone must not create an approved payload.',
+  )
+  process.stdout.write('Build required-anchor support reselection: passed\n')
+}
+
+function assertBuildRequiredAnchorSupportSelectionFailsClosedWithoutAlternatives(): void {
+  const opportunity = buildSupportReselectionOpportunity({
+    includeCompactAlternatives: false,
+  })
+  const directions = [buildDirectionCard({ directionId: 'direction-downtown', pocketId: 'raw-pocket-downtown' })]
+  const bridge = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [opportunity],
+    fallbackOpportunities: [],
+    ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
+    directionCards: directions,
+    allDirectionCards: directions,
+    starterPack: coffeeBooksStarterPack,
+    proofTarget: buildBuildRequiredAnchorProofTarget(),
+  })
+  const diagnostic = bridge.diagnostics[0]
+  assert(bridge.candidateArtifacts.length === 0, 'Missing compact alternatives must fail closed.')
+  assert(
+    diagnostic?.scenarioRouteBuildabilityReason === 'anchor_centered_support_selection_failed',
+    `Expected support-selection failure, received ${diagnostic?.scenarioRouteBuildabilityReason}.`,
+  )
+  assert(
+    diagnostic?.buildRequiredAnchorSupportSelection.status === 'failed' &&
+      diagnostic.buildRequiredAnchorSupportSelection.reason === 'anchor_centered_support_selection_failed',
+    'Fail-closed diagnostics must name anchor_centered_support_selection_failed.',
+  )
+  process.stdout.write('Build required-anchor support reselection fail-closed: passed\n')
+}
+
+function assertHardPocketModesDoNotReselectSupports(): void {
+  const opportunity = buildSupportReselectionOpportunity({
+    includeCompactAlternatives: true,
+    selectionPocketId: 'raw-pocket-willow',
+    selectionPocketLabel: 'Willow Glen Pocket',
+    directionId: 'direction-willow',
+  })
+  const directions = [buildDirectionCard({ directionId: 'direction-willow', pocketId: 'raw-pocket-willow' })]
+  const curate = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [opportunity],
+    fallbackOpportunities: [],
+    ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
+    directionCards: directions,
+    allDirectionCards: directions,
+    starterPack: coffeeBooksStarterPack,
+    proofTarget: {
+      diagnosticOnly: true,
+      proofTargetId: 'row1_step_b_coffee_books_representative',
+      proofPolicy: 'curate_hard_pocket',
+      proofMode: 'curate_or_surprise',
+      targetPocketId: 'raw-pocket-willow',
+      targetPocketLabel: 'Willow Glen Pocket',
+      activePocketId: 'raw-pocket-willow',
+      activePocketLabel: 'Willow Glen Pocket',
+      crossPocketAllowed: false,
+    },
+  })
+  const surprise = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [opportunity],
+    fallbackOpportunities: [],
+    ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
+    directionCards: directions,
+    allDirectionCards: directions,
+    starterPack: coffeeBooksStarterPack,
+    proofTarget: {
+      diagnosticOnly: true,
+      proofTargetId: 'row1_step_b_coffee_books_representative',
+      proofPolicy: 'surprise_hard_pocket',
+      proofMode: 'curate_or_surprise',
+      targetPocketId: 'raw-pocket-willow',
+      targetPocketLabel: 'Willow Glen Pocket',
+      activePocketId: 'raw-pocket-willow',
+      activePocketLabel: 'Willow Glen Pocket',
+      crossPocketAllowed: false,
+    },
+  })
+  assert(
+    curate.candidateArtifacts[0]?.storySpine.start === 'Rose Garden Twilight Walk' &&
+      curate.diagnostics[0]?.buildRequiredAnchorSupportSelection.status === 'not_applicable',
+    'Curate hard-pocket behavior must not inherit Build support reselection.',
+  )
+  assert(
+    surprise.candidateArtifacts[0]?.storySpine.windDown === 'Japantown Matcha Kissaten' &&
+      surprise.diagnostics[0]?.buildRequiredAnchorSupportSelection.status === 'not_applicable',
+    'Surprise hard-pocket behavior must not inherit Build support reselection.',
+  )
+  process.stdout.write('Curate/Surprise hard-pocket support behavior unchanged: passed\n')
+}
+
 function assertQueryTermsDoNotSatisfyProof(): void {
   const opportunity = buildOpportunity({
     pocketId: 'willow-pocket',
@@ -425,6 +735,9 @@ function main(): void {
   assertHardPocketAssertionRejectsMismatchedActivePocket()
   assertEquivalentPocketLabelsRemainHardPocketConsistent()
   assertSelectedProofStopMustBeInsideTargetPocket()
+  assertBuildRequiredAnchorSupportSelectionReselectsStaleSupports()
+  assertBuildRequiredAnchorSupportSelectionFailsClosedWithoutAlternatives()
+  assertHardPocketModesDoNotReselectSupports()
   assertQueryTermsDoNotSatisfyProof()
   assertCompatibilityWrappersRemainNonAuthority()
   process.stdout.write('Step B hard-pocket proof-target assertion: passed\n')

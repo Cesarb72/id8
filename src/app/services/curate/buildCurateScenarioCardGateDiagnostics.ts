@@ -10,7 +10,10 @@ import { buildDistrictOpportunityProfiles } from '../../../domain/interpretation
 import { buildContractEntryArtifactLineage } from '../../../domain/artifacts/contractEntryArtifact'
 import type { ContractEntryArtifact } from '../../../domain/artifacts/contractEntryArtifact'
 import { buildContractEntryArtifactFromVerifiedOpportunity } from '../../../domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity'
-import { buildScenarioNightsFromCandidateBoard } from '../../../domain/interpretation/construction/scenarioBuilder'
+import {
+  buildScenarioNightsFromCandidateBoard,
+  type BuiltScenarioStop,
+} from '../../../domain/interpretation/construction/scenarioBuilder'
 import {
   buildStopTypeCandidateBoardFromIntent,
   resolveScenarioFamily,
@@ -522,13 +525,65 @@ function buildSelectedArtifactDiscoveryPreferences(params: {
     params.opportunity?.scenarioNight?.stops[
       params.opportunity.scenarioNight.stops.length - 1
     ]
-  addPreference(scenarioStart?.venueId ?? params.opportunity?.starts[0]?.venueId, 'start')
+  const artifactStartScenarioStop = findScenarioStopByArtifactRoleName({
+    opportunity: params.opportunity,
+    role: 'start',
+    stopName: params.artifact.storySpine.start,
+  })
+  const artifactHighlightScenarioStop = findScenarioStopByArtifactRoleName({
+    opportunity: params.opportunity,
+    role: 'highlight',
+    stopName: params.artifact.storySpine.highlight,
+  })
+  const artifactWindDownScenarioStop = findScenarioStopByArtifactRoleName({
+    opportunity: params.opportunity,
+    role: 'windDown',
+    stopName: params.artifact.storySpine.windDown,
+  })
   addPreference(
-    scenarioHighlight?.venueId ?? params.artifact.anchorVenueId ?? params.opportunity?.anchor.venueId,
+    artifactStartScenarioStop?.venueId ?? scenarioStart?.venueId ?? params.opportunity?.starts[0]?.venueId,
+    'start',
+  )
+  addPreference(
+    artifactHighlightScenarioStop?.venueId ??
+      scenarioHighlight?.venueId ??
+      params.artifact.anchorVenueId ??
+      params.opportunity?.anchor.venueId,
     params.artifact.anchorRole ?? 'highlight',
   )
-  addPreference(scenarioWindDown?.venueId ?? params.opportunity?.closes[0]?.venueId, 'windDown')
+  addPreference(
+    artifactWindDownScenarioStop?.venueId ??
+      scenarioWindDown?.venueId ??
+      params.opportunity?.closes[0]?.venueId,
+    'windDown',
+  )
   return preferences.size > 0 ? [...preferences.values()] : undefined
+}
+
+function findScenarioStopByArtifactRoleName(params: {
+  opportunity?: VerifiedCityOpportunity
+  role: 'start' | 'highlight' | 'windDown'
+  stopName?: string
+}): BuiltScenarioStop | undefined {
+  const normalizedStopName = normalizeToken(params.stopName)
+  if (!params.opportunity?.scenarioNight || !normalizedStopName) {
+    return undefined
+  }
+  const candidates = params.opportunity.scenarioNight.stops.filter((stop) => {
+    if (normalizeToken(stop.name) !== normalizedStopName) {
+      return false
+    }
+    if (params.role === 'start') {
+      return stop.position === 'start' || stop.position === 'mid'
+    }
+    if (params.role === 'highlight') {
+      return stop.position === 'highlight'
+    }
+    return stop.position === 'windDown' || stop.position === 'closer'
+  })
+  return candidates[0] ?? params.opportunity.scenarioNight.stops.find(
+    (stop) => normalizeToken(stop.name) === normalizedStopName,
+  )
 }
 
 function resolvePrimaryCardDisplayMode(params: {

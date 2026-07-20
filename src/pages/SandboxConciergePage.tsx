@@ -4078,6 +4078,32 @@ function findOpportunityStopOptionByName(
   )
 }
 
+function findScenarioStopByArtifactRoleName(
+  opportunity: VerifiedCityOpportunity | undefined,
+  role: 'start' | 'highlight' | 'windDown',
+  stopName: string | undefined,
+): BuiltScenarioStop | undefined {
+  const normalizedStopName = normalizeCurateAuditStopName(stopName)
+  if (!opportunity?.scenarioNight || !normalizedStopName) {
+    return undefined
+  }
+  const candidates = opportunity.scenarioNight.stops.filter((stop) => {
+    if (normalizeCurateAuditStopName(stop.name) !== normalizedStopName) {
+      return false
+    }
+    if (role === 'start') {
+      return stop.position === 'start' || stop.position === 'mid'
+    }
+    if (role === 'highlight') {
+      return stop.position === 'highlight'
+    }
+    return stop.position === 'windDown' || stop.position === 'closer'
+  })
+  return candidates[0] ?? opportunity.scenarioNight.stops.find(
+    (stop) => normalizeCurateAuditStopName(stop.name) === normalizedStopName,
+  )
+}
+
 function attemptStarterAwareWindDownRepair(params: {
   artifact: ContractEntryArtifact
   opportunity: VerifiedCityOpportunity | undefined
@@ -9418,13 +9444,32 @@ function buildSelectedArtifactDiscoveryPreferences(params: {
     'windDown',
     artifact.storySpine.windDown,
   )
+  const artifactStartScenarioStop = findScenarioStopByArtifactRoleName(
+    opportunity,
+    'start',
+    artifact.storySpine.start,
+  )
+  const artifactHighlightScenarioStop = findScenarioStopByArtifactRoleName(
+    opportunity,
+    'highlight',
+    artifact.storySpine.highlight,
+  )
+  const artifactWindDownScenarioStop = findScenarioStopByArtifactRoleName(
+    opportunity,
+    'windDown',
+    artifact.storySpine.windDown,
+  )
 
   addPreference(
-    artifactStartOption?.venueId ?? scenarioStart?.venueId ?? opportunity?.starts[0]?.venueId,
+    artifactStartOption?.venueId ??
+      artifactStartScenarioStop?.venueId ??
+      scenarioStart?.venueId ??
+      opportunity?.starts[0]?.venueId,
     'start',
   )
   addPreference(
     artifactHighlightOption?.venueId ??
+      artifactHighlightScenarioStop?.venueId ??
       scenarioHighlight?.venueId ??
       artifact.anchorVenueId ??
       opportunity?.anchor.venueId,
@@ -9433,6 +9478,7 @@ function buildSelectedArtifactDiscoveryPreferences(params: {
   addPreference(
     windDownOverride?.venueId ??
       artifactWindDownOption?.venueId ??
+      artifactWindDownScenarioStop?.venueId ??
       scenarioWindDown?.venueId ??
       opportunity?.closes[0]?.venueId,
     'windDown',
@@ -12660,6 +12706,8 @@ export function SandboxConciergePage({
                 proofTargetId:
                   row1CoffeeBooksProofTarget?.proofTargetId ??
                   ROW_1_COFFEE_BOOKS_PROOF_TARGET_ID,
+                proofPolicy: row1CoffeeBooksProofTargetDiagnostics.proofPolicy,
+                proofMode: row1CoffeeBooksProofTargetDiagnostics.proofMode,
                 targetPocketId: row1CoffeeBooksProofTarget?.selectedPocketId ?? null,
                 targetPocketLabel: row1CoffeeBooksProofTarget?.selectedPocketLabel ?? null,
                 activePocketId: activePocketDiagnostic.activePocketId,

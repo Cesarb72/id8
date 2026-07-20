@@ -24,6 +24,7 @@ type CurateScenarioBuildabilityAdmissionReason =
   | 'scenario_route_mixed_di_fallback_scattered'
   | 'scenario_route_seed_projection_missing'
   | 'coffee_books_insufficient_in_pocket_literary_supply'
+  | 'anchor_centered_support_selection_failed'
   | CurateHardPocketProofTargetAssertionReason
 type CurateHardCommitFeasibilityFailureClass =
   | 'missing_seed_identity'
@@ -54,6 +55,8 @@ export type CurateHardPocketProofTargetAssertionReason =
 export interface CurateHardPocketProofTargetAssertionContext {
   diagnosticOnly: true
   proofTargetId: string
+  proofPolicy?: 'curate_hard_pocket' | 'surprise_hard_pocket' | 'build_required_anchor_soft_geography'
+  proofMode?: 'curate_or_surprise' | 'build_required_anchor'
   targetPocketId?: string | null
   targetPocketLabel?: string | null
   activePocketId?: string | null
@@ -83,6 +86,69 @@ export interface CurateHardPocketProofTargetAssertionResult {
   selectedProofStopName: string | null
   selectedProofStopPocketId: string | null
   selectedProofStopPocketLabel: string | null
+}
+
+type CurateBuildAnchorSupportRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
+type CurateBuildAnchorSupportSelectionStatus = 'not_applicable' | 'passed' | 'failed'
+type CurateBuildAnchorSupportSelectionSource =
+  | 'live_supply'
+  | 'admitted_candidate'
+  | 'static_fallback'
+  | 'none'
+type CurateBuildAnchorSupportSelectionReason =
+  | 'build_required_anchor_support_reselected'
+  | 'stale_support_stop_outside_anchor_pocket'
+  | 'support_stop_replaced_for_route_compactness'
+  | 'anchor_centered_support_selection_applied'
+  | 'anchor_centered_support_selection_failed'
+  | 'support_stop_kept_anchor_centered'
+  | 'support_stop_preserved_required_anchor'
+  | 'build_required_anchor_support_selection_not_applicable'
+
+interface CurateBuildAnchorSupportStopDiagnostic {
+  role: CurateBuildAnchorSupportRole
+  originalStopId: string | null
+  originalStopName: string | null
+  originalPocketId: string | null
+  originalPocketLabel: string | null
+  replacementStopId: string | null
+  replacementStopName: string | null
+  replacementPocketId: string | null
+  replacementPocketLabel: string | null
+  kept: boolean
+  replaced: boolean
+  selectedSupportSource: CurateBuildAnchorSupportSelectionSource
+  reason: CurateBuildAnchorSupportSelectionReason
+}
+
+export interface CurateBuildAnchorSupportSelectionDiagnostic {
+  diagnosticOnly: true
+  status: CurateBuildAnchorSupportSelectionStatus
+  reason: CurateBuildAnchorSupportSelectionReason | null
+  proofPolicy: CurateHardPocketProofTargetAssertionContext['proofPolicy'] | null
+  proofMode: CurateHardPocketProofTargetAssertionContext['proofMode'] | null
+  requiredAnchorId: string | null
+  requiredAnchorName: string | null
+  requiredAnchorPocketId: string | null
+  requiredAnchorPocketLabel: string | null
+  originalSupportStops: CurateBuildAnchorSupportStopDiagnostic[]
+  replacementSupportStops: CurateBuildAnchorSupportStopDiagnostic[]
+  availableCompactAlternativesConsidered: Array<{
+    role: CurateBuildAnchorSupportRole
+    venueId: string
+    name: string
+    pocketId: string | null
+    pocketLabel: string | null
+    source: CurateBuildAnchorSupportSelectionSource
+  }>
+  movementTotalBefore: number | null
+  movementTotalAfter: number | null
+  maxTransitionBefore: number | null
+  maxTransitionAfter: number | null
+  neighborhoodsBefore: string[]
+  neighborhoodsAfter: string[]
+  anchorCentered: boolean
+  greatStopInputUsesReplacedSupports: boolean
 }
 
 interface CurateHardCommitFeasibilityRoleDiagnostic {
@@ -130,6 +196,7 @@ export interface CurateScenarioBackedArtifactBridgeDiagnostic {
   scenarioRouteBuildabilityReason: CurateScenarioBuildabilityAdmissionReason | null
   scenarioRouteBuildabilityFailedRoles: Array<Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>>
   scenarioRouteBuildabilitySeedProjectionAvailable: boolean
+  buildRequiredAnchorSupportSelection: CurateBuildAnchorSupportSelectionDiagnostic
   proofTargetAssertion: CurateHardPocketProofTargetAssertionResult
   hardCommitFeasibility: CurateHardCommitFeasibilityDiagnostic
 }
@@ -286,6 +353,660 @@ function buildProofTargetAssertionResult(params: {
       params.selectedProofStop?.district ??
       params.selectedProofStop?.neighborhoodLabel ??
       null,
+  }
+}
+
+function buildDefaultBuildAnchorSupportSelectionDiagnostic(
+  overrides: Partial<CurateBuildAnchorSupportSelectionDiagnostic> = {},
+): CurateBuildAnchorSupportSelectionDiagnostic {
+  return {
+    diagnosticOnly: true,
+    status: 'not_applicable',
+    reason: 'build_required_anchor_support_selection_not_applicable',
+    proofPolicy: null,
+    proofMode: null,
+    requiredAnchorId: null,
+    requiredAnchorName: null,
+    requiredAnchorPocketId: null,
+    requiredAnchorPocketLabel: null,
+    originalSupportStops: [],
+    replacementSupportStops: [],
+    availableCompactAlternativesConsidered: [],
+    movementTotalBefore: null,
+    movementTotalAfter: null,
+    maxTransitionBefore: null,
+    maxTransitionAfter: null,
+    neighborhoodsBefore: [],
+    neighborhoodsAfter: [],
+    anchorCentered: false,
+    greatStopInputUsesReplacedSupports: false,
+    ...overrides,
+  }
+}
+
+function buildSupportStopDiagnostic(params: {
+  role: CurateBuildAnchorSupportRole
+  originalStop?: BuiltScenarioStop | null
+  replacementStop?: BuiltScenarioStop | null
+  kept: boolean
+  replaced: boolean
+  selectedSupportSource: CurateBuildAnchorSupportSelectionSource
+  reason: CurateBuildAnchorSupportSelectionReason
+}): CurateBuildAnchorSupportStopDiagnostic {
+  return {
+    role: params.role,
+    originalStopId: params.originalStop?.venueId ?? null,
+    originalStopName: params.originalStop?.name ?? null,
+    originalPocketId: params.originalStop?.geoBucket ?? null,
+    originalPocketLabel:
+      params.originalStop?.geoLabel ??
+      params.originalStop?.district ??
+      params.originalStop?.neighborhoodLabel ??
+      null,
+    replacementStopId: params.replacementStop?.venueId ?? null,
+    replacementStopName: params.replacementStop?.name ?? null,
+    replacementPocketId: params.replacementStop?.geoBucket ?? null,
+    replacementPocketLabel:
+      params.replacementStop?.geoLabel ??
+      params.replacementStop?.district ??
+      params.replacementStop?.neighborhoodLabel ??
+      null,
+    kept: params.kept,
+    replaced: params.replaced,
+    selectedSupportSource: params.selectedSupportSource,
+    reason: params.reason,
+  }
+}
+
+function roleForScenarioPosition(
+  position: BuiltScenarioStop['position'] | undefined,
+): CurateBuildAnchorSupportRole | null {
+  if (position === 'start' || position === 'mid') {
+    return 'start'
+  }
+  if (position === 'highlight') {
+    return 'highlight'
+  }
+  if (position === 'windDown' || position === 'closer') {
+    return 'windDown'
+  }
+  return null
+}
+
+function findScenarioCoreStopByRole(params: {
+  opportunity: VerifiedCityOpportunity
+  role: CurateBuildAnchorSupportRole
+}): BuiltScenarioStop | undefined {
+  const stops = params.opportunity.scenarioNight?.stops ?? []
+  if (params.role === 'start') {
+    return (
+      findScenarioStopByName(params.opportunity, params.opportunity.storySpine.start) ??
+      stops.find((stop) => stop.position === 'start') ??
+      stops[0]
+    )
+  }
+  if (params.role === 'highlight') {
+    return (
+      findScenarioStopByName(params.opportunity, params.opportunity.storySpine.highlight) ??
+      stops.find((stop) => stop.position === 'highlight') ??
+      findScenarioStopByVenueId(params.opportunity, params.opportunity.anchor.venueId)
+    )
+  }
+  const finalVenueId = params.opportunity.scenarioWindDownDebug?.finalVenueId ?? undefined
+  const finalName = params.opportunity.scenarioWindDownDebug?.finalName ?? undefined
+  return (
+    findScenarioStopByVenueId(params.opportunity, finalVenueId) ??
+    findScenarioStopByName(params.opportunity, finalName) ??
+    findScenarioStopByName(params.opportunity, params.opportunity.storySpine.windDown) ??
+    stops.find((stop) => stop.position === 'closer') ??
+    stops.find((stop) => stop.position === 'windDown') ??
+    stops[stops.length - 1]
+  )
+}
+
+function scenarioStopMatchesRole(
+  stop: BuiltScenarioStop,
+  role: CurateBuildAnchorSupportRole,
+): boolean {
+  return roleForScenarioPosition(stop.position) === role
+}
+
+function scenarioStopMatchesProofTargetPocket(params: {
+  stop: BuiltScenarioStop
+  proofTarget: CurateHardPocketProofTargetAssertionContext
+}): boolean {
+  const targetPocketId = params.proofTarget.targetPocketId?.trim()
+  const targetPocketLabel = params.proofTarget.targetPocketLabel?.trim()
+  if (!targetPocketId && !targetPocketLabel) {
+    return false
+  }
+  return selectedProofStopMatchesPocket({
+    stop: params.stop,
+    targetPocketId: targetPocketId || targetPocketLabel || '',
+    targetPocketLabel,
+  })
+}
+
+function estimateTransitionMinutes(
+  left: BuiltScenarioStop | undefined,
+  right: BuiltScenarioStop | undefined,
+): number {
+  if (!left || !right) {
+    return 0
+  }
+  if (left.coordinates && right.coordinates) {
+    const dx = left.coordinates.lat - right.coordinates.lat
+    const dy = left.coordinates.lng - right.coordinates.lng
+    const approximateMeters = Math.sqrt(dx * dx + dy * dy) * 111_000
+    return Math.max(4, Math.ceil(approximateMeters / 80))
+  }
+  if (
+    left.geoBucket &&
+    right.geoBucket &&
+    normalizeProofTargetToken(left.geoBucket) === normalizeProofTargetToken(right.geoBucket)
+  ) {
+    return 8
+  }
+  const leftLabel = left.geoLabel ?? left.district ?? left.neighborhoodLabel
+  const rightLabel = right.geoLabel ?? right.district ?? right.neighborhoodLabel
+  if (proofTargetTokensMatch(leftLabel, rightLabel)) {
+    return 10
+  }
+  return 16
+}
+
+function summarizeScenarioRouteMovement(
+  routeStops: Array<BuiltScenarioStop | undefined>,
+): {
+  total: number | null
+  max: number | null
+  neighborhoods: string[]
+} {
+  const stops = routeStops.filter((stop): stop is BuiltScenarioStop => Boolean(stop))
+  if (stops.length < 2) {
+    return {
+      total: null,
+      max: null,
+      neighborhoods: stops
+        .map((stop) => stop.geoLabel ?? stop.district ?? stop.neighborhoodLabel)
+        .filter((value): value is string => Boolean(value?.trim())),
+    }
+  }
+  const transitions = stops.slice(1).map((stop, index) =>
+    estimateTransitionMinutes(stops[index], stop),
+  )
+  return {
+    total: transitions.reduce((sum, value) => sum + value, 0),
+    max: Math.max(...transitions),
+    neighborhoods: Array.from(
+      new Set(
+        stops
+          .map((stop) => stop.geoLabel ?? stop.district ?? stop.neighborhoodLabel)
+          .filter((value): value is string => Boolean(value?.trim())),
+      ),
+    ),
+  }
+}
+
+function cloneStopForRole(
+  stop: BuiltScenarioStop,
+  role: CurateBuildAnchorSupportRole,
+): BuiltScenarioStop {
+  return {
+    ...stop,
+    position: role === 'windDown' ? 'windDown' : role,
+  }
+}
+
+function collectBuildAnchorSupportCandidates(params: {
+  opportunities: VerifiedCityOpportunity[]
+  role: CurateBuildAnchorSupportRole
+  proofTarget: CurateHardPocketProofTargetAssertionContext
+  blockedVenueIds: Set<string>
+  starterPack: StarterPack
+}): Array<{
+  stop: BuiltScenarioStop
+  source: CurateBuildAnchorSupportSelectionSource
+  score: number
+}> {
+  const byVenueId = new Map<string, {
+    stop: BuiltScenarioStop
+    source: CurateBuildAnchorSupportSelectionSource
+    score: number
+  }>()
+  params.opportunities.forEach((opportunity, opportunityIndex) => {
+    for (const stop of opportunity.scenarioNight?.stops ?? []) {
+      if (
+        !stop.venueId.trim() ||
+        params.blockedVenueIds.has(stop.venueId) ||
+        !scenarioStopMatchesRole(stop, params.role) ||
+        !scenarioStopMatchesProofTargetPocket({ stop, proofTarget: params.proofTarget }) ||
+        !scenarioStopSatisfiesRoleContract({
+          starterPack: params.starterPack,
+          stop,
+          role: params.role,
+        })
+      ) {
+        continue
+      }
+      const roleFit =
+        params.role === 'start'
+          ? stop.roleFit.start
+          : params.role === 'highlight'
+            ? stop.roleFit.highlight
+            : stop.roleFit.windDown
+      const source: CurateBuildAnchorSupportSelectionSource =
+        opportunity.sourceMode === 'live'
+          ? 'live_supply'
+          : opportunityIndex === 0
+            ? 'admitted_candidate'
+            : 'static_fallback'
+      const score =
+        (roleFit ?? 0) * 0.52 +
+        stop.authorityScore * 0.24 +
+        stop.currentRelevance * 0.18 +
+        (source === 'live_supply' ? 0.05 : source === 'admitted_candidate' ? 0.03 : 0)
+      const existing = byVenueId.get(stop.venueId)
+      if (!existing || score > existing.score) {
+        byVenueId.set(stop.venueId, {
+          stop,
+          source,
+          score,
+        })
+      }
+    }
+  })
+  return [...byVenueId.values()].sort(
+    (left, right) =>
+      right.score - left.score ||
+      left.stop.name.localeCompare(right.stop.name) ||
+      left.stop.venueId.localeCompare(right.stop.venueId),
+  )
+}
+
+function replaceScenarioCoreStop(params: {
+  opportunity: VerifiedCityOpportunity
+  replacements: Partial<Record<CurateBuildAnchorSupportRole, BuiltScenarioStop>>
+}): VerifiedCityOpportunity {
+  const scenarioNight = params.opportunity.scenarioNight
+  if (!scenarioNight) {
+    return params.opportunity
+  }
+  const originalStart = findScenarioCoreStopByRole({ opportunity: params.opportunity, role: 'start' })
+  const originalHighlight = findScenarioCoreStopByRole({
+    opportunity: params.opportunity,
+    role: 'highlight',
+  })
+  const originalWindDown = findScenarioCoreStopByRole({
+    opportunity: params.opportunity,
+    role: 'windDown',
+  })
+  const start = params.replacements.start ?? originalStart
+  const highlight = params.replacements.highlight ?? originalHighlight
+  const windDown = params.replacements.windDown ?? originalWindDown
+  const replacementByOriginalVenueId = new Map<string, BuiltScenarioStop>()
+  if (params.replacements.start && originalStart?.venueId) {
+    replacementByOriginalVenueId.set(originalStart.venueId, cloneStopForRole(params.replacements.start, 'start'))
+  }
+  if (params.replacements.highlight && originalHighlight?.venueId) {
+    replacementByOriginalVenueId.set(
+      originalHighlight.venueId,
+      cloneStopForRole(params.replacements.highlight, 'highlight'),
+    )
+  }
+  if (params.replacements.windDown && originalWindDown?.venueId) {
+    replacementByOriginalVenueId.set(
+      originalWindDown.venueId,
+      cloneStopForRole(params.replacements.windDown, 'windDown'),
+    )
+  }
+  const replacementVenueIds = new Set(
+    Object.values(params.replacements)
+      .map((stop) => stop?.venueId)
+      .filter((value): value is string => Boolean(value)),
+  )
+  const replacedScenarioStops = scenarioNight.stops
+    .map((stop) => replacementByOriginalVenueId.get(stop.venueId) ?? stop)
+    .filter((stop, index, list) => {
+      if (!replacementVenueIds.has(stop.venueId)) {
+        return true
+      }
+      return list.findIndex((entry) => entry.venueId === stop.venueId) === index
+    })
+  return {
+    ...params.opportunity,
+    starts: start
+      ? [{
+          venueId: start.venueId,
+          name: start.name,
+          address: start.address,
+          reason: start.whyThisStop || start.reasons[0] || 'Anchor-centered start support.',
+          score: start.roleFit.start ?? start.authorityScore,
+        }]
+      : params.opportunity.starts,
+    closes: windDown
+      ? [{
+          venueId: windDown.venueId,
+          name: windDown.name,
+          address: windDown.address,
+          reason:
+            windDown.whyThisStop ||
+            windDown.reasons[0] ||
+            'Anchor-centered wind-down support.',
+          score: windDown.roleFit.windDown ?? windDown.authorityScore,
+        }]
+      : params.opportunity.closes,
+    storySpine: {
+      start: start?.name ?? params.opportunity.storySpine.start,
+      highlight: highlight?.name ?? params.opportunity.storySpine.highlight,
+      windDown: windDown?.name ?? params.opportunity.storySpine.windDown,
+    },
+    districtContext: {
+      ...params.opportunity.districtContext,
+      primaryDistrict:
+        highlight?.geoLabel ??
+        highlight?.district ??
+        highlight?.neighborhoodLabel ??
+        params.opportunity.districtContext.primaryDistrict,
+    },
+    excellence: {
+      ...params.opportunity.excellence,
+      startQuality: start?.roleFit.start ?? params.opportunity.excellence.startQuality,
+      windDownQuality:
+        windDown?.roleFit.windDown ?? params.opportunity.excellence.windDownQuality,
+      supportCoherence: Math.max(params.opportunity.excellence.supportCoherence, 0.82),
+    },
+    scenarioWindDownDebug: windDown
+      ? {
+          originalVenueId:
+            params.opportunity.scenarioWindDownDebug?.originalVenueId ??
+            originalWindDown?.venueId ??
+            null,
+          originalName:
+            params.opportunity.scenarioWindDownDebug?.originalName ??
+            originalWindDown?.name ??
+            null,
+          originalRoleEligible:
+            params.opportunity.scenarioWindDownDebug?.originalRoleEligible ?? true,
+          repairApplied:
+            params.opportunity.scenarioWindDownDebug?.repairApplied ??
+            Boolean(params.replacements.windDown),
+          repairReplacementVenueId:
+            params.replacements.windDown?.venueId ??
+            params.opportunity.scenarioWindDownDebug?.repairReplacementVenueId ??
+            null,
+          repairReplacementName:
+            params.replacements.windDown?.name ??
+            params.opportunity.scenarioWindDownDebug?.repairReplacementName ??
+            null,
+          repairSource:
+            params.replacements.windDown
+              ? 'build_required_anchor_support_selection'
+              : params.opportunity.scenarioWindDownDebug?.repairSource ?? null,
+          repairReason:
+            params.replacements.windDown
+              ? 'support_stop_replaced_for_route_compactness'
+              : params.opportunity.scenarioWindDownDebug?.repairReason ?? null,
+          finalVenueId: windDown.venueId,
+          finalName: windDown.name,
+          finalRoleEligible: true,
+        }
+      : params.opportunity.scenarioWindDownDebug,
+    scenarioNight: {
+      ...scenarioNight,
+      stops: replacedScenarioStops,
+      whyThisWorks:
+        start && highlight && windDown
+          ? `Starts at ${start.name}, centers on ${highlight.name}, and lands cleanly at ${windDown.name}.`
+          : scenarioNight.whyThisWorks,
+    },
+  }
+}
+
+function maybeApplyBuildRequiredAnchorSupportSelection(params: {
+  opportunity: VerifiedCityOpportunity
+  opportunities: VerifiedCityOpportunity[]
+  starterPack?: StarterPack | null
+  proofTarget?: CurateHardPocketProofTargetAssertionContext
+}): {
+  opportunity: VerifiedCityOpportunity
+  diagnostic: CurateBuildAnchorSupportSelectionDiagnostic
+} {
+  const { opportunity, proofTarget, starterPack } = params
+  const isBuildRequiredAnchor =
+    proofTarget?.proofPolicy === 'build_required_anchor_soft_geography' ||
+    proofTarget?.proofMode === 'build_required_anchor'
+  if (
+    !isBuildRequiredAnchor ||
+    starterPack?.id !== 'coffee-books' ||
+    !proofTarget ||
+    !opportunity.scenarioNight
+  ) {
+    return {
+      opportunity,
+      diagnostic: buildDefaultBuildAnchorSupportSelectionDiagnostic({
+        proofPolicy: proofTarget?.proofPolicy ?? null,
+        proofMode: proofTarget?.proofMode ?? null,
+      }),
+    }
+  }
+
+  const selectedProofStop = findSelectedStopForCoffeeBooksProof({
+    opportunity,
+    representation:
+      opportunity.starterSemanticRepresentation ??
+      opportunity.scenarioNight.starterSemanticRepresentation,
+  })
+  if (!selectedProofStop) {
+    return {
+      opportunity,
+      diagnostic: buildDefaultBuildAnchorSupportSelectionDiagnostic({
+        status: 'failed',
+        reason: 'anchor_centered_support_selection_failed',
+        proofPolicy: proofTarget.proofPolicy ?? null,
+        proofMode: proofTarget.proofMode ?? null,
+      }),
+    }
+  }
+
+  const anchorRole = roleForScenarioPosition(selectedProofStop.position) ?? 'highlight'
+  const originalRoute = {
+    start: findScenarioCoreStopByRole({ opportunity, role: 'start' }),
+    highlight: findScenarioCoreStopByRole({ opportunity, role: 'highlight' }),
+    windDown: findScenarioCoreStopByRole({ opportunity, role: 'windDown' }),
+  }
+  const originalMovement = summarizeScenarioRouteMovement([
+    originalRoute.start,
+    originalRoute.highlight,
+    originalRoute.windDown,
+  ])
+  const blockedVenueIds = new Set(
+    [selectedProofStop.venueId].filter((value): value is string => Boolean(value?.trim())),
+  )
+  const replacements: Partial<Record<CurateBuildAnchorSupportRole, BuiltScenarioStop>> = {}
+  const originalSupportStops: CurateBuildAnchorSupportStopDiagnostic[] = []
+  const replacementSupportStops: CurateBuildAnchorSupportStopDiagnostic[] = []
+  const availableCompactAlternativesConsidered:
+    CurateBuildAnchorSupportSelectionDiagnostic['availableCompactAlternativesConsidered'] = []
+
+  for (const role of ['start', 'highlight', 'windDown'] as const) {
+    const originalStop = originalRoute[role]
+    if (role === anchorRole || originalStop?.venueId === selectedProofStop.venueId) {
+      const preserved = buildSupportStopDiagnostic({
+        role,
+        originalStop,
+        replacementStop: originalStop,
+        kept: true,
+        replaced: false,
+        selectedSupportSource: 'none',
+        reason: 'support_stop_preserved_required_anchor',
+      })
+      originalSupportStops.push(preserved)
+      replacementSupportStops.push(preserved)
+      continue
+    }
+    const alreadyAnchorCentered = originalStop
+      ? scenarioStopMatchesProofTargetPocket({ stop: originalStop, proofTarget })
+      : false
+    if (alreadyAnchorCentered) {
+      const kept = buildSupportStopDiagnostic({
+        role,
+        originalStop,
+        replacementStop: originalStop,
+        kept: true,
+        replaced: false,
+        selectedSupportSource: 'admitted_candidate',
+        reason: 'support_stop_kept_anchor_centered',
+      })
+      originalSupportStops.push(kept)
+      replacementSupportStops.push(kept)
+      if (originalStop?.venueId) {
+        blockedVenueIds.add(originalStop.venueId)
+      }
+      continue
+    }
+    const candidates = collectBuildAnchorSupportCandidates({
+      opportunities: params.opportunities,
+      role,
+      proofTarget,
+      blockedVenueIds,
+      starterPack,
+    })
+    availableCompactAlternativesConsidered.push(
+      ...candidates.slice(0, 5).map((entry) => ({
+        role,
+        venueId: entry.stop.venueId,
+        name: entry.stop.name,
+        pocketId: entry.stop.geoBucket ?? null,
+        pocketLabel:
+          entry.stop.geoLabel ?? entry.stop.district ?? entry.stop.neighborhoodLabel ?? null,
+        source: entry.source,
+      })),
+    )
+    const replacement = candidates[0]
+    if (!replacement) {
+      const failed = buildSupportStopDiagnostic({
+        role,
+        originalStop,
+        replacementStop: null,
+        kept: false,
+        replaced: false,
+        selectedSupportSource: 'none',
+        reason: 'anchor_centered_support_selection_failed',
+      })
+      originalSupportStops.push(failed)
+      replacementSupportStops.push(failed)
+      const failedRoute = {
+        ...originalRoute,
+        ...replacements,
+      }
+      const failedMovement = summarizeScenarioRouteMovement([
+        failedRoute.start,
+        failedRoute.highlight,
+        failedRoute.windDown,
+      ])
+      return {
+        opportunity,
+        diagnostic: buildDefaultBuildAnchorSupportSelectionDiagnostic({
+          status: 'failed',
+          reason: 'anchor_centered_support_selection_failed',
+          proofPolicy: proofTarget.proofPolicy ?? null,
+          proofMode: proofTarget.proofMode ?? null,
+          requiredAnchorId: selectedProofStop.venueId,
+          requiredAnchorName: selectedProofStop.name,
+          requiredAnchorPocketId: selectedProofStop.geoBucket ?? null,
+          requiredAnchorPocketLabel:
+            selectedProofStop.geoLabel ??
+            selectedProofStop.district ??
+            selectedProofStop.neighborhoodLabel ??
+            null,
+          originalSupportStops,
+          replacementSupportStops,
+          availableCompactAlternativesConsidered,
+          movementTotalBefore: originalMovement.total,
+          movementTotalAfter: failedMovement.total,
+          maxTransitionBefore: originalMovement.max,
+          maxTransitionAfter: failedMovement.max,
+          neighborhoodsBefore: originalMovement.neighborhoods,
+          neighborhoodsAfter: failedMovement.neighborhoods,
+          anchorCentered: false,
+          greatStopInputUsesReplacedSupports: false,
+        }),
+      }
+    }
+    replacements[role] = replacement.stop
+    blockedVenueIds.add(replacement.stop.venueId)
+    const diagnostic = buildSupportStopDiagnostic({
+      role,
+      originalStop,
+      replacementStop: replacement.stop,
+      kept: false,
+      replaced: true,
+      selectedSupportSource: replacement.source,
+      reason: 'support_stop_replaced_for_route_compactness',
+    })
+    originalSupportStops.push(
+      buildSupportStopDiagnostic({
+        role,
+        originalStop,
+        replacementStop: null,
+        kept: false,
+        replaced: false,
+        selectedSupportSource: 'none',
+        reason: 'stale_support_stop_outside_anchor_pocket',
+      }),
+    )
+    replacementSupportStops.push(diagnostic)
+  }
+
+  const adjustedOpportunity = replaceScenarioCoreStop({
+    opportunity,
+    replacements,
+  })
+  const adjustedRoute = {
+    start: findScenarioCoreStopByRole({ opportunity: adjustedOpportunity, role: 'start' }),
+    highlight: findScenarioCoreStopByRole({ opportunity: adjustedOpportunity, role: 'highlight' }),
+    windDown: findScenarioCoreStopByRole({ opportunity: adjustedOpportunity, role: 'windDown' }),
+  }
+  const adjustedMovement = summarizeScenarioRouteMovement([
+    adjustedRoute.start,
+    adjustedRoute.highlight,
+    adjustedRoute.windDown,
+  ])
+  const replacementApplied = Object.keys(replacements).length > 0
+  const anchorCentered = [adjustedRoute.start, adjustedRoute.highlight, adjustedRoute.windDown]
+    .filter((stop): stop is BuiltScenarioStop => Boolean(stop))
+    .every((stop) => scenarioStopMatchesProofTargetPocket({ stop, proofTarget }))
+
+  return {
+    opportunity: adjustedOpportunity,
+    diagnostic: buildDefaultBuildAnchorSupportSelectionDiagnostic({
+      status: 'passed',
+      reason: replacementApplied
+        ? 'anchor_centered_support_selection_applied'
+        : null,
+      proofPolicy: proofTarget.proofPolicy ?? null,
+      proofMode: proofTarget.proofMode ?? null,
+      requiredAnchorId: selectedProofStop.venueId,
+      requiredAnchorName: selectedProofStop.name,
+      requiredAnchorPocketId: selectedProofStop.geoBucket ?? null,
+      requiredAnchorPocketLabel:
+        selectedProofStop.geoLabel ??
+        selectedProofStop.district ??
+        selectedProofStop.neighborhoodLabel ??
+        null,
+      originalSupportStops,
+      replacementSupportStops,
+      availableCompactAlternativesConsidered,
+      movementTotalBefore: originalMovement.total,
+      movementTotalAfter: adjustedMovement.total,
+      maxTransitionBefore: originalMovement.max,
+      maxTransitionAfter: adjustedMovement.max,
+      neighborhoodsBefore: originalMovement.neighborhoods,
+      neighborhoodsAfter: adjustedMovement.neighborhoods,
+      anchorCentered,
+      greatStopInputUsesReplacedSupports: replacementApplied,
+    }),
   }
 }
 
@@ -593,6 +1314,7 @@ function assessCoffeeBooksScenarioBuildability(params: {
   artifact: ContractEntryArtifact | null
   starterPack?: StarterPack | null
   proofTarget?: CurateHardPocketProofTargetAssertionContext
+  buildRequiredAnchorSupportSelection?: CurateBuildAnchorSupportSelectionDiagnostic
 }): {
   allowed: boolean
   status: CurateScenarioBuildabilityAdmissionStatus
@@ -603,6 +1325,12 @@ function assessCoffeeBooksScenarioBuildability(params: {
   hardCommitFeasibility: CurateHardCommitFeasibilityDiagnostic
 } {
   const { opportunity, artifact, starterPack, proofTarget } = params
+  const buildRequiredAnchorSupportSelection =
+    params.buildRequiredAnchorSupportSelection ??
+    buildDefaultBuildAnchorSupportSelectionDiagnostic({
+      proofPolicy: proofTarget?.proofPolicy ?? null,
+      proofMode: proofTarget?.proofMode ?? null,
+    })
   const buildFeasibility = (overrides: Partial<CurateHardCommitFeasibilityDiagnostic> = {}) => {
     const roles = ['start', 'highlight', 'windDown'] as const
     const roleDiagnostics = roles.map((role) => {
@@ -771,6 +1499,27 @@ function assessCoffeeBooksScenarioBuildability(params: {
     }
   }
 
+  if (buildRequiredAnchorSupportSelection.status === 'failed') {
+    return {
+      allowed: false,
+      status: 'rejected',
+      reason: 'anchor_centered_support_selection_failed',
+      failedRoles: buildRequiredAnchorSupportSelection.replacementSupportStops
+        .filter((entry) => entry.reason === 'anchor_centered_support_selection_failed')
+        .map((entry) => entry.role),
+      seedProjectionAvailable: true,
+      proofTargetAssertion,
+      hardCommitFeasibility: buildFeasibility({
+        status: 'failed',
+        failureClass: 'materialization_unresolved',
+        failedRole:
+          buildRequiredAnchorSupportSelection.replacementSupportStops.find(
+            (entry) => entry.reason === 'anchor_centered_support_selection_failed',
+          )?.role ?? null,
+      }),
+    }
+  }
+
   const roles = ['start', 'highlight', 'windDown'] as const
   const stopsByRole = new Map(
     roles.map((role) => [
@@ -826,8 +1575,14 @@ function buildArtifactsForPool(params: {
   const diagnostics: CurateScenarioBackedArtifactBridgeDiagnostic[] = []
 
   dedupeOpportunities(params.opportunities).forEach((opportunity) => {
-    const baseArtifact = buildContractEntryArtifactFromVerifiedOpportunity({
+    const supportSelection = maybeApplyBuildRequiredAnchorSupportSelection({
       opportunity,
+      opportunities: params.opportunities,
+      starterPack: params.starterPack,
+      proofTarget: params.proofTarget,
+    })
+    const baseArtifact = buildContractEntryArtifactFromVerifiedOpportunity({
+      opportunity: supportSelection.opportunity,
       ecsState: params.ecsState,
       useScenarioBackedArtifacts: true,
     })
@@ -839,10 +1594,11 @@ function buildArtifactsForPool(params: {
         })
       : null
     const admission = assessCoffeeBooksScenarioBuildability({
-      opportunity,
+      opportunity: supportSelection.opportunity,
       artifact,
       starterPack: params.starterPack,
       proofTarget: params.proofTarget,
+      buildRequiredAnchorSupportSelection: supportSelection.diagnostic,
     })
     if (artifact && admission.allowed) {
       artifacts.push(artifact)
@@ -873,6 +1629,7 @@ function buildArtifactsForPool(params: {
       scenarioRouteBuildabilityReason: admission.reason,
       scenarioRouteBuildabilityFailedRoles: admission.failedRoles,
       scenarioRouteBuildabilitySeedProjectionAvailable: admission.seedProjectionAvailable,
+      buildRequiredAnchorSupportSelection: supportSelection.diagnostic,
       proofTargetAssertion: admission.proofTargetAssertion,
       hardCommitFeasibility: admission.hardCommitFeasibility,
     })
