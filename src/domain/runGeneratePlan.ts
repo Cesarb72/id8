@@ -126,6 +126,7 @@ import type {
 import type { ConstraintTraceEntry } from './types/constraints'
 import type {
   BuildFallbackTraceDiagnostics,
+  ContractArtifactGreatStopProjectionDiagnostics,
   CurateHardCommitCandidateDiagnostics,
   CurateHardCommitDiagnostics,
   GenerationDiagnostics,
@@ -1146,6 +1147,7 @@ type CurateHardCommitRole = 'start' | 'highlight' | 'windDown'
 type CurateHardCommitFeasibilityFailureClass = NonNullable<
   NonNullable<CurateHardCommitDiagnostics['hardCommitFeasibility']>['failureClass']
 >
+type CurateHardCommitRoleTargets = Record<CurateHardCommitRole, string | null>
 
 function rolePoolForCurateHardCommitRole(
   rolePools: RolePools,
@@ -1243,6 +1245,223 @@ function buildCanonicalCurateHardCommitCandidate(params: {
     pacing: score.pacing,
     spatial: score.spatial,
     hasWildcard: false,
+  }
+}
+
+function roleTargetMapFromCurateHardCommitPreferences(
+  preferences: NonNullable<IntentProfile['discoveryPreferences']>,
+): CurateHardCommitRoleTargets {
+  return {
+    start: preferences.find((entry) => entry.role === 'start')?.venueId?.trim() || null,
+    highlight: preferences.find((entry) => entry.role === 'highlight')?.venueId?.trim() || null,
+    windDown: preferences.find((entry) => entry.role === 'windDown')?.venueId?.trim() || null,
+  }
+}
+
+function allCurateHardCommitTargetsPresent(targets: CurateHardCommitRoleTargets): boolean {
+  return Boolean(targets.start && targets.highlight && targets.windDown)
+}
+
+function buildContractArtifactGreatStopProjectionDiagnostics(params: {
+  adapterUsed: boolean
+  reason: ContractArtifactGreatStopProjectionDiagnostics['reason']
+  selectedArtifactLineage?: ContractEntryArtifactLineage
+  selectedStopIds: CurateHardCommitRoleTargets
+  seedVenueIds: CurateHardCommitRoleTargets
+  projectedCandidates: ArcCandidate[]
+  existingCurateHardCommitCandidatesEmpty?: boolean
+  projectedCandidatesReachedGreatStop?: boolean
+  greatStopInputCandidateCount?: number
+  greatStopEvaluatedCandidateCount?: number
+}): ContractArtifactGreatStopProjectionDiagnostics {
+  const projectedCandidate = params.projectedCandidates[0]
+  return {
+    adapterUsed: params.adapterUsed,
+    reason: params.reason,
+    materializedArtifactCount: params.selectedArtifactLineage ? 1 : 0,
+    materializedArtifactIds: params.selectedArtifactLineage
+      ? [params.selectedArtifactLineage.artifactId]
+      : [],
+    projectedGreatStopCandidateCount: params.projectedCandidates.length,
+    projectedGreatStopCandidateIds: params.projectedCandidates.map((candidate) => candidate.id),
+    existingCurateHardCommitCandidatesEmpty:
+      params.existingCurateHardCommitCandidatesEmpty ?? false,
+    projectedCandidatesReachedGreatStop: params.projectedCandidatesReachedGreatStop ?? false,
+    greatStopInputCandidateCount: params.greatStopInputCandidateCount ?? 0,
+    ...(params.greatStopEvaluatedCandidateCount !== undefined
+      ? { greatStopEvaluatedCandidateCount: params.greatStopEvaluatedCandidateCount }
+      : {}),
+    selectedArtifactLineagePresent: Boolean(params.selectedArtifactLineage),
+    exactRolePreferencesPresent: allCurateHardCommitTargetsPresent(params.selectedStopIds),
+    selectedStopIds: params.selectedStopIds,
+    seedVenueIds: params.seedVenueIds,
+    ...(projectedCandidate
+      ? {
+          projectedCandidateRoleVenueIds: {
+            start: getArcCandidateRoleStop(projectedCandidate, 'start')?.scoredVenue.venue.id ?? null,
+            highlight:
+              getArcCandidateRoleStop(projectedCandidate, 'highlight')?.scoredVenue.venue.id ?? null,
+            windDown:
+              getArcCandidateRoleStop(projectedCandidate, 'windDown')?.scoredVenue.venue.id ?? null,
+          },
+        }
+      : {}),
+    softGeography: {
+      selectedDirectionId: params.selectedArtifactLineage?.directionId ?? null,
+      selectedPocketId: params.selectedArtifactLineage?.pocketId ?? null,
+    },
+  }
+}
+
+function findSeedVenueIdForTarget(params: {
+  seedVenues?: Venue[]
+  venueId: string | null
+}): string | null {
+  const venueId = params.venueId?.trim()
+  if (!venueId) {
+    return null
+  }
+  return params.seedVenues?.find((venue) => venue.id === venueId)?.id ?? null
+}
+
+function buildContractArtifactGreatStopCandidateProjection(params: {
+  scoredVenues: ScoredVenue[]
+  rolePools: RolePools
+  intent: IntentProfile
+  crewPolicy: ReturnType<typeof getCrewPolicy>
+  lens: ExperienceLens
+  preferences: NonNullable<IntentProfile['discoveryPreferences']>
+  seedVenues?: Venue[]
+  selectedArtifactLineage?: ContractEntryArtifactLineage
+  existingCandidates: ArcCandidate[]
+}): {
+  candidates: ArcCandidate[]
+  diagnostics: ContractArtifactGreatStopProjectionDiagnostics
+} {
+  const selectedStopIds = roleTargetMapFromCurateHardCommitPreferences(params.preferences)
+  const seedVenueIds: CurateHardCommitRoleTargets = {
+    start: findSeedVenueIdForTarget({
+      seedVenues: params.seedVenues,
+      venueId: selectedStopIds.start,
+    }),
+    highlight: findSeedVenueIdForTarget({
+      seedVenues: params.seedVenues,
+      venueId: selectedStopIds.highlight,
+    }),
+    windDown: findSeedVenueIdForTarget({
+      seedVenues: params.seedVenues,
+      venueId: selectedStopIds.windDown,
+    }),
+  }
+  const baseDiagnostics = {
+    selectedArtifactLineage: params.selectedArtifactLineage,
+    selectedStopIds,
+    seedVenueIds,
+  }
+
+  if (!params.selectedArtifactLineage) {
+    return {
+      candidates: [],
+      diagnostics: buildContractArtifactGreatStopProjectionDiagnostics({
+        ...baseDiagnostics,
+        adapterUsed: false,
+        reason: 'missing_selected_artifact_lineage',
+        projectedCandidates: [],
+      }),
+    }
+  }
+  if (!allCurateHardCommitTargetsPresent(selectedStopIds)) {
+    return {
+      candidates: [],
+      diagnostics: buildContractArtifactGreatStopProjectionDiagnostics({
+        ...baseDiagnostics,
+        adapterUsed: false,
+        reason: 'missing_exact_role_preferences',
+        projectedCandidates: [],
+      }),
+    }
+  }
+  if (!allCurateHardCommitTargetsPresent(seedVenueIds)) {
+    return {
+      candidates: [],
+      diagnostics: buildContractArtifactGreatStopProjectionDiagnostics({
+        ...baseDiagnostics,
+        adapterUsed: false,
+        reason: 'missing_seed_identity',
+        projectedCandidates: [],
+      }),
+    }
+  }
+  if (
+    params.existingCandidates.some((candidate) =>
+      candidateMatchesCurateCommitPreferences(candidate, params.preferences),
+    )
+  ) {
+    return {
+      candidates: [],
+      diagnostics: buildContractArtifactGreatStopProjectionDiagnostics({
+        ...baseDiagnostics,
+        adapterUsed: false,
+        reason: 'duplicate_exact_candidate_exists',
+        projectedCandidates: [],
+      }),
+    }
+  }
+
+  const warmup = findSelectedContractScoredVenue({
+    scoredVenues: params.scoredVenues,
+    venueId: selectedStopIds.start ?? undefined,
+  })
+  const peak = findSelectedContractScoredVenue({
+    scoredVenues: params.scoredVenues,
+    venueId: selectedStopIds.highlight ?? undefined,
+  })
+  const cooldown = findSelectedContractScoredVenue({
+    scoredVenues: params.scoredVenues,
+    venueId: selectedStopIds.windDown ?? undefined,
+  })
+  if (!warmup || !peak || !cooldown) {
+    return {
+      candidates: [],
+      diagnostics: buildContractArtifactGreatStopProjectionDiagnostics({
+        ...baseDiagnostics,
+        adapterUsed: false,
+        reason: 'missing_scored_venue',
+        projectedCandidates: [],
+      }),
+    }
+  }
+
+  const stops: ArcStop[] = [
+    { role: 'warmup', scoredVenue: warmup },
+    { role: 'peak', scoredVenue: peak },
+    { role: 'cooldown', scoredVenue: cooldown },
+  ]
+  const score = scoreArcAssembly(
+    stops,
+    params.intent,
+    params.crewPolicy,
+    params.lens,
+    params.rolePools,
+  )
+  const candidate: ArcCandidate = {
+    id: createId('arc_contract_artifact_great_stop_candidate'),
+    stops,
+    totalScore: score.totalScore,
+    scoreBreakdown: score.scoreBreakdown,
+    pacing: score.pacing,
+    spatial: score.spatial,
+    hasWildcard: false,
+  }
+
+  return {
+    candidates: [candidate],
+    diagnostics: buildContractArtifactGreatStopProjectionDiagnostics({
+      ...baseDiagnostics,
+      adapterUsed: true,
+      reason: 'projected',
+      projectedCandidates: [candidate],
+    }),
   }
 }
 
@@ -3159,9 +3378,50 @@ async function runGeneratePlanInternal(
     )
       ? [canonicalCurateHardCommitCandidate, ...rankedCandidates]
       : rankedCandidates
-  const curateHardCommitCandidates =
+  const existingCurateHardCommitCandidates =
     curateCommitPreferences.length > 0
       ? rankedCandidatesWithCanonicalHardCommit.filter((candidate) =>
+          candidateMatchesCurateCommitPreferences(candidate, curateCommitPreferences),
+        )
+      : []
+  const contractArtifactGreatStopProjection =
+    selectedArtifactLineage &&
+    planningIntent.mode === 'curate' &&
+    curateCommitSemantics === 'approved_route_hard_commit' &&
+    curateCommitPreferences.length > 0
+      ? buildContractArtifactGreatStopCandidateProjection({
+          scoredVenues,
+          rolePools,
+          intent: planningIntent,
+          crewPolicy,
+          lens,
+          preferences: curateCommitPreferences,
+          seedVenues: options.seedVenues,
+          selectedArtifactLineage,
+          existingCandidates: rankedCandidatesWithCanonicalHardCommit,
+        })
+      : {
+          candidates: [],
+          diagnostics: buildContractArtifactGreatStopProjectionDiagnostics({
+            adapterUsed: false,
+            reason: 'not_applicable',
+            selectedArtifactLineage,
+            selectedStopIds: roleTargetMapFromCurateHardCommitPreferences(curateCommitPreferences),
+            seedVenueIds: {
+              start: null,
+              highlight: null,
+              windDown: null,
+            },
+            projectedCandidates: [],
+          }),
+        }
+  const rankedCandidatesWithContractArtifactProjection =
+    contractArtifactGreatStopProjection.candidates.length > 0
+      ? [...contractArtifactGreatStopProjection.candidates, ...rankedCandidatesWithCanonicalHardCommit]
+      : rankedCandidatesWithCanonicalHardCommit
+  const curateHardCommitCandidates =
+    curateCommitPreferences.length > 0
+      ? rankedCandidatesWithContractArtifactProjection.filter((candidate) =>
           candidateMatchesCurateCommitPreferences(candidate, curateCommitPreferences),
         )
       : []
@@ -3304,10 +3564,34 @@ async function runGeneratePlanInternal(
             : compactnessRankingDiagnostics,
         })
       : undefined
+  const contractArtifactProjectedCandidateIds = new Set(
+    contractArtifactGreatStopProjection.candidates.map((candidate) => candidate.id),
+  )
+  const contractArtifactProjectedCandidatesReachedGreatStop =
+    contractArtifactProjectedCandidateIds.size > 0 &&
+    greatStopCandidatePool.some((candidate) => contractArtifactProjectedCandidateIds.has(candidate.id))
+  const contractArtifactGreatStopProjectionDiagnostics =
+    buildContractArtifactGreatStopProjectionDiagnostics({
+      adapterUsed: contractArtifactGreatStopProjection.diagnostics.adapterUsed,
+      reason: contractArtifactGreatStopProjection.diagnostics.reason,
+      selectedArtifactLineage,
+      selectedStopIds: contractArtifactGreatStopProjection.diagnostics.selectedStopIds,
+      seedVenueIds: contractArtifactGreatStopProjection.diagnostics.seedVenueIds,
+      projectedCandidates: contractArtifactGreatStopProjection.candidates,
+      existingCurateHardCommitCandidatesEmpty: existingCurateHardCommitCandidates.length === 0,
+      projectedCandidatesReachedGreatStop:
+        contractArtifactProjectedCandidatesReachedGreatStop,
+      greatStopInputCandidateCount: greatStopCandidatePool.length,
+      greatStopEvaluatedCandidateCount:
+        greatStopSelection?.diagnostics.evaluatedCandidateCount,
+    })
   if (greatStopSelection) {
-    greatStopGateSelectionDiagnostics = greatStopSelection.diagnostics
+    greatStopGateSelectionDiagnostics = {
+      ...greatStopSelection.diagnostics,
+      contractArtifactGreatStopProjection: contractArtifactGreatStopProjectionDiagnostics,
+    } as GreatStopGateSelectionDiagnostics
     if (!greatStopSelection.selectedCandidate) {
-      throw new GreatStopGateSelectionError(greatStopSelection.diagnostics)
+      throw new GreatStopGateSelectionError(greatStopGateSelectionDiagnostics)
     }
   }
   let selectedArc =
@@ -3329,7 +3613,7 @@ async function runGeneratePlanInternal(
     })
   const curateHardCommitSampleCandidates =
     curateHardCommitRequired && curateCommitPreferences.length > 0
-      ? rankedCandidatesWithCanonicalHardCommit
+      ? rankedCandidatesWithContractArtifactProjection
           .slice(0, 5)
           .map((candidate) =>
             buildCurateHardCommitCandidateDiagnostics(candidate, curateCommitPreferences),
@@ -4560,7 +4844,7 @@ async function runGeneratePlanInternal(
                     }
                   : undefined,
               },
-              rankedCandidateCount: rankedCandidatesWithCanonicalHardCommit.length,
+              rankedCandidateCount: rankedCandidatesWithContractArtifactProjection.length,
               hardCommitCandidateCount: curateHardCommitCandidates.length,
               hardCommitPreservationSucceeded: curateHardCommitCandidates.length > 0,
               explicitFallbackTriggered:
@@ -4575,6 +4859,8 @@ async function runGeneratePlanInternal(
                 : failedRoles.length < 3
                   ? 'partial_role_match'
                   : 'pure_fallback',
+              contractArtifactGreatStopProjection:
+                contractArtifactGreatStopProjectionDiagnostics,
               hardCommitFeasibility: {
                 routeArtifactId: selectedArtifactLineage?.artifactId,
                 status: !curateHardCommitRequired

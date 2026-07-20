@@ -843,6 +843,47 @@ export interface CurateHardCommitCandidateDiagnostics {
   overallMatch: boolean
 }
 
+export interface ContractArtifactGreatStopProjectionDiagnostics {
+  adapterUsed: boolean
+  reason:
+    | 'not_applicable'
+    | 'missing_selected_artifact_lineage'
+    | 'missing_exact_role_preferences'
+    | 'missing_seed_identity'
+    | 'missing_scored_venue'
+    | 'duplicate_exact_candidate_exists'
+    | 'projected'
+  materializedArtifactCount: number
+  materializedArtifactIds: string[]
+  projectedGreatStopCandidateCount: number
+  projectedGreatStopCandidateIds: string[]
+  existingCurateHardCommitCandidatesEmpty: boolean
+  projectedCandidatesReachedGreatStop: boolean
+  greatStopInputCandidateCount: number
+  greatStopEvaluatedCandidateCount?: number
+  selectedArtifactLineagePresent: boolean
+  exactRolePreferencesPresent: boolean
+  selectedStopIds: {
+    start: string | null
+    highlight: string | null
+    windDown: string | null
+  }
+  seedVenueIds: {
+    start: string | null
+    highlight: string | null
+    windDown: string | null
+  }
+  projectedCandidateRoleVenueIds?: {
+    start: string | null
+    highlight: string | null
+    windDown: string | null
+  }
+  softGeography: {
+    selectedDirectionId: string | null
+    selectedPocketId: string | null
+  }
+}
+
 export interface CurateHardCommitDiagnostics {
   curateCommitSemantics: 'seed_guided' | 'approved_route_hard_commit'
   hardCommitRequired: boolean
@@ -862,6 +903,7 @@ export interface CurateHardCommitDiagnostics {
   sampledCandidates: CurateHardCommitCandidateDiagnostics[]
   finalWinner: CurateHardCommitCandidateDiagnostics
   finalWinnerMatchType: 'exact_selected_artifact_match' | 'partial_role_match' | 'pure_fallback'
+  contractArtifactGreatStopProjection?: ContractArtifactGreatStopProjectionDiagnostics
   hardCommitFeasibility?: {
     routeArtifactId?: string | null
     status: 'passed' | 'failed' | 'not_applicable'

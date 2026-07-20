@@ -3357,6 +3357,54 @@ async function assertCuratePreflightApprovedPayloadTruthInvariant(): Promise<voi
   process.stdout.write('Curate preflight approved-payload truth invariant: passed\n')
 }
 
+function assertContractArtifactGreatStopCandidateHandoff(): void {
+  const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf8')
+  const diagnosticsSource = readFileSync('src/domain/types/diagnostics.ts', 'utf8')
+  assert(
+    runGeneratePlanSource.includes('buildContractArtifactGreatStopCandidateProjection') &&
+      runGeneratePlanSource.includes('arc_contract_artifact_great_stop_candidate') &&
+      runGeneratePlanSource.includes('rankedCandidatesWithContractArtifactProjection') &&
+      runGeneratePlanSource.includes('existingCurateHardCommitCandidates') &&
+      runGeneratePlanSource.includes('candidateMatchesCurateCommitPreferences(candidate, curateCommitPreferences)'),
+    'Qualified ContractEntryArtifact-backed routes must be projected as canonical ArcCandidates while preserving the existing ranked planner path.',
+  )
+  assert(
+    runGeneratePlanSource.includes('selectedArtifactLineage') &&
+      runGeneratePlanSource.includes('roleTargetMapFromCurateHardCommitPreferences') &&
+      runGeneratePlanSource.includes('findSeedVenueIdForTarget') &&
+      runGeneratePlanSource.includes('missing_exact_role_preferences') &&
+      runGeneratePlanSource.includes('missing_seed_identity') &&
+      runGeneratePlanSource.includes('missing_scored_venue'),
+    'Contract artifact projection must require selected lineage, exact role preferences, seed identity, and scored venues before contributing a Great Stop candidate.',
+  )
+  assert(
+    runGeneratePlanSource.includes("role: 'warmup'") &&
+      runGeneratePlanSource.includes("role: 'peak'") &&
+      runGeneratePlanSource.includes("role: 'cooldown'") &&
+      runGeneratePlanSource.includes('selectedStopIds') &&
+      runGeneratePlanSource.includes('softGeography') &&
+      runGeneratePlanSource.includes('selectedPocketId'),
+    'Projected Great Stop candidates must preserve start/highlight/windDown roles, selected proof stop identities, and soft-geography metadata.',
+  )
+  assert(
+    runGeneratePlanSource.includes('contractArtifactGreatStopProjectionDiagnostics') &&
+      runGeneratePlanSource.includes('projectedCandidatesReachedGreatStop') &&
+      runGeneratePlanSource.includes('greatStopInputCandidateCount') &&
+      runGeneratePlanSource.includes('greatStopEvaluatedCandidateCount') &&
+      runGeneratePlanSource.includes('new GreatStopGateSelectionError(greatStopGateSelectionDiagnostics)') &&
+      diagnosticsSource.includes('ContractArtifactGreatStopProjectionDiagnostics'),
+    'Contract artifact projection diagnostics must expose adapter use, projected candidates, Great Stop input count, and evaluated candidate count through success and Great Stop failure paths.',
+  )
+  assert(
+    !runGeneratePlanSource.includes('approvedRefinementEntryPayload') &&
+      !runGeneratePlanSource.includes('RuntimeRouteArtifact') &&
+      !runGeneratePlanSource.includes('field/text-search') &&
+      !runGeneratePlanSource.includes('Movement Elasticity'),
+    'Contract artifact projection must not create approved payloads, mutate RuntimeRouteArtifact, touch Field provider wiring, or introduce Movement Elasticity.',
+  )
+  process.stdout.write('Contract artifact to Great Stop candidate handoff: passed\n')
+}
+
 function assertCurateVisibleCardProjectionUsesApprovedRouteTruth(): void {
   const sandboxSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   assert(
@@ -3507,6 +3555,7 @@ async function main(): Promise<void> {
   assertCoffeeBooksCommittedRuntimeSummaryGate()
   assertCurateApprovedPayloadVisibleCardTruthInvariant()
   await assertCuratePreflightApprovedPayloadTruthInvariant()
+  assertContractArtifactGreatStopCandidateHandoff()
   assertCurateVisibleCardProjectionUsesApprovedRouteTruth()
   assertHostedObserverCapturesSuppressedRouteSummaryEvidence()
   assertGeneralStarterContractPropagationToGreatStop()
