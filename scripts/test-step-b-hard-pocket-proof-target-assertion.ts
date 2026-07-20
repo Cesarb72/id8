@@ -32,6 +32,7 @@ function buildStop(params: {
   geoLabel: string
   tags?: string[]
   sourceTypes?: string[]
+  roleFit?: Partial<BuiltScenarioStop['roleFit']>
 }): BuiltScenarioStop {
   return {
     position: params.position,
@@ -53,7 +54,7 @@ function buildStop(params: {
     venueSubcategory: params.subcategory,
     venueTags: params.tags ?? [],
     sourceTypes: params.sourceTypes ?? [params.category],
-    roleFit: { start: 0.72, highlight: 0.72, windDown: 0.72 },
+    roleFit: { start: 0.72, highlight: 0.72, windDown: 0.72, ...params.roleFit },
   }
 }
 
@@ -241,6 +242,8 @@ function buildDirectionCard(params: { directionId: string; pocketId: string }) {
 
 function buildSupportReselectionOpportunity(params: {
   includeCompactAlternatives: boolean
+  includeAdmittedWindDownSupply?: boolean
+  includeRejectedAdmittedWindDownSupply?: boolean
   selectionPocketId?: string
   selectionPocketLabel?: string
   directionId?: string
@@ -297,9 +300,38 @@ function buildSupportReselectionOpportunity(params: {
     geoLabel: 'Willow Glen Pocket',
     sourceTypes: ['dessert'],
   })
+  const admittedWindDown = buildStop({
+    position: 'mid',
+    stopType: 'atmospheric_detour',
+    venueId: 'sj-willow-glen-cafe-landing',
+    name: 'Willow Glen Cafe Landing',
+    category: 'cafe',
+    geoBucket: 'raw-pocket-willow',
+    geoLabel: 'Willow Glen Pocket',
+    sourceTypes: ['cafe', 'coffee_shop'],
+    roleFit: { start: 0.2, highlight: 0.36, windDown: 0.86 },
+  })
+  const rejectedAdmittedWindDown = buildStop({
+    position: 'mid',
+    stopType: 'atmospheric_detour',
+    venueId: 'sj-willow-glen-low-fit-cafe',
+    name: 'Willow Glen Low-Fit Cafe',
+    category: 'cafe',
+    geoBucket: 'raw-pocket-willow',
+    geoLabel: 'Willow Glen Pocket',
+    sourceTypes: ['cafe', 'coffee_shop'],
+    roleFit: { start: 0.2, highlight: 0.3, windDown: 0.2 },
+  })
   const stops = params.includeCompactAlternatives
     ? [staleStart, compactStart, proofStop, staleWindDown, compactWindDown]
-    : [staleStart, proofStop, staleWindDown]
+    : [
+        staleStart,
+        compactStart,
+        proofStop,
+        staleWindDown,
+        ...(params.includeAdmittedWindDownSupply ? [admittedWindDown] : []),
+        ...(params.includeRejectedAdmittedWindDownSupply ? [rejectedAdmittedWindDown] : []),
+      ]
   const starterSemanticRepresentation = buildSemanticRepresentation({
     stop: proofStop,
   })
@@ -589,6 +621,115 @@ function assertBuildRequiredAnchorSupportSelectionReselectsStaleSupports(): void
   process.stdout.write('Build required-anchor support reselection: passed\n')
 }
 
+function assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply(): void {
+  const opportunity = buildSupportReselectionOpportunity({
+    includeCompactAlternatives: false,
+    includeAdmittedWindDownSupply: true,
+  })
+  const directions = [buildDirectionCard({ directionId: 'direction-downtown', pocketId: 'raw-pocket-downtown' })]
+  const first = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [opportunity],
+    fallbackOpportunities: [],
+    ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
+    directionCards: directions,
+    allDirectionCards: directions,
+    starterPack: coffeeBooksStarterPack,
+    proofTarget: buildBuildRequiredAnchorProofTarget(),
+  })
+  const second = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [opportunity],
+    fallbackOpportunities: [],
+    ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
+    directionCards: directions,
+    allDirectionCards: directions,
+    starterPack: coffeeBooksStarterPack,
+    proofTarget: buildBuildRequiredAnchorProofTarget(),
+  })
+  const artifact = first.candidateArtifacts[0]
+  const diagnostic = first.diagnostics[0]?.buildRequiredAnchorSupportSelection
+  assert(artifact, 'Admitted windDown supply must allow Build support selection to materialize an artifact.')
+  assert(diagnostic?.status === 'passed', `Admitted windDown support selection must pass, got ${diagnostic?.status}.`)
+  assert(
+    diagnostic.reason === 'build_required_anchor_support_from_admitted_supply',
+    `Expected admitted-supply reason, received ${diagnostic.reason}.`,
+  )
+  assert(
+    artifact.anchorVenueId === 'sj-willow-glen-bookhouse' &&
+      artifact.storySpine.highlight === 'Willow Glen Bookhouse',
+    'Admitted windDown fallback must preserve the required anchor.',
+  )
+  assert(
+    artifact.storySpine.start === 'Willow Glen Tea Atelier' &&
+      artifact.storySpine.windDown === 'Willow Glen Cafe Landing',
+    `Expected admitted Willow Glen windDown route, got ${JSON.stringify(artifact.storySpine)}.`,
+  )
+  assert(
+    diagnostic.routeShapePreserved &&
+      Boolean(artifact.storySpine.start) &&
+      Boolean(artifact.storySpine.highlight) &&
+      Boolean(artifact.storySpine.windDown),
+    'Admitted windDown fallback must preserve start/highlight/windDown route shape.',
+  )
+  assert(
+    second.candidateArtifacts[0]?.storySpine.start === artifact.storySpine.start &&
+      second.candidateArtifacts[0]?.storySpine.windDown === artifact.storySpine.windDown,
+    'Admitted windDown support selection must be deterministic for the same inputs.',
+  )
+  assert(
+    diagnostic.scenarioSupportCandidateCountByRole.windDown === 0 &&
+      diagnostic.admittedFallbackCandidateCountByRole.windDown > 0,
+    `Diagnostics must separate missing scenario windDown from admitted fallback candidates: ${JSON.stringify(diagnostic)}`,
+  )
+  assert(
+    diagnostic.supportSelectionSourceByRole.start === 'scenario_stop' &&
+      diagnostic.supportSelectionSourceByRole.windDown === 'admitted_candidate',
+    `Diagnostics must distinguish scenario and admitted support sources: ${JSON.stringify(diagnostic.supportSelectionSourceByRole)}`,
+  )
+  assert(
+    diagnostic.replacementSupportStops.some(
+      (entry) =>
+        entry.role === 'windDown' &&
+        entry.replaced &&
+        entry.reason === 'admitted_winddown_candidate_selected' &&
+        entry.replacementStopName === 'Willow Glen Cafe Landing',
+    ),
+    'Replacement diagnostics must name admitted windDown selection.',
+  )
+  assert(
+    diagnostic.chosenWindDownCandidate?.name === 'Willow Glen Cafe Landing' &&
+      diagnostic.chosenWindDownCandidate.source === 'admitted_candidate',
+    `Chosen windDown diagnostic must identify admitted candidate: ${JSON.stringify(diagnostic.chosenWindDownCandidate)}`,
+  )
+  assert(
+    diagnostic.windDownCandidateDiagnostics.some(
+      (entry) =>
+        entry.name === 'Willow Glen Cafe Landing' &&
+        entry.source === 'admitted_candidate' &&
+        entry.anchorPocketMatch &&
+        entry.roleSemanticsPassed &&
+        entry.roleContractPassed &&
+        entry.selected,
+    ),
+    `WindDown candidate diagnostics must show selected admitted role/contract pass: ${JSON.stringify(diagnostic.windDownCandidateDiagnostics)}`,
+  )
+  assert(
+    diagnostic.movementTotalBefore !== null &&
+      diagnostic.movementTotalAfter !== null &&
+      diagnostic.movementTotalAfter < diagnostic.movementTotalBefore &&
+      diagnostic.maxTransitionBefore !== null &&
+      diagnostic.maxTransitionAfter !== null &&
+      diagnostic.maxTransitionAfter < diagnostic.maxTransitionBefore &&
+      diagnostic.neighborhoodsAfter.length === 1 &&
+      diagnostic.neighborhoodsAfter[0] === 'Willow Glen Pocket',
+    'Admitted support selection must improve anchor-centered compactness before Great Stop.',
+  )
+  assert(
+    !artifact.qualification?.approvedRefinementEntryPayload,
+    'Admitted support replacement alone must not create an approved payload.',
+  )
+  process.stdout.write('Build admitted windDown support selection: passed\n')
+}
+
 function assertBuildRequiredAnchorSupportSelectionFailsClosedWithoutAlternatives(): void {
   const opportunity = buildSupportReselectionOpportunity({
     includeCompactAlternatives: false,
@@ -615,6 +756,49 @@ function assertBuildRequiredAnchorSupportSelectionFailsClosedWithoutAlternatives
     'Fail-closed diagnostics must name anchor_centered_support_selection_failed.',
   )
   process.stdout.write('Build required-anchor support reselection fail-closed: passed\n')
+}
+
+function assertBuildRequiredAnchorSupportSelectionRejectsLowFitAdmittedWindDown(): void {
+  const opportunity = buildSupportReselectionOpportunity({
+    includeCompactAlternatives: false,
+    includeRejectedAdmittedWindDownSupply: true,
+  })
+  const directions = [buildDirectionCard({ directionId: 'direction-downtown', pocketId: 'raw-pocket-downtown' })]
+  const bridge = buildCurateScenarioBackedArtifactBridge({
+    primaryOpportunities: [opportunity],
+    fallbackOpportunities: [],
+    ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
+    directionCards: directions,
+    allDirectionCards: directions,
+    starterPack: coffeeBooksStarterPack,
+    proofTarget: buildBuildRequiredAnchorProofTarget(),
+  })
+  const diagnostic = bridge.diagnostics[0]
+  const supportDiagnostic = diagnostic?.buildRequiredAnchorSupportSelection
+  assert(bridge.candidateArtifacts.length === 0, 'Low-fit admitted windDown supply must fail closed.')
+  assert(
+    diagnostic?.scenarioRouteBuildabilityReason === 'anchor_centered_support_selection_failed',
+    `Expected support-selection failure, received ${diagnostic?.scenarioRouteBuildabilityReason}.`,
+  )
+  assert(
+    supportDiagnostic?.status === 'failed' &&
+      supportDiagnostic.reason === 'anchor_centered_support_selection_failed' &&
+      supportDiagnostic.scenarioSupportCandidateCountByRole.windDown === 0 &&
+      supportDiagnostic.admittedFallbackCandidateCountByRole.windDown === 0,
+    `Fail-closed diagnostics must show no qualifying windDown supply: ${JSON.stringify(supportDiagnostic)}.`,
+  )
+  assert(
+    supportDiagnostic.windDownCandidateDiagnostics.some(
+      (entry) =>
+        entry.name === 'Willow Glen Low-Fit Cafe' &&
+        entry.source === 'admitted_candidate' &&
+        entry.anchorPocketMatch &&
+        !entry.roleSemanticsPassed &&
+        entry.rejectedReason === 'role_semantics_failed',
+    ),
+    `Rejected admitted windDown diagnostics must name role semantics failure: ${JSON.stringify(supportDiagnostic.windDownCandidateDiagnostics)}`,
+  )
+  process.stdout.write('Build admitted windDown role-semantics fail-closed: passed\n')
 }
 
 function assertHardPocketModesDoNotReselectSupports(): void {
@@ -736,7 +920,9 @@ function main(): void {
   assertEquivalentPocketLabelsRemainHardPocketConsistent()
   assertSelectedProofStopMustBeInsideTargetPocket()
   assertBuildRequiredAnchorSupportSelectionReselectsStaleSupports()
+  assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply()
   assertBuildRequiredAnchorSupportSelectionFailsClosedWithoutAlternatives()
+  assertBuildRequiredAnchorSupportSelectionRejectsLowFitAdmittedWindDown()
   assertHardPocketModesDoNotReselectSupports()
   assertQueryTermsDoNotSatisfyProof()
   assertCompatibilityWrappersRemainNonAuthority()

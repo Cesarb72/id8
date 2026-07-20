@@ -91,6 +91,7 @@ export interface CurateHardPocketProofTargetAssertionResult {
 type CurateBuildAnchorSupportRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
 type CurateBuildAnchorSupportSelectionStatus = 'not_applicable' | 'passed' | 'failed'
 type CurateBuildAnchorSupportSelectionSource =
+  | 'scenario_stop'
   | 'live_supply'
   | 'admitted_candidate'
   | 'static_fallback'
@@ -104,6 +105,33 @@ type CurateBuildAnchorSupportSelectionReason =
   | 'support_stop_kept_anchor_centered'
   | 'support_stop_preserved_required_anchor'
   | 'build_required_anchor_support_selection_not_applicable'
+  | 'admitted_support_candidate_used'
+  | 'scenario_support_role_missing'
+  | 'admitted_winddown_candidate_selected'
+  | 'admitted_winddown_candidate_rejected_role_contract'
+  | 'admitted_winddown_candidate_rejected_anchor_pocket'
+  | 'build_required_anchor_support_from_admitted_supply'
+
+type CurateBuildAnchorSupportCandidateRejectedReason =
+  | 'anchor_pocket_mismatch'
+  | 'role_semantics_failed'
+  | 'role_contract_failed'
+  | 'blocked_venue'
+  | 'missing_venue_id'
+
+interface CurateBuildAnchorSupportCandidateDiagnostic {
+  role: CurateBuildAnchorSupportRole
+  venueId: string | null
+  name: string | null
+  pocketId: string | null
+  pocketLabel: string | null
+  source: CurateBuildAnchorSupportSelectionSource
+  anchorPocketMatch: boolean
+  roleSemanticsPassed: boolean
+  roleContractPassed: boolean
+  selected: boolean
+  rejectedReason: CurateBuildAnchorSupportCandidateRejectedReason | null
+}
 
 interface CurateBuildAnchorSupportStopDiagnostic {
   role: CurateBuildAnchorSupportRole
@@ -133,6 +161,17 @@ export interface CurateBuildAnchorSupportSelectionDiagnostic {
   requiredAnchorPocketLabel: string | null
   originalSupportStops: CurateBuildAnchorSupportStopDiagnostic[]
   replacementSupportStops: CurateBuildAnchorSupportStopDiagnostic[]
+  scenarioSupportCandidateCountByRole: Record<CurateBuildAnchorSupportRole, number>
+  admittedFallbackCandidateCountByRole: Record<CurateBuildAnchorSupportRole, number>
+  supportSelectionSourceByRole: Record<CurateBuildAnchorSupportRole, CurateBuildAnchorSupportSelectionSource>
+  windDownCandidateDiagnostics: CurateBuildAnchorSupportCandidateDiagnostic[]
+  chosenWindDownCandidate: {
+    venueId: string
+    name: string
+    pocketId: string | null
+    pocketLabel: string | null
+    source: CurateBuildAnchorSupportSelectionSource
+  } | null
   availableCompactAlternativesConsidered: Array<{
     role: CurateBuildAnchorSupportRole
     venueId: string
@@ -148,6 +187,7 @@ export interface CurateBuildAnchorSupportSelectionDiagnostic {
   neighborhoodsBefore: string[]
   neighborhoodsAfter: string[]
   anchorCentered: boolean
+  routeShapePreserved: boolean
   greatStopInputUsesReplacedSupports: boolean
 }
 
@@ -371,6 +411,11 @@ function buildDefaultBuildAnchorSupportSelectionDiagnostic(
     requiredAnchorPocketLabel: null,
     originalSupportStops: [],
     replacementSupportStops: [],
+    scenarioSupportCandidateCountByRole: { start: 0, highlight: 0, windDown: 0 },
+    admittedFallbackCandidateCountByRole: { start: 0, highlight: 0, windDown: 0 },
+    supportSelectionSourceByRole: { start: 'none', highlight: 'none', windDown: 'none' },
+    windDownCandidateDiagnostics: [],
+    chosenWindDownCandidate: null,
     availableCompactAlternativesConsidered: [],
     movementTotalBefore: null,
     movementTotalAfter: null,
@@ -379,6 +424,7 @@ function buildDefaultBuildAnchorSupportSelectionDiagnostic(
     neighborhoodsBefore: [],
     neighborhoodsAfter: [],
     anchorCentered: false,
+    routeShapePreserved: false,
     greatStopInputUsesReplacedSupports: false,
     ...overrides,
   }
@@ -471,6 +517,20 @@ function scenarioStopMatchesRole(
   return roleForScenarioPosition(stop.position) === role
 }
 
+function scenarioStopPassesSupportRoleSemantics(params: {
+  stop: BuiltScenarioStop
+  role: CurateBuildAnchorSupportRole
+}): boolean {
+  const roleFit =
+    params.role === 'start'
+      ? params.stop.roleFit.start
+      : params.role === 'highlight'
+        ? params.stop.roleFit.highlight
+        : params.stop.roleFit.windDown
+  const minimumFit = params.role === 'highlight' ? 0.5 : params.role === 'windDown' ? 0.42 : 0.36
+  return typeof roleFit === 'number' ? roleFit >= minimumFit : true
+}
+
 function scenarioStopMatchesProofTargetPocket(params: {
   stop: BuiltScenarioStop
   proofTarget: CurateHardPocketProofTargetAssertionContext
@@ -558,34 +618,130 @@ function cloneStopForRole(
   }
 }
 
+function getBuildAnchorSupportSelectionSource(params: {
+  opportunity: VerifiedCityOpportunity
+  opportunityIndex: number
+  stage: 'scenario' | 'admitted'
+}): CurateBuildAnchorSupportSelectionSource {
+  if (params.stage === 'scenario') {
+    return 'scenario_stop'
+  }
+  void params.opportunity
+  void params.opportunityIndex
+  return 'admitted_candidate'
+}
+
+function buildSupportCandidateDiagnostic(params: {
+  role: CurateBuildAnchorSupportRole
+  stop: BuiltScenarioStop | null
+  source: CurateBuildAnchorSupportSelectionSource
+  anchorPocketMatch: boolean
+  roleSemanticsPassed: boolean
+  roleContractPassed: boolean
+  selected?: boolean
+  rejectedReason?: CurateBuildAnchorSupportCandidateRejectedReason | null
+}): CurateBuildAnchorSupportCandidateDiagnostic {
+  return {
+    role: params.role,
+    venueId: params.stop?.venueId ?? null,
+    name: params.stop?.name ?? null,
+    pocketId: params.stop?.geoBucket ?? null,
+    pocketLabel:
+      params.stop?.geoLabel ?? params.stop?.district ?? params.stop?.neighborhoodLabel ?? null,
+    source: params.source,
+    anchorPocketMatch: params.anchorPocketMatch,
+    roleSemanticsPassed: params.roleSemanticsPassed,
+    roleContractPassed: params.roleContractPassed,
+    selected: params.selected === true,
+    rejectedReason: params.rejectedReason ?? null,
+  }
+}
+
 function collectBuildAnchorSupportCandidates(params: {
   opportunities: VerifiedCityOpportunity[]
   role: CurateBuildAnchorSupportRole
   proofTarget: CurateHardPocketProofTargetAssertionContext
   blockedVenueIds: Set<string>
   starterPack: StarterPack
-}): Array<{
-  stop: BuiltScenarioStop
-  source: CurateBuildAnchorSupportSelectionSource
-  score: number
-}> {
+  allowAdmittedFallback: boolean
+}): {
+  candidates: Array<{
+    stop: BuiltScenarioStop
+    source: CurateBuildAnchorSupportSelectionSource
+    score: number
+    sourceStage: 'scenario' | 'admitted'
+  }>
+  diagnostics: CurateBuildAnchorSupportCandidateDiagnostic[]
+  scenarioCandidateCount: number
+  admittedFallbackCandidateCount: number
+} {
+  function collectForStage(stage: 'scenario' | 'admitted'): {
+    candidates: Array<{
+      stop: BuiltScenarioStop
+      source: CurateBuildAnchorSupportSelectionSource
+      score: number
+      sourceStage: 'scenario' | 'admitted'
+    }>
+    diagnostics: CurateBuildAnchorSupportCandidateDiagnostic[]
+  } {
   const byVenueId = new Map<string, {
     stop: BuiltScenarioStop
     source: CurateBuildAnchorSupportSelectionSource
     score: number
+    sourceStage: 'scenario' | 'admitted'
   }>()
+  const diagnostics: CurateBuildAnchorSupportCandidateDiagnostic[] = []
   params.opportunities.forEach((opportunity, opportunityIndex) => {
     for (const stop of opportunity.scenarioNight?.stops ?? []) {
-      if (
-        !stop.venueId.trim() ||
-        params.blockedVenueIds.has(stop.venueId) ||
-        !scenarioStopMatchesRole(stop, params.role) ||
-        !scenarioStopMatchesProofTargetPocket({ stop, proofTarget: params.proofTarget }) ||
-        !scenarioStopSatisfiesRoleContract({
+      const source = getBuildAnchorSupportSelectionSource({ opportunity, opportunityIndex, stage })
+      const venueIdPresent = Boolean(stop.venueId.trim())
+      const blocked = venueIdPresent && params.blockedVenueIds.has(stop.venueId)
+      const roleMatched =
+        stage === 'scenario' ? scenarioStopMatchesRole(stop, params.role) : params.role === 'windDown'
+      const anchorPocketMatch = scenarioStopMatchesProofTargetPocket({
+        stop,
+        proofTarget: params.proofTarget,
+      })
+      const roleSemanticsPassed =
+        roleMatched && scenarioStopPassesSupportRoleSemantics({ stop, role: params.role })
+      const roleContractPassed =
+        roleMatched &&
+        scenarioStopSatisfiesRoleContract({
           starterPack: params.starterPack,
           stop,
           role: params.role,
         })
+      const rejectedReason: CurateBuildAnchorSupportCandidateRejectedReason | null = !venueIdPresent
+        ? 'missing_venue_id'
+        : blocked
+          ? 'blocked_venue'
+          : !anchorPocketMatch
+            ? 'anchor_pocket_mismatch'
+            : !roleSemanticsPassed
+              ? 'role_semantics_failed'
+              : !roleContractPassed
+                ? 'role_contract_failed'
+                : null
+      if (params.role === 'windDown') {
+        diagnostics.push(
+          buildSupportCandidateDiagnostic({
+            role: params.role,
+            stop,
+            source,
+            anchorPocketMatch,
+            roleSemanticsPassed,
+            roleContractPassed,
+            rejectedReason,
+          }),
+        )
+      }
+      if (
+        !venueIdPresent ||
+        blocked ||
+        !roleMatched ||
+        !anchorPocketMatch ||
+        !roleSemanticsPassed ||
+        !roleContractPassed
       ) {
         continue
       }
@@ -595,33 +751,46 @@ function collectBuildAnchorSupportCandidates(params: {
           : params.role === 'highlight'
             ? stop.roleFit.highlight
             : stop.roleFit.windDown
-      const source: CurateBuildAnchorSupportSelectionSource =
-        opportunity.sourceMode === 'live'
-          ? 'live_supply'
-          : opportunityIndex === 0
-            ? 'admitted_candidate'
-            : 'static_fallback'
       const score =
         (roleFit ?? 0) * 0.52 +
         stop.authorityScore * 0.24 +
         stop.currentRelevance * 0.18 +
-        (source === 'live_supply' ? 0.05 : source === 'admitted_candidate' ? 0.03 : 0)
+        (source === 'live_supply' ? 0.05 : source === 'admitted_candidate' ? 0.03 : source === 'scenario_stop' ? 0.02 : 0)
       const existing = byVenueId.get(stop.venueId)
       if (!existing || score > existing.score) {
         byVenueId.set(stop.venueId, {
           stop,
           source,
           score,
+          sourceStage: stage,
         })
       }
     }
   })
-  return [...byVenueId.values()].sort(
+  return {
+    candidates: [...byVenueId.values()].sort(
     (left, right) =>
       right.score - left.score ||
       left.stop.name.localeCompare(right.stop.name) ||
       left.stop.venueId.localeCompare(right.stop.venueId),
-  )
+    ),
+    diagnostics,
+  }
+  }
+
+  const scenario = collectForStage('scenario')
+  const admitted =
+    scenario.candidates.length === 0 && params.allowAdmittedFallback
+      ? collectForStage('admitted')
+      : { candidates: [], diagnostics: [] }
+  const selectedStage = scenario.candidates.length > 0 ? scenario : admitted
+  const diagnostics = [...scenario.diagnostics, ...admitted.diagnostics]
+  return {
+    candidates: selectedStage.candidates,
+    diagnostics,
+    scenarioCandidateCount: scenario.candidates.length,
+    admittedFallbackCandidateCount: admitted.candidates.length,
+  }
 }
 
 function replaceScenarioCoreStop(params: {
@@ -826,6 +995,26 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
   const replacements: Partial<Record<CurateBuildAnchorSupportRole, BuiltScenarioStop>> = {}
   const originalSupportStops: CurateBuildAnchorSupportStopDiagnostic[] = []
   const replacementSupportStops: CurateBuildAnchorSupportStopDiagnostic[] = []
+  const scenarioSupportCandidateCountByRole: Record<CurateBuildAnchorSupportRole, number> = {
+    start: 0,
+    highlight: 0,
+    windDown: 0,
+  }
+  const admittedFallbackCandidateCountByRole: Record<CurateBuildAnchorSupportRole, number> = {
+    start: 0,
+    highlight: 0,
+    windDown: 0,
+  }
+  const supportSelectionSourceByRole: Record<
+    CurateBuildAnchorSupportRole,
+    CurateBuildAnchorSupportSelectionSource
+  > = {
+    start: 'none',
+    highlight: 'none',
+    windDown: 'none',
+  }
+  const windDownCandidateDiagnostics: CurateBuildAnchorSupportCandidateDiagnostic[] = []
+  let chosenWindDownCandidate: CurateBuildAnchorSupportSelectionDiagnostic['chosenWindDownCandidate'] = null
   const availableCompactAlternativesConsidered:
     CurateBuildAnchorSupportSelectionDiagnostic['availableCompactAlternativesConsidered'] = []
 
@@ -843,6 +1032,7 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
       })
       originalSupportStops.push(preserved)
       replacementSupportStops.push(preserved)
+      supportSelectionSourceByRole[role] = 'none'
       continue
     }
     const alreadyAnchorCentered = originalStop
@@ -855,25 +1045,33 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
         replacementStop: originalStop,
         kept: true,
         replaced: false,
-        selectedSupportSource: 'admitted_candidate',
+        selectedSupportSource: 'scenario_stop',
         reason: 'support_stop_kept_anchor_centered',
       })
       originalSupportStops.push(kept)
       replacementSupportStops.push(kept)
+      supportSelectionSourceByRole[role] = 'scenario_stop'
       if (originalStop?.venueId) {
         blockedVenueIds.add(originalStop.venueId)
       }
       continue
     }
-    const candidates = collectBuildAnchorSupportCandidates({
+    const candidateCollection = collectBuildAnchorSupportCandidates({
       opportunities: params.opportunities,
       role,
       proofTarget,
       blockedVenueIds,
       starterPack,
+      allowAdmittedFallback: role === 'windDown',
     })
+    scenarioSupportCandidateCountByRole[role] = candidateCollection.scenarioCandidateCount
+    admittedFallbackCandidateCountByRole[role] =
+      candidateCollection.admittedFallbackCandidateCount
+    if (role === 'windDown') {
+      windDownCandidateDiagnostics.push(...candidateCollection.diagnostics)
+    }
     availableCompactAlternativesConsidered.push(
-      ...candidates.slice(0, 5).map((entry) => ({
+      ...candidateCollection.candidates.slice(0, 5).map((entry) => ({
         role,
         venueId: entry.stop.venueId,
         name: entry.stop.name,
@@ -883,7 +1081,7 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
         source: entry.source,
       })),
     )
-    const replacement = candidates[0]
+    const replacement = candidateCollection.candidates[0]
     if (!replacement) {
       const failed = buildSupportStopDiagnostic({
         role,
@@ -892,7 +1090,10 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
         kept: false,
         replaced: false,
         selectedSupportSource: 'none',
-        reason: 'anchor_centered_support_selection_failed',
+        reason:
+          role === 'windDown' && candidateCollection.scenarioCandidateCount === 0
+            ? 'scenario_support_role_missing'
+            : 'anchor_centered_support_selection_failed',
       })
       originalSupportStops.push(failed)
       replacementSupportStops.push(failed)
@@ -922,6 +1123,11 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
             null,
           originalSupportStops,
           replacementSupportStops,
+          scenarioSupportCandidateCountByRole,
+          admittedFallbackCandidateCountByRole,
+          supportSelectionSourceByRole,
+          windDownCandidateDiagnostics,
+          chosenWindDownCandidate,
           availableCompactAlternativesConsidered,
           movementTotalBefore: originalMovement.total,
           movementTotalAfter: failedMovement.total,
@@ -930,12 +1136,33 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
           neighborhoodsBefore: originalMovement.neighborhoods,
           neighborhoodsAfter: failedMovement.neighborhoods,
           anchorCentered: false,
+          routeShapePreserved: false,
           greatStopInputUsesReplacedSupports: false,
         }),
       }
     }
     replacements[role] = replacement.stop
     blockedVenueIds.add(replacement.stop.venueId)
+    supportSelectionSourceByRole[role] = replacement.source
+    if (role === 'windDown') {
+      chosenWindDownCandidate = {
+        venueId: replacement.stop.venueId,
+        name: replacement.stop.name,
+        pocketId: replacement.stop.geoBucket ?? null,
+        pocketLabel:
+          replacement.stop.geoLabel ??
+          replacement.stop.district ??
+          replacement.stop.neighborhoodLabel ??
+          null,
+        source: replacement.source,
+      }
+      windDownCandidateDiagnostics.forEach((entry) => {
+        if (entry.venueId === replacement.stop.venueId) {
+          entry.selected = true
+          entry.rejectedReason = null
+        }
+      })
+    }
     const diagnostic = buildSupportStopDiagnostic({
       role,
       originalStop,
@@ -943,7 +1170,10 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
       kept: false,
       replaced: true,
       selectedSupportSource: replacement.source,
-      reason: 'support_stop_replaced_for_route_compactness',
+      reason:
+        replacement.sourceStage === 'admitted'
+          ? 'admitted_winddown_candidate_selected'
+          : 'support_stop_replaced_for_route_compactness',
     })
     originalSupportStops.push(
       buildSupportStopDiagnostic({
@@ -977,13 +1207,19 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
   const anchorCentered = [adjustedRoute.start, adjustedRoute.highlight, adjustedRoute.windDown]
     .filter((stop): stop is BuiltScenarioStop => Boolean(stop))
     .every((stop) => scenarioStopMatchesProofTargetPocket({ stop, proofTarget }))
+  const routeShapePreserved = Boolean(adjustedRoute.start && adjustedRoute.highlight && adjustedRoute.windDown)
+  const usedAdmittedSupply = Object.values(supportSelectionSourceByRole).some(
+    (source) => source === 'live_supply' || source === 'admitted_candidate',
+  )
 
   return {
     opportunity: adjustedOpportunity,
     diagnostic: buildDefaultBuildAnchorSupportSelectionDiagnostic({
       status: 'passed',
       reason: replacementApplied
-        ? 'anchor_centered_support_selection_applied'
+        ? usedAdmittedSupply
+          ? 'build_required_anchor_support_from_admitted_supply'
+          : 'anchor_centered_support_selection_applied'
         : null,
       proofPolicy: proofTarget.proofPolicy ?? null,
       proofMode: proofTarget.proofMode ?? null,
@@ -997,6 +1233,11 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
         null,
       originalSupportStops,
       replacementSupportStops,
+      scenarioSupportCandidateCountByRole,
+      admittedFallbackCandidateCountByRole,
+      supportSelectionSourceByRole,
+      windDownCandidateDiagnostics,
+      chosenWindDownCandidate,
       availableCompactAlternativesConsidered,
       movementTotalBefore: originalMovement.total,
       movementTotalAfter: adjustedMovement.total,
@@ -1005,6 +1246,7 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
       neighborhoodsBefore: originalMovement.neighborhoods,
       neighborhoodsAfter: adjustedMovement.neighborhoods,
       anchorCentered,
+      routeShapePreserved,
       greatStopInputUsesReplacedSupports: replacementApplied,
     }),
   }
