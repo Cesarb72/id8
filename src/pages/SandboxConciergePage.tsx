@@ -9433,6 +9433,7 @@ function buildSelectedArtifactDiscoveryPreferences(params: {
   const scenarioWindDown =
     opportunity?.scenarioNight?.stops.find((stop) => stop.position === 'closer') ??
     opportunity?.scenarioNight?.stops[opportunity.scenarioNight.stops.length - 1]
+  const materializedRouteStops = artifact.enrichment?.materializedRouteStops
 
   const artifactStartOption = findOpportunityStopOptionByName(opportunity, 'start', artifact.storySpine.start)
   const artifactHighlightOption = findOpportunityStopOptionByName(
@@ -9462,14 +9463,16 @@ function buildSelectedArtifactDiscoveryPreferences(params: {
   )
 
   addPreference(
-    artifactStartOption?.venueId ??
+    materializedRouteStops?.start?.venueId ??
+      artifactStartOption?.venueId ??
       artifactStartScenarioStop?.venueId ??
       scenarioStart?.venueId ??
       opportunity?.starts[0]?.venueId,
     'start',
   )
   addPreference(
-    artifactHighlightOption?.venueId ??
+    materializedRouteStops?.highlight?.venueId ??
+      artifactHighlightOption?.venueId ??
       artifactHighlightScenarioStop?.venueId ??
       scenarioHighlight?.venueId ??
       artifact.anchorVenueId ??
@@ -9478,6 +9481,7 @@ function buildSelectedArtifactDiscoveryPreferences(params: {
   )
   addPreference(
     windDownOverride?.venueId ??
+      materializedRouteStops?.windDown?.venueId ??
       artifactWindDownOption?.venueId ??
       artifactWindDownScenarioStop?.venueId ??
       scenarioWindDown?.venueId ??
@@ -17112,12 +17116,13 @@ export function SandboxConciergePage({
             opportunity: activeCandidateOpportunity,
             windDownOverride: repairState?.repairedWindDownTarget ?? null,
           })
+          const selectedArtifactLineage = resolveSelectedArtifactPlanningLineage(artifactToQualify)
           const scenarioHardCommitSeedVenues = buildCurateScenarioHardCommitSeedVenues({
             opportunity: activeCandidateOpportunity,
             discoveryPreferences: selectedArtifactDiscoveryPreferences,
+            materializedRouteStops: selectedArtifactLineage?.materializedRouteStops,
             city: districtLocationQuery,
           }).seedVenues
-          const selectedArtifactLineage = resolveSelectedArtifactPlanningLineage(artifactToQualify)
           const selectedArtifactLineageSummary = formatSelectedArtifactLineageSummary(
             selectedArtifactLineage,
           )

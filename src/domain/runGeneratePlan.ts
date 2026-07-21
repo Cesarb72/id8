@@ -1373,10 +1373,18 @@ function buildContractArtifactGreatStopProjectionDiagnostics(params: {
 }): ContractArtifactGreatStopProjectionDiagnostics {
   const projectedCandidate = params.projectedCandidates[0]
   const projectedCandidateRoleVenueIds = projectedRouteVenueIds(projectedCandidate)
+  const staleStopsRemainingInGreatStopInput = projectedCandidate
+    ? stalePreferenceStopIdsRemainingInProjectedCandidate({
+        materializedRouteStopIds: params.materializedRouteStopIds,
+        preferenceRouteStopIds: params.preferenceRouteStopIds,
+        projectedCandidateRoleVenueIds,
+      })
+    : []
   const projectedGreatStopCandidateMatchesMaterializedRoute =
     params.materializedRouteStopIds && allCurateHardCommitTargetsPresent(params.materializedRouteStopIds)
       ? roleTargetsEqual(projectedCandidateRoleVenueIds, params.materializedRouteStopIds)
       : undefined
+  const hasMaterializedRouteStops = Boolean(params.selectedArtifactLineage?.materializedRouteStops)
   const movement = projectedCandidateMovement(projectedCandidate)
   return {
     adapterUsed: params.adapterUsed,
@@ -1398,21 +1406,25 @@ function buildContractArtifactGreatStopProjectionDiagnostics(params: {
     exactRolePreferencesPresent: allCurateHardCommitTargetsPresent(params.selectedStopIds),
     selectedStopIds: params.selectedStopIds,
     ...(params.materializedRouteStopIds
-      ? { materializedRouteStopIds: params.materializedRouteStopIds }
+      ? {
+          selectedArtifactLineageRouteIds: params.materializedRouteStopIds,
+          materializedRouteStopIds: params.materializedRouteStopIds,
+          materializedRouteIds: params.materializedRouteStopIds,
+        }
       : {}),
     ...(params.preferenceRouteStopIds
-      ? { preferenceRouteStopIds: params.preferenceRouteStopIds }
+      ? {
+          preferenceRouteStopIds: params.preferenceRouteStopIds,
+          stalePreferenceRouteIds: params.preferenceRouteStopIds,
+        }
       : {}),
     seedVenueIds: params.seedVenueIds,
     ...(projectedCandidate
       ? {
           projectedCandidateRoleVenueIds,
-          stalePreferenceStopIdsRemainingInProjectedCandidate:
-            stalePreferenceStopIdsRemainingInProjectedCandidate({
-              materializedRouteStopIds: params.materializedRouteStopIds,
-              preferenceRouteStopIds: params.preferenceRouteStopIds,
-              projectedCandidateRoleVenueIds,
-            }),
+          projectedArcCandidateRouteIds: projectedCandidateRoleVenueIds,
+          stalePreferenceStopIdsRemainingInProjectedCandidate: staleStopsRemainingInGreatStopInput,
+          staleStopsRemainingInGreatStopInput,
           projectedCandidateNeighborhoods: projectedCandidateNeighborhoods(projectedCandidate),
           ...(movement ? { projectedCandidateMovement: movement } : {}),
         }
@@ -1423,6 +1435,14 @@ function buildContractArtifactGreatStopProjectionDiagnostics(params: {
     ...(params.stalePreferenceRouteBypassed !== undefined
       ? { stalePreferenceRouteBypassed: params.stalePreferenceRouteBypassed }
       : {}),
+    materializedRouteLineageSource: hasMaterializedRouteStops
+      ? 'selected_artifact_lineage'
+      : 'none',
+    projectionSource: params.projectedCandidates.length > 0
+      ? hasMaterializedRouteStops
+        ? 'materialized_route'
+        : 'stale_preferences'
+      : 'none',
     softGeography: {
       selectedDirectionId: params.selectedArtifactLineage?.directionId ?? null,
       selectedPocketId: params.selectedArtifactLineage?.pocketId ?? null,
@@ -1504,7 +1524,7 @@ function buildContractArtifactGreatStopCandidateProjection(params: {
         ...baseDiagnostics,
         adapterUsed: false,
         reason: hasMaterializedRouteStops
-          ? 'materialized_route_projection_missing_required_stops'
+          ? 'materialized_route_lineage_missing_required_stops'
           : 'missing_exact_role_preferences',
         projectedCandidates: [],
       }),

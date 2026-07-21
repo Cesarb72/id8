@@ -1,5 +1,8 @@
 import { readFileSync } from 'node:fs'
 import {
+  buildCurateScenarioHardCommitSeedVenues,
+} from '../src/app/services/curate/buildCurateScenarioHardCommitSeedVenues.ts'
+import {
   buildCurateScenarioBackedArtifactBridge,
   evaluateCurateHardPocketProofTargetAssertion,
   type CurateBuildAdmittedSupportCandidate,
@@ -708,6 +711,32 @@ function assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply(): 
     ),
     'Stale original windDown must not survive in materialized route lineage.',
   )
+  const materializedRouteIds = [
+    lineage.materializedRouteStops?.start?.venueId,
+    lineage.materializedRouteStops?.highlight?.venueId,
+    lineage.materializedRouteStops?.windDown?.venueId,
+  ]
+  assert(
+    materializedRouteIds.join('|') ===
+      'sj-willow-glen-tea-atelier|sj-willow-glen-bookhouse|sj-willow-glen-cafe-landing',
+    `Materialized route ids must be complete before Great Stop projection: ${JSON.stringify(materializedRouteIds)}`,
+  )
+  const seedResult = buildCurateScenarioHardCommitSeedVenues({
+    opportunity,
+    discoveryPreferences: [
+      { role: 'start', venueId: 'sj-willow-glen-tea-atelier' },
+      { role: 'highlight', venueId: 'sj-willow-glen-bookhouse' },
+      { role: 'windDown', venueId: 'sj-willow-glen-cafe-landing' },
+    ],
+    materializedRouteStops: lineage.materializedRouteStops,
+    city: 'San Jose',
+  })
+  assert(
+    seedResult.missingRoles.length === 0 &&
+      seedResult.missingVenueIds.length === 0 &&
+      seedResult.seedVenues.some((venue) => venue.id === 'sj-willow-glen-cafe-landing'),
+    `Materialized route lineage must supply seed identity for replacement support ids: ${JSON.stringify(seedResult)}`,
+  )
   assert(
     diagnostic.routeShapePreserved &&
       Boolean(artifact.storySpine.start) &&
@@ -1215,14 +1244,35 @@ function assertCompatibilityWrappersRemainNonAuthority(): void {
   assert(
     runGeneratePlanSource.includes('roleTargetMapFromMaterializedRouteStops') &&
       runGeneratePlanSource.includes('hasMaterializedRouteStops') &&
-      runGeneratePlanSource.includes('materialized_route_projection_missing_required_stops'),
+      runGeneratePlanSource.includes('materialized_route_lineage_missing_required_stops'),
     'Great Stop projection must prefer materialized route stops and fail closed when they are incomplete.',
   )
   assert(
     runGeneratePlanSource.includes('projectedGreatStopCandidateMatchesMaterializedRoute') &&
       runGeneratePlanSource.includes('stalePreferenceRouteBypassed') &&
-      runGeneratePlanSource.includes('stalePreferenceStopIdsRemainingInProjectedCandidate'),
+      runGeneratePlanSource.includes('stalePreferenceStopIdsRemainingInProjectedCandidate') &&
+      runGeneratePlanSource.includes('projectedArcCandidateRouteIds') &&
+      runGeneratePlanSource.includes('staleStopsRemainingInGreatStopInput') &&
+      runGeneratePlanSource.includes('projectionSource') &&
+      runGeneratePlanSource.includes('materializedRouteLineageSource'),
     'Great Stop projection diagnostics must expose materialized-route match and stale-preference bypass evidence.',
+  )
+  const sandboxPageSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
+  const hardCommitSeedSource = readFileSync(
+    'src/app/services/curate/buildCurateScenarioHardCommitSeedVenues.ts',
+    'utf8',
+  )
+  assert(
+    sandboxPageSource.includes('materializedRouteStops?.start?.venueId') &&
+      sandboxPageSource.includes('materializedRouteStops?.highlight?.venueId') &&
+      sandboxPageSource.includes('materializedRouteStops?.windDown?.venueId') &&
+      sandboxPageSource.includes('materializedRouteStops: selectedArtifactLineage?.materializedRouteStops'),
+    'Curate qualification must pass materialized route ids into hard-commit preferences and seed identity.',
+  )
+  assert(
+    hardCommitSeedSource.includes('materializedRouteStopToSeedVenue') &&
+      hardCommitSeedSource.includes("sourceQueryLabel: 'materialized-route-lineage'"),
+    'Hard-commit seed builder must accept materialized route lineage stops as seed identity.',
   )
   process.stdout.write('compatibility-wrapper-not-authority test: passed\n')
 }

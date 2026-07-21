@@ -3,6 +3,10 @@ import type { PreferredDiscoveryVenue } from '../../../domain/types/intent'
 import type { Venue } from '../../../domain/types/venue'
 import type { BuiltScenarioStop } from '../../../domain/interpretation/construction/scenarioBuilder'
 import type {
+  ContractEntryArtifactMaterializedRouteStop,
+  ContractEntryArtifactMaterializedRouteStops,
+} from '../../../domain/artifacts/contractEntryArtifact'
+import type {
   CityOpportunityStopOption,
   VerifiedCityOpportunity,
 } from '../../../domain/interpretation/verifiedCityOpportunity'
@@ -184,6 +188,38 @@ function stopOptionToSeedVenue(params: {
   })
 }
 
+function materializedRouteStopToSeedVenue(params: {
+  stop: ContractEntryArtifactMaterializedRouteStop
+  role: CurateHardCommitRole
+  city: string
+}): Venue {
+  const { stop, role, city } = params
+  return normalizeVenue({
+    rawType: 'place',
+    id: stop.venueId,
+    name: stop.name,
+    city,
+    neighborhood: stop.pocketLabel ?? 'San Jose',
+    driveMinutes: role === 'highlight' ? 14 : role === 'start' ? 12 : 16,
+    sourceTypes: ['materialized-route-lineage', role],
+    tags: ['materialized-route-lineage', role],
+    normalizedFromRawType: 'seed',
+    sourceOrigin: 'curated',
+    curatedSubtype: 'seed',
+    sourceQueryLabel: 'materialized-route-lineage',
+    sourceConfidence: 0.86,
+    shortDescription: `${stop.name} is carried from the materialized ContractEntryArtifact route.`,
+    narrativeFlavor: `${stop.name} preserves the materialized route selected for Great Stop projection.`,
+    isActive: true,
+    localSignals: {
+      localFavoriteScore: 0.72,
+      neighborhoodPrideScore: 0.68,
+      repeatVisitorScore: 0.62,
+    },
+    roleAffinity: roleAffinityFor(role),
+  })
+}
+
 function findScenarioStop(
   opportunity: VerifiedCityOpportunity,
   venueId: string,
@@ -205,6 +241,7 @@ function findStopOption(
 export function buildCurateScenarioHardCommitSeedVenues(params: {
   opportunity: VerifiedCityOpportunity | undefined
   discoveryPreferences: PreferredDiscoveryVenue[] | undefined
+  materializedRouteStops?: ContractEntryArtifactMaterializedRouteStops
   city: string
 }): CurateScenarioHardCommitSeedVenueResult {
   const rolePreferences = (params.discoveryPreferences ?? []).filter(
@@ -218,7 +255,7 @@ export function buildCurateScenarioHardCommitSeedVenues(params: {
   const missingRoles: CurateHardCommitRole[] = []
   const missingVenueIds: string[] = []
 
-  if (!params.opportunity) {
+  if (!params.opportunity && !params.materializedRouteStops) {
     return {
       seedVenues,
       missingRoles: requiredRoles,
@@ -234,7 +271,9 @@ export function buildCurateScenarioHardCommitSeedVenues(params: {
       continue
     }
 
-    const scenarioStop = findScenarioStop(params.opportunity, venueId)
+    const scenarioStop = params.opportunity
+      ? findScenarioStop(params.opportunity, venueId)
+      : undefined
     if (scenarioStop) {
       seedVenues.push(
         scenarioStopToSeedVenue({
@@ -246,11 +285,25 @@ export function buildCurateScenarioHardCommitSeedVenues(params: {
       continue
     }
 
-    const stopOption = findStopOption(params.opportunity, venueId)
+    const stopOption = params.opportunity
+      ? findStopOption(params.opportunity, venueId)
+      : undefined
     if (stopOption) {
       seedVenues.push(
         stopOptionToSeedVenue({
           option: stopOption,
+          role,
+          city: params.city,
+        }),
+      )
+      continue
+    }
+
+    const materializedStop = params.materializedRouteStops?.[role]
+    if (materializedStop?.venueId.trim() === venueId) {
+      seedVenues.push(
+        materializedRouteStopToSeedVenue({
+          stop: materializedStop,
           role,
           city: params.city,
         }),

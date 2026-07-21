@@ -851,6 +851,7 @@ export interface ContractArtifactGreatStopProjectionDiagnostics {
     | 'missing_exact_role_preferences'
     | 'missing_seed_identity'
     | 'missing_scored_venue'
+    | 'materialized_route_lineage_missing_required_stops'
     | 'materialized_route_projection_missing_required_stops'
     | 'duplicate_exact_candidate_exists'
     | 'projected'
@@ -869,12 +870,27 @@ export interface ContractArtifactGreatStopProjectionDiagnostics {
     highlight: string | null
     windDown: string | null
   }
+  selectedArtifactLineageRouteIds?: {
+    start: string | null
+    highlight: string | null
+    windDown: string | null
+  }
   materializedRouteStopIds?: {
     start: string | null
     highlight: string | null
     windDown: string | null
   }
+  materializedRouteIds?: {
+    start: string | null
+    highlight: string | null
+    windDown: string | null
+  }
   preferenceRouteStopIds?: {
+    start: string | null
+    highlight: string | null
+    windDown: string | null
+  }
+  stalePreferenceRouteIds?: {
     start: string | null
     highlight: string | null
     windDown: string | null
@@ -889,9 +905,17 @@ export interface ContractArtifactGreatStopProjectionDiagnostics {
     highlight: string | null
     windDown: string | null
   }
+  projectedArcCandidateRouteIds?: {
+    start: string | null
+    highlight: string | null
+    windDown: string | null
+  }
   projectedGreatStopCandidateMatchesMaterializedRoute?: boolean
   stalePreferenceRouteBypassed?: boolean
   stalePreferenceStopIdsRemainingInProjectedCandidate?: string[]
+  staleStopsRemainingInGreatStopInput?: string[]
+  materializedRouteLineageSource?: 'selected_artifact_lineage' | 'none'
+  projectionSource?: 'materialized_route' | 'stale_preferences' | 'none'
   projectedCandidateNeighborhoods?: string[]
   projectedCandidateMovement?: {
     totalEstimatedTransitionMinutes: number
