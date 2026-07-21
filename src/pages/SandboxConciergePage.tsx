@@ -135,6 +135,7 @@ import {
 } from '../app/services/curate/buildCurateCommittedRouteFallback'
 import {
   buildCurateScenarioBackedArtifactBridge,
+  collectBuildAdmittedSupportCandidatesFromCandidateBoard,
   evaluateCurateHardPocketProofTargetAssertion,
 } from '../app/services/curate/buildCurateScenarioBackedArtifactBridge'
 import { buildCurateScenarioHardCommitSeedVenues } from '../app/services/curate/buildCurateScenarioHardCommitSeedVenues'
@@ -12692,6 +12693,9 @@ export function SandboxConciergePage({
       directionCards,
       allDirectionCards,
       maxQualificationCandidateCount: 8,
+      admittedSupportCandidates: collectBuildAdmittedSupportCandidatesFromCandidateBoard(
+        scenarioCandidateBoard,
+      ),
       starterPack: selectedStarterPack ?? null,
       proofTarget:
         selectedStarterPack?.id === 'coffee-books'

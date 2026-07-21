@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import {
   buildCurateScenarioBackedArtifactBridge,
   evaluateCurateHardPocketProofTargetAssertion,
+  type CurateBuildAdmittedSupportCandidate,
 } from '../src/app/services/curate/buildCurateScenarioBackedArtifactBridge.ts'
 import { starterPacks } from '../src/data/starterPacks.ts'
 import type {
@@ -55,6 +56,47 @@ function buildStop(params: {
     venueTags: params.tags ?? [],
     sourceTypes: params.sourceTypes ?? [params.category],
     roleFit: { start: 0.72, highlight: 0.72, windDown: 0.72, ...params.roleFit },
+  }
+}
+
+function buildAdmittedSupportCandidate(params: {
+  venueId?: string
+  name?: string
+  category?: VenueCategory
+  subcategory?: string
+  geoBucket?: string
+  geoLabel?: string
+  sourceLabel?: string
+  sourceTypes?: string[]
+  admitted?: boolean
+  blockedReason?: string | null
+  enteredStopTypePool?: boolean
+  enteredAnyScenarioNight?: boolean
+  roleFit?: Partial<NonNullable<CurateBuildAdmittedSupportCandidate['roleFit']>>
+  score?: number
+} = {}): CurateBuildAdmittedSupportCandidate {
+  return {
+    venueId: params.venueId ?? 'sj-willow-glen-cafe-landing',
+    name: params.name ?? 'Willow Glen Cafe Landing',
+    district: params.geoLabel ?? 'Willow Glen Pocket',
+    neighborhoodLabel: params.geoLabel ?? 'Willow Glen Pocket',
+    geoBucket: params.geoBucket ?? 'raw-pocket-willow-live',
+    geoBucketSource: 'district_intelligence',
+    geoLabel: params.geoLabel ?? 'Willow Glen Pocket',
+    geoAssignmentMethod: 'district_intelligence_direct',
+    venueCategory: params.category ?? 'cafe',
+    venueSubcategory: params.subcategory ?? 'coffee-shop',
+    sourceLabel: params.sourceLabel ?? 'coffee-books-start-reading@pocket',
+    sourceTypes: params.sourceTypes ?? ['coffee-shop', 'cafe', 'food-store'],
+    authorityScore: params.score ?? 0.77,
+    currentRelevance: params.score ?? 0.77,
+    score: params.score ?? 0.77,
+    boardRank: 6,
+    admitted: params.admitted ?? true,
+    blockedReason: params.blockedReason ?? null,
+    enteredStopTypePool: params.enteredStopTypePool ?? false,
+    enteredAnyScenarioNight: params.enteredAnyScenarioNight ?? false,
+    roleFit: { start: 1, highlight: 1, windDown: 1, ...params.roleFit },
   }
 }
 
@@ -242,8 +284,6 @@ function buildDirectionCard(params: { directionId: string; pocketId: string }) {
 
 function buildSupportReselectionOpportunity(params: {
   includeCompactAlternatives: boolean
-  includeAdmittedWindDownSupply?: boolean
-  includeRejectedAdmittedWindDownSupply?: boolean
   selectionPocketId?: string
   selectionPocketLabel?: string
   directionId?: string
@@ -300,38 +340,9 @@ function buildSupportReselectionOpportunity(params: {
     geoLabel: 'Willow Glen Pocket',
     sourceTypes: ['dessert'],
   })
-  const admittedWindDown = buildStop({
-    position: 'mid',
-    stopType: 'atmospheric_detour',
-    venueId: 'sj-willow-glen-cafe-landing',
-    name: 'Willow Glen Cafe Landing',
-    category: 'cafe',
-    geoBucket: 'raw-pocket-willow',
-    geoLabel: 'Willow Glen Pocket',
-    sourceTypes: ['cafe', 'coffee_shop'],
-    roleFit: { start: 0.2, highlight: 0.36, windDown: 0.86 },
-  })
-  const rejectedAdmittedWindDown = buildStop({
-    position: 'mid',
-    stopType: 'atmospheric_detour',
-    venueId: 'sj-willow-glen-low-fit-cafe',
-    name: 'Willow Glen Low-Fit Cafe',
-    category: 'cafe',
-    geoBucket: 'raw-pocket-willow',
-    geoLabel: 'Willow Glen Pocket',
-    sourceTypes: ['cafe', 'coffee_shop'],
-    roleFit: { start: 0.2, highlight: 0.3, windDown: 0.2 },
-  })
   const stops = params.includeCompactAlternatives
     ? [staleStart, compactStart, proofStop, staleWindDown, compactWindDown]
-    : [
-        staleStart,
-        compactStart,
-        proofStop,
-        staleWindDown,
-        ...(params.includeAdmittedWindDownSupply ? [admittedWindDown] : []),
-        ...(params.includeRejectedAdmittedWindDownSupply ? [rejectedAdmittedWindDown] : []),
-      ]
+    : [staleStart, compactStart, proofStop, staleWindDown]
   const starterSemanticRepresentation = buildSemanticRepresentation({
     stop: proofStop,
   })
@@ -624,8 +635,8 @@ function assertBuildRequiredAnchorSupportSelectionReselectsStaleSupports(): void
 function assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply(): void {
   const opportunity = buildSupportReselectionOpportunity({
     includeCompactAlternatives: false,
-    includeAdmittedWindDownSupply: true,
   })
+  const admittedSupportCandidate = buildAdmittedSupportCandidate()
   const directions = [buildDirectionCard({ directionId: 'direction-downtown', pocketId: 'raw-pocket-downtown' })]
   const first = buildCurateScenarioBackedArtifactBridge({
     primaryOpportunities: [opportunity],
@@ -633,6 +644,7 @@ function assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply(): 
     ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
     directionCards: directions,
     allDirectionCards: directions,
+    admittedSupportCandidates: [admittedSupportCandidate],
     starterPack: coffeeBooksStarterPack,
     proofTarget: buildBuildRequiredAnchorProofTarget(),
   })
@@ -642,6 +654,7 @@ function assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply(): 
     ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
     directionCards: directions,
     allDirectionCards: directions,
+    admittedSupportCandidates: [admittedSupportCandidate],
     starterPack: coffeeBooksStarterPack,
     proofTarget: buildBuildRequiredAnchorProofTarget(),
   })
@@ -677,12 +690,14 @@ function assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply(): 
   )
   assert(
     diagnostic.scenarioSupportCandidateCountByRole.windDown === 0 &&
+      diagnostic.admittedCandidateBoardCountByRole.windDown === 1 &&
       diagnostic.admittedFallbackCandidateCountByRole.windDown > 0,
     `Diagnostics must separate missing scenario windDown from admitted fallback candidates: ${JSON.stringify(diagnostic)}`,
   )
   assert(
     diagnostic.supportSelectionSourceByRole.start === 'scenario_stop' &&
-      diagnostic.supportSelectionSourceByRole.windDown === 'admitted_candidate',
+      diagnostic.supportSelectionSourceByRole.windDown === 'admitted_candidate_board' &&
+      diagnostic.supportSelectionUsedCandidateBoardFallback,
     `Diagnostics must distinguish scenario and admitted support sources: ${JSON.stringify(diagnostic.supportSelectionSourceByRole)}`,
   )
   assert(
@@ -697,14 +712,19 @@ function assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply(): 
   )
   assert(
     diagnostic.chosenWindDownCandidate?.name === 'Willow Glen Cafe Landing' &&
-      diagnostic.chosenWindDownCandidate.source === 'admitted_candidate',
+      diagnostic.chosenWindDownCandidate.source === 'admitted_candidate_board',
     `Chosen windDown diagnostic must identify admitted candidate: ${JSON.stringify(diagnostic.chosenWindDownCandidate)}`,
   )
   assert(
     diagnostic.windDownCandidateDiagnostics.some(
       (entry) =>
         entry.name === 'Willow Glen Cafe Landing' &&
-        entry.source === 'admitted_candidate' &&
+        entry.source === 'admitted_candidate_board' &&
+        entry.sourceLabel === 'coffee-books-start-reading@pocket' &&
+        entry.admitted === true &&
+        entry.enteredStopTypePool === false &&
+        entry.enteredAnyScenarioNight === false &&
+        entry.roleFit?.windDown === 1 &&
         entry.anchorPocketMatch &&
         entry.roleSemanticsPassed &&
         entry.roleContractPassed &&
@@ -761,7 +781,11 @@ function assertBuildRequiredAnchorSupportSelectionFailsClosedWithoutAlternatives
 function assertBuildRequiredAnchorSupportSelectionRejectsLowFitAdmittedWindDown(): void {
   const opportunity = buildSupportReselectionOpportunity({
     includeCompactAlternatives: false,
-    includeRejectedAdmittedWindDownSupply: true,
+  })
+  const rejectedCandidate = buildAdmittedSupportCandidate({
+    venueId: 'sj-willow-glen-low-fit-cafe',
+    name: 'Willow Glen Low-Fit Cafe',
+    roleFit: { start: 0.2, highlight: 0.3, windDown: 0.2 },
   })
   const directions = [buildDirectionCard({ directionId: 'direction-downtown', pocketId: 'raw-pocket-downtown' })]
   const bridge = buildCurateScenarioBackedArtifactBridge({
@@ -770,6 +794,7 @@ function assertBuildRequiredAnchorSupportSelectionRejectsLowFitAdmittedWindDown(
     ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
     directionCards: directions,
     allDirectionCards: directions,
+    admittedSupportCandidates: [rejectedCandidate],
     starterPack: coffeeBooksStarterPack,
     proofTarget: buildBuildRequiredAnchorProofTarget(),
   })
@@ -782,8 +807,9 @@ function assertBuildRequiredAnchorSupportSelectionRejectsLowFitAdmittedWindDown(
   )
   assert(
     supportDiagnostic?.status === 'failed' &&
-      supportDiagnostic.reason === 'anchor_centered_support_selection_failed' &&
+      supportDiagnostic.reason === 'build_required_anchor_no_admitted_winddown_support_candidate' &&
       supportDiagnostic.scenarioSupportCandidateCountByRole.windDown === 0 &&
+      supportDiagnostic.admittedCandidateBoardCountByRole.windDown === 1 &&
       supportDiagnostic.admittedFallbackCandidateCountByRole.windDown === 0,
     `Fail-closed diagnostics must show no qualifying windDown supply: ${JSON.stringify(supportDiagnostic)}.`,
   )
@@ -791,7 +817,7 @@ function assertBuildRequiredAnchorSupportSelectionRejectsLowFitAdmittedWindDown(
     supportDiagnostic.windDownCandidateDiagnostics.some(
       (entry) =>
         entry.name === 'Willow Glen Low-Fit Cafe' &&
-        entry.source === 'admitted_candidate' &&
+        entry.source === 'admitted_candidate_board' &&
         entry.anchorPocketMatch &&
         !entry.roleSemanticsPassed &&
         entry.rejectedReason === 'role_semantics_failed',
@@ -799,6 +825,84 @@ function assertBuildRequiredAnchorSupportSelectionRejectsLowFitAdmittedWindDown(
     `Rejected admitted windDown diagnostics must name role semantics failure: ${JSON.stringify(supportDiagnostic.windDownCandidateDiagnostics)}`,
   )
   process.stdout.write('Build admitted windDown role-semantics fail-closed: passed\n')
+}
+
+function assertBuildRequiredAnchorSupportSelectionRejectsCandidateBoardPolicyFailures(): void {
+  const directions = [buildDirectionCard({ directionId: 'direction-downtown', pocketId: 'raw-pocket-downtown' })]
+  const runWithCandidate = (candidate: CurateBuildAdmittedSupportCandidate) => {
+    const opportunity = buildSupportReselectionOpportunity({
+      includeCompactAlternatives: false,
+    })
+    return buildCurateScenarioBackedArtifactBridge({
+      primaryOpportunities: [opportunity],
+      fallbackOpportunities: [],
+      ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
+      directionCards: directions,
+      allDirectionCards: directions,
+      admittedSupportCandidates: [candidate],
+      starterPack: coffeeBooksStarterPack,
+      proofTarget: buildBuildRequiredAnchorProofTarget(),
+    })
+  }
+
+  const roleContractRejected = runWithCandidate(
+    buildAdmittedSupportCandidate({
+      venueId: 'sj-willow-glen-late-bar',
+      name: 'Willow Glen Late Bar',
+      category: 'bar',
+      sourceTypes: ['bar'],
+      roleFit: { windDown: 1 },
+    }),
+  ).diagnostics[0]?.buildRequiredAnchorSupportSelection
+  assert(
+    roleContractRejected?.status === 'failed' &&
+      roleContractRejected.admittedCandidateBoardCountByRole.windDown === 1 &&
+      roleContractRejected.admittedFallbackCandidateCountByRole.windDown === 0 &&
+      roleContractRejected.windDownCandidateDiagnostics.some(
+        (entry) =>
+          entry.name === 'Willow Glen Late Bar' &&
+          entry.rejectedReason === 'role_contract_failed',
+      ),
+    `Coffee & Books windDown contract must reject non-low-energy candidate-board support: ${JSON.stringify(roleContractRejected)}`,
+  )
+
+  const pocketRejected = runWithCandidate(
+    buildAdmittedSupportCandidate({
+      venueId: 'sj-downtown-cafe',
+      name: 'Downtown Cafe',
+      geoBucket: 'raw-pocket-downtown',
+      geoLabel: 'Downtown Pocket',
+    }),
+  ).diagnostics[0]?.buildRequiredAnchorSupportSelection
+  assert(
+    pocketRejected?.status === 'failed' &&
+      pocketRejected.windDownCandidateDiagnostics.some(
+        (entry) =>
+          entry.name === 'Downtown Cafe' &&
+          !entry.anchorPocketMatch &&
+          entry.rejectedReason === 'anchor_pocket_mismatch',
+      ),
+    `Candidate-board fallback must reject non-anchor-pocket support: ${JSON.stringify(pocketRejected)}`,
+  )
+
+  const usedIdRejected = runWithCandidate(
+    buildAdmittedSupportCandidate({
+      venueId: 'sj-willow-glen-bookhouse',
+      name: 'Willow Glen Bookhouse',
+    }),
+  ).diagnostics[0]?.buildRequiredAnchorSupportSelection
+  assert(
+    usedIdRejected?.status === 'failed' &&
+      usedIdRejected.windDownCandidateDiagnostics.some(
+        (entry) =>
+          entry.name === 'Willow Glen Bookhouse' &&
+          entry.usedIdConflict &&
+          entry.rejectedReason === 'used_id_conflict',
+      ),
+    `Candidate-board fallback must reject required-anchor/used-id conflicts: ${JSON.stringify(usedIdRejected)}`,
+  )
+
+  process.stdout.write('Build admitted candidate-board policy rejection diagnostics: passed\n')
 }
 
 function assertHardPocketModesDoNotReselectSupports(): void {
@@ -923,6 +1027,7 @@ function main(): void {
   assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply()
   assertBuildRequiredAnchorSupportSelectionFailsClosedWithoutAlternatives()
   assertBuildRequiredAnchorSupportSelectionRejectsLowFitAdmittedWindDown()
+  assertBuildRequiredAnchorSupportSelectionRejectsCandidateBoardPolicyFailures()
   assertHardPocketModesDoNotReselectSupports()
   assertQueryTermsDoNotSatisfyProof()
   assertCompatibilityWrappersRemainNonAuthority()
