@@ -538,7 +538,7 @@ function assertEquivalentPocketLabelsRemainHardPocketConsistent(): void {
   process.stdout.write('hard-pocket equivalent-label assertion test: passed\n')
 }
 
-function assertSelectedProofStopMustBeInsideTargetPocket(): void {
+function assertOutOfPocketSelectedProofStopIsDiagnosticOnly(): void {
   const opportunity = buildOpportunity({
     pocketId: 'downtown-pocket',
     pocketLabel: 'Downtown Pocket',
@@ -561,12 +561,15 @@ function assertSelectedProofStopMustBeInsideTargetPocket(): void {
       crossPocketAllowed: false,
     },
   })
-  assert(result.status === 'failed', 'Out-of-pocket selected proof stop must fail.')
+  assert(result.status === 'passed', 'Out-of-pocket selected proof stop must remain diagnostic-only.')
   assert(
-    result.reason === 'proof_target_selected_stop_outside_pocket',
-    `Expected selected-stop outside-pocket failure, received ${result.reason}.`,
+    result.reason === null &&
+      result.coffeeBooksLiteralEvidenceDiagnostic ===
+        'coffee_books_literal_evidence_outside_target_pocket_diagnostic_only' &&
+      result.coffeeBooksLiteralHardGateDemoted,
+    `Expected selected-stop outside-pocket diagnostic, received ${JSON.stringify(result)}.`,
   )
-  process.stdout.write('Coffee & Books pocket-consistent target test: passed\n')
+  process.stdout.write('Coffee & Books out-of-pocket literal evidence diagnostic: passed\n')
 }
 
 function assertBuildRequiredAnchorSupportSelectionReselectsStaleSupports(): void {
@@ -1233,12 +1236,17 @@ function assertQueryTermsDoNotSatisfyProof(): void {
       crossPocketAllowed: false,
     },
   })
-  assert(result.status === 'failed', 'Query terms alone must not satisfy proof.')
+  assert(result.status === 'passed', 'Query terms alone must not hard-block Coffee Books approval.')
   assert(
-    result.reason === 'proof_target_semantic_proof_missing',
-    `Expected semantic proof missing, received ${result.reason}.`,
+    result.reason === null &&
+      result.selectedProofStopId === null &&
+      result.coffeeBooksLiteralEvidenceDiagnostic ===
+        'coffee_books_literal_evidence_missing_diagnostic_only' &&
+      result.coffeeBooksFrontDoorFamilyResolutionApplied &&
+      result.coffeeBooksLiteralHardGateDemoted,
+    `Expected missing semantic proof to remain diagnostic-only, received ${JSON.stringify(result)}.`,
   )
-  process.stdout.write('no query-term proof test: passed\n')
+  process.stdout.write('Coffee Books query-term evidence diagnostic-only: passed\n')
 }
 
 function assertCompatibilityWrappersRemainNonAuthority(): void {
@@ -1314,7 +1322,7 @@ function main(): void {
   assertHardPocketAssertionPassesAndMaterializes()
   assertHardPocketAssertionRejectsMismatchedActivePocket()
   assertEquivalentPocketLabelsRemainHardPocketConsistent()
-  assertSelectedProofStopMustBeInsideTargetPocket()
+  assertOutOfPocketSelectedProofStopIsDiagnosticOnly()
   assertBuildRequiredAnchorSupportSelectionReselectsStaleSupports()
   assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply()
   assertBuildRequiredAnchorSupportSelectionFailsClosedWithoutAlternatives()

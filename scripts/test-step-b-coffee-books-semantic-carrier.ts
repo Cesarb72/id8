@@ -550,7 +550,7 @@ function assertInPocketLiteraryStopQualifies(): void {
   process.stdout.write('Coffee & Books in-pocket semantic carrier: passed\n')
 }
 
-function assertOutOfPocketOnlyLiteraryStopFailsEarly(): void {
+function assertOutOfPocketOnlyLiteraryStopRemainsDiagnosticOnly(): void {
   const nights = buildScenarioNightsFromCandidateBoard(
     buildBoard({
       includeInPocketLiteraryStop: false,
@@ -580,27 +580,30 @@ function assertOutOfPocketOnlyLiteraryStopFailsEarly(): void {
     starterPack: coffeeBooksStarterPack,
   })
   assert(
-    bridge.candidateArtifacts.length === 0 &&
-      bridge.qualificationCandidateArtifacts.length === 0,
-    'Missing in-pocket literary/bookstore proof must not enter qualification.',
+    bridge.candidateArtifacts.length > 0 &&
+      bridge.qualificationCandidateArtifacts.length > 0,
+    'Missing in-pocket literary/bookstore proof must not block scenario-family qualification candidates.',
   )
-  const rejection = bridge.diagnostics.find(
+  const diagnostic = bridge.diagnostics.find(
     (entry) =>
-      entry.scenarioRouteBuildabilityReason ===
-      'coffee_books_insufficient_in_pocket_literary_supply',
+      entry.coffeeBooksLiteralEvidenceDiagnostic ===
+      'coffee_books_literal_evidence_missing_diagnostic_only',
   )
   assert(
-    rejection?.scenarioRouteBuildabilityStatus === 'rejected' &&
-      rejection.hardCommitFeasibility.failureClass === 'semantic_contract_failed',
-    'Out-of-pocket-only literary/bookstore supply must fail early with semantic insufficient-supply diagnostics.',
+    diagnostic?.scenarioRouteBuildabilityStatus === 'passed' &&
+      diagnostic.scenarioRouteBuildabilityReason === null &&
+      diagnostic.coffeeBooksFrontDoorFamilyResolutionApplied &&
+      diagnostic.coffeeBooksLiteralHardGateDemoted &&
+      !bridge.candidateArtifacts[0]?.qualification?.approvedRefinementEntryPayload,
+    `Out-of-pocket-only literary/bookstore supply must remain diagnostic-only without creating approved payload: ${JSON.stringify(diagnostic)}.`,
   )
-  process.stdout.write('Coffee & Books out-of-pocket insufficient supply: passed\n')
+  process.stdout.write('Coffee & Books out-of-pocket literal evidence diagnostic-only: passed\n')
 }
 
 function main(): void {
   assertProviderBookstoreSurvivesBoardAdmission()
   assertInPocketLiteraryStopQualifies()
-  assertOutOfPocketOnlyLiteraryStopFailsEarly()
+  assertOutOfPocketOnlyLiteraryStopRemainsDiagnosticOnly()
   process.stdout.write('Coffee & Books Step B semantic carrier: passed\n')
 }
 

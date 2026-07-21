@@ -24,7 +24,6 @@ type CurateScenarioBuildabilityAdmissionReason =
   | 'scenario_route_buildability_mismatch'
   | 'scenario_route_mixed_di_fallback_scattered'
   | 'scenario_route_seed_projection_missing'
-  | 'coffee_books_insufficient_in_pocket_literary_supply'
   | 'anchor_centered_support_selection_failed'
   | CurateHardPocketProofTargetAssertionReason
 type CurateHardCommitFeasibilityFailureClass =
@@ -33,7 +32,6 @@ type CurateHardCommitFeasibilityFailureClass =
   | 'role_mapping_mismatch'
   | 'planner_inventory_mismatch'
   | 'exact_preservation_failed'
-  | 'semantic_contract_failed'
   | 'canonical_start_not_planner_compatible'
   | 'canonical_highlight_not_planner_compatible'
   | 'canonical_windDown_not_planner_compatible'
@@ -87,6 +85,13 @@ export interface CurateHardPocketProofTargetAssertionResult {
   selectedProofStopName: string | null
   selectedProofStopPocketId: string | null
   selectedProofStopPocketLabel: string | null
+  coffeeBooksLiteralEvidenceDiagnostic:
+    | 'not_applicable'
+    | 'coffee_books_literal_evidence_present'
+    | 'coffee_books_literal_evidence_missing_diagnostic_only'
+    | 'coffee_books_literal_evidence_outside_target_pocket_diagnostic_only'
+  coffeeBooksFrontDoorFamilyResolutionApplied: boolean
+  coffeeBooksLiteralHardGateDemoted: boolean
 }
 
 type CurateBuildAnchorSupportRole = Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
@@ -300,6 +305,11 @@ export interface CurateScenarioBackedArtifactBridgeDiagnostic {
   scenarioRouteBuildabilityReason: CurateScenarioBuildabilityAdmissionReason | null
   scenarioRouteBuildabilityFailedRoles: Array<Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>>
   scenarioRouteBuildabilitySeedProjectionAvailable: boolean
+  coffeeBooksLiteralEvidenceDiagnostic:
+    | CurateHardPocketProofTargetAssertionResult['coffeeBooksLiteralEvidenceDiagnostic']
+    | null
+  coffeeBooksFrontDoorFamilyResolutionApplied: boolean
+  coffeeBooksLiteralHardGateDemoted: boolean
   buildRequiredAnchorSupportSelection: CurateBuildAnchorSupportSelectionDiagnostic
   proofTargetAssertion: CurateHardPocketProofTargetAssertionResult
   hardCommitFeasibility: CurateHardCommitFeasibilityDiagnostic
@@ -332,15 +342,6 @@ function dedupeArtifacts(artifacts: ContractEntryArtifact[]): ContractEntryArtif
     }
   })
   return [...byId.values()]
-}
-
-function starterSemanticRepresentationIsSelectedStopBacked(
-  representation: StarterSemanticRepresentation | undefined,
-): boolean {
-  return Boolean(
-    representation?.status === 'represented' &&
-      representation.evidence.some((entry) => entry.source === 'selected_route_stop'),
-  )
 }
 
 const COFFEE_BOOKS_PUBLIC_EVIDENCE_TYPES = new Set<StarterSemanticEvidenceKind>([
@@ -383,6 +384,19 @@ function findSelectedStopForCoffeeBooksProof(params: {
     findScenarioStopByVenueId(params.opportunity, evidence.venueId) ??
     findScenarioStopByName(params.opportunity, evidence.name)
   )
+}
+
+function getCoffeeBooksLiteralEvidenceDiagnostic(
+  representation: StarterSemanticRepresentation | undefined,
+): Exclude<CurateHardPocketProofTargetAssertionResult['coffeeBooksLiteralEvidenceDiagnostic'], 'not_applicable'> {
+  return representation?.status === 'represented' &&
+    representation.evidence.some(
+      (entry) =>
+        entry.source === 'selected_route_stop' &&
+        entry.evidenceTypes.some((type) => COFFEE_BOOKS_PUBLIC_EVIDENCE_TYPES.has(type)),
+    )
+    ? 'coffee_books_literal_evidence_present'
+    : 'coffee_books_literal_evidence_missing_diagnostic_only'
 }
 
 function selectedProofStopMatchesPocket(params: {
@@ -432,7 +446,15 @@ function buildProofTargetAssertionResult(params: {
   targetPocketId?: string | null
   targetPocketLabel?: string | null
   selectedProofStop?: BuiltScenarioStop | null
+  literalEvidenceDiagnostic?: CurateHardPocketProofTargetAssertionResult['coffeeBooksLiteralEvidenceDiagnostic']
 }): CurateHardPocketProofTargetAssertionResult {
+  const literalEvidenceDiagnostic =
+    params.literalEvidenceDiagnostic ??
+    (!params.proofTarget
+      ? 'not_applicable'
+      : params.selectedProofStop
+        ? 'coffee_books_literal_evidence_present'
+        : 'coffee_books_literal_evidence_missing_diagnostic_only')
   return {
     diagnosticOnly: true,
     status: params.status,
@@ -457,6 +479,10 @@ function buildProofTargetAssertionResult(params: {
       params.selectedProofStop?.district ??
       params.selectedProofStop?.neighborhoodLabel ??
       null,
+    coffeeBooksLiteralEvidenceDiagnostic: literalEvidenceDiagnostic,
+    coffeeBooksFrontDoorFamilyResolutionApplied:
+      literalEvidenceDiagnostic !== 'not_applicable',
+    coffeeBooksLiteralHardGateDemoted: literalEvidenceDiagnostic !== 'not_applicable',
   }
 }
 
@@ -1432,8 +1458,8 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
     return {
       opportunity,
       diagnostic: buildDefaultBuildAnchorSupportSelectionDiagnostic({
-        status: 'failed',
-        reason: 'anchor_centered_support_selection_failed',
+        status: 'not_applicable',
+        reason: 'build_required_anchor_support_selection_not_applicable',
         proofPolicy: proofTarget.proofPolicy ?? null,
         proofMode: proofTarget.proofMode ?? null,
       }),
@@ -1881,13 +1907,14 @@ export function evaluateCurateHardPocketProofTargetAssertion(params: {
   if (!selectedProofStop) {
     return buildProofTargetAssertionResult({
       proofTarget,
-      status: 'failed',
-      reason: 'proof_target_semantic_proof_missing',
+      status: 'passed',
+      reason: null,
       selectedDirectionId,
       selectedPocketId,
       targetPocketId,
       targetPocketLabel,
       selectedProofStop,
+      literalEvidenceDiagnostic: 'coffee_books_literal_evidence_missing_diagnostic_only',
     })
   }
   if (
@@ -1899,13 +1926,14 @@ export function evaluateCurateHardPocketProofTargetAssertion(params: {
   ) {
     return buildProofTargetAssertionResult({
       proofTarget,
-      status: 'failed',
-      reason: 'proof_target_selected_stop_outside_pocket',
+      status: 'passed',
+      reason: null,
       selectedDirectionId,
       selectedPocketId,
       targetPocketId,
       targetPocketLabel,
       selectedProofStop,
+      literalEvidenceDiagnostic: 'coffee_books_literal_evidence_outside_target_pocket_diagnostic_only',
     })
   }
 
@@ -1919,19 +1947,6 @@ export function evaluateCurateHardPocketProofTargetAssertion(params: {
     targetPocketLabel,
     selectedProofStop,
   })
-}
-
-function starterSemanticRepresentationHasPublicCoffeeBooksEvidence(
-  representation: StarterSemanticRepresentation | undefined,
-): boolean {
-  return Boolean(
-    representation?.status === 'represented' &&
-      representation.evidence.some(
-        (entry) =>
-          entry.source === 'selected_route_stop' &&
-          entry.evidenceTypes.some((type) => COFFEE_BOOKS_PUBLIC_EVIDENCE_TYPES.has(type)),
-      ),
-  )
 }
 
 function expectedArcRoleFor(
@@ -2117,7 +2132,7 @@ function assessCoffeeBooksScenarioBuildability(params: {
         : undefined
       const selectedStopId = stop?.venueId ?? null
       const selectedStopName = stop?.name ?? null
-      const failed = !selectedStopId || overrides.failureClass === 'semantic_contract_failed'
+      const failed = !selectedStopId
       return {
         role,
         expectedArcRole: expectedArcRoleFor(role),
@@ -2255,28 +2270,6 @@ function assessCoffeeBooksScenarioBuildability(params: {
     }
   }
 
-  if (
-    starterPack?.id === 'coffee-books' &&
-    !starterSemanticRepresentationHasPublicCoffeeBooksEvidence(
-      artifact.enrichment?.starterSemanticRepresentation ??
-        opportunity.starterSemanticRepresentation,
-    )
-  ) {
-    return {
-      allowed: false,
-      status: 'rejected',
-      reason: 'coffee_books_insufficient_in_pocket_literary_supply',
-      failedRoles: ['highlight'],
-      seedProjectionAvailable: true,
-      proofTargetAssertion,
-      hardCommitFeasibility: buildFeasibility({
-        status: 'failed',
-        failureClass: 'semantic_contract_failed',
-        failedRole: 'highlight',
-      }),
-    }
-  }
-
   if (buildRequiredAnchorSupportSelection.status === 'failed') {
     return {
       allowed: false,
@@ -2386,6 +2379,13 @@ function buildArtifactsForPool(params: {
       proofTarget: params.proofTarget,
       buildRequiredAnchorSupportSelection: supportSelection.diagnostic,
     })
+    const coffeeBooksLiteralEvidenceDiagnostic =
+      params.starterPack?.id === 'coffee-books'
+        ? getCoffeeBooksLiteralEvidenceDiagnostic(
+            artifact?.enrichment?.starterSemanticRepresentation ??
+              supportSelection.opportunity.starterSemanticRepresentation,
+          )
+        : null
     if (artifact && admission.allowed) {
       artifacts.push(artifact)
     }
@@ -2415,6 +2415,11 @@ function buildArtifactsForPool(params: {
       scenarioRouteBuildabilityReason: admission.reason,
       scenarioRouteBuildabilityFailedRoles: admission.failedRoles,
       scenarioRouteBuildabilitySeedProjectionAvailable: admission.seedProjectionAvailable,
+      coffeeBooksLiteralEvidenceDiagnostic,
+      coffeeBooksFrontDoorFamilyResolutionApplied:
+        params.starterPack?.id === 'coffee-books',
+      coffeeBooksLiteralHardGateDemoted:
+        params.starterPack?.id === 'coffee-books',
       buildRequiredAnchorSupportSelection: supportSelection.diagnostic,
       proofTargetAssertion: admission.proofTargetAssertion,
       hardCommitFeasibility: admission.hardCommitFeasibility,

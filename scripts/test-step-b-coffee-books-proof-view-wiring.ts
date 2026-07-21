@@ -336,9 +336,9 @@ function assertAssertionReceivesActivePocketAndSelectedProofStop(): void {
   process.stdout.write('Coffee Books proof-view assertion inputs: passed\n')
 }
 
-function assertScenarioPassWithoutCoffeeBooksProofDoesNotMaterialize(): void {
+function assertScenarioPassWithoutCoffeeBooksProofMaterializesWithDiagnostic(): void {
   const opportunity = buildOpportunity({
-    scenarioFamily: 'romantic_lively',
+    scenarioFamily: 'romantic_cultured',
     pocketId: 'raw-pocket-reading',
     pocketLabel: 'Reading Pocket',
     directionId: 'direction-reading',
@@ -364,16 +364,26 @@ function assertScenarioPassWithoutCoffeeBooksProofDoesNotMaterialize(): void {
     },
   })
   const diagnostic = bridge.diagnostics[0]
-  assert(bridge.candidateArtifacts.length === 0, 'Great Stop pass without Coffee proof must not materialize.')
   assert(
-    diagnostic?.proofTargetAssertion.status === 'failed',
-    'Scenario pass without Coffee proof must fail hard-pocket assertion.',
+    bridge.candidateArtifacts.length === 1 &&
+      bridge.qualificationCandidateArtifacts.length === 1,
+    'Coffee Books romantic_cultured scenario route must materialize without literal proof.',
   )
   assert(
-    diagnostic?.proofTargetAssertion.reason === 'proof_target_semantic_proof_missing',
-    `Expected semantic proof missing, received ${diagnostic?.proofTargetAssertion.reason}.`,
+    !bridge.candidateArtifacts[0]?.qualification?.approvedRefinementEntryPayload,
+    'Literal proof demotion alone must not create an approved payload.',
   )
-  process.stdout.write('scenario PASS without Coffee Books proof: passed\n')
+  assert(
+    diagnostic?.proofTargetAssertion.status === 'passed' &&
+      diagnostic.proofTargetAssertion.coffeeBooksLiteralEvidenceDiagnostic ===
+        'coffee_books_literal_evidence_missing_diagnostic_only' &&
+      diagnostic.coffeeBooksLiteralEvidenceDiagnostic ===
+        'coffee_books_literal_evidence_missing_diagnostic_only' &&
+      diagnostic.coffeeBooksFrontDoorFamilyResolutionApplied &&
+      diagnostic.coffeeBooksLiteralHardGateDemoted,
+    `Expected missing Coffee Books literal proof to remain diagnostic-only, received ${JSON.stringify(diagnostic)}.`,
+  )
+  process.stdout.write('scenario PASS without Coffee Books proof diagnostic-only: passed\n')
 }
 
 function assertQueryTermsRemainNonProof(): void {
@@ -400,10 +410,14 @@ function assertQueryTermsRemainNonProof(): void {
       crossPocketAllowed: false,
     },
   })
-  assert(result.status === 'failed', 'Query terms alone must not satisfy Coffee Books proof.')
+  assert(result.status === 'passed', 'Query terms alone must not hard-block Coffee Books approval.')
   assert(
-    result.reason === 'proof_target_semantic_proof_missing',
-    `Expected semantic proof missing for query-only evidence, received ${result.reason}.`,
+    result.reason === null &&
+      result.selectedProofStopId === null &&
+      result.coffeeBooksLiteralEvidenceDiagnostic ===
+        'coffee_books_literal_evidence_missing_diagnostic_only' &&
+      result.coffeeBooksLiteralHardGateDemoted,
+    `Expected query-only evidence to remain diagnostic-only, received ${JSON.stringify(result)}.`,
   )
   process.stdout.write('Coffee Books query terms remain non-proof: passed\n')
 }
@@ -468,7 +482,7 @@ function assertPageWiresFieldPocketDiagnosticsIntoProofTarget(): void {
 async function main(): Promise<void> {
   await assertCoffeeBooksStarterWinsOverCanonicalFamily()
   assertAssertionReceivesActivePocketAndSelectedProofStop()
-  assertScenarioPassWithoutCoffeeBooksProofDoesNotMaterialize()
+  assertScenarioPassWithoutCoffeeBooksProofMaterializesWithDiagnostic()
   assertQueryTermsRemainNonProof()
   assertPageWiresFieldPocketDiagnosticsIntoProofTarget()
   process.stdout.write('Step B Coffee Books proof-view wiring: passed\n')
