@@ -716,10 +716,32 @@ function assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply(): 
     lineage.materializedRouteStops?.highlight?.venueId,
     lineage.materializedRouteStops?.windDown?.venueId,
   ]
+  const materializedRouteBaseVenueIds = [
+    lineage.materializedRouteStops?.start?.candidateIdentity?.baseVenueId,
+    lineage.materializedRouteStops?.highlight?.candidateIdentity?.baseVenueId,
+    lineage.materializedRouteStops?.windDown?.candidateIdentity?.baseVenueId,
+  ]
   assert(
     materializedRouteIds.join('|') ===
       'sj-willow-glen-tea-atelier|sj-willow-glen-bookhouse|sj-willow-glen-cafe-landing',
     `Materialized route ids must be complete before Great Stop projection: ${JSON.stringify(materializedRouteIds)}`,
+  )
+  assert(
+    materializedRouteBaseVenueIds.join('|') ===
+      'sj-willow-glen-tea-atelier|sj-willow-glen-bookhouse|sj-willow-glen-cafe-landing',
+    `Materialized route stops must carry route-logic baseVenueIds: ${JSON.stringify(lineage.materializedRouteStops)}`,
+  )
+  assert(
+    lineage.materializedRouteStops?.start?.baseVenueId === 'sj-willow-glen-tea-atelier' &&
+      lineage.materializedRouteStops.highlight?.baseVenueId === 'sj-willow-glen-bookhouse' &&
+      lineage.materializedRouteStops.windDown?.baseVenueId === 'sj-willow-glen-cafe-landing',
+    `Materialized route stops must expose baseVenueId alongside authority venueId: ${JSON.stringify(lineage.materializedRouteStops)}`,
+  )
+  assert(
+    lineage.materializedRouteStops?.start?.routeOrder === 0 &&
+      lineage.materializedRouteStops.highlight?.routeOrder === 1 &&
+      lineage.materializedRouteStops.windDown?.routeOrder === 2,
+    `Materialized route stops must carry stable route order: ${JSON.stringify(lineage.materializedRouteStops)}`,
   )
   const seedResult = buildCurateScenarioHardCommitSeedVenues({
     opportunity,
@@ -1243,19 +1265,30 @@ function assertCompatibilityWrappersRemainNonAuthority(): void {
   )
   assert(
     runGeneratePlanSource.includes('roleTargetMapFromMaterializedRouteStops') &&
+      runGeneratePlanSource.includes('roleBaseVenueIdMapFromMaterializedRouteStops') &&
       runGeneratePlanSource.includes('hasMaterializedRouteStops') &&
-      runGeneratePlanSource.includes('materialized_route_lineage_missing_required_stops'),
-    'Great Stop projection must prefer materialized route stops and fail closed when they are incomplete.',
+      runGeneratePlanSource.includes('materialized_route_lineage_missing_required_stops') &&
+      runGeneratePlanSource.includes('materialized_route_base_venue_identity_missing'),
+    'Great Stop projection must prefer materialized route stops and fail closed when route/base identity is incomplete.',
+  )
+  assert(
+    runGeneratePlanSource.includes('lineage.materializedRouteStops') &&
+      runGeneratePlanSource.includes('materializedRouteStops: lineage.materializedRouteStops'),
+    'Selected artifact lineage normalization must preserve materialized route stops into planning.',
   )
   assert(
     runGeneratePlanSource.includes('projectedGreatStopCandidateMatchesMaterializedRoute') &&
+      runGeneratePlanSource.includes('projectedGreatStopCandidateBaseVenueIdsMatchMaterializedRoute') &&
       runGeneratePlanSource.includes('stalePreferenceRouteBypassed') &&
       runGeneratePlanSource.includes('stalePreferenceStopIdsRemainingInProjectedCandidate') &&
       runGeneratePlanSource.includes('projectedArcCandidateRouteIds') &&
+      runGeneratePlanSource.includes('projectedArcCandidateBaseVenueIds') &&
+      runGeneratePlanSource.includes('materializedRouteBaseVenueIds') &&
+      runGeneratePlanSource.includes('missingBaseVenueIdRoles') &&
       runGeneratePlanSource.includes('staleStopsRemainingInGreatStopInput') &&
       runGeneratePlanSource.includes('projectionSource') &&
       runGeneratePlanSource.includes('materializedRouteLineageSource'),
-    'Great Stop projection diagnostics must expose materialized-route match and stale-preference bypass evidence.',
+    'Great Stop projection diagnostics must expose materialized-route/base identity match and stale-preference bypass evidence.',
   )
   const sandboxPageSource = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
   const hardCommitSeedSource = readFileSync(
@@ -1263,11 +1296,11 @@ function assertCompatibilityWrappersRemainNonAuthority(): void {
     'utf8',
   )
   assert(
-    sandboxPageSource.includes('materializedRouteStops?.start?.venueId') &&
-      sandboxPageSource.includes('materializedRouteStops?.highlight?.venueId') &&
-      sandboxPageSource.includes('materializedRouteStops?.windDown?.venueId') &&
+    sandboxPageSource.includes('materializedRouteStops?.start?.candidateIdentity?.baseVenueId') &&
+      sandboxPageSource.includes('materializedRouteStops?.highlight?.candidateIdentity?.baseVenueId') &&
+      sandboxPageSource.includes('materializedRouteStops?.windDown?.candidateIdentity?.baseVenueId') &&
       sandboxPageSource.includes('materializedRouteStops: selectedArtifactLineage?.materializedRouteStops'),
-    'Curate qualification must pass materialized route ids into hard-commit preferences and seed identity.',
+    'Curate qualification must pass materialized route baseVenueIds into hard-commit preferences and seed identity.',
   )
   assert(
     hardCommitSeedSource.includes('materializedRouteStopToSeedVenue') &&

@@ -9463,7 +9463,9 @@ function buildSelectedArtifactDiscoveryPreferences(params: {
   )
 
   addPreference(
-    materializedRouteStops?.start?.venueId ??
+    materializedRouteStops?.start?.candidateIdentity?.baseVenueId ??
+      materializedRouteStops?.start?.baseVenueId ??
+      materializedRouteStops?.start?.venueId ??
       artifactStartOption?.venueId ??
       artifactStartScenarioStop?.venueId ??
       scenarioStart?.venueId ??
@@ -9471,7 +9473,9 @@ function buildSelectedArtifactDiscoveryPreferences(params: {
     'start',
   )
   addPreference(
-    materializedRouteStops?.highlight?.venueId ??
+    materializedRouteStops?.highlight?.candidateIdentity?.baseVenueId ??
+      materializedRouteStops?.highlight?.baseVenueId ??
+      materializedRouteStops?.highlight?.venueId ??
       artifactHighlightOption?.venueId ??
       artifactHighlightScenarioStop?.venueId ??
       scenarioHighlight?.venueId ??
@@ -9480,8 +9484,10 @@ function buildSelectedArtifactDiscoveryPreferences(params: {
     artifact.anchorRole ?? 'highlight',
   )
   addPreference(
-    windDownOverride?.venueId ??
+    materializedRouteStops?.windDown?.candidateIdentity?.baseVenueId ??
+      materializedRouteStops?.windDown?.baseVenueId ??
       materializedRouteStops?.windDown?.venueId ??
+      windDownOverride?.venueId ??
       artifactWindDownOption?.venueId ??
       artifactWindDownScenarioStop?.venueId ??
       scenarioWindDown?.venueId ??

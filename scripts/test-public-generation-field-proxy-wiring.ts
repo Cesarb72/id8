@@ -3371,11 +3371,14 @@ function assertContractArtifactGreatStopCandidateHandoff(): void {
   assert(
     runGeneratePlanSource.includes('selectedArtifactLineage') &&
       runGeneratePlanSource.includes('roleTargetMapFromCurateHardCommitPreferences') &&
+      runGeneratePlanSource.includes('roleBaseVenueIdMapFromMaterializedRouteStops') &&
+      runGeneratePlanSource.includes('lineage.materializedRouteStops') &&
       runGeneratePlanSource.includes('findSeedVenueIdForTarget') &&
       runGeneratePlanSource.includes('missing_exact_role_preferences') &&
       runGeneratePlanSource.includes('missing_seed_identity') &&
+      runGeneratePlanSource.includes('materialized_route_base_venue_identity_missing') &&
       runGeneratePlanSource.includes('missing_scored_venue'),
-    'Contract artifact projection must require selected lineage, exact role preferences, seed identity, and scored venues before contributing a Great Stop candidate.',
+    'Contract artifact projection must require selected lineage, route-logic baseVenueId, seed identity, and scored venues before contributing a Great Stop candidate.',
   )
   assert(
     runGeneratePlanSource.includes("role: 'warmup'") &&
@@ -3391,9 +3394,13 @@ function assertContractArtifactGreatStopCandidateHandoff(): void {
       runGeneratePlanSource.includes('projectedCandidatesReachedGreatStop') &&
       runGeneratePlanSource.includes('greatStopInputCandidateCount') &&
       runGeneratePlanSource.includes('greatStopEvaluatedCandidateCount') &&
+      runGeneratePlanSource.includes('materializedRouteBaseVenueIds') &&
+      runGeneratePlanSource.includes('projectedArcCandidateBaseVenueIds') &&
+      runGeneratePlanSource.includes('projectedGreatStopCandidateBaseVenueIdsMatchMaterializedRoute') &&
+      runGeneratePlanSource.includes('missingBaseVenueIdRoles') &&
       runGeneratePlanSource.includes('new GreatStopGateSelectionError(greatStopGateSelectionDiagnostics)') &&
       diagnosticsSource.includes('ContractArtifactGreatStopProjectionDiagnostics'),
-    'Contract artifact projection diagnostics must expose adapter use, projected candidates, Great Stop input count, and evaluated candidate count through success and Great Stop failure paths.',
+    'Contract artifact projection diagnostics must expose adapter use, projected candidates, baseVenueId lineage, Great Stop input count, and evaluated candidate count through success and Great Stop failure paths.',
   )
   assert(
     !runGeneratePlanSource.includes('approvedRefinementEntryPayload') &&

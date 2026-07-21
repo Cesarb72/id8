@@ -2,6 +2,7 @@ import type {
   BuiltScenarioNight,
   StarterSemanticRepresentation,
 } from '../interpretation/construction/scenarioBuilder'
+import type { ScoredVenueCandidateIdentity } from '../types/arc'
 import type { DirectionContractBuildability } from '../bearings/assessDirectionContractBuildability'
 import type { UserStopRole } from '../types/itinerary'
 import type { EngineSourceMode } from '../types/sourceMode'
@@ -114,6 +115,12 @@ export interface ContractEntryArtifactCanonicalRouteRoleCoverage {
 
 export interface ContractEntryArtifactMaterializedRouteStop {
   role: Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
+  routeOrder?: number
+  baseVenueId?: string
+  candidateIdentity?: Pick<
+    ScoredVenueCandidateIdentity,
+    'candidateId' | 'baseVenueId' | 'kind' | 'traceLabel'
+  >
   venueId: string
   name: string
   pocketId?: string

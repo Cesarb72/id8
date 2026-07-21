@@ -243,8 +243,22 @@ function projectMaterializedRouteStop(
   stop: VerifiedOpportunityArtifactBuilderScenarioStop,
   role: ContractEntryArtifactMaterializedRouteStop['role'],
 ): ContractEntryArtifactMaterializedRouteStop {
+  const baseVenueId = stop.venueId?.trim() ?? ''
+  const routeOrder = role === 'start' ? 0 : role === 'highlight' ? 1 : 2
   return {
     role,
+    routeOrder,
+    ...(baseVenueId
+      ? {
+          baseVenueId,
+          candidateIdentity: {
+            candidateId: baseVenueId,
+            baseVenueId,
+            kind: 'base',
+            traceLabel: stop.name,
+          },
+        }
+      : {}),
     venueId: stop.venueId ?? '',
     name: stop.name,
     ...(stop.geoBucket ? { pocketId: stop.geoBucket } : {}),

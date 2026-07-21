@@ -270,6 +270,9 @@ function normalizeSelectedArtifactLineage(input: {
         ? { directionId: selectedDirectionId }
         : {}),
     ...(lineage.pocketId?.trim() ? { pocketId: lineage.pocketId.trim() } : {}),
+    ...(lineage.materializedRouteStops
+      ? { materializedRouteStops: lineage.materializedRouteStops }
+      : {}),
   }
 }
 
@@ -1269,6 +1272,33 @@ function roleTargetMapFromMaterializedRouteStops(
   }
 }
 
+function getMaterializedRouteStopBaseVenueId(
+  stop: ContractEntryArtifactMaterializedRouteStops[keyof ContractEntryArtifactMaterializedRouteStops],
+): string | null {
+  return stop?.candidateIdentity?.baseVenueId?.trim() || stop?.baseVenueId?.trim() || null
+}
+
+function roleBaseVenueIdMapFromMaterializedRouteStops(
+  materializedRouteStops: ContractEntryArtifactMaterializedRouteStops | undefined,
+): CurateHardCommitRoleTargets {
+  return {
+    start: getMaterializedRouteStopBaseVenueId(materializedRouteStops?.start),
+    highlight: getMaterializedRouteStopBaseVenueId(materializedRouteStops?.highlight),
+    windDown: getMaterializedRouteStopBaseVenueId(materializedRouteStops?.windDown),
+  }
+}
+
+function missingBaseVenueIdRolesFromMaterializedRouteStops(
+  materializedRouteStops: ContractEntryArtifactMaterializedRouteStops | undefined,
+): Array<'start' | 'highlight' | 'windDown'> {
+  if (!materializedRouteStops) {
+    return []
+  }
+  return (['start', 'highlight', 'windDown'] as const).filter(
+    (role) => Boolean(materializedRouteStops[role]) && !getMaterializedRouteStopBaseVenueId(materializedRouteStops[role]),
+  )
+}
+
 function allCurateHardCommitTargetsPresent(targets: CurateHardCommitRoleTargets): boolean {
   return Boolean(targets.start && targets.highlight && targets.windDown)
 }
@@ -1278,15 +1308,22 @@ function candidateMatchesRoleTargets(
   targets: CurateHardCommitRoleTargets,
 ): boolean {
   return (
-    (!targets.start ||
-      getArcCandidateRoleStop(candidate, 'start')?.scoredVenue.venue.id === targets.start) &&
-    (!targets.highlight ||
-      getArcCandidateRoleStop(candidate, 'highlight')?.scoredVenue.venue.id ===
-        targets.highlight) &&
-    (!targets.windDown ||
-      getArcCandidateRoleStop(candidate, 'windDown')?.scoredVenue.venue.id ===
-        targets.windDown)
+    candidateRoleMatchesTarget(candidate, 'start', targets.start) &&
+    candidateRoleMatchesTarget(candidate, 'highlight', targets.highlight) &&
+    candidateRoleMatchesTarget(candidate, 'windDown', targets.windDown)
   )
+}
+
+function candidateRoleMatchesTarget(
+  candidate: ArcCandidate,
+  role: 'start' | 'highlight' | 'windDown',
+  target: string | null,
+): boolean {
+  if (!target) {
+    return true
+  }
+  const stop = getArcCandidateRoleStop(candidate, role)
+  return Boolean(stop && arcStopMatchesVenueId(stop, target))
 }
 
 function roleTargetsEqual(
@@ -1305,6 +1342,17 @@ function projectedRouteVenueIds(candidate: ArcCandidate | undefined): CurateHard
     windDown: candidate
       ? getArcCandidateRoleStop(candidate, 'windDown')?.scoredVenue.venue.id ?? null
       : null,
+  }
+}
+
+function projectedRouteBaseVenueIds(candidate: ArcCandidate | undefined): CurateHardCommitRoleTargets {
+  const start = candidate ? getArcCandidateRoleStop(candidate, 'start') : undefined
+  const highlight = candidate ? getArcCandidateRoleStop(candidate, 'highlight') : undefined
+  const windDown = candidate ? getArcCandidateRoleStop(candidate, 'windDown') : undefined
+  return {
+    start: start ? getArcStopBaseVenueId(start) : null,
+    highlight: highlight ? getArcStopBaseVenueId(highlight) : null,
+    windDown: windDown ? getArcStopBaseVenueId(windDown) : null,
   }
 }
 
@@ -1362,8 +1410,10 @@ function buildContractArtifactGreatStopProjectionDiagnostics(params: {
   selectedArtifactLineage?: ContractEntryArtifactLineage
   selectedStopIds: CurateHardCommitRoleTargets
   materializedRouteStopIds?: CurateHardCommitRoleTargets
+  materializedRouteBaseVenueIds?: CurateHardCommitRoleTargets
   preferenceRouteStopIds?: CurateHardCommitRoleTargets
   seedVenueIds: CurateHardCommitRoleTargets
+  missingBaseVenueIdRoles?: Array<'start' | 'highlight' | 'windDown'>
   projectedCandidates: ArcCandidate[]
   stalePreferenceRouteBypassed?: boolean
   existingCurateHardCommitCandidatesEmpty?: boolean
@@ -1373,6 +1423,7 @@ function buildContractArtifactGreatStopProjectionDiagnostics(params: {
 }): ContractArtifactGreatStopProjectionDiagnostics {
   const projectedCandidate = params.projectedCandidates[0]
   const projectedCandidateRoleVenueIds = projectedRouteVenueIds(projectedCandidate)
+  const projectedCandidateRoleBaseVenueIds = projectedRouteBaseVenueIds(projectedCandidate)
   const staleStopsRemainingInGreatStopInput = projectedCandidate
     ? stalePreferenceStopIdsRemainingInProjectedCandidate({
         materializedRouteStopIds: params.materializedRouteStopIds,
@@ -1383,6 +1434,11 @@ function buildContractArtifactGreatStopProjectionDiagnostics(params: {
   const projectedGreatStopCandidateMatchesMaterializedRoute =
     params.materializedRouteStopIds && allCurateHardCommitTargetsPresent(params.materializedRouteStopIds)
       ? roleTargetsEqual(projectedCandidateRoleVenueIds, params.materializedRouteStopIds)
+      : undefined
+  const projectedGreatStopCandidateBaseVenueIdsMatchMaterializedRoute =
+    params.materializedRouteBaseVenueIds &&
+    allCurateHardCommitTargetsPresent(params.materializedRouteBaseVenueIds)
+      ? roleTargetsEqual(projectedCandidateRoleBaseVenueIds, params.materializedRouteBaseVenueIds)
       : undefined
   const hasMaterializedRouteStops = Boolean(params.selectedArtifactLineage?.materializedRouteStops)
   const movement = projectedCandidateMovement(projectedCandidate)
@@ -1412,6 +1468,12 @@ function buildContractArtifactGreatStopProjectionDiagnostics(params: {
           materializedRouteIds: params.materializedRouteStopIds,
         }
       : {}),
+    ...(params.materializedRouteBaseVenueIds
+      ? {
+          selectedArtifactLineageBaseVenueIds: params.materializedRouteBaseVenueIds,
+          materializedRouteBaseVenueIds: params.materializedRouteBaseVenueIds,
+        }
+      : {}),
     ...(params.preferenceRouteStopIds
       ? {
           preferenceRouteStopIds: params.preferenceRouteStopIds,
@@ -1423,6 +1485,8 @@ function buildContractArtifactGreatStopProjectionDiagnostics(params: {
       ? {
           projectedCandidateRoleVenueIds,
           projectedArcCandidateRouteIds: projectedCandidateRoleVenueIds,
+          projectedCandidateRoleBaseVenueIds,
+          projectedArcCandidateBaseVenueIds: projectedCandidateRoleBaseVenueIds,
           stalePreferenceStopIdsRemainingInProjectedCandidate: staleStopsRemainingInGreatStopInput,
           staleStopsRemainingInGreatStopInput,
           projectedCandidateNeighborhoods: projectedCandidateNeighborhoods(projectedCandidate),
@@ -1431,6 +1495,12 @@ function buildContractArtifactGreatStopProjectionDiagnostics(params: {
       : {}),
     ...(projectedGreatStopCandidateMatchesMaterializedRoute !== undefined
       ? { projectedGreatStopCandidateMatchesMaterializedRoute }
+      : {}),
+    ...(projectedGreatStopCandidateBaseVenueIdsMatchMaterializedRoute !== undefined
+      ? { projectedGreatStopCandidateBaseVenueIdsMatchMaterializedRoute }
+      : {}),
+    ...(params.missingBaseVenueIdRoles && params.missingBaseVenueIdRoles.length > 0
+      ? { missingBaseVenueIdRoles: params.missingBaseVenueIdRoles }
       : {}),
     ...(params.stalePreferenceRouteBypassed !== undefined
       ? { stalePreferenceRouteBypassed: params.stalePreferenceRouteBypassed }
@@ -1479,9 +1549,15 @@ function buildContractArtifactGreatStopCandidateProjection(params: {
   const materializedRouteStopIds = roleTargetMapFromMaterializedRouteStops(
     params.selectedArtifactLineage?.materializedRouteStops,
   )
+  const materializedRouteBaseVenueIds = roleBaseVenueIdMapFromMaterializedRouteStops(
+    params.selectedArtifactLineage?.materializedRouteStops,
+  )
+  const missingBaseVenueIdRoles = missingBaseVenueIdRolesFromMaterializedRouteStops(
+    params.selectedArtifactLineage?.materializedRouteStops,
+  )
   const hasMaterializedRouteStops = Boolean(params.selectedArtifactLineage?.materializedRouteStops)
   const selectedStopIds = hasMaterializedRouteStops
-    ? materializedRouteStopIds
+    ? materializedRouteBaseVenueIds
     : preferenceRouteStopIds
   const seedVenueIds: CurateHardCommitRoleTargets = {
     start: findSeedVenueIdForTarget({
@@ -1503,7 +1579,9 @@ function buildContractArtifactGreatStopCandidateProjection(params: {
     preferenceRouteStopIds,
     seedVenueIds,
     stalePreferenceRouteBypassed: hasMaterializedRouteStops,
-    ...(hasMaterializedRouteStops ? { materializedRouteStopIds } : {}),
+    ...(hasMaterializedRouteStops
+      ? { materializedRouteStopIds, materializedRouteBaseVenueIds, missingBaseVenueIdRoles }
+      : {}),
   }
 
   if (!params.selectedArtifactLineage) {
@@ -1524,7 +1602,9 @@ function buildContractArtifactGreatStopCandidateProjection(params: {
         ...baseDiagnostics,
         adapterUsed: false,
         reason: hasMaterializedRouteStops
-          ? 'materialized_route_lineage_missing_required_stops'
+          ? allCurateHardCommitTargetsPresent(materializedRouteStopIds)
+            ? 'materialized_route_base_venue_identity_missing'
+            : 'materialized_route_lineage_missing_required_stops'
           : 'missing_exact_role_preferences',
         projectedCandidates: [],
       }),
@@ -3572,6 +3652,7 @@ async function runGeneratePlanInternal(
       ? [...contractArtifactGreatStopProjection.candidates, ...rankedCandidatesWithCanonicalHardCommit]
       : rankedCandidatesWithCanonicalHardCommit
   const curateHardCommitProjectionTargets =
+    contractArtifactGreatStopProjection.diagnostics.materializedRouteBaseVenueIds ??
     contractArtifactGreatStopProjection.diagnostics.materializedRouteStopIds ??
     roleTargetMapFromCurateHardCommitPreferences(curateCommitPreferences)
   const curateHardCommitCandidates =
@@ -3731,7 +3812,15 @@ async function runGeneratePlanInternal(
       reason: contractArtifactGreatStopProjection.diagnostics.reason,
       selectedArtifactLineage,
       selectedStopIds: contractArtifactGreatStopProjection.diagnostics.selectedStopIds,
+      materializedRouteStopIds:
+        contractArtifactGreatStopProjection.diagnostics.materializedRouteStopIds,
+      materializedRouteBaseVenueIds:
+        contractArtifactGreatStopProjection.diagnostics.materializedRouteBaseVenueIds,
+      preferenceRouteStopIds:
+        contractArtifactGreatStopProjection.diagnostics.preferenceRouteStopIds,
       seedVenueIds: contractArtifactGreatStopProjection.diagnostics.seedVenueIds,
+      missingBaseVenueIdRoles:
+        contractArtifactGreatStopProjection.diagnostics.missingBaseVenueIdRoles,
       projectedCandidates: contractArtifactGreatStopProjection.candidates,
       existingCurateHardCommitCandidatesEmpty: existingCurateHardCommitCandidates.length === 0,
       projectedCandidatesReachedGreatStop:

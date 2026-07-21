@@ -194,9 +194,10 @@ function materializedRouteStopToSeedVenue(params: {
   city: string
 }): Venue {
   const { stop, role, city } = params
+  const seedVenueId = getMaterializedRouteStopBaseVenueId(stop) ?? stop.venueId
   return normalizeVenue({
     rawType: 'place',
-    id: stop.venueId,
+    id: seedVenueId,
     name: stop.name,
     city,
     neighborhood: stop.pocketLabel ?? 'San Jose',
@@ -218,6 +219,12 @@ function materializedRouteStopToSeedVenue(params: {
     },
     roleAffinity: roleAffinityFor(role),
   })
+}
+
+function getMaterializedRouteStopBaseVenueId(
+  stop: ContractEntryArtifactMaterializedRouteStop,
+): string | null {
+  return stop.candidateIdentity?.baseVenueId?.trim() || stop.baseVenueId?.trim() || null
 }
 
 function findScenarioStop(
@@ -300,7 +307,13 @@ export function buildCurateScenarioHardCommitSeedVenues(params: {
     }
 
     const materializedStop = params.materializedRouteStops?.[role]
-    if (materializedStop?.venueId.trim() === venueId) {
+    const materializedStopIds = materializedStop
+      ? [
+          materializedStop.venueId.trim(),
+          getMaterializedRouteStopBaseVenueId(materializedStop),
+        ].filter((value): value is string => Boolean(value))
+      : []
+    if (materializedStop && materializedStopIds.includes(venueId)) {
       seedVenues.push(
         materializedRouteStopToSeedVenue({
           stop: materializedStop,
