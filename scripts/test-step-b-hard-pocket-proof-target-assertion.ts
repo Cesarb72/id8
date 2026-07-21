@@ -5,6 +5,7 @@ import {
   type CurateBuildAdmittedSupportCandidate,
 } from '../src/app/services/curate/buildCurateScenarioBackedArtifactBridge.ts'
 import { starterPacks } from '../src/data/starterPacks.ts'
+import { buildContractEntryArtifactLineage } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import type {
   BuiltScenarioNight,
   BuiltScenarioStop,
@@ -676,6 +677,25 @@ function assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply(): 
       artifact.storySpine.windDown === 'Willow Glen Cafe Landing',
     `Expected admitted Willow Glen windDown route, got ${JSON.stringify(artifact.storySpine)}.`,
   )
+  const lineage = buildContractEntryArtifactLineage(artifact)
+  assert(
+    artifact.enrichment?.materializedRouteStops?.start?.venueId === 'sj-willow-glen-tea-atelier' &&
+      artifact.enrichment.materializedRouteStops.highlight?.venueId === 'sj-willow-glen-bookhouse' &&
+      artifact.enrichment.materializedRouteStops.windDown?.venueId === 'sj-willow-glen-cafe-landing',
+    `Materialized route stops must carry replacement route ids: ${JSON.stringify(artifact.enrichment?.materializedRouteStops)}`,
+  )
+  assert(
+    lineage.materializedRouteStops?.start?.venueId === 'sj-willow-glen-tea-atelier' &&
+      lineage.materializedRouteStops.highlight?.venueId === 'sj-willow-glen-bookhouse' &&
+      lineage.materializedRouteStops.windDown?.venueId === 'sj-willow-glen-cafe-landing',
+    `ContractEntryArtifact lineage must preserve materialized replacement ids: ${JSON.stringify(lineage.materializedRouteStops)}`,
+  )
+  assert(
+    !Object.values(lineage.materializedRouteStops ?? {}).some(
+      (stop) => stop?.venueId === 'fixture-japantown-kissaten',
+    ),
+    'Stale original windDown must not survive in materialized route lineage.',
+  )
   assert(
     diagnostic.routeShapePreserved &&
       Boolean(artifact.storySpine.start) &&
@@ -1001,6 +1021,7 @@ function assertCompatibilityWrappersRemainNonAuthority(): void {
     'src/app/services/curate/buildCurateScenarioBackedArtifactBridge.ts',
     'utf8',
   )
+  const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf8')
   assert(
     selectedRouteArtifactSource.includes('must not independently author canonical route truth'),
     'SelectedRouteArtifact must remain compatibility projection, not authority.',
@@ -1014,6 +1035,18 @@ function assertCompatibilityWrappersRemainNonAuthority(): void {
     !proofAssertionSource.includes("from '../../../domain/artifacts/selectedRouteArtifact'") &&
       !proofAssertionSource.includes("from '../../wrapper/curateRefinementEntry'"),
     'Hard-pocket proof assertion must not depend on legacy compatibility wrappers as authority.',
+  )
+  assert(
+    runGeneratePlanSource.includes('roleTargetMapFromMaterializedRouteStops') &&
+      runGeneratePlanSource.includes('hasMaterializedRouteStops') &&
+      runGeneratePlanSource.includes('materialized_route_projection_missing_required_stops'),
+    'Great Stop projection must prefer materialized route stops and fail closed when they are incomplete.',
+  )
+  assert(
+    runGeneratePlanSource.includes('projectedGreatStopCandidateMatchesMaterializedRoute') &&
+      runGeneratePlanSource.includes('stalePreferenceRouteBypassed') &&
+      runGeneratePlanSource.includes('stalePreferenceStopIdsRemainingInProjectedCandidate'),
+    'Great Stop projection diagnostics must expose materialized-route match and stale-preference bypass evidence.',
   )
   process.stdout.write('compatibility-wrapper-not-authority test: passed\n')
 }

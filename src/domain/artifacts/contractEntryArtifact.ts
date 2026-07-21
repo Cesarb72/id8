@@ -42,6 +42,7 @@ export interface ContractEntryArtifactLineage {
   anchorRole?: Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
   directionId?: string
   pocketId?: string
+  materializedRouteStops?: ContractEntryArtifactMaterializedRouteStops
 }
 
 export type ContractEntryArtifactMode = 'curate' | 'surprise' | 'build'
@@ -111,6 +112,20 @@ export interface ContractEntryArtifactCanonicalRouteRoleCoverage {
   }>
 }
 
+export interface ContractEntryArtifactMaterializedRouteStop {
+  role: Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>
+  venueId: string
+  name: string
+  pocketId?: string
+  pocketLabel?: string
+}
+
+export interface ContractEntryArtifactMaterializedRouteStops {
+  start?: ContractEntryArtifactMaterializedRouteStop
+  highlight?: ContractEntryArtifactMaterializedRouteStop
+  windDown?: ContractEntryArtifactMaterializedRouteStop
+}
+
 export interface ContractEntryArtifactStarterContextFit {
   status: 'passed' | 'rejected' | 'not_run'
   starterPackId?: string
@@ -152,6 +167,7 @@ export interface ContractEntryArtifactEnrichment {
   bearingsAdmissionProof?: ContractEntryArtifactProofSummary
   waypointSequenceProof?: ContractEntryArtifactProofSummary
   canonicalRouteRoleCoverage?: ContractEntryArtifactCanonicalRouteRoleCoverage
+  materializedRouteStops?: ContractEntryArtifactMaterializedRouteStops
   validationStatus?: ContractEntryArtifactValidationStatus
   rejectionReasons?: string[]
   starterContextFit?: ContractEntryArtifactStarterContextFit
@@ -228,6 +244,9 @@ export function buildContractEntryArtifactLineage(
     ...(artifact.anchorRole ? { anchorRole: artifact.anchorRole } : {}),
     ...(artifact.selection.directionId ? { directionId: artifact.selection.directionId } : {}),
     ...(artifact.selection.pocketId ? { pocketId: artifact.selection.pocketId } : {}),
+    ...(artifact.enrichment?.materializedRouteStops
+      ? { materializedRouteStops: artifact.enrichment.materializedRouteStops }
+      : {}),
   }
 }
 

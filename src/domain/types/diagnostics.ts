@@ -851,6 +851,7 @@ export interface ContractArtifactGreatStopProjectionDiagnostics {
     | 'missing_exact_role_preferences'
     | 'missing_seed_identity'
     | 'missing_scored_venue'
+    | 'materialized_route_projection_missing_required_stops'
     | 'duplicate_exact_candidate_exists'
     | 'projected'
   materializedArtifactCount: number
@@ -868,6 +869,16 @@ export interface ContractArtifactGreatStopProjectionDiagnostics {
     highlight: string | null
     windDown: string | null
   }
+  materializedRouteStopIds?: {
+    start: string | null
+    highlight: string | null
+    windDown: string | null
+  }
+  preferenceRouteStopIds?: {
+    start: string | null
+    highlight: string | null
+    windDown: string | null
+  }
   seedVenueIds: {
     start: string | null
     highlight: string | null
@@ -877,6 +888,14 @@ export interface ContractArtifactGreatStopProjectionDiagnostics {
     start: string | null
     highlight: string | null
     windDown: string | null
+  }
+  projectedGreatStopCandidateMatchesMaterializedRoute?: boolean
+  stalePreferenceRouteBypassed?: boolean
+  stalePreferenceStopIdsRemainingInProjectedCandidate?: string[]
+  projectedCandidateNeighborhoods?: string[]
+  projectedCandidateMovement?: {
+    totalEstimatedTransitionMinutes: number
+    maxSingleTransitionMinutes: number
   }
   softGeography: {
     selectedDirectionId: string | null

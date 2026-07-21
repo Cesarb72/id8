@@ -1,6 +1,7 @@
 import type {
   CanonicalCandidateRouteArtifact,
   ContractEntryArtifact,
+  ContractEntryArtifactMaterializedRouteStop,
 } from '../artifacts/contractEntryArtifact'
 import type { EngineSourceMode } from '../types/sourceMode'
 import type {
@@ -23,6 +24,10 @@ interface VerifiedOpportunityArtifactBuilderScenarioStop {
   venueId?: string
   name: string
   whyThisStop?: string
+  geoBucket?: string
+  geoLabel?: string
+  district?: string
+  neighborhoodLabel?: string
 }
 
 interface VerifiedOpportunityArtifactBuilderScenarioNight {
@@ -101,6 +106,28 @@ export function buildContractEntryArtifactFromVerifiedOpportunity(params: {
     const canonicalHighlight = canonicalNight?.stops.find((stop) => stop.position === 'highlight')
     const canonicalWindDownName =
       opportunity.scenarioWindDownDebug?.finalName ?? opportunity.storySpine.windDown
+    const canonicalWindDown =
+      canonicalNight?.stops.find(
+        (stop) =>
+          stop.name.trim().toLowerCase() === canonicalWindDownName.trim().toLowerCase() &&
+          (stop.position === 'windDown' || stop.position === 'closer'),
+      ) ??
+      canonicalNight?.stops.find(
+        (stop) => stop.name.trim().toLowerCase() === canonicalWindDownName.trim().toLowerCase(),
+      ) ??
+      canonicalNight?.stops.find((stop) => stop.position === 'closer') ??
+      canonicalNight?.stops[canonicalNight.stops.length - 1]
+    const materializedRouteStops = {
+      ...(canonicalStart
+        ? { start: projectMaterializedRouteStop(canonicalStart, 'start') }
+        : {}),
+      ...(canonicalHighlight
+        ? { highlight: projectMaterializedRouteStop(canonicalHighlight, 'highlight') }
+        : {}),
+      ...(canonicalWindDown
+        ? { windDown: projectMaterializedRouteStop(canonicalWindDown, 'windDown') }
+        : {}),
+    }
     const canonicalRoleNames = new Set(
       [canonicalStart?.name, canonicalHighlight?.name, canonicalWindDownName]
         .map((name) => name?.trim().toLowerCase())
@@ -116,6 +143,18 @@ export function buildContractEntryArtifactFromVerifiedOpportunity(params: {
         })) ?? []
     const starterSemanticRepresentation =
       opportunity.starterSemanticRepresentation ?? canonicalNight?.starterSemanticRepresentation
+    const enrichment: ContractEntryArtifact['enrichment'] = {
+      canonicalRouteRoleCoverage: {
+        start: canonicalStart?.name ?? opportunity.storySpine.start,
+        highlight: canonicalHighlight?.name ?? opportunity.storySpine.highlight,
+        windDown: canonicalWindDownName,
+        ...(supportStops.length > 0 ? { support: supportStops } : {}),
+      },
+      ...(Object.keys(materializedRouteStops).length > 0
+        ? { materializedRouteStops }
+        : {}),
+      ...(starterSemanticRepresentation ? { starterSemanticRepresentation } : {}),
+    }
 
     return {
       id: opportunity.id,
@@ -141,30 +180,7 @@ export function buildContractEntryArtifactFromVerifiedOpportunity(params: {
       whyTonightProofLine: opportunity.whyTonightProofLine,
       scenarioEvaluation: canonicalNight?.evaluation,
       selection: opportunity.selection,
-      ...(starterSemanticRepresentation
-        ? {
-            enrichment: {
-              canonicalRouteRoleCoverage: {
-                start: canonicalStart?.name ?? opportunity.storySpine.start,
-                highlight: canonicalHighlight?.name ?? opportunity.storySpine.highlight,
-                windDown: canonicalWindDownName,
-                ...(supportStops.length > 0 ? { support: supportStops } : {}),
-              },
-              starterSemanticRepresentation,
-            },
-          }
-        : supportStops.length > 0
-          ? {
-              enrichment: {
-                canonicalRouteRoleCoverage: {
-                  start: canonicalStart?.name ?? opportunity.storySpine.start,
-                  highlight: canonicalHighlight?.name ?? opportunity.storySpine.highlight,
-                  windDown: canonicalWindDownName,
-                  support: supportStops,
-                },
-              },
-            }
-        : {}),
+      enrichment,
     }
   }
 
@@ -221,6 +237,21 @@ function buildStep2CardTraits(
             ? 'Standout'
             : 'Balanced'
   return [explorationTrait, discoveryTrait, vibeTrait]
+}
+
+function projectMaterializedRouteStop(
+  stop: VerifiedOpportunityArtifactBuilderScenarioStop,
+  role: ContractEntryArtifactMaterializedRouteStop['role'],
+): ContractEntryArtifactMaterializedRouteStop {
+  return {
+    role,
+    venueId: stop.venueId ?? '',
+    name: stop.name,
+    ...(stop.geoBucket ? { pocketId: stop.geoBucket } : {}),
+    ...(stop.geoLabel ?? stop.district ?? stop.neighborhoodLabel
+      ? { pocketLabel: stop.geoLabel ?? stop.district ?? stop.neighborhoodLabel }
+      : {}),
+  }
 }
 
 function uniqueStopNames(names: Array<string | undefined>): string[] {
