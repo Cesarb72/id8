@@ -98,6 +98,11 @@ type CurateBuildAnchorSupportSelectionSource =
   | 'admitted_candidate_board'
   | 'static_fallback'
   | 'none'
+type CurateBuildAnchorSupportAdmissionEvidenceSource =
+  | 'district_admission_diagnostic'
+  | 'candidate_board_admitted'
+  | 'carried_admission'
+  | 'none'
 type CurateBuildAnchorSupportSelectionReason =
   | 'build_required_anchor_support_reselected'
   | 'stale_support_stop_outside_anchor_pocket'
@@ -114,6 +119,7 @@ type CurateBuildAnchorSupportSelectionReason =
   | 'admitted_winddown_candidate_rejected_anchor_pocket'
   | 'build_required_anchor_support_from_admitted_supply'
   | 'build_required_anchor_no_admitted_winddown_support_candidate'
+  | 'build_required_anchor_no_admission_proven_winddown_support_candidate'
 
 type CurateBuildAnchorSupportCandidateRejectedReason =
   | 'anchor_pocket_mismatch'
@@ -122,6 +128,9 @@ type CurateBuildAnchorSupportCandidateRejectedReason =
   | 'blocked_venue'
   | 'used_id_conflict'
   | 'not_admitted'
+  | 'not_admitted_missing_admission_evidence'
+  | 'not_admitted_district_status_blocked'
+  | 'not_admitted_shape_unlinked'
   | 'missing_venue_id'
 
 export interface CurateBuildAdmittedSupportCandidate {
@@ -148,6 +157,9 @@ export interface CurateBuildAdmittedSupportCandidate {
   score?: number
   boardRank?: number
   admitted?: boolean
+  admissionEvidenceSource?: CurateBuildAnchorSupportAdmissionEvidenceSource
+  admissionStatusBeforeAdaptation?: string | null
+  admissionStatusAfterAdaptation?: string | null
   blockedReason?: string | null
   enteredStopTypePool?: boolean
   enteredAnyScenarioNight?: boolean
@@ -163,6 +175,9 @@ interface CurateBuildAnchorSupportCandidateDiagnostic {
   sourceLabel: string | null
   roleFit: BuiltScenarioStop['roleFit'] | null
   admitted: boolean | null
+  admissionEvidenceSource: CurateBuildAnchorSupportAdmissionEvidenceSource | null
+  admissionStatusBeforeAdaptation: string | null
+  admissionStatusAfterAdaptation: string | null
   blockedReason: string | null
   usedIdConflict: boolean
   enteredStopTypePool: boolean | null
@@ -170,6 +185,7 @@ interface CurateBuildAnchorSupportCandidateDiagnostic {
   anchorPocketMatch: boolean
   roleSemanticsPassed: boolean
   roleContractPassed: boolean
+  deterministicRankPosition: number | null
   selected: boolean
   rejectedReason: CurateBuildAnchorSupportCandidateRejectedReason | null
 }
@@ -205,6 +221,10 @@ export interface CurateBuildAnchorSupportSelectionDiagnostic {
   scenarioSupportCandidateCountByRole: Record<CurateBuildAnchorSupportRole, number>
   admittedCandidateBoardCountByRole: Record<CurateBuildAnchorSupportRole, number>
   admittedFallbackCandidateCountByRole: Record<CurateBuildAnchorSupportRole, number>
+  rawCandidateBoardCountByRole: Record<CurateBuildAnchorSupportRole, number>
+  admissionProvenCandidateBoardCountByRole: Record<CurateBuildAnchorSupportRole, number>
+  roleEligibleCandidateBoardCountByRole: Record<CurateBuildAnchorSupportRole, number>
+  finalFallbackPoolCountByRole: Record<CurateBuildAnchorSupportRole, number>
   supportSelectionUsedCandidateBoardFallback: boolean
   supportSelectionSourceByRole: Record<CurateBuildAnchorSupportRole, CurateBuildAnchorSupportSelectionSource>
   windDownCandidateDiagnostics: CurateBuildAnchorSupportCandidateDiagnostic[]
@@ -215,6 +235,7 @@ export interface CurateBuildAnchorSupportSelectionDiagnostic {
     pocketLabel: string | null
     source: CurateBuildAnchorSupportSelectionSource
   } | null
+  chosenWindDownAdmissionSource: CurateBuildAnchorSupportAdmissionEvidenceSource | null
   availableCompactAlternativesConsidered: Array<{
     role: CurateBuildAnchorSupportRole
     venueId: string
@@ -457,10 +478,15 @@ function buildDefaultBuildAnchorSupportSelectionDiagnostic(
     scenarioSupportCandidateCountByRole: { start: 0, highlight: 0, windDown: 0 },
     admittedCandidateBoardCountByRole: { start: 0, highlight: 0, windDown: 0 },
     admittedFallbackCandidateCountByRole: { start: 0, highlight: 0, windDown: 0 },
+    rawCandidateBoardCountByRole: { start: 0, highlight: 0, windDown: 0 },
+    admissionProvenCandidateBoardCountByRole: { start: 0, highlight: 0, windDown: 0 },
+    roleEligibleCandidateBoardCountByRole: { start: 0, highlight: 0, windDown: 0 },
+    finalFallbackPoolCountByRole: { start: 0, highlight: 0, windDown: 0 },
     supportSelectionUsedCandidateBoardFallback: false,
     supportSelectionSourceByRole: { start: 'none', highlight: 'none', windDown: 'none' },
     windDownCandidateDiagnostics: [],
     chosenWindDownCandidate: null,
+    chosenWindDownAdmissionSource: null,
     availableCompactAlternativesConsidered: [],
     movementTotalBefore: null,
     movementTotalAfter: null,
@@ -685,7 +711,25 @@ export function collectBuildAdmittedSupportCandidatesFromCandidateBoard(
       }
       const districtDiagnostic =
         candidate.districtIntelligenceDiagnostic ?? districtDiagnosticByVenueId.get(venueId)
-      const admitted = districtDiagnostic?.admissionStatus === 'admitted'
+      const districtAdmissionStatus = districtDiagnostic?.admissionStatus ?? null
+      const candidateBoardAdmitted = candidate.enteredStopTypePool === true
+      const admissionEvidenceSource: CurateBuildAnchorSupportAdmissionEvidenceSource =
+        districtAdmissionStatus
+          ? 'district_admission_diagnostic'
+          : candidateBoardAdmitted
+            ? 'candidate_board_admitted'
+            : 'none'
+      const admissionStatusBeforeAdaptation =
+        districtAdmissionStatus ??
+        (candidateBoardAdmitted ? 'entered_stop_type_pool' : 'missing')
+      const admitted =
+        districtAdmissionStatus === 'admitted' ||
+        (!districtAdmissionStatus && candidateBoardAdmitted)
+      const admissionStatusAfterAdaptation = admitted
+        ? 'admitted'
+        : districtAdmissionStatus
+          ? 'blocked'
+          : 'missing'
       const candidateBoardEntry: CurateBuildAdmittedSupportCandidate = {
         venueId,
         name: candidate.name,
@@ -709,6 +753,9 @@ export function collectBuildAdmittedSupportCandidatesFromCandidateBoard(
         score: candidate.score,
         boardRank: candidate.boardRank,
         admitted,
+        admissionEvidenceSource,
+        admissionStatusBeforeAdaptation,
+        admissionStatusAfterAdaptation,
         blockedReason:
           districtDiagnostic?.admissionBlockedReason ??
           districtDiagnostic?.assignmentBlockedReason ??
@@ -755,6 +802,9 @@ function buildSupportCandidateDiagnostic(params: {
   sourceLabel?: string | null
   roleFit?: BuiltScenarioStop['roleFit'] | null
   admitted?: boolean | null
+  admissionEvidenceSource?: CurateBuildAnchorSupportAdmissionEvidenceSource | null
+  admissionStatusBeforeAdaptation?: string | null
+  admissionStatusAfterAdaptation?: string | null
   blockedReason?: string | null
   usedIdConflict?: boolean
   enteredStopTypePool?: boolean | null
@@ -762,6 +812,7 @@ function buildSupportCandidateDiagnostic(params: {
   anchorPocketMatch: boolean
   roleSemanticsPassed: boolean
   roleContractPassed: boolean
+  deterministicRankPosition?: number | null
   selected?: boolean
   rejectedReason?: CurateBuildAnchorSupportCandidateRejectedReason | null
 }): CurateBuildAnchorSupportCandidateDiagnostic {
@@ -776,6 +827,9 @@ function buildSupportCandidateDiagnostic(params: {
     sourceLabel: params.sourceLabel ?? params.stop?.sourceLabel ?? null,
     roleFit: params.roleFit ?? params.stop?.roleFit ?? null,
     admitted: params.admitted ?? null,
+    admissionEvidenceSource: params.admissionEvidenceSource ?? null,
+    admissionStatusBeforeAdaptation: params.admissionStatusBeforeAdaptation ?? null,
+    admissionStatusAfterAdaptation: params.admissionStatusAfterAdaptation ?? null,
     blockedReason: params.blockedReason ?? null,
     usedIdConflict: params.usedIdConflict === true,
     enteredStopTypePool: params.enteredStopTypePool ?? null,
@@ -783,8 +837,69 @@ function buildSupportCandidateDiagnostic(params: {
     anchorPocketMatch: params.anchorPocketMatch,
     roleSemanticsPassed: params.roleSemanticsPassed,
     roleContractPassed: params.roleContractPassed,
+    deterministicRankPosition: params.deterministicRankPosition ?? null,
     selected: params.selected === true,
     rejectedReason: params.rejectedReason ?? null,
+  }
+}
+
+function resolveAdmittedSupportCandidateAdmission(candidate: CurateBuildAdmittedSupportCandidate): {
+  admitted: boolean
+  evidenceSource: CurateBuildAnchorSupportAdmissionEvidenceSource
+  statusBeforeAdaptation: string
+  statusAfterAdaptation: string
+  rejectedReason: Extract<
+    CurateBuildAnchorSupportCandidateRejectedReason,
+    | 'not_admitted_missing_admission_evidence'
+    | 'not_admitted_district_status_blocked'
+    | 'not_admitted_shape_unlinked'
+  >
+} {
+  if (candidate.admissionEvidenceSource === 'district_admission_diagnostic') {
+    const before = candidate.admissionStatusBeforeAdaptation ?? (candidate.admitted ? 'admitted' : 'blocked')
+    const admitted = candidate.admitted === true && before === 'admitted'
+    return {
+      admitted,
+      evidenceSource: 'district_admission_diagnostic',
+      statusBeforeAdaptation: before,
+      statusAfterAdaptation: admitted ? 'admitted' : 'blocked',
+      rejectedReason: 'not_admitted_district_status_blocked',
+    }
+  }
+
+  if (candidate.enteredStopTypePool === true) {
+    return {
+      admitted: true,
+      evidenceSource: 'candidate_board_admitted',
+      statusBeforeAdaptation:
+        candidate.admissionStatusBeforeAdaptation ?? 'entered_stop_type_pool',
+      statusAfterAdaptation: 'admitted',
+      rejectedReason: 'not_admitted_shape_unlinked',
+    }
+  }
+
+  if (candidate.admitted === true) {
+    return {
+      admitted: true,
+      evidenceSource: candidate.admissionEvidenceSource ?? 'carried_admission',
+      statusBeforeAdaptation: candidate.admissionStatusBeforeAdaptation ?? 'admitted',
+      statusAfterAdaptation: candidate.admissionStatusAfterAdaptation ?? 'admitted',
+      rejectedReason: 'not_admitted_missing_admission_evidence',
+    }
+  }
+
+  const hasCandidateBoardShape =
+    Boolean(candidate.sourceLabel?.trim()) ||
+    typeof candidate.boardRank === 'number' ||
+    typeof candidate.enteredStopTypePool === 'boolean'
+  return {
+    admitted: false,
+    evidenceSource: candidate.admissionEvidenceSource ?? 'none',
+    statusBeforeAdaptation: candidate.admissionStatusBeforeAdaptation ?? 'missing',
+    statusAfterAdaptation: candidate.admissionStatusAfterAdaptation ?? 'missing',
+    rejectedReason: hasCandidateBoardShape
+      ? 'not_admitted_shape_unlinked'
+      : 'not_admitted_missing_admission_evidence',
   }
 }
 
@@ -802,11 +917,16 @@ function collectBuildAnchorSupportCandidates(params: {
     source: CurateBuildAnchorSupportSelectionSource
     score: number
     sourceStage: 'scenario' | 'admitted_candidate_board'
+    admissionEvidenceSource?: CurateBuildAnchorSupportAdmissionEvidenceSource
   }>
   diagnostics: CurateBuildAnchorSupportCandidateDiagnostic[]
   scenarioCandidateCount: number
   admittedCandidateBoardCount: number
   admittedFallbackCandidateCount: number
+  rawCandidateBoardCount: number
+  admissionProvenCandidateBoardCount: number
+  roleEligibleCandidateBoardCount: number
+  finalFallbackPoolCount: number
 } {
   const scenarioVenueIds = new Set(
     params.opportunities.flatMap((opportunity) =>
@@ -860,6 +980,7 @@ function collectBuildAnchorSupportCandidates(params: {
       source: CurateBuildAnchorSupportSelectionSource
       score: number
       sourceStage: 'scenario' | 'admitted_candidate_board'
+      admissionEvidenceSource?: CurateBuildAnchorSupportAdmissionEvidenceSource
     }>
     diagnostics: CurateBuildAnchorSupportCandidateDiagnostic[]
   } {
@@ -969,9 +1090,12 @@ function collectBuildAnchorSupportCandidates(params: {
       source: CurateBuildAnchorSupportSelectionSource
       score: number
       sourceStage: 'scenario' | 'admitted_candidate_board'
+      admissionEvidenceSource: CurateBuildAnchorSupportAdmissionEvidenceSource
     }>
     diagnostics: CurateBuildAnchorSupportCandidateDiagnostic[]
     candidateBoardCount: number
+    admissionProvenCandidateBoardCount: number
+    roleEligibleCandidateBoardCount: number
   } {
     const source = getBuildAnchorSupportSelectionSource({
       opportunity: params.opportunities[0],
@@ -983,13 +1107,19 @@ function collectBuildAnchorSupportCandidates(params: {
       source: CurateBuildAnchorSupportSelectionSource
       score: number
       sourceStage: 'scenario' | 'admitted_candidate_board'
+      admissionEvidenceSource: CurateBuildAnchorSupportAdmissionEvidenceSource
     }>()
     const diagnostics: CurateBuildAnchorSupportCandidateDiagnostic[] = []
     const candidates = params.admittedSupportCandidates ?? []
+    let admissionProvenCandidateBoardCount = 0
+    let roleEligibleCandidateBoardCount = 0
     candidates.forEach((candidate) => {
       const stop = toAdmittedCandidateStop(candidate)
       const venueIdPresent = Boolean(stop.venueId.trim())
-      const admitted = candidate.admitted === true
+      const admission = resolveAdmittedSupportCandidateAdmission(candidate)
+      if (admission.admitted) {
+        admissionProvenCandidateBoardCount += 1
+      }
       const usedIdConflict = venueIdPresent && params.blockedVenueIds.has(stop.venueId)
       const anchorPocketMatch = scenarioStopMatchesProofTargetPocket({
         stop,
@@ -1004,10 +1134,13 @@ function collectBuildAnchorSupportCandidates(params: {
         stop,
         role: params.role,
       })
+      if (admission.admitted && roleSemanticsPassed && roleContractPassed) {
+        roleEligibleCandidateBoardCount += 1
+      }
       const rejectedReason: CurateBuildAnchorSupportCandidateRejectedReason | null = !venueIdPresent
         ? 'missing_venue_id'
-        : !admitted
-          ? 'not_admitted'
+        : !admission.admitted
+          ? admission.rejectedReason
           : usedIdConflict
             ? 'used_id_conflict'
             : !anchorPocketMatch
@@ -1025,7 +1158,10 @@ function collectBuildAnchorSupportCandidates(params: {
             source,
             sourceLabel: candidate.sourceLabel ?? null,
             roleFit: stop.roleFit,
-            admitted,
+            admitted: admission.admitted,
+            admissionEvidenceSource: admission.evidenceSource,
+            admissionStatusBeforeAdaptation: admission.statusBeforeAdaptation,
+            admissionStatusAfterAdaptation: admission.statusAfterAdaptation,
             blockedReason: candidate.blockedReason ?? null,
             usedIdConflict,
             enteredStopTypePool: candidate.enteredStopTypePool ?? null,
@@ -1040,7 +1176,7 @@ function collectBuildAnchorSupportCandidates(params: {
       }
       if (
         !venueIdPresent ||
-        !admitted ||
+        !admission.admitted ||
         usedIdConflict ||
         !anchorPocketMatch ||
         !roleSemanticsPassed ||
@@ -1066,18 +1202,29 @@ function collectBuildAnchorSupportCandidates(params: {
           source,
           score,
           sourceStage: 'admitted_candidate_board',
+          admissionEvidenceSource: admission.evidenceSource,
         })
       }
     })
-    return {
-      candidates: [...byVenueId.values()].sort(
+    const sorted = [...byVenueId.values()].sort(
         (left, right) =>
           right.score - left.score ||
           left.stop.name.localeCompare(right.stop.name) ||
           left.stop.venueId.localeCompare(right.stop.venueId),
-      ),
+      )
+    sorted.forEach((entry, index) => {
+      diagnostics.forEach((diagnostic) => {
+        if (diagnostic.venueId === entry.stop.venueId) {
+          diagnostic.deterministicRankPosition = index + 1
+        }
+      })
+    })
+    return {
+      candidates: sorted,
       diagnostics,
       candidateBoardCount: candidates.length,
+      admissionProvenCandidateBoardCount,
+      roleEligibleCandidateBoardCount,
     }
   }
 
@@ -1085,7 +1232,13 @@ function collectBuildAnchorSupportCandidates(params: {
   const admitted =
     scenario.candidates.length === 0 && params.allowAdmittedFallback
       ? collectAdmittedCandidateBoardCandidates()
-      : { candidates: [], diagnostics: [], candidateBoardCount: 0 }
+      : {
+          candidates: [],
+          diagnostics: [],
+          candidateBoardCount: 0,
+          admissionProvenCandidateBoardCount: 0,
+          roleEligibleCandidateBoardCount: 0,
+        }
   const selectedStage = scenario.candidates.length > 0 ? scenario : admitted
   const diagnostics = [...scenario.diagnostics, ...admitted.diagnostics]
   return {
@@ -1094,6 +1247,10 @@ function collectBuildAnchorSupportCandidates(params: {
     scenarioCandidateCount: scenario.candidates.length,
     admittedCandidateBoardCount: admitted.candidateBoardCount,
     admittedFallbackCandidateCount: admitted.candidates.length,
+    rawCandidateBoardCount: admitted.candidateBoardCount,
+    admissionProvenCandidateBoardCount: admitted.admissionProvenCandidateBoardCount,
+    roleEligibleCandidateBoardCount: admitted.roleEligibleCandidateBoardCount,
+    finalFallbackPoolCount: admitted.candidates.length,
   }
 }
 
@@ -1315,6 +1472,26 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
     highlight: 0,
     windDown: 0,
   }
+  const rawCandidateBoardCountByRole: Record<CurateBuildAnchorSupportRole, number> = {
+    start: 0,
+    highlight: 0,
+    windDown: 0,
+  }
+  const admissionProvenCandidateBoardCountByRole: Record<CurateBuildAnchorSupportRole, number> = {
+    start: 0,
+    highlight: 0,
+    windDown: 0,
+  }
+  const roleEligibleCandidateBoardCountByRole: Record<CurateBuildAnchorSupportRole, number> = {
+    start: 0,
+    highlight: 0,
+    windDown: 0,
+  }
+  const finalFallbackPoolCountByRole: Record<CurateBuildAnchorSupportRole, number> = {
+    start: 0,
+    highlight: 0,
+    windDown: 0,
+  }
   const supportSelectionSourceByRole: Record<
     CurateBuildAnchorSupportRole,
     CurateBuildAnchorSupportSelectionSource
@@ -1325,6 +1502,7 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
   }
   const windDownCandidateDiagnostics: CurateBuildAnchorSupportCandidateDiagnostic[] = []
   let chosenWindDownCandidate: CurateBuildAnchorSupportSelectionDiagnostic['chosenWindDownCandidate'] = null
+  let chosenWindDownAdmissionSource: CurateBuildAnchorSupportSelectionDiagnostic['chosenWindDownAdmissionSource'] = null
   const availableCompactAlternativesConsidered:
     CurateBuildAnchorSupportSelectionDiagnostic['availableCompactAlternativesConsidered'] = []
 
@@ -1380,6 +1558,12 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
       candidateCollection.admittedCandidateBoardCount
     admittedFallbackCandidateCountByRole[role] =
       candidateCollection.admittedFallbackCandidateCount
+    rawCandidateBoardCountByRole[role] = candidateCollection.rawCandidateBoardCount
+    admissionProvenCandidateBoardCountByRole[role] =
+      candidateCollection.admissionProvenCandidateBoardCount
+    roleEligibleCandidateBoardCountByRole[role] =
+      candidateCollection.roleEligibleCandidateBoardCount
+    finalFallbackPoolCountByRole[role] = candidateCollection.finalFallbackPoolCount
     if (role === 'windDown') {
       windDownCandidateDiagnostics.push(...candidateCollection.diagnostics)
     }
@@ -1396,6 +1580,11 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
     )
     const replacement = candidateCollection.candidates[0]
     if (!replacement) {
+      const noAdmissionProvenWindDown =
+        role === 'windDown' &&
+        candidateCollection.scenarioCandidateCount === 0 &&
+        candidateCollection.rawCandidateBoardCount > 0 &&
+        candidateCollection.admissionProvenCandidateBoardCount === 0
       const admittedCandidateBoardWindDownFailed =
         role === 'windDown' &&
         candidateCollection.scenarioCandidateCount === 0 &&
@@ -1409,7 +1598,9 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
         replaced: false,
         selectedSupportSource: 'none',
         reason:
-          admittedCandidateBoardWindDownFailed
+          noAdmissionProvenWindDown
+            ? 'build_required_anchor_no_admission_proven_winddown_support_candidate'
+            : admittedCandidateBoardWindDownFailed
             ? 'build_required_anchor_no_admitted_winddown_support_candidate'
             : role === 'windDown' && candidateCollection.scenarioCandidateCount === 0
             ? 'scenario_support_role_missing'
@@ -1430,7 +1621,9 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
         opportunity,
         diagnostic: buildDefaultBuildAnchorSupportSelectionDiagnostic({
           status: 'failed',
-          reason: admittedCandidateBoardWindDownFailed
+          reason: noAdmissionProvenWindDown
+            ? 'build_required_anchor_no_admission_proven_winddown_support_candidate'
+            : admittedCandidateBoardWindDownFailed
             ? 'build_required_anchor_no_admitted_winddown_support_candidate'
             : 'anchor_centered_support_selection_failed',
           proofPolicy: proofTarget.proofPolicy ?? null,
@@ -1448,10 +1641,15 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
           scenarioSupportCandidateCountByRole,
           admittedCandidateBoardCountByRole,
           admittedFallbackCandidateCountByRole,
+          rawCandidateBoardCountByRole,
+          admissionProvenCandidateBoardCountByRole,
+          roleEligibleCandidateBoardCountByRole,
+          finalFallbackPoolCountByRole,
           supportSelectionUsedCandidateBoardFallback: false,
           supportSelectionSourceByRole,
           windDownCandidateDiagnostics,
           chosenWindDownCandidate,
+          chosenWindDownAdmissionSource,
           availableCompactAlternativesConsidered,
           movementTotalBefore: originalMovement.total,
           movementTotalAfter: failedMovement.total,
@@ -1480,6 +1678,7 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
           null,
         source: replacement.source,
       }
+      chosenWindDownAdmissionSource = replacement.admissionEvidenceSource ?? null
       windDownCandidateDiagnostics.forEach((entry) => {
         if (entry.venueId === replacement.stop.venueId) {
           entry.selected = true
@@ -1566,10 +1765,15 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
       scenarioSupportCandidateCountByRole,
       admittedCandidateBoardCountByRole,
       admittedFallbackCandidateCountByRole,
+      rawCandidateBoardCountByRole,
+      admissionProvenCandidateBoardCountByRole,
+      roleEligibleCandidateBoardCountByRole,
+      finalFallbackPoolCountByRole,
       supportSelectionUsedCandidateBoardFallback,
       supportSelectionSourceByRole,
       windDownCandidateDiagnostics,
       chosenWindDownCandidate,
+      chosenWindDownAdmissionSource,
       availableCompactAlternativesConsidered,
       movementTotalBefore: originalMovement.total,
       movementTotalAfter: adjustedMovement.total,

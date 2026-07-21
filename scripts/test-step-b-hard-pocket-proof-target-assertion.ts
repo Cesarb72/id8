@@ -70,6 +70,9 @@ function buildAdmittedSupportCandidate(params: {
   sourceLabel?: string
   sourceTypes?: string[]
   admitted?: boolean
+  admissionEvidenceSource?: CurateBuildAdmittedSupportCandidate['admissionEvidenceSource']
+  admissionStatusBeforeAdaptation?: string | null
+  admissionStatusAfterAdaptation?: string | null
   blockedReason?: string | null
   enteredStopTypePool?: boolean
   enteredAnyScenarioNight?: boolean
@@ -94,6 +97,15 @@ function buildAdmittedSupportCandidate(params: {
     score: params.score ?? 0.77,
     boardRank: 6,
     admitted: params.admitted ?? true,
+    ...(params.admissionEvidenceSource
+      ? { admissionEvidenceSource: params.admissionEvidenceSource }
+      : {}),
+    ...(params.admissionStatusBeforeAdaptation !== undefined
+      ? { admissionStatusBeforeAdaptation: params.admissionStatusBeforeAdaptation }
+      : {}),
+    ...(params.admissionStatusAfterAdaptation !== undefined
+      ? { admissionStatusAfterAdaptation: params.admissionStatusAfterAdaptation }
+      : {}),
     blockedReason: params.blockedReason ?? null,
     enteredStopTypePool: params.enteredStopTypePool ?? false,
     enteredAnyScenarioNight: params.enteredAnyScenarioNight ?? false,
@@ -736,18 +748,29 @@ function assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply(): 
     `Chosen windDown diagnostic must identify admitted candidate: ${JSON.stringify(diagnostic.chosenWindDownCandidate)}`,
   )
   assert(
+    diagnostic.chosenWindDownAdmissionSource === 'carried_admission' &&
+      diagnostic.rawCandidateBoardCountByRole.windDown === 1 &&
+      diagnostic.admissionProvenCandidateBoardCountByRole.windDown === 1 &&
+      diagnostic.roleEligibleCandidateBoardCountByRole.windDown === 1 &&
+      diagnostic.finalFallbackPoolCountByRole.windDown === 1,
+    `Admission aggregate diagnostics must expose carried candidate-board admission: ${JSON.stringify(diagnostic)}`,
+  )
+  assert(
     diagnostic.windDownCandidateDiagnostics.some(
       (entry) =>
         entry.name === 'Willow Glen Cafe Landing' &&
         entry.source === 'admitted_candidate_board' &&
         entry.sourceLabel === 'coffee-books-start-reading@pocket' &&
         entry.admitted === true &&
+        entry.admissionEvidenceSource === 'carried_admission' &&
+        entry.admissionStatusAfterAdaptation === 'admitted' &&
         entry.enteredStopTypePool === false &&
         entry.enteredAnyScenarioNight === false &&
         entry.roleFit?.windDown === 1 &&
         entry.anchorPocketMatch &&
         entry.roleSemanticsPassed &&
         entry.roleContractPassed &&
+        entry.deterministicRankPosition === 1 &&
         entry.selected,
     ),
     `WindDown candidate diagnostics must show selected admitted role/contract pass: ${JSON.stringify(diagnostic.windDownCandidateDiagnostics)}`,
@@ -925,6 +948,159 @@ function assertBuildRequiredAnchorSupportSelectionRejectsCandidateBoardPolicyFai
   process.stdout.write('Build admitted candidate-board policy rejection diagnostics: passed\n')
 }
 
+function assertBuildRequiredAnchorAdmissionShapeAdapter(): void {
+  const directions = [buildDirectionCard({ directionId: 'direction-downtown', pocketId: 'raw-pocket-downtown' })]
+  const runWithCandidates = (candidates: CurateBuildAdmittedSupportCandidate[]) => {
+    const opportunity = buildSupportReselectionOpportunity({
+      includeCompactAlternatives: false,
+    })
+    return buildCurateScenarioBackedArtifactBridge({
+      primaryOpportunities: [opportunity],
+      fallbackOpportunities: [],
+      ecsState: { exploration: 'focused', discovery: 'reliable', highlight: 'standout' },
+      directionCards: directions,
+      allDirectionCards: directions,
+      admittedSupportCandidates: candidates,
+      starterPack: coffeeBooksStarterPack,
+      proofTarget: buildBuildRequiredAnchorProofTarget(),
+    })
+  }
+
+  const missingAdmission = runWithCandidates([
+    buildAdmittedSupportCandidate({
+      venueId: 'sj-willow-glen-rolefit-only-cafe',
+      name: 'Willow Glen RoleFit Only Cafe',
+      admitted: false,
+      enteredStopTypePool: false,
+      roleFit: { windDown: 1 },
+    }),
+  ]).diagnostics[0]?.buildRequiredAnchorSupportSelection
+  assert(
+    missingAdmission?.status === 'failed' &&
+      missingAdmission.reason ===
+        'build_required_anchor_no_admission_proven_winddown_support_candidate' &&
+      missingAdmission.rawCandidateBoardCountByRole.windDown === 1 &&
+      missingAdmission.admissionProvenCandidateBoardCountByRole.windDown === 0 &&
+      missingAdmission.roleEligibleCandidateBoardCountByRole.windDown === 0 &&
+      missingAdmission.finalFallbackPoolCountByRole.windDown === 0,
+    `Missing admission evidence must fail closed before roleFit can admit: ${JSON.stringify(missingAdmission)}`,
+  )
+  assert(
+    missingAdmission.windDownCandidateDiagnostics.some(
+      (entry) =>
+        entry.name === 'Willow Glen RoleFit Only Cafe' &&
+        entry.roleFit?.windDown === 1 &&
+        entry.admissionEvidenceSource === 'none' &&
+        entry.admissionStatusAfterAdaptation === 'missing' &&
+        entry.rejectedReason === 'not_admitted_shape_unlinked',
+    ),
+    `RoleFit-only candidate must report missing admission evidence: ${JSON.stringify(missingAdmission.windDownCandidateDiagnostics)}`,
+  )
+
+  const boardEntered = runWithCandidates([
+    buildAdmittedSupportCandidate({
+      venueId: 'sj-willow-glen-board-entered-cafe',
+      name: 'Willow Glen Board Entered Cafe',
+      admitted: false,
+      enteredStopTypePool: true,
+      roleFit: { windDown: 1 },
+    }),
+  ])
+  const boardEnteredDiagnostic = boardEntered.diagnostics[0]?.buildRequiredAnchorSupportSelection
+  assert(
+    boardEntered.candidateArtifacts[0]?.storySpine.windDown === 'Willow Glen Board Entered Cafe' &&
+      boardEnteredDiagnostic?.chosenWindDownAdmissionSource === 'candidate_board_admitted' &&
+      boardEnteredDiagnostic.admissionProvenCandidateBoardCountByRole.windDown === 1 &&
+      boardEnteredDiagnostic.finalFallbackPoolCountByRole.windDown === 1,
+    `Candidate-board entered marker must adapt into admitted support: ${JSON.stringify(boardEnteredDiagnostic)}`,
+  )
+  assert(
+    boardEnteredDiagnostic.windDownCandidateDiagnostics.some(
+      (entry) =>
+        entry.name === 'Willow Glen Board Entered Cafe' &&
+        entry.admissionEvidenceSource === 'candidate_board_admitted' &&
+        entry.admissionStatusBeforeAdaptation === 'entered_stop_type_pool' &&
+        entry.admissionStatusAfterAdaptation === 'admitted' &&
+        entry.selected,
+    ),
+    `Board-entered admission diagnostics must be explicit: ${JSON.stringify(boardEnteredDiagnostic.windDownCandidateDiagnostics)}`,
+  )
+
+  const districtBlocked = runWithCandidates([
+    buildAdmittedSupportCandidate({
+      venueId: 'sj-willow-glen-district-blocked-cafe',
+      name: 'Willow Glen District Blocked Cafe',
+      admitted: false,
+      admissionEvidenceSource: 'district_admission_diagnostic',
+      admissionStatusBeforeAdaptation: 'blocked',
+      admissionStatusAfterAdaptation: 'blocked',
+      enteredStopTypePool: true,
+      blockedReason: 'outside_admitted_bound',
+      roleFit: { windDown: 1 },
+    }),
+  ]).diagnostics[0]?.buildRequiredAnchorSupportSelection
+  assert(
+    districtBlocked?.status === 'failed' &&
+      districtBlocked.reason ===
+        'build_required_anchor_no_admission_proven_winddown_support_candidate' &&
+      districtBlocked.windDownCandidateDiagnostics.some(
+        (entry) =>
+          entry.name === 'Willow Glen District Blocked Cafe' &&
+          entry.admissionEvidenceSource === 'district_admission_diagnostic' &&
+          entry.rejectedReason === 'not_admitted_district_status_blocked',
+      ),
+    `District-blocked admission must fail closed even with board marker: ${JSON.stringify(districtBlocked)}`,
+  )
+
+  const ranked = runWithCandidates([
+    buildAdmittedSupportCandidate({
+      venueId: 'sj-willow-glen-lower-ranked-cafe',
+      name: 'Willow Glen Lower Ranked Cafe',
+      admitted: false,
+      enteredStopTypePool: true,
+      score: 0.62,
+      roleFit: { windDown: 1 },
+    }),
+    buildAdmittedSupportCandidate({
+      venueId: 'sj-willow-glen-higher-ranked-cafe',
+      name: 'Willow Glen Higher Ranked Cafe',
+      admitted: false,
+      enteredStopTypePool: true,
+      score: 0.91,
+      roleFit: { windDown: 1 },
+    }),
+  ])
+  const rankedDiagnostic = ranked.diagnostics[0]?.buildRequiredAnchorSupportSelection
+  assert(
+    ranked.candidateArtifacts[0]?.storySpine.windDown === 'Willow Glen Higher Ranked Cafe' &&
+      rankedDiagnostic?.chosenWindDownCandidate?.name === 'Willow Glen Higher Ranked Cafe' &&
+      rankedDiagnostic.finalFallbackPoolCountByRole.windDown === 2,
+    `Deterministic ranking must choose the highest admitted support candidate: ${JSON.stringify(rankedDiagnostic)}`,
+  )
+  assert(
+    rankedDiagnostic.windDownCandidateDiagnostics.some(
+      (entry) =>
+        entry.name === 'Willow Glen Higher Ranked Cafe' &&
+        entry.deterministicRankPosition === 1 &&
+        entry.selected,
+    ) &&
+      rankedDiagnostic.windDownCandidateDiagnostics.some(
+        (entry) =>
+          entry.name === 'Willow Glen Lower Ranked Cafe' &&
+          entry.deterministicRankPosition === 2 &&
+          !entry.selected,
+      ),
+    `Ranking diagnostics must expose selected and rejected ranks: ${JSON.stringify(rankedDiagnostic.windDownCandidateDiagnostics)}`,
+  )
+
+  assert(
+    !boardEntered.candidateArtifacts[0]?.qualification?.approvedRefinementEntryPayload &&
+      !ranked.candidateArtifacts[0]?.qualification?.approvedRefinementEntryPayload,
+    'Admission adaptation alone must not create an approved payload or bypass Great Stop.',
+  )
+  process.stdout.write('Build candidate-board admission shape adapter: passed\n')
+}
+
 function assertHardPocketModesDoNotReselectSupports(): void {
   const opportunity = buildSupportReselectionOpportunity({
     includeCompactAlternatives: true,
@@ -1061,6 +1237,7 @@ function main(): void {
   assertBuildRequiredAnchorSupportSelectionFailsClosedWithoutAlternatives()
   assertBuildRequiredAnchorSupportSelectionRejectsLowFitAdmittedWindDown()
   assertBuildRequiredAnchorSupportSelectionRejectsCandidateBoardPolicyFailures()
+  assertBuildRequiredAnchorAdmissionShapeAdapter()
   assertHardPocketModesDoNotReselectSupports()
   assertQueryTermsDoNotSatisfyProof()
   assertCompatibilityWrappersRemainNonAuthority()
