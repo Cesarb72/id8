@@ -15,6 +15,15 @@ import type {
   StarterSemanticRepresentation,
 } from '../src/domain/interpretation/construction/scenarioBuilder.ts'
 import type { VerifiedCityOpportunity } from '../src/domain/interpretation/verifiedCityOpportunity.ts'
+import {
+  evaluateTasteSupportCandidateVerdict,
+} from '../src/domain/interpretation/taste/evaluateTasteSupportCandidateVerdict.ts'
+import {
+  INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD,
+  computeRouteMeaningIntentRightVerdict,
+  computeRouteMeaningRoleRightVerdict,
+  ROLE_RIGHT_SHAPE_FIT_THRESHOLD,
+} from '../src/domain/interpretation/taste/computeRouteMeaningVerdict.ts'
 import type { VenueCategory } from '../src/domain/types/venue.ts'
 
 function assert(condition: boolean, message: string): asserts condition {
@@ -80,8 +89,49 @@ function buildAdmittedSupportCandidate(params: {
   enteredStopTypePool?: boolean
   enteredAnyScenarioNight?: boolean
   roleFit?: Partial<NonNullable<CurateBuildAdmittedSupportCandidate['roleFit']>>
+  tasteEvidence?: Partial<NonNullable<CurateBuildAdmittedSupportCandidate['tasteEvidence']>>
   score?: number
 } = {}): CurateBuildAdmittedSupportCandidate {
+  const roleContract = {
+    contractLabel: 'Coffee Books support',
+    strength: 'strong' as const,
+    score: 0.82,
+    satisfied: true,
+    matchedSignals: ['fixture_taste_evidence'],
+    violations: [],
+  }
+  const tasteEvidence: NonNullable<CurateBuildAdmittedSupportCandidate['tasteEvidence']> = {
+    lensCompatibility: 0.72,
+    stopShapeFit: { start: 0.7, highlight: 0.68, surprise: 0.5, windDown: 0.72 },
+    roleScores: { warmup: 0.72, peak: 0.72, wildcard: 0.5, cooldown: 0.72 },
+    fitScore: 0.74,
+    contextSpecificity: {
+      overall: 0.68,
+      personaSignal: 0.68,
+      vibeSignal: 0.7,
+      lensSignal: 0.7,
+      byRole: { warmup: 0.68, peak: 0.68, wildcard: 0.5, cooldown: 0.7 },
+    },
+    roleContract: {
+      warmup: roleContract,
+      peak: roleContract,
+      wildcard: roleContract,
+      cooldown: roleContract,
+    },
+    candidateIdentity: {
+      candidateId: params.venueId ?? 'sj-willow-glen-cafe-landing',
+      baseVenueId: params.venueId ?? 'sj-willow-glen-cafe-landing',
+      kind: 'base',
+      traceLabel: params.name ?? 'Willow Glen Cafe Landing',
+    },
+    sourceProvenance: {
+      provider: 'google-places',
+      providerRecordId: params.venueId ?? 'sj-willow-glen-cafe-landing',
+      sourceOrigin: 'live',
+      sourceQueryLabel: params.sourceLabel ?? 'coffee-books-start-reading@pocket',
+    },
+    ...params.tasteEvidence,
+  }
   return {
     venueId: params.venueId ?? 'sj-willow-glen-cafe-landing',
     name: params.name ?? 'Willow Glen Cafe Landing',
@@ -113,6 +163,7 @@ function buildAdmittedSupportCandidate(params: {
     enteredStopTypePool: params.enteredStopTypePool ?? false,
     enteredAnyScenarioNight: params.enteredAnyScenarioNight ?? false,
     roleFit: { start: 1, highlight: 1, windDown: 1, ...params.roleFit },
+    tasteEvidence,
   }
 }
 
@@ -1051,6 +1102,160 @@ function assertBuildRequiredAnchorAdmissionShapeAdapter(): void {
     `RoleFit-only candidate must report missing admission evidence: ${JSON.stringify(missingAdmission.windDownCandidateDiagnostics)}`,
   )
 
+  const lowTasteEvidence = runWithCandidates([
+    buildAdmittedSupportCandidate({
+      venueId: 'sj-willow-glen-philz-style-cafe',
+      name: 'Willow Glen Philz-Style Cafe',
+      admitted: false,
+      enteredStopTypePool: true,
+      roleFit: { windDown: 1 },
+      tasteEvidence: {
+        lensCompatibility: INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD - 0.04,
+        stopShapeFit: { start: 0.7, highlight: 0.68, surprise: 0.5, windDown: ROLE_RIGHT_SHAPE_FIT_THRESHOLD - 0.05 },
+      },
+    }),
+    buildAdmittedSupportCandidate({
+      venueId: 'sj-willow-glen-peets-style-cafe',
+      name: 'Willow Glen Peets-Style Cafe',
+      admitted: false,
+      enteredStopTypePool: true,
+      roleFit: { windDown: 1 },
+      tasteEvidence: {
+        lensCompatibility: INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD - 0.02,
+        stopShapeFit: { start: 0.7, highlight: 0.68, surprise: 0.5, windDown: ROLE_RIGHT_SHAPE_FIT_THRESHOLD + 0.04 },
+      },
+    }),
+  ])
+  const lowTasteDiagnostic = lowTasteEvidence.diagnostics[0]?.buildRequiredAnchorSupportSelection
+  assert(
+    lowTasteEvidence.candidateArtifacts.length === 0 &&
+      lowTasteDiagnostic?.status === 'failed' &&
+      lowTasteDiagnostic.reason ===
+        'build_required_anchor_no_taste_compatible_winddown_candidate' &&
+      lowTasteDiagnostic.roleEligibleCandidateBoardCountByRole.windDown === 2 &&
+      lowTasteDiagnostic.tasteCompatibleCandidateBoardCountByRole.windDown === 0 &&
+      lowTasteDiagnostic.finalFallbackPoolCountByRole.windDown === 0,
+    `Low shape/lens windDown support must fail closed before materialization: ${JSON.stringify(lowTasteDiagnostic)}`,
+  )
+  assert(
+    lowTasteDiagnostic.windDownCandidateDiagnostics.some(
+      (entry) =>
+        entry.name === 'Willow Glen Philz-Style Cafe' &&
+        entry.roleFit?.windDown === 1 &&
+        entry.stopShapeFit?.windDown !== undefined &&
+        entry.stopShapeFit.windDown < ROLE_RIGHT_SHAPE_FIT_THRESHOLD &&
+        entry.stopShapeFitThreshold === ROLE_RIGHT_SHAPE_FIT_THRESHOLD &&
+        entry.lensCompatibility !== null &&
+        entry.lensCompatibility < INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD &&
+        entry.lensCompatibilityThreshold === INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD &&
+        entry.tasteSupportVerdict?.owner === 'taste' &&
+        entry.tasteSupportVerdict.coreFunctionName === 'evaluateTasteRoleIntentCore' &&
+        entry.tasteSupportVerdict.evidenceSource === 'scored_venue_taste_evidence' &&
+        entry.tasteSupportVerdict.failedReasons.includes('taste_support_shape_fit_failed') &&
+        entry.tasteSupportVerdict.failures.some(
+          (failure) =>
+            failure.criterion === 'role_right' &&
+            failure.field === 'stop_shape_fit' &&
+            failure.actualValue === entry.stopShapeFit?.windDown &&
+            failure.threshold === ROLE_RIGHT_SHAPE_FIT_THRESHOLD &&
+            failure.thresholdOwner === 'taste' &&
+            failure.thresholdSource === 'evaluateTasteRoleIntentCore' &&
+            failure.reasonCode === 'taste_support_shape_fit_failed' &&
+            failure.evidencePresent &&
+            failure.coreFunctionName === 'evaluateTasteRoleIntentCore',
+        ) &&
+        !entry.tasteSupportVerdictPassed &&
+        entry.consumedBy === 'build_required_anchor_support_selection' &&
+        entry.rejectedReason === 'taste_verdict_failed',
+    ),
+    `Philz-style low shape/lens diagnostics must surface numeric evidence: ${JSON.stringify(lowTasteDiagnostic.windDownCandidateDiagnostics)}`,
+  )
+  assert(
+    lowTasteDiagnostic.windDownCandidateDiagnostics.some(
+      (entry) =>
+        entry.name === 'Willow Glen Peets-Style Cafe' &&
+        entry.roleFit?.windDown === 1 &&
+        entry.stopShapeFit?.windDown !== undefined &&
+        entry.stopShapeFit.windDown >= ROLE_RIGHT_SHAPE_FIT_THRESHOLD &&
+        entry.lensCompatibility !== null &&
+        entry.lensCompatibility < INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD &&
+        entry.tasteSupportVerdict?.owner === 'taste' &&
+        entry.tasteSupportVerdict.coreFunctionName === 'evaluateTasteRoleIntentCore' &&
+        entry.tasteSupportVerdict.failedReasons.includes('taste_support_lens_compatibility_failed') &&
+        entry.tasteSupportVerdict.failures.some(
+          (failure) =>
+            failure.criterion === 'intent_right' &&
+            failure.field === 'lens_compatibility' &&
+            failure.actualValue === entry.lensCompatibility &&
+            failure.threshold === INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD &&
+            failure.reasonCode === 'taste_support_lens_compatibility_failed' &&
+            failure.coreFunctionName === 'evaluateTasteRoleIntentCore',
+        ) &&
+        !entry.tasteSupportVerdictPassed &&
+        entry.rejectedReason === 'taste_verdict_failed',
+    ),
+    `Peets-style low lens diagnostics must stay distinct from roleFit: ${JSON.stringify(lowTasteDiagnostic.windDownCandidateDiagnostics)}`,
+  )
+  const directTasteVerdict = evaluateTasteSupportCandidateVerdict({
+    role: 'windDown',
+    evidence: lowTasteDiagnostic.windDownCandidateDiagnostics.find(
+      (entry) => entry.name === 'Willow Glen Philz-Style Cafe',
+    )?.tasteSupportVerdict
+      ? buildAdmittedSupportCandidate({
+          venueId: 'taste-direct-low-shape',
+          tasteEvidence: {
+            lensCompatibility: INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD - 0.04,
+            stopShapeFit: {
+              start: 0.7,
+              highlight: 0.68,
+              surprise: 0.5,
+              windDown: ROLE_RIGHT_SHAPE_FIT_THRESHOLD - 0.05,
+            },
+          },
+        }).tasteEvidence
+      : null,
+  })
+  assert(
+    directTasteVerdict.owner === 'taste' &&
+      directTasteVerdict.coreFunctionName === 'evaluateTasteRoleIntentCore' &&
+      !directTasteVerdict.passed &&
+      directTasteVerdict.failedReasons.includes('taste_support_shape_fit_failed'),
+    `Taste support helper must wrap the shared role/intent core: ${JSON.stringify(directTasteVerdict)}`,
+  )
+  const routeRoleVerdict = computeRouteMeaningRoleRightVerdict([
+    {
+      role: 'windDown',
+      candidateVenueId: 'taste-direct-low-shape',
+      roleFitScore: directTasteVerdict.scores.roleScore ?? undefined,
+      stopShapeFitScore: directTasteVerdict.scores.stopShapeFit ?? undefined,
+    },
+  ])
+  const routeIntentVerdict = computeRouteMeaningIntentRightVerdict([
+    {
+      role: 'windDown',
+      candidateVenueId: 'taste-direct-low-shape',
+      routeFitScore: 0.72,
+      lensCompatibilityScore: directTasteVerdict.scores.lensCompatibility ?? undefined,
+      contextSpecificityScore: directTasteVerdict.scores.contextSpecificity ?? undefined,
+    },
+  ])
+  assert(
+    routeRoleVerdict.lowShapeEvidence[0]?.reason === 'role_right:low_shape_fit:windDown' &&
+      directTasteVerdict.failures.some(
+        (failure) =>
+          failure.field === 'stop_shape_fit' &&
+          failure.threshold === routeRoleVerdict.shapeFitThreshold,
+      ) &&
+      routeIntentVerdict.lowLensCompatibilityEvidence[0]?.reason ===
+        'intent_right:low_lens_compatibility:windDown' &&
+      directTasteVerdict.failures.some(
+        (failure) =>
+          failure.field === 'lens_compatibility' &&
+          failure.threshold === routeIntentVerdict.lensCompatibilityThreshold,
+      ),
+    `Route and candidate verdicts must share core comparison behavior: ${JSON.stringify({ directTasteVerdict, routeRoleVerdict, routeIntentVerdict })}`,
+  )
+
   const boardEntered = runWithCandidates([
     buildAdmittedSupportCandidate({
       venueId: 'sj-willow-glen-board-entered-cafe',
@@ -1062,9 +1267,10 @@ function assertBuildRequiredAnchorAdmissionShapeAdapter(): void {
   ])
   const boardEnteredDiagnostic = boardEntered.diagnostics[0]?.buildRequiredAnchorSupportSelection
   assert(
-    boardEntered.candidateArtifacts[0]?.storySpine.windDown === 'Willow Glen Board Entered Cafe' &&
+      boardEntered.candidateArtifacts[0]?.storySpine.windDown === 'Willow Glen Board Entered Cafe' &&
       boardEnteredDiagnostic?.chosenWindDownAdmissionSource === 'candidate_board_admitted' &&
       boardEnteredDiagnostic.admissionProvenCandidateBoardCountByRole.windDown === 1 &&
+      boardEnteredDiagnostic.tasteCompatibleCandidateBoardCountByRole.windDown === 1 &&
       boardEnteredDiagnostic.finalFallbackPoolCountByRole.windDown === 1,
     `Candidate-board entered marker must adapt into admitted support: ${JSON.stringify(boardEnteredDiagnostic)}`,
   )
@@ -1075,6 +1281,16 @@ function assertBuildRequiredAnchorAdmissionShapeAdapter(): void {
         entry.admissionEvidenceSource === 'candidate_board_admitted' &&
         entry.admissionStatusBeforeAdaptation === 'entered_stop_type_pool' &&
         entry.admissionStatusAfterAdaptation === 'admitted' &&
+        entry.tasteSupportVerdict?.owner === 'taste' &&
+        entry.tasteSupportVerdict.coreFunctionName === 'evaluateTasteRoleIntentCore' &&
+        entry.tasteSupportVerdict.failures.length === 0 &&
+        entry.tasteSupportVerdictPassed &&
+        entry.stopShapeFit?.windDown !== undefined &&
+        entry.stopShapeFit.windDown >= ROLE_RIGHT_SHAPE_FIT_THRESHOLD &&
+        entry.lensCompatibility !== null &&
+        entry.lensCompatibility >= INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD &&
+        entry.roleScores?.cooldown !== undefined &&
+        entry.contextSpecificity?.overall !== undefined &&
         entry.selected,
     ),
     `Board-entered admission diagnostics must be explicit: ${JSON.stringify(boardEnteredDiagnostic.windDownCandidateDiagnostics)}`,
@@ -1256,6 +1472,14 @@ function assertCompatibilityWrappersRemainNonAuthority(): void {
     'src/app/services/curate/buildCurateScenarioBackedArtifactBridge.ts',
     'utf8',
   )
+  const routeTasteSource = readFileSync(
+    'src/domain/interpretation/taste/computeRouteMeaningVerdict.ts',
+    'utf8',
+  )
+  const candidateTasteSource = readFileSync(
+    'src/domain/interpretation/taste/evaluateTasteSupportCandidateVerdict.ts',
+    'utf8',
+  )
   const runGeneratePlanSource = readFileSync('src/domain/runGeneratePlan.ts', 'utf8')
   assert(
     selectedRouteArtifactSource.includes('must not independently author canonical route truth'),
@@ -1270,6 +1494,24 @@ function assertCompatibilityWrappersRemainNonAuthority(): void {
     !proofAssertionSource.includes("from '../../../domain/artifacts/selectedRouteArtifact'") &&
       !proofAssertionSource.includes("from '../../wrapper/curateRefinementEntry'"),
     'Hard-pocket proof assertion must not depend on legacy compatibility wrappers as authority.',
+  )
+  assert(
+    proofAssertionSource.includes('evaluateTasteSupportCandidateVerdict') &&
+      !proofAssertionSource.includes('evaluateGreatStopCompatibleSupportPredicate') &&
+      !proofAssertionSource.includes('ROLE_RIGHT_SHAPE_FIT_THRESHOLD') &&
+      !proofAssertionSource.includes('INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD'),
+    'Build support selection must consume a Taste-authored support verdict instead of owning threshold checks.',
+  )
+  assert(
+    routeTasteSource.includes('export function evaluateTasteRoleIntentCore') &&
+      /computeRouteMeaningRoleRightVerdict[\s\S]*evaluateTasteRoleIntentCore/.test(routeTasteSource) &&
+      /computeRouteMeaningIntentRightVerdict[\s\S]*evaluateTasteRoleIntentCore/.test(routeTasteSource) &&
+      candidateTasteSource.includes('evaluateTasteRoleIntentCore') &&
+      !candidateTasteSource.includes('ROLE_RIGHT_ROLE_FIT_THRESHOLD') &&
+      !candidateTasteSource.includes('ROLE_RIGHT_SHAPE_FIT_THRESHOLD') &&
+      !candidateTasteSource.includes('INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD') &&
+      !candidateTasteSource.includes('INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD'),
+    'Route-level Taste and candidate support verdicts must share evaluateTasteRoleIntentCore as the only comparison standard.',
   )
   assert(
     runGeneratePlanSource.includes('roleTargetMapFromMaterializedRouteStops') &&

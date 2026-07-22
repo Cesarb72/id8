@@ -14,7 +14,12 @@ import type {
   StarterSemanticRepresentation,
 } from '../../../domain/interpretation/construction/scenarioBuilder'
 import type { StopTypeCandidateBoard } from '../../../domain/interpretation/discovery/stopTypeCandidateBoard'
+import type { StopTypeCandidateTasteEvidence } from '../../../domain/interpretation/discovery/stopTypeCandidateBoard'
 import type { VerifiedCityOpportunity } from '../../../domain/interpretation/verifiedCityOpportunity'
+import {
+  evaluateTasteSupportCandidateVerdict,
+  type TasteSupportCandidateVerdict,
+} from '../../../domain/interpretation/taste/evaluateTasteSupportCandidateVerdict'
 import type { StarterPack } from '../../../domain/types/starterPack'
 import type { UserStopRole } from '../../../domain/types/itinerary'
 
@@ -25,6 +30,7 @@ type CurateScenarioBuildabilityAdmissionReason =
   | 'scenario_route_mixed_di_fallback_scattered'
   | 'scenario_route_seed_projection_missing'
   | 'anchor_centered_support_selection_failed'
+  | 'build_required_anchor_no_taste_compatible_winddown_candidate'
   | CurateHardPocketProofTargetAssertionReason
 type CurateHardCommitFeasibilityFailureClass =
   | 'missing_seed_identity'
@@ -125,6 +131,7 @@ type CurateBuildAnchorSupportSelectionReason =
   | 'build_required_anchor_support_from_admitted_supply'
   | 'build_required_anchor_no_admitted_winddown_support_candidate'
   | 'build_required_anchor_no_admission_proven_winddown_support_candidate'
+  | 'build_required_anchor_no_taste_compatible_winddown_candidate'
 
 type CurateBuildAnchorSupportCandidateRejectedReason =
   | 'anchor_pocket_mismatch'
@@ -136,6 +143,8 @@ type CurateBuildAnchorSupportCandidateRejectedReason =
   | 'not_admitted_missing_admission_evidence'
   | 'not_admitted_district_status_blocked'
   | 'not_admitted_shape_unlinked'
+  | 'taste_verdict_failed'
+  | 'taste_verdict_evidence_missing'
   | 'missing_venue_id'
 
 export interface CurateBuildAdmittedSupportCandidate {
@@ -159,6 +168,7 @@ export interface CurateBuildAdmittedSupportCandidate {
   authorityScore?: number
   currentRelevance?: number
   roleFit?: BuiltScenarioStop['roleFit']
+  tasteEvidence?: StopTypeCandidateTasteEvidence
   score?: number
   boardRank?: number
   admitted?: boolean
@@ -179,6 +189,24 @@ interface CurateBuildAnchorSupportCandidateDiagnostic {
   source: CurateBuildAnchorSupportSelectionSource
   sourceLabel: string | null
   roleFit: BuiltScenarioStop['roleFit'] | null
+  stopShapeFit: StopTypeCandidateTasteEvidence['stopShapeFit'] | null
+  stopShapeFitThreshold: number | null
+  lensCompatibility: number | null
+  lensCompatibilityThreshold: number | null
+  roleScores: StopTypeCandidateTasteEvidence['roleScores'] | null
+  roleScoreThreshold: number | null
+  fitScore: number | null
+  contextSpecificity: StopTypeCandidateTasteEvidence['contextSpecificity'] | null
+  contextSpecificityThreshold: number | null
+  roleContractResult: {
+    passed: boolean
+    source: 'build_support_role_contract' | 'taste_role_contract' | 'missing'
+    tasteSatisfied: boolean | null
+  }
+  tasteSupportVerdict: TasteSupportCandidateVerdict | null
+  tasteSupportVerdictPassed: boolean
+  consumedBy: 'build_required_anchor_support_selection'
+  deterministicRankBeforePredicate: number | null
   admitted: boolean | null
   admissionEvidenceSource: CurateBuildAnchorSupportAdmissionEvidenceSource | null
   admissionStatusBeforeAdaptation: string | null
@@ -230,6 +258,7 @@ export interface CurateBuildAnchorSupportSelectionDiagnostic {
   admissionProvenCandidateBoardCountByRole: Record<CurateBuildAnchorSupportRole, number>
   roleEligibleCandidateBoardCountByRole: Record<CurateBuildAnchorSupportRole, number>
   finalFallbackPoolCountByRole: Record<CurateBuildAnchorSupportRole, number>
+  tasteCompatibleCandidateBoardCountByRole: Record<CurateBuildAnchorSupportRole, number>
   supportSelectionUsedCandidateBoardFallback: boolean
   supportSelectionSourceByRole: Record<CurateBuildAnchorSupportRole, CurateBuildAnchorSupportSelectionSource>
   windDownCandidateDiagnostics: CurateBuildAnchorSupportCandidateDiagnostic[]
@@ -508,6 +537,7 @@ function buildDefaultBuildAnchorSupportSelectionDiagnostic(
     admissionProvenCandidateBoardCountByRole: { start: 0, highlight: 0, windDown: 0 },
     roleEligibleCandidateBoardCountByRole: { start: 0, highlight: 0, windDown: 0 },
     finalFallbackPoolCountByRole: { start: 0, highlight: 0, windDown: 0 },
+    tasteCompatibleCandidateBoardCountByRole: { start: 0, highlight: 0, windDown: 0 },
     supportSelectionUsedCandidateBoardFallback: false,
     supportSelectionSourceByRole: { start: 'none', highlight: 'none', windDown: 'none' },
     windDownCandidateDiagnostics: [],
@@ -776,6 +806,7 @@ export function collectBuildAdmittedSupportCandidatesFromCandidateBoard(
         authorityScore: candidate.score,
         currentRelevance: candidate.score,
         roleFit: candidate.roleFit,
+        tasteEvidence: candidate.tasteEvidence,
         score: candidate.score,
         boardRank: candidate.boardRank,
         admitted,
@@ -827,6 +858,7 @@ function buildSupportCandidateDiagnostic(params: {
   source: CurateBuildAnchorSupportSelectionSource
   sourceLabel?: string | null
   roleFit?: BuiltScenarioStop['roleFit'] | null
+  tasteEvidence?: StopTypeCandidateTasteEvidence | null
   admitted?: boolean | null
   admissionEvidenceSource?: CurateBuildAnchorSupportAdmissionEvidenceSource | null
   admissionStatusBeforeAdaptation?: string | null
@@ -838,10 +870,14 @@ function buildSupportCandidateDiagnostic(params: {
   anchorPocketMatch: boolean
   roleSemanticsPassed: boolean
   roleContractPassed: boolean
+  tasteSupportVerdict?: TasteSupportCandidateVerdict | null
   deterministicRankPosition?: number | null
+  deterministicRankBeforePredicate?: number | null
   selected?: boolean
   rejectedReason?: CurateBuildAnchorSupportCandidateRejectedReason | null
 }): CurateBuildAnchorSupportCandidateDiagnostic {
+  const tasteEvidence = params.tasteEvidence ?? null
+  const tasteVerdict = params.tasteSupportVerdict ?? null
   return {
     role: params.role,
     venueId: params.stop?.venueId ?? null,
@@ -852,6 +888,24 @@ function buildSupportCandidateDiagnostic(params: {
     source: params.source,
     sourceLabel: params.sourceLabel ?? params.stop?.sourceLabel ?? null,
     roleFit: params.roleFit ?? params.stop?.roleFit ?? null,
+    stopShapeFit: tasteEvidence?.stopShapeFit ?? null,
+    stopShapeFitThreshold: tasteVerdict?.thresholds.stopShapeFit ?? null,
+    lensCompatibility: tasteVerdict?.scores.lensCompatibility ?? null,
+    lensCompatibilityThreshold: tasteVerdict?.thresholds.lensCompatibility ?? null,
+    roleScores: tasteEvidence?.roleScores ?? null,
+    roleScoreThreshold: tasteVerdict?.thresholds.roleScore ?? null,
+    fitScore: tasteVerdict?.scores.fitScore ?? null,
+    contextSpecificity: tasteEvidence?.contextSpecificity ?? null,
+    contextSpecificityThreshold: tasteVerdict?.thresholds.contextSpecificity ?? null,
+    roleContractResult: {
+      passed: params.roleContractPassed,
+      source: tasteVerdict ? 'taste_role_contract' : 'build_support_role_contract',
+      tasteSatisfied: tasteVerdict?.scores.roleContractSatisfied ?? null,
+    },
+    tasteSupportVerdict: tasteVerdict,
+    tasteSupportVerdictPassed: tasteVerdict?.passed === true,
+    consumedBy: 'build_required_anchor_support_selection',
+    deterministicRankBeforePredicate: params.deterministicRankBeforePredicate ?? null,
     admitted: params.admitted ?? null,
     admissionEvidenceSource: params.admissionEvidenceSource ?? null,
     admissionStatusBeforeAdaptation: params.admissionStatusBeforeAdaptation ?? null,
@@ -929,6 +983,17 @@ function resolveAdmittedSupportCandidateAdmission(candidate: CurateBuildAdmitted
   }
 }
 
+function mapTasteSupportVerdictRejectedReason(
+  verdict: TasteSupportCandidateVerdict,
+): Extract<
+  CurateBuildAnchorSupportCandidateRejectedReason,
+  'taste_verdict_failed' | 'taste_verdict_evidence_missing'
+> {
+  return verdict.failedReasons.includes('taste_support_evidence_missing')
+    ? 'taste_verdict_evidence_missing'
+    : 'taste_verdict_failed'
+}
+
 function collectBuildAnchorSupportCandidates(params: {
   opportunities: VerifiedCityOpportunity[]
   admittedSupportCandidates?: readonly CurateBuildAdmittedSupportCandidate[]
@@ -953,6 +1018,7 @@ function collectBuildAnchorSupportCandidates(params: {
   admissionProvenCandidateBoardCount: number
   roleEligibleCandidateBoardCount: number
   finalFallbackPoolCount: number
+  tasteCompatibleCandidateBoardCount: number
 } {
   const scenarioVenueIds = new Set(
     params.opportunities.flatMap((opportunity) =>
@@ -1122,6 +1188,7 @@ function collectBuildAnchorSupportCandidates(params: {
     candidateBoardCount: number
     admissionProvenCandidateBoardCount: number
     roleEligibleCandidateBoardCount: number
+    tasteCompatibleCandidateBoardCount: number
   } {
     const source = getBuildAnchorSupportSelectionSource({
       opportunity: params.opportunities[0],
@@ -1139,6 +1206,7 @@ function collectBuildAnchorSupportCandidates(params: {
     const candidates = params.admittedSupportCandidates ?? []
     let admissionProvenCandidateBoardCount = 0
     let roleEligibleCandidateBoardCount = 0
+    let tasteCompatibleCandidateBoardCount = 0
     candidates.forEach((candidate) => {
       const stop = toAdmittedCandidateStop(candidate)
       const venueIdPresent = Boolean(stop.venueId.trim())
@@ -1160,8 +1228,23 @@ function collectBuildAnchorSupportCandidates(params: {
         stop,
         role: params.role,
       })
+      const tasteSupportVerdict =
+        params.role === 'windDown'
+          ? evaluateTasteSupportCandidateVerdict({
+              role: params.role,
+              evidence: candidate.tasteEvidence ?? null,
+            })
+          : null
       if (admission.admitted && roleSemanticsPassed && roleContractPassed) {
         roleEligibleCandidateBoardCount += 1
+      }
+      if (
+        admission.admitted &&
+        roleSemanticsPassed &&
+        roleContractPassed &&
+        (tasteSupportVerdict?.passed ?? true)
+      ) {
+        tasteCompatibleCandidateBoardCount += 1
       }
       const rejectedReason: CurateBuildAnchorSupportCandidateRejectedReason | null = !venueIdPresent
         ? 'missing_venue_id'
@@ -1175,7 +1258,9 @@ function collectBuildAnchorSupportCandidates(params: {
                 ? 'role_semantics_failed'
                 : !roleContractPassed
                   ? 'role_contract_failed'
-                  : null
+                  : tasteSupportVerdict && !tasteSupportVerdict.passed
+                    ? mapTasteSupportVerdictRejectedReason(tasteSupportVerdict)
+                    : null
       if (params.role === 'windDown') {
         diagnostics.push(
           buildSupportCandidateDiagnostic({
@@ -1184,6 +1269,7 @@ function collectBuildAnchorSupportCandidates(params: {
             source,
             sourceLabel: candidate.sourceLabel ?? null,
             roleFit: stop.roleFit,
+            tasteEvidence: candidate.tasteEvidence ?? null,
             admitted: admission.admitted,
             admissionEvidenceSource: admission.evidenceSource,
             admissionStatusBeforeAdaptation: admission.statusBeforeAdaptation,
@@ -1196,6 +1282,8 @@ function collectBuildAnchorSupportCandidates(params: {
             anchorPocketMatch,
             roleSemanticsPassed,
             roleContractPassed,
+            tasteSupportVerdict,
+            deterministicRankBeforePredicate: candidate.boardRank ?? null,
             rejectedReason,
           }),
         )
@@ -1206,7 +1294,8 @@ function collectBuildAnchorSupportCandidates(params: {
         usedIdConflict ||
         !anchorPocketMatch ||
         !roleSemanticsPassed ||
-        !roleContractPassed
+        !roleContractPassed ||
+        (tasteSupportVerdict && !tasteSupportVerdict.passed)
       ) {
         return
       }
@@ -1251,6 +1340,7 @@ function collectBuildAnchorSupportCandidates(params: {
       candidateBoardCount: candidates.length,
       admissionProvenCandidateBoardCount,
       roleEligibleCandidateBoardCount,
+      tasteCompatibleCandidateBoardCount,
     }
   }
 
@@ -1264,6 +1354,7 @@ function collectBuildAnchorSupportCandidates(params: {
           candidateBoardCount: 0,
           admissionProvenCandidateBoardCount: 0,
           roleEligibleCandidateBoardCount: 0,
+          tasteCompatibleCandidateBoardCount: 0,
         }
   const selectedStage = scenario.candidates.length > 0 ? scenario : admitted
   const diagnostics = [...scenario.diagnostics, ...admitted.diagnostics]
@@ -1277,6 +1368,7 @@ function collectBuildAnchorSupportCandidates(params: {
     admissionProvenCandidateBoardCount: admitted.admissionProvenCandidateBoardCount,
     roleEligibleCandidateBoardCount: admitted.roleEligibleCandidateBoardCount,
     finalFallbackPoolCount: admitted.candidates.length,
+    tasteCompatibleCandidateBoardCount: admitted.tasteCompatibleCandidateBoardCount,
   }
 }
 
@@ -1518,6 +1610,11 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
     highlight: 0,
     windDown: 0,
   }
+  const tasteCompatibleCandidateBoardCountByRole: Record<CurateBuildAnchorSupportRole, number> = {
+    start: 0,
+    highlight: 0,
+    windDown: 0,
+  }
   const supportSelectionSourceByRole: Record<
     CurateBuildAnchorSupportRole,
     CurateBuildAnchorSupportSelectionSource
@@ -1590,6 +1687,8 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
     roleEligibleCandidateBoardCountByRole[role] =
       candidateCollection.roleEligibleCandidateBoardCount
     finalFallbackPoolCountByRole[role] = candidateCollection.finalFallbackPoolCount
+    tasteCompatibleCandidateBoardCountByRole[role] =
+      candidateCollection.tasteCompatibleCandidateBoardCount
     if (role === 'windDown') {
       windDownCandidateDiagnostics.push(...candidateCollection.diagnostics)
     }
@@ -1611,6 +1710,11 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
         candidateCollection.scenarioCandidateCount === 0 &&
         candidateCollection.rawCandidateBoardCount > 0 &&
         candidateCollection.admissionProvenCandidateBoardCount === 0
+      const noTasteCompatibleWindDown =
+        role === 'windDown' &&
+        candidateCollection.scenarioCandidateCount === 0 &&
+        candidateCollection.roleEligibleCandidateBoardCount > 0 &&
+        candidateCollection.tasteCompatibleCandidateBoardCount === 0
       const admittedCandidateBoardWindDownFailed =
         role === 'windDown' &&
         candidateCollection.scenarioCandidateCount === 0 &&
@@ -1626,6 +1730,8 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
         reason:
           noAdmissionProvenWindDown
             ? 'build_required_anchor_no_admission_proven_winddown_support_candidate'
+            : noTasteCompatibleWindDown
+            ? 'build_required_anchor_no_taste_compatible_winddown_candidate'
             : admittedCandidateBoardWindDownFailed
             ? 'build_required_anchor_no_admitted_winddown_support_candidate'
             : role === 'windDown' && candidateCollection.scenarioCandidateCount === 0
@@ -1649,6 +1755,8 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
           status: 'failed',
           reason: noAdmissionProvenWindDown
             ? 'build_required_anchor_no_admission_proven_winddown_support_candidate'
+            : noTasteCompatibleWindDown
+            ? 'build_required_anchor_no_taste_compatible_winddown_candidate'
             : admittedCandidateBoardWindDownFailed
             ? 'build_required_anchor_no_admitted_winddown_support_candidate'
             : 'anchor_centered_support_selection_failed',
@@ -1671,6 +1779,7 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
           admissionProvenCandidateBoardCountByRole,
           roleEligibleCandidateBoardCountByRole,
           finalFallbackPoolCountByRole,
+          tasteCompatibleCandidateBoardCountByRole,
           supportSelectionUsedCandidateBoardFallback: false,
           supportSelectionSourceByRole,
           windDownCandidateDiagnostics,
@@ -1795,6 +1904,7 @@ function maybeApplyBuildRequiredAnchorSupportSelection(params: {
       admissionProvenCandidateBoardCountByRole,
       roleEligibleCandidateBoardCountByRole,
       finalFallbackPoolCountByRole,
+      tasteCompatibleCandidateBoardCountByRole,
       supportSelectionUsedCandidateBoardFallback,
       supportSelectionSourceByRole,
       windDownCandidateDiagnostics,
@@ -2271,15 +2381,21 @@ function assessCoffeeBooksScenarioBuildability(params: {
   }
 
   if (buildRequiredAnchorSupportSelection.status === 'failed') {
+    const supportFailureReason =
+      buildRequiredAnchorSupportSelection.reason ===
+      'build_required_anchor_no_taste_compatible_winddown_candidate'
+        ? 'build_required_anchor_no_taste_compatible_winddown_candidate'
+        : 'anchor_centered_support_selection_failed'
     return {
       allowed: false,
       status: 'rejected',
-      reason: 'anchor_centered_support_selection_failed',
+      reason: supportFailureReason,
       failedRoles: buildRequiredAnchorSupportSelection.replacementSupportStops
         .filter(
           (entry) =>
             entry.reason === 'anchor_centered_support_selection_failed' ||
-            entry.reason === 'build_required_anchor_no_admitted_winddown_support_candidate',
+            entry.reason === 'build_required_anchor_no_admitted_winddown_support_candidate' ||
+            entry.reason === 'build_required_anchor_no_taste_compatible_winddown_candidate',
         )
         .map((entry) => entry.role),
       seedProjectionAvailable: true,
@@ -2291,7 +2407,8 @@ function assessCoffeeBooksScenarioBuildability(params: {
           buildRequiredAnchorSupportSelection.replacementSupportStops.find(
             (entry) =>
               entry.reason === 'anchor_centered_support_selection_failed' ||
-              entry.reason === 'build_required_anchor_no_admitted_winddown_support_candidate',
+              entry.reason === 'build_required_anchor_no_admitted_winddown_support_candidate' ||
+              entry.reason === 'build_required_anchor_no_taste_compatible_winddown_candidate',
           )?.role ?? null,
       }),
     }

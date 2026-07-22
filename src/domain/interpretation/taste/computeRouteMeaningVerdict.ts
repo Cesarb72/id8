@@ -118,11 +118,78 @@ export interface ComputeRouteMeaningVerdictResult
   verdict: TasteRouteMeaningVerdict
 }
 
-const ROLE_RIGHT_ROLE_FIT_THRESHOLD = 0.5
-const ROLE_RIGHT_SHAPE_FIT_THRESHOLD = 0.34
+export const ROLE_RIGHT_ROLE_FIT_THRESHOLD = 0.5
+export const ROLE_RIGHT_SHAPE_FIT_THRESHOLD = 0.34
 const INTENT_RIGHT_ROUTE_FIT_THRESHOLD = 0.42
-const INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD = 0.38
-const INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD = 0.3
+export const INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD = 0.38
+export const INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD = 0.3
+
+export type TasteRoleIntentCoreCriterion = 'role_right' | 'intent_right'
+export type TasteRoleIntentCoreField =
+  | 'role_fit'
+  | 'stop_shape_fit'
+  | 'route_fit'
+  | 'lens_compatibility'
+  | 'context_specificity'
+
+export interface TasteRoleIntentCoreFailure {
+  criterion: TasteRoleIntentCoreCriterion
+  field: TasteRoleIntentCoreField
+  role: TasteRouteMeaningStopRole
+  candidateVenueId: TasteRouteMeaningVenueId
+  score: number
+  threshold: number
+  reason: string
+  evidencePresent: true
+}
+
+export interface TasteRoleIntentCoreMissingEvidence {
+  criterion: TasteRoleIntentCoreCriterion
+  field: TasteRoleIntentCoreField
+  role: TasteRouteMeaningStopRole
+  candidateVenueId: TasteRouteMeaningVenueId
+  evidencePresent: false
+}
+
+export interface TasteRoleIntentCoreResult {
+  owner: 'taste'
+  coreFunctionName: 'evaluateTasteRoleIntentCore'
+  role: TasteRouteMeaningStopRole
+  candidateVenueId: TasteRouteMeaningVenueId
+  scores: {
+    roleFit: number | undefined
+    stopShapeFit: number | undefined
+    routeFit: number | undefined
+    lensCompatibility: number | undefined
+    contextSpecificity: number | undefined
+  }
+  thresholds: {
+    roleFit: number
+    stopShapeFit: number
+    routeFit: number
+    lensCompatibility: number
+    contextSpecificity: number
+  }
+  roleRight: {
+    ready: boolean
+    failures: readonly TasteRoleIntentCoreFailure[]
+    missingEvidence: readonly TasteRoleIntentCoreMissingEvidence[]
+  }
+  intentRight: {
+    ready: boolean
+    failures: readonly TasteRoleIntentCoreFailure[]
+    missingEvidence: readonly TasteRoleIntentCoreMissingEvidence[]
+  }
+}
+
+export interface TasteRoleIntentCoreOptions {
+  roleRight?: boolean
+  intentRight?: {
+    routeFit?: boolean
+    lensCompatibility?: boolean
+    contextSpecificity?: boolean
+  }
+}
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
@@ -335,6 +402,181 @@ function getCompatibilityStatus(score: number | undefined): TasteRouteMeaningCom
   return 'conflict'
 }
 
+function buildCoreMissingEvidence(params: {
+  criterion: TasteRoleIntentCoreCriterion
+  field: TasteRoleIntentCoreField
+  stop: TasteRouteMeaningStopEvidenceInput
+}): TasteRoleIntentCoreMissingEvidence {
+  return {
+    criterion: params.criterion,
+    field: params.field,
+    role: params.stop.role,
+    candidateVenueId: params.stop.candidateVenueId,
+    evidencePresent: false,
+  }
+}
+
+function evaluateTasteRoleIntentCoreField(params: {
+  criterion: TasteRoleIntentCoreCriterion
+  field: TasteRoleIntentCoreField
+  stop: TasteRouteMeaningStopEvidenceInput
+  score: number | undefined
+  threshold: number
+  reason: string
+}): {
+  failure?: TasteRoleIntentCoreFailure
+  missingEvidence?: TasteRoleIntentCoreMissingEvidence
+} {
+  if (typeof params.score !== 'number') {
+    return {
+      missingEvidence: buildCoreMissingEvidence({
+        criterion: params.criterion,
+        field: params.field,
+        stop: params.stop,
+      }),
+    }
+  }
+  if (params.score < params.threshold) {
+    return {
+      failure: {
+        criterion: params.criterion,
+        field: params.field,
+        role: params.stop.role,
+        candidateVenueId: params.stop.candidateVenueId,
+        score: params.score,
+        threshold: params.threshold,
+        reason: params.reason,
+        evidencePresent: true,
+      },
+    }
+  }
+  return {}
+}
+
+export function evaluateTasteRoleIntentCore(params: {
+  stop: TasteRouteMeaningStopEvidenceInput
+  options: TasteRoleIntentCoreOptions
+}): TasteRoleIntentCoreResult {
+  const { stop, options } = params
+  const roleRightFailures: TasteRoleIntentCoreFailure[] = []
+  const roleRightMissingEvidence: TasteRoleIntentCoreMissingEvidence[] = []
+  const intentRightFailures: TasteRoleIntentCoreFailure[] = []
+  const intentRightMissingEvidence: TasteRoleIntentCoreMissingEvidence[] = []
+
+  const applyResult = (
+    target: TasteRoleIntentCoreCriterion,
+    result: ReturnType<typeof evaluateTasteRoleIntentCoreField>,
+  ): void => {
+    if (target === 'role_right') {
+      if (result.failure) roleRightFailures.push(result.failure)
+      if (result.missingEvidence) roleRightMissingEvidence.push(result.missingEvidence)
+      return
+    }
+    if (result.failure) intentRightFailures.push(result.failure)
+    if (result.missingEvidence) intentRightMissingEvidence.push(result.missingEvidence)
+  }
+
+  if (options.roleRight === true) {
+    applyResult(
+      'role_right',
+      evaluateTasteRoleIntentCoreField({
+        criterion: 'role_right',
+        field: 'role_fit',
+        stop,
+        score: stop.roleFitScore,
+        threshold: ROLE_RIGHT_ROLE_FIT_THRESHOLD,
+        reason: `role_right:low_role_fit:${stop.role}`,
+      }),
+    )
+    applyResult(
+      'role_right',
+      evaluateTasteRoleIntentCoreField({
+        criterion: 'role_right',
+        field: 'stop_shape_fit',
+        stop,
+        score: stop.stopShapeFitScore,
+        threshold: ROLE_RIGHT_SHAPE_FIT_THRESHOLD,
+        reason: `role_right:low_shape_fit:${stop.role}`,
+      }),
+    )
+  }
+
+  if (options.intentRight?.routeFit === true) {
+    applyResult(
+      'intent_right',
+      evaluateTasteRoleIntentCoreField({
+        criterion: 'intent_right',
+        field: 'route_fit',
+        stop,
+        score: stop.routeFitScore,
+        threshold: INTENT_RIGHT_ROUTE_FIT_THRESHOLD,
+        reason: `intent_right:low_fit:${stop.role}`,
+      }),
+    )
+  }
+  if (options.intentRight?.lensCompatibility === true) {
+    applyResult(
+      'intent_right',
+      evaluateTasteRoleIntentCoreField({
+        criterion: 'intent_right',
+        field: 'lens_compatibility',
+        stop,
+        score: stop.lensCompatibilityScore,
+        threshold: INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD,
+        reason: `intent_right:low_lens_compatibility:${stop.role}`,
+      }),
+    )
+  }
+  if (options.intentRight?.contextSpecificity === true) {
+    applyResult(
+      'intent_right',
+      evaluateTasteRoleIntentCoreField({
+        criterion: 'intent_right',
+        field: 'context_specificity',
+        stop,
+        score: stop.contextSpecificityScore,
+        threshold: INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD,
+        reason: `intent_right:low_context_specificity:${stop.role}`,
+      }),
+    )
+  }
+
+  return {
+    owner: 'taste',
+    coreFunctionName: 'evaluateTasteRoleIntentCore',
+    role: stop.role,
+    candidateVenueId: stop.candidateVenueId,
+    scores: {
+      roleFit: stop.roleFitScore,
+      stopShapeFit: stop.stopShapeFitScore,
+      routeFit: stop.routeFitScore,
+      lensCompatibility: stop.lensCompatibilityScore,
+      contextSpecificity: stop.contextSpecificityScore,
+    },
+    thresholds: {
+      roleFit: ROLE_RIGHT_ROLE_FIT_THRESHOLD,
+      stopShapeFit: ROLE_RIGHT_SHAPE_FIT_THRESHOLD,
+      routeFit: INTENT_RIGHT_ROUTE_FIT_THRESHOLD,
+      lensCompatibility: INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD,
+      contextSpecificity: INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD,
+    },
+    roleRight: {
+      ready:
+        options.roleRight !== true ||
+        roleRightMissingEvidence.length === 0,
+      failures: roleRightFailures,
+      missingEvidence: roleRightMissingEvidence,
+    },
+    intentRight: {
+      ready:
+        !options.intentRight ||
+        intentRightMissingEvidence.length === 0,
+      failures: intentRightFailures,
+      missingEvidence: intentRightMissingEvidence,
+    },
+  }
+}
+
 function buildRoleRightFailureEvidence(params: {
   stop: TasteRouteMeaningStopEvidenceInput
   evidenceType: TasteRouteMeaningRoleRightFailureEvidence['evidenceType']
@@ -366,26 +608,26 @@ function buildRoleRightFailureEvidence(params: {
 export function computeRouteMeaningRoleRightVerdict(
   stops: readonly TasteRouteMeaningStopEvidenceInput[],
 ): TasteRouteMeaningRoleRightVerdict {
-  const stopEvidence = stops.map((stop) => {
-    const lowRoleReasons =
-      typeof stop.roleFitScore === 'number' &&
-      stop.roleFitScore < ROLE_RIGHT_ROLE_FIT_THRESHOLD
-        ? [`role_right:low_role_fit:${stop.role}`]
-        : []
-    const lowShapeReasons =
-      typeof stop.stopShapeFitScore === 'number' &&
-      stop.stopShapeFitScore < ROLE_RIGHT_SHAPE_FIT_THRESHOLD
-        ? [`role_right:low_shape_fit:${stop.role}`]
-        : []
+  const coreResults = stops.map((stop) => ({
+    stop,
+    core: evaluateTasteRoleIntentCore({
+      stop,
+      options: { roleRight: true },
+    }),
+  }))
+  const stopEvidence = coreResults.map(({ stop, core }) => {
+    const lowRoleReasons = core.roleRight.failures
+      .filter((failure) => failure.field === 'role_fit')
+      .map((failure) => failure.reason)
+    const lowShapeReasons = core.roleRight.failures
+      .filter((failure) => failure.field === 'stop_shape_fit')
+      .map((failure) => failure.reason)
     const roleRightReasons = [...lowRoleReasons, ...lowShapeReasons]
-    const conflictEvidence = [
-      ...lowRoleReasons.map(() =>
-        toComponent('role_fit_score', clamp01(stop.roleFitScore ?? 0), 'Low role fit'),
-      ),
-      ...lowShapeReasons.map(() =>
-        toComponent('stop_shape_fit_score', clamp01(stop.stopShapeFitScore ?? 0), 'Low stop shape fit'),
-      ),
-    ]
+    const conflictEvidence = core.roleRight.failures.map((failure) =>
+      failure.field === 'role_fit'
+        ? toComponent('role_fit_score', clamp01(failure.score), 'Low role fit')
+        : toComponent('stop_shape_fit_score', clamp01(failure.score), 'Low stop shape fit'),
+    )
 
     return {
       role: stop.role,
@@ -398,43 +640,37 @@ export function computeRouteMeaningRoleRightVerdict(
       conflictEvidence: conflictEvidence.length > 0 ? conflictEvidence : undefined,
     }
   })
-  const lowRoleEvidence = stops.flatMap((stop) =>
-    typeof stop.roleFitScore === 'number' &&
-    stop.roleFitScore < ROLE_RIGHT_ROLE_FIT_THRESHOLD
-      ? [
-          buildRoleRightFailureEvidence({
-            stop,
-            evidenceType: 'low_role_fit',
-            score: stop.roleFitScore,
-            threshold: ROLE_RIGHT_ROLE_FIT_THRESHOLD,
-            reason: `role_right:low_role_fit:${stop.role}`,
-          }),
-        ]
-      : [],
+  const lowRoleEvidence = coreResults.flatMap(({ stop, core }) =>
+    core.roleRight.failures
+      .filter((failure) => failure.field === 'role_fit')
+      .map((failure) =>
+        buildRoleRightFailureEvidence({
+          stop,
+          evidenceType: 'low_role_fit',
+          score: failure.score,
+          threshold: failure.threshold,
+          reason: failure.reason,
+        }),
+      ),
   )
-  const lowShapeEvidence = stops.flatMap((stop) =>
-    typeof stop.stopShapeFitScore === 'number' &&
-    stop.stopShapeFitScore < ROLE_RIGHT_SHAPE_FIT_THRESHOLD
-      ? [
-          buildRoleRightFailureEvidence({
-            stop,
-            evidenceType: 'low_shape_fit',
-            score: stop.stopShapeFitScore,
-            threshold: ROLE_RIGHT_SHAPE_FIT_THRESHOLD,
-            reason: `role_right:low_shape_fit:${stop.role}`,
-          }),
-        ]
-      : [],
+  const lowShapeEvidence = coreResults.flatMap(({ stop, core }) =>
+    core.roleRight.failures
+      .filter((failure) => failure.field === 'stop_shape_fit')
+      .map((failure) =>
+        buildRoleRightFailureEvidence({
+          stop,
+          evidenceType: 'low_shape_fit',
+          score: failure.score,
+          threshold: failure.threshold,
+          reason: failure.reason,
+        }),
+      ),
   )
   const reasons = [
     ...lowRoleEvidence.map((evidence) => evidence.reason),
     ...lowShapeEvidence.map((evidence) => evidence.reason),
   ]
-  const ready = stops.every(
-    (stop) =>
-      typeof stop.roleFitScore === 'number' &&
-      typeof stop.stopShapeFitScore === 'number',
-  )
+  const ready = coreResults.every(({ core }) => core.roleRight.ready)
 
   return {
     status: ready ? (reasons.length === 0 ? 'pass' : 'fail') : 'unknown',
@@ -487,46 +723,51 @@ function buildIntentRightFailureEvidence(params: {
 export function computeRouteMeaningIntentRightVerdict(
   stops: readonly TasteRouteMeaningStopEvidenceInput[],
 ): TasteRouteMeaningIntentRightVerdict {
-  const stopEvidence = stops.map((stop) => {
-    const lowFitReasons =
-      typeof stop.routeFitScore === 'number' &&
-      stop.routeFitScore < INTENT_RIGHT_ROUTE_FIT_THRESHOLD
-        ? [`intent_right:low_fit:${stop.role}`]
-        : []
-    const lowLensCompatibilityReasons =
-      typeof stop.lensCompatibilityScore === 'number' &&
-      stop.lensCompatibilityScore < INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD
-        ? [`intent_right:low_lens_compatibility:${stop.role}`]
-        : []
-    const lowContextSpecificityReasons =
-      typeof stop.contextSpecificityScore === 'number' &&
-      stop.contextSpecificityScore < INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD
-        ? [`intent_right:low_context_specificity:${stop.role}`]
-        : []
+  const coreResults = stops.map((stop) => ({
+    stop,
+    core: evaluateTasteRoleIntentCore({
+      stop,
+      options: {
+        intentRight: {
+          routeFit: true,
+          lensCompatibility: true,
+          contextSpecificity: true,
+        },
+      },
+    }),
+  }))
+  const stopEvidence = coreResults.map(({ stop, core }) => {
+    const lowFitReasons = core.intentRight.failures
+      .filter((failure) => failure.field === 'route_fit')
+      .map((failure) => failure.reason)
+    const lowLensCompatibilityReasons = core.intentRight.failures
+      .filter((failure) => failure.field === 'lens_compatibility')
+      .map((failure) => failure.reason)
+    const lowContextSpecificityReasons = core.intentRight.failures
+      .filter((failure) => failure.field === 'context_specificity')
+      .map((failure) => failure.reason)
     const intentRightReasons = [
       ...lowFitReasons,
       ...lowLensCompatibilityReasons,
       ...lowContextSpecificityReasons,
     ]
-    const conflictEvidence = [
-      ...lowFitReasons.map(() =>
-        toComponent('route_fit_score', clamp01(stop.routeFitScore ?? 0), 'Low route fit'),
-      ),
-      ...lowLensCompatibilityReasons.map(() =>
-        toComponent(
+    const conflictEvidence = core.intentRight.failures.map((failure) => {
+      if (failure.field === 'route_fit') {
+        return toComponent('route_fit_score', clamp01(failure.score), 'Low route fit')
+      }
+      if (failure.field === 'lens_compatibility') {
+        return toComponent(
           'lens_compatibility_score',
-          clamp01(stop.lensCompatibilityScore ?? 0),
+          clamp01(failure.score),
           'Low lens compatibility',
-        ),
-      ),
-      ...lowContextSpecificityReasons.map(() =>
-        toComponent(
-          'context_specificity_score',
-          clamp01(stop.contextSpecificityScore ?? 0),
-          'Low context specificity',
-        ),
-      ),
-    ]
+        )
+      }
+      return toComponent(
+        'context_specificity_score',
+        clamp01(failure.score),
+        'Low context specificity',
+      )
+    })
 
     return {
       role: stop.role,
@@ -549,59 +790,51 @@ export function computeRouteMeaningIntentRightVerdict(
       conflictEvidence: conflictEvidence.length > 0 ? conflictEvidence : undefined,
     }
   })
-  const lowFitEvidence = stops.flatMap((stop) =>
-    typeof stop.routeFitScore === 'number' &&
-    stop.routeFitScore < INTENT_RIGHT_ROUTE_FIT_THRESHOLD
-      ? [
-          buildIntentRightFailureEvidence({
-            stop,
-            evidenceType: 'low_fit',
-            score: stop.routeFitScore,
-            threshold: INTENT_RIGHT_ROUTE_FIT_THRESHOLD,
-            reason: `intent_right:low_fit:${stop.role}`,
-          }),
-        ]
-      : [],
+  const lowFitEvidence = coreResults.flatMap(({ stop, core }) =>
+    core.intentRight.failures
+      .filter((failure) => failure.field === 'route_fit')
+      .map((failure) =>
+        buildIntentRightFailureEvidence({
+          stop,
+          evidenceType: 'low_fit',
+          score: failure.score,
+          threshold: failure.threshold,
+          reason: failure.reason,
+        }),
+      ),
   )
-  const lowLensCompatibilityEvidence = stops.flatMap((stop) =>
-    typeof stop.lensCompatibilityScore === 'number' &&
-    stop.lensCompatibilityScore < INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD
-      ? [
-          buildIntentRightFailureEvidence({
-            stop,
-            evidenceType: 'low_lens_compatibility',
-            score: stop.lensCompatibilityScore,
-            threshold: INTENT_RIGHT_LENS_COMPATIBILITY_THRESHOLD,
-            reason: `intent_right:low_lens_compatibility:${stop.role}`,
-          }),
-        ]
-      : [],
+  const lowLensCompatibilityEvidence = coreResults.flatMap(({ stop, core }) =>
+    core.intentRight.failures
+      .filter((failure) => failure.field === 'lens_compatibility')
+      .map((failure) =>
+        buildIntentRightFailureEvidence({
+          stop,
+          evidenceType: 'low_lens_compatibility',
+          score: failure.score,
+          threshold: failure.threshold,
+          reason: failure.reason,
+        }),
+      ),
   )
-  const lowContextSpecificityEvidence = stops.flatMap((stop) =>
-    typeof stop.contextSpecificityScore === 'number' &&
-    stop.contextSpecificityScore < INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD
-      ? [
-          buildIntentRightFailureEvidence({
-            stop,
-            evidenceType: 'low_context_specificity',
-            score: stop.contextSpecificityScore,
-            threshold: INTENT_RIGHT_CONTEXT_SPECIFICITY_THRESHOLD,
-            reason: `intent_right:low_context_specificity:${stop.role}`,
-          }),
-        ]
-      : [],
+  const lowContextSpecificityEvidence = coreResults.flatMap(({ stop, core }) =>
+    core.intentRight.failures
+      .filter((failure) => failure.field === 'context_specificity')
+      .map((failure) =>
+        buildIntentRightFailureEvidence({
+          stop,
+          evidenceType: 'low_context_specificity',
+          score: failure.score,
+          threshold: failure.threshold,
+          reason: failure.reason,
+        }),
+      ),
   )
   const reasons = [
     ...lowFitEvidence.map((evidence) => evidence.reason),
     ...lowLensCompatibilityEvidence.map((evidence) => evidence.reason),
     ...lowContextSpecificityEvidence.map((evidence) => evidence.reason),
   ]
-  const ready = stops.every(
-    (stop) =>
-      typeof stop.routeFitScore === 'number' &&
-      typeof stop.lensCompatibilityScore === 'number' &&
-      typeof stop.contextSpecificityScore === 'number',
-  )
+  const ready = coreResults.every(({ core }) => core.intentRight.ready)
 
   return {
     status: ready ? (reasons.length === 0 ? 'pass' : 'fail') : 'unknown',

@@ -129,6 +129,23 @@ export type StopTypeCandidate = {
     windDown?: number
   }
   reasons: string[]
+  tasteEvidence?: StopTypeCandidateTasteEvidence
+}
+
+export type StopTypeCandidateTasteEvidence = {
+  lensCompatibility: ScoredVenue['lensCompatibility']
+  stopShapeFit: ScoredVenue['stopShapeFit']
+  roleScores: ScoredVenue['roleScores']
+  fitScore: ScoredVenue['fitScore']
+  contextSpecificity: ScoredVenue['contextSpecificity']
+  roleContract: ScoredVenue['roleContract']
+  candidateIdentity: ScoredVenue['candidateIdentity']
+  sourceProvenance: {
+    provider: ScoredVenue['venue']['source']['provider']
+    providerRecordId?: string
+    sourceOrigin: ScoredVenue['venue']['source']['sourceOrigin']
+    sourceQueryLabel?: string
+  }
 }
 
 export type ScenarioEvaluationContract = {
@@ -189,6 +206,7 @@ export type StopTypeCandidateBoard = {
           sourceType?: 'venue' | 'event' | 'hybrid'
           sourceTypes?: string[]
           roleFit: StopTypeCandidate['roleFit']
+          tasteEvidence?: StopTypeCandidateTasteEvidence
           score: number
           boardRank: number
           survivedNormalization: boolean
@@ -1949,6 +1967,25 @@ export function buildStopTypeCandidateBoard(
         lateNightPotential: signals.lateNightPotential,
         majorVenueStrength: signals.majorVenueStrength,
         roleFit: candidateRoleFit,
+        tasteEvidence: {
+          lensCompatibility: scoredVenue.lensCompatibility,
+          stopShapeFit: scoredVenue.stopShapeFit,
+          roleScores: scoredVenue.roleScores,
+          fitScore: scoredVenue.fitScore,
+          contextSpecificity: scoredVenue.contextSpecificity,
+          roleContract: scoredVenue.roleContract,
+          candidateIdentity: scoredVenue.candidateIdentity,
+          sourceProvenance: {
+            provider: scoredVenue.venue.source.provider,
+            ...(scoredVenue.venue.source.providerRecordId
+              ? { providerRecordId: scoredVenue.venue.source.providerRecordId }
+              : {}),
+            sourceOrigin: scoredVenue.venue.source.sourceOrigin,
+            ...(scoredVenue.venue.source.sourceQueryLabel
+              ? { sourceQueryLabel: scoredVenue.venue.source.sourceQueryLabel }
+              : {}),
+          },
+        },
         reasons: toCandidateReasons({
           baseReasons: fitResult.reasons,
           scenarioRelevance,
@@ -2113,6 +2150,7 @@ function buildFixtureCandidateBoardDebug(
           sourceType: candidate.sourceType,
           sourceTypes: candidate.sourceTypes,
           roleFit: candidate.roleFit,
+          tasteEvidence: candidate.tasteEvidence,
           score: Number(candidate.__rankScore.toFixed(3)),
           boardRank: index + 1,
           survivedNormalization: true,
