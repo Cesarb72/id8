@@ -60,6 +60,14 @@ const outputColumns = [
   'runtime lock truth status',
   'runtime lock truth reason',
   'lifecycle input availability',
+  'itinerary missing? yes/no',
+  'scored venues missing? yes/no',
+  'runtime lock eligibility missing? yes/no',
+  'Great Stop status missing? yes/no',
+  'route-level lock truth source missing? yes/no',
+  'compatibility route truth? yes/no',
+  'canonical route truth? yes/no',
+  'false-green risk? yes/no',
   'why not MVP green',
   'invalid false-green? yes/no',
   'proof validity label',
@@ -97,7 +105,7 @@ function readGitMetadata(args: string[]): string | null {
   }
 }
 
-const PROOF_PHASE_LABEL = 'Phase 3I lifecycle observation harness implementation/run'
+const PROOF_PHASE_LABEL = 'Phase 3L harness input mapping implementation/run'
 const metadataHead = readGitMetadata(['rev-parse', '--short', 'HEAD'])
 const metadataBranch = readGitMetadata(['branch', '--show-current'])
 const metadataStatus = metadataHead ? 'available' : 'unavailable'
@@ -464,6 +472,13 @@ function buildRow(params: {
   runtimeLockTruthStatus: string
   runtimeLockTruthReason: string
   lifecycleInputAvailability: string
+  itineraryMissing: boolean
+  scoredVenuesMissing: boolean
+  runtimeLockEligibilityMissing: boolean
+  greatStopStatusMissing: boolean
+  routeLevelLockTruthSourceMissing: boolean
+  compatibilityRouteTruth: boolean
+  canonicalRouteTruth: boolean
   whyNotMvpGreen: string
 }): ProofRow {
   const lineagePopulated = [
@@ -481,13 +496,16 @@ function buildRow(params: {
     params.demoSpecialUsed ||
     params.appAuthorityShadowUsed ||
     params.legacyWrapperUsed
+  const falseGreenRisk = disqualifyingMasking || params.compatibilityRouteTruth
   const validMvpPass =
     params.contractEntryProduced &&
     params.runtimeRouteProduced &&
+    params.canonicalRouteTruth &&
     params.greatStopPassFail === 'pass' &&
     params.reviewLockEligible &&
     lineagePopulated &&
     maskingFlagsPopulated &&
+    !params.compatibilityRouteTruth &&
     !disqualifyingMasking
   const apparentPass =
     params.contractEntryProduced &&
@@ -543,6 +561,14 @@ function buildRow(params: {
     'runtime lock truth status': params.runtimeLockTruthStatus,
     'runtime lock truth reason': params.runtimeLockTruthReason,
     'lifecycle input availability': params.lifecycleInputAvailability,
+    'itinerary missing? yes/no': yesNo(params.itineraryMissing),
+    'scored venues missing? yes/no': yesNo(params.scoredVenuesMissing),
+    'runtime lock eligibility missing? yes/no': yesNo(params.runtimeLockEligibilityMissing),
+    'Great Stop status missing? yes/no': yesNo(params.greatStopStatusMissing),
+    'route-level lock truth source missing? yes/no': yesNo(params.routeLevelLockTruthSourceMissing),
+    'compatibility route truth? yes/no': yesNo(params.compatibilityRouteTruth),
+    'canonical route truth? yes/no': yesNo(params.canonicalRouteTruth),
+    'false-green risk? yes/no': yesNo(falseGreenRisk),
     'why not MVP green': validMvpPass ? 'valid MVP pass' : params.whyNotMvpGreen,
     'invalid false-green? yes/no': yesNo(invalidFalseGreen),
     'proof validity label': validMvpPass
@@ -591,6 +617,13 @@ function observeLifecycleFromArtifact(params: {
   reviewLockStatus: 'eligible' | 'ineligible' | 'not observed' | 'unavailable_missing_inputs'
   reviewLockEligible: boolean
   lifecycleInputAvailability: string
+  itineraryMissing: boolean
+  scoredVenuesMissing: boolean
+  runtimeLockEligibilityMissing: boolean
+  greatStopStatusMissing: boolean
+  routeLevelLockTruthSourceMissing: boolean
+  compatibilityRouteTruth: boolean
+  canonicalRouteTruth: boolean
 } {
   if (!params.artifact) {
     return {
@@ -606,6 +639,13 @@ function observeLifecycleFromArtifact(params: {
       reviewLockStatus: 'ineligible',
       reviewLockEligible: false,
       lifecycleInputAvailability: 'not_applicable_no_contract_entry_artifact',
+      itineraryMissing: true,
+      scoredVenuesMissing: true,
+      runtimeLockEligibilityMissing: true,
+      greatStopStatusMissing: true,
+      routeLevelLockTruthSourceMissing: true,
+      compatibilityRouteTruth: false,
+      canonicalRouteTruth: false,
     }
   }
 
@@ -617,6 +657,11 @@ function observeLifecycleFromArtifact(params: {
     'missing_scored_venues',
     embeddedRuntimeLockEligibility ? null : 'missing_runtime_lock_eligibility',
   ].filter((value): value is string => Boolean(value))
+  const itineraryMissing = true
+  const scoredVenuesMissing = true
+  const runtimeLockEligibilityMissing = !embeddedRuntimeLockEligibility
+  const greatStopStatusMissing = !embeddedGreatStopStatus
+  const routeLevelLockTruthSourceMissing = !embeddedRuntimeRouteArtifact
   const snapshot = buildRouteAuthoritySnapshot({
     contractEntryArtifact: params.artifact,
     selectedDirectionId: params.artifact.selection.directionId ?? null,
@@ -662,6 +707,13 @@ function observeLifecycleFromArtifact(params: {
     reviewLockEligible: lockInput.ok,
     lifecycleInputAvailability:
       lifecycleMissingInputs.length > 0 ? lifecycleMissingInputs.join('|') : 'available',
+    itineraryMissing,
+    scoredVenuesMissing,
+    runtimeLockEligibilityMissing,
+    greatStopStatusMissing,
+    routeLevelLockTruthSourceMissing,
+    compatibilityRouteTruth: false,
+    canonicalRouteTruth: Boolean(embeddedRuntimeRouteArtifact),
   }
 }
 
@@ -773,6 +825,13 @@ const rows: ProofRow[] = [
     runtimeLockTruthStatus: scenarioOnlyLifecycle.runtimeLockTruthStatus,
     runtimeLockTruthReason: scenarioOnlyLifecycle.runtimeLockTruthReason,
     lifecycleInputAvailability: scenarioOnlyLifecycle.lifecycleInputAvailability,
+    itineraryMissing: scenarioOnlyLifecycle.itineraryMissing,
+    scoredVenuesMissing: scenarioOnlyLifecycle.scoredVenuesMissing,
+    runtimeLockEligibilityMissing: scenarioOnlyLifecycle.runtimeLockEligibilityMissing,
+    greatStopStatusMissing: scenarioOnlyLifecycle.greatStopStatusMissing,
+    routeLevelLockTruthSourceMissing: scenarioOnlyLifecycle.routeLevelLockTruthSourceMissing,
+    compatibilityRouteTruth: scenarioOnlyLifecycle.compatibilityRouteTruth,
+    canonicalRouteTruth: scenarioOnlyLifecycle.canonicalRouteTruth,
     whyNotMvpGreen:
       'support selection failed closed before ContractEntryArtifact; RuntimeRouteArtifact, Great Stop, and Review/Lock are blocked',
   }),
@@ -824,6 +883,13 @@ const rows: ProofRow[] = [
     runtimeLockTruthStatus: admittedLifecycle.runtimeLockTruthStatus,
     runtimeLockTruthReason: admittedLifecycle.runtimeLockTruthReason,
     lifecycleInputAvailability: admittedLifecycle.lifecycleInputAvailability,
+    itineraryMissing: admittedLifecycle.itineraryMissing,
+    scoredVenuesMissing: admittedLifecycle.scoredVenuesMissing,
+    runtimeLockEligibilityMissing: admittedLifecycle.runtimeLockEligibilityMissing,
+    greatStopStatusMissing: admittedLifecycle.greatStopStatusMissing,
+    routeLevelLockTruthSourceMissing: admittedLifecycle.routeLevelLockTruthSourceMissing,
+    compatibilityRouteTruth: admittedLifecycle.compatibilityRouteTruth,
+    canonicalRouteTruth: admittedLifecycle.canonicalRouteTruth,
     whyNotMvpGreen:
       'ContractEntryArtifact is produced and routeAuthority/lock-input are observed, but RuntimeRouteArtifact is unavailable because route-level lock inputs are missing; Great Stop is not observed; Review/Lock remains ineligible; static/DEMO-SPECIAL/app-authority flags remain',
   }),
@@ -832,7 +898,27 @@ const rows: ProofRow[] = [
 const missingColumns = rows.flatMap((row, index) =>
   missingColumnsFor(row).map((column) => ({ row: index + 1, column })),
 )
+const compatibilityRouteTruthRows = rows.filter((row) => row['compatibility route truth? yes/no'] === 'yes').length
+const canonicalRouteTruthRows = rows.filter((row) => row['canonical route truth? yes/no'] === 'yes').length
+const diagnosticCompatibilityRowAdded = rows.some(
+  (row) => row['compatibility route truth? yes/no'] === 'yes' && row['diagnostic-only? yes/no'] === 'yes',
+)
+const currentRow2 = rows.find((row) => row['support source'] === 'admitted_candidate_board') ?? null
+const currentRow2MissingInputs = currentRow2
+  ? {
+      itineraryMissing: currentRow2['itinerary missing? yes/no'],
+      scoredVenuesMissing: currentRow2['scored venues missing? yes/no'],
+      runtimeLockEligibilityMissing: currentRow2['runtime lock eligibility missing? yes/no'],
+      greatStopStatusMissing: currentRow2['Great Stop status missing? yes/no'],
+      routeLevelLockTruthSourceMissing: currentRow2['route-level lock truth source missing? yes/no'],
+      lockInputBlockedReason: currentRow2['lock input rejection reason'],
+    }
+  : null
 assert(missingColumns.length === 0, `Missing Phase 3 proof columns: ${JSON.stringify(missingColumns)}`)
+assert(
+  rows.every((row) => row['compatibility route truth? yes/no'] !== 'yes' || row['valid MVP pass? yes/no'] === 'no'),
+  'Compatibility route truth rows must not be marked as valid MVP passes.',
+)
 assert(fetchCallCount === 0, `Provider/hosted fetch calls must stay zero, got ${fetchCallCount}.`)
 
 const outputDir = join(process.cwd(), '.audit-output-614a103', 'phase-3-proof-gate')
@@ -858,6 +944,10 @@ const summary = {
   lifecycleCompleteRows: rows.filter((row) => row['lifecycle capture status'] === 'complete').length,
   lifecyclePartialRows: rows.filter((row) => row['lifecycle capture status'] === 'partial').length,
   lifecycleBlockedRows: rows.filter((row) => row['lifecycle capture status'] === 'blocked').length,
+  compatibilityRouteTruthRows,
+  canonicalRouteTruthRows,
+  currentRow2MissingInputs,
+  diagnosticCompatibilityRowAdded,
   missingColumns,
   outputColumns,
 }
@@ -883,6 +973,10 @@ writeFileSync(
     `- lifecycle-complete rows: ${summary.lifecycleCompleteRows}`,
     `- lifecycle-partial rows: ${summary.lifecyclePartialRows}`,
     `- lifecycle-blocked rows: ${summary.lifecycleBlockedRows}`,
+    `- compatibility route truth rows: ${summary.compatibilityRouteTruthRows}`,
+    `- canonical route truth rows: ${summary.canonicalRouteTruthRows}`,
+    `- diagnostic compatibility row added: ${yesNo(summary.diagnosticCompatibilityRowAdded)}`,
+    `- current Row 2 missing inputs: ${summary.currentRow2MissingInputs ? JSON.stringify(summary.currentRow2MissingInputs) : 'not_found'}`,
     `- provider calls: ${summary.providerCalls}`,
     `- hosted calls: ${summary.hostedCalls}`,
     `- missing columns: ${summary.missingColumns.length}`,
@@ -902,6 +996,8 @@ writeFileSync(
         `- routeAuthority snapshot: ${row['routeAuthority snapshot status']}`,
         `- lock input: ${row['lock input status']}`,
         `- runtime lock truth: ${row['runtime lock truth status']}`,
+        `- input missing flags: itinerary=${row['itinerary missing? yes/no']}; scored venues=${row['scored venues missing? yes/no']}; runtime lock eligibility=${row['runtime lock eligibility missing? yes/no']}; Great Stop status=${row['Great Stop status missing? yes/no']}; route-level lock truth source=${row['route-level lock truth source missing? yes/no']}`,
+        `- route truth flags: compatibility=${row['compatibility route truth? yes/no']}; canonical=${row['canonical route truth? yes/no']}; false-green risk=${row['false-green risk? yes/no']}`,
         `- why not MVP green: ${row['why not MVP green']}`,
         `- proof validity: ${row['proof validity label']}`,
         '',
