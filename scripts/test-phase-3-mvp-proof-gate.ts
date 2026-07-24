@@ -5,11 +5,15 @@ import type {
   CurateBuildAdmittedSupportCandidate,
 } from '../src/app/services/curate/buildCurateScenarioBackedArtifactBridge.ts'
 import type { ContractEntryArtifact } from '../src/domain/artifacts/contractEntryArtifact.ts'
+import type { RuntimeRouteArtifact } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
 import type {
   BuiltScenarioNight,
   BuiltScenarioStop,
   StarterSemanticRepresentation,
 } from '../src/domain/interpretation/construction/scenarioBuilder.ts'
+import type { ScoredVenue } from '../src/domain/types/arc.ts'
+import type { ExperienceMode, IntentInput, PersonaMode, VibeAnchor } from '../src/domain/types/intent.ts'
+import type { Itinerary } from '../src/domain/types/itinerary.ts'
 import type { VerifiedCityOpportunity } from '../src/domain/interpretation/verifiedCityOpportunity.ts'
 import type { VenueCategory } from '../src/domain/types/venue.ts'
 
@@ -67,6 +71,12 @@ const outputColumns = [
   'route-level lock truth source missing? yes/no',
   'compatibility route truth? yes/no',
   'canonical route truth? yes/no',
+  'approved payload compatibility? yes/no',
+  'page-local route used? yes/no',
+  'SelectedRouteArtifact used? yes/no',
+  'CurateRefinementEntryPayload used? yes/no',
+  'RuntimeRouteArtifact canonical? yes/no',
+  'dry path used? yes/no',
   'false-green risk? yes/no',
   'why not MVP green',
   'invalid false-green? yes/no',
@@ -105,7 +115,7 @@ function readGitMetadata(args: string[]): string | null {
   }
 }
 
-const PROOF_PHASE_LABEL = 'Phase 3L harness input mapping implementation/run'
+const PROOF_PHASE_LABEL = 'Phase 3O harness local lifecycle path implementation/run'
 const metadataHead = readGitMetadata(['rev-parse', '--short', 'HEAD'])
 const metadataBranch = readGitMetadata(['branch', '--show-current'])
 const metadataStatus = metadataHead ? 'available' : 'unavailable'
@@ -479,6 +489,12 @@ function buildRow(params: {
   routeLevelLockTruthSourceMissing: boolean
   compatibilityRouteTruth: boolean
   canonicalRouteTruth: boolean
+  approvedPayloadCompatibility: boolean
+  pageLocalRouteUsed: boolean
+  selectedRouteArtifactUsed: boolean
+  curateRefinementEntryPayloadUsed: boolean
+  runtimeRouteArtifactCanonical: boolean
+  dryPathUsed: boolean
   whyNotMvpGreen: string
 }): ProofRow {
   const lineagePopulated = [
@@ -495,7 +511,8 @@ function buildRow(params: {
     params.providerShadowUsed ||
     params.demoSpecialUsed ||
     params.appAuthorityShadowUsed ||
-    params.legacyWrapperUsed
+    params.legacyWrapperUsed ||
+    params.dryPathUsed
   const falseGreenRisk = disqualifyingMasking || params.compatibilityRouteTruth
   const validMvpPass =
     params.contractEntryProduced &&
@@ -568,6 +585,12 @@ function buildRow(params: {
     'route-level lock truth source missing? yes/no': yesNo(params.routeLevelLockTruthSourceMissing),
     'compatibility route truth? yes/no': yesNo(params.compatibilityRouteTruth),
     'canonical route truth? yes/no': yesNo(params.canonicalRouteTruth),
+    'approved payload compatibility? yes/no': yesNo(params.approvedPayloadCompatibility),
+    'page-local route used? yes/no': yesNo(params.pageLocalRouteUsed),
+    'SelectedRouteArtifact used? yes/no': yesNo(params.selectedRouteArtifactUsed),
+    'CurateRefinementEntryPayload used? yes/no': yesNo(params.curateRefinementEntryPayloadUsed),
+    'RuntimeRouteArtifact canonical? yes/no': yesNo(params.runtimeRouteArtifactCanonical),
+    'dry path used? yes/no': yesNo(params.dryPathUsed),
     'false-green risk? yes/no': yesNo(falseGreenRisk),
     'why not MVP green': validMvpPass ? 'valid MVP pass' : params.whyNotMvpGreen,
     'invalid false-green? yes/no': yesNo(invalidFalseGreen),
@@ -587,6 +610,13 @@ const { buildCurateScenarioBackedArtifactBridge } = await import(
 const { buildLockInputFromRouteAuthoritySnapshot, buildRouteAuthoritySnapshot } = await import(
   '../src/app/services/routeAuthority/routeAuthorityService.ts'
 )
+const { buildArtifactBackedVisibleItinerary } = await import(
+  '../src/app/services/canonicalPublicRouteTruthService.ts'
+)
+const { buildContractEntryRuntimeRouteLockTruth } = await import(
+  '../src/app/services/live/contractEntryLockHandoff.ts'
+)
+const { runGeneratePlan } = await import('../src/domain/runGeneratePlan.ts')
 const { starterPacks } = await import('../src/data/starterPacks.ts')
 
 function joinReasonList(values: readonly string[] | null | undefined): string {
@@ -624,6 +654,12 @@ function observeLifecycleFromArtifact(params: {
   routeLevelLockTruthSourceMissing: boolean
   compatibilityRouteTruth: boolean
   canonicalRouteTruth: boolean
+  approvedPayloadCompatibility: boolean
+  pageLocalRouteUsed: boolean
+  selectedRouteArtifactUsed: boolean
+  curateRefinementEntryPayloadUsed: boolean
+  runtimeRouteArtifactCanonical: boolean
+  dryPathUsed: boolean
 } {
   if (!params.artifact) {
     return {
@@ -646,6 +682,12 @@ function observeLifecycleFromArtifact(params: {
       routeLevelLockTruthSourceMissing: true,
       compatibilityRouteTruth: false,
       canonicalRouteTruth: false,
+      approvedPayloadCompatibility: false,
+      pageLocalRouteUsed: false,
+      selectedRouteArtifactUsed: false,
+      curateRefinementEntryPayloadUsed: false,
+      runtimeRouteArtifactCanonical: false,
+      dryPathUsed: false,
     }
   }
 
@@ -714,6 +756,377 @@ function observeLifecycleFromArtifact(params: {
     routeLevelLockTruthSourceMissing,
     compatibilityRouteTruth: false,
     canonicalRouteTruth: Boolean(embeddedRuntimeRouteArtifact),
+    approvedPayloadCompatibility: false,
+    pageLocalRouteUsed: false,
+    selectedRouteArtifactUsed: false,
+    curateRefinementEntryPayloadUsed: false,
+    runtimeRouteArtifactCanonical: Boolean(embeddedRuntimeRouteArtifact),
+    dryPathUsed: false,
+  }
+}
+
+function buildPhase3OLocalLifecycleInput(
+  starterPack: (typeof starterPacks)[number],
+): IntentInput {
+  return {
+    mode: 'curate',
+    persona: starterPack.personaBias ?? null,
+    primaryVibe: starterPack.primaryAnchor,
+    secondaryVibe: starterPack.secondaryAnchors?.[0],
+    city: 'San Jose',
+    distanceMode: starterPack.distanceMode ?? 'nearby',
+    prefersHiddenGems: starterPack.lensPreset?.discoveryBias === 'high',
+  }
+}
+
+function buildDryLockSafeItinerary(itinerary: Itinerary): {
+  itinerary: Itinerary
+  dryPathUsed: boolean
+} {
+  let dryPathUsed = false
+  const stops = itinerary.stops.map((stop, index) => {
+    const next = {
+      ...stop,
+      imageUrl: stop.imageUrl || `https://example.test/phase-3o-dry-validation/${index + 1}.jpg`,
+      formattedAddress:
+        stop.formattedAddress ?? `Phase 3O dry validation address ${index + 1}, San Jose, CA`,
+      latitude: stop.latitude ?? 37.33 + index * 0.001,
+      longitude: stop.longitude ?? -121.89 - index * 0.001,
+    }
+    if (
+      next.imageUrl !== stop.imageUrl ||
+      next.formattedAddress !== stop.formattedAddress ||
+      next.latitude !== stop.latitude ||
+      next.longitude !== stop.longitude
+    ) {
+      dryPathUsed = true
+    }
+    return next
+  })
+  return {
+    dryPathUsed,
+    itinerary: {
+      ...itinerary,
+      stops,
+    },
+  }
+}
+
+function buildDryLockSafeScoredVenues(params: {
+  itinerary: Itinerary
+  scoredVenues: ScoredVenue[]
+}): {
+  scoredVenues: ScoredVenue[]
+  dryPathUsed: boolean
+} {
+  let dryPathUsed = false
+  const stopByVenueId = new Map(params.itinerary.stops.map((stop) => [stop.venueId, stop] as const))
+  const scoredVenues = params.scoredVenues.map((candidate, index) => {
+    const stop = stopByVenueId.get(candidate.venue.id)
+    const source = {
+      ...candidate.venue.source,
+      formattedAddress:
+        candidate.venue.source.formattedAddress ??
+        stop?.formattedAddress ??
+        `Phase 3O dry validation address ${index + 1}, San Jose, CA`,
+      latitude: candidate.venue.source.latitude ?? stop?.latitude ?? 37.33 + index * 0.001,
+      longitude: candidate.venue.source.longitude ?? stop?.longitude ?? -121.89 - index * 0.001,
+    }
+    if (
+      source.formattedAddress !== candidate.venue.source.formattedAddress ||
+      source.latitude !== candidate.venue.source.latitude ||
+      source.longitude !== candidate.venue.source.longitude
+    ) {
+      dryPathUsed = true
+    }
+    return {
+      ...candidate,
+      venue: {
+        ...candidate.venue,
+        source,
+      },
+    }
+  })
+  return {
+    dryPathUsed,
+    scoredVenues,
+  }
+}
+
+async function observePhase3OLocalLifecycle(
+  starterPack: (typeof starterPacks)[number],
+): Promise<{
+  routeLabel: string
+  runGeneratePlanStatus: string
+  artifactBackedItineraryStatus: string
+  routeAuthoritySnapshotStatus: string
+  routeAuthoritySourceLabel: string
+  routeAuthorityRejectionReasons: string
+  lockInputStatus: string
+  lockInputRejectionReason: string
+  runtimeLockTruthStatus: string
+  runtimeLockTruthReason: string
+  runtimeRouteStatus: 'produced' | 'blocked' | 'not observed' | 'unavailable_missing_inputs' | 'diagnostic-only'
+  greatStopPassFail: 'pass' | 'fail' | 'not_evaluated'
+  greatStopFailureReasons: string
+  greatStopEvaluationStatus:
+    | 'evaluated-pass'
+    | 'evaluated-fail'
+    | 'not evaluated'
+    | 'not observed'
+    | 'unavailable_missing_inputs'
+    | 'diagnostic-only'
+  reviewLockStatus: 'eligible' | 'ineligible' | 'not evaluated' | 'not observed' | 'unavailable_missing_inputs' | 'diagnostic-only'
+  reviewLockEligible: boolean
+  lifecycleCaptureStatus: 'complete' | 'partial' | 'diagnostic-only' | 'blocked'
+  contractEntryProduced: boolean
+  runtimeRouteProduced: boolean
+  lifecycleInputAvailability: string
+  itineraryMissing: boolean
+  scoredVenuesMissing: boolean
+  runtimeLockEligibilityMissing: boolean
+  greatStopStatusMissing: boolean
+  routeLevelLockTruthSourceMissing: boolean
+  compatibilityRouteTruth: boolean
+  canonicalRouteTruth: boolean
+  approvedPayloadCompatibility: boolean
+  pageLocalRouteUsed: boolean
+  selectedRouteArtifactUsed: boolean
+  curateRefinementEntryPayloadUsed: boolean
+  runtimeRouteArtifactCanonical: boolean
+  dryPathUsed: boolean
+  staticCorpusUsed: boolean
+  providerShadowUsed: boolean
+  whyNotMvpGreen: string
+}> {
+  const input = buildPhase3OLocalLifecycleInput(starterPack)
+
+  try {
+    const result = await runGeneratePlan(input, {
+      starterPack,
+      sourceMode: 'curated',
+      sourceModeOverrideApplied: true,
+    })
+    const artifact = result.contractEntryArtifact
+    const dryItinerary = buildDryLockSafeItinerary(result.itinerary)
+    const dryScoredVenues = buildDryLockSafeScoredVenues({
+      itinerary: dryItinerary.itinerary,
+      scoredVenues: result.scoredVenues,
+    })
+    const artifactBackedItinerary = buildArtifactBackedVisibleItinerary({
+      artifact,
+      itinerary: dryItinerary.itinerary,
+      context: {
+        mode: 'curate',
+        starterPack,
+      },
+    })
+    const runtimeLockEligibility = artifact.enrichment?.runtimeLockEligibility ?? null
+    const greatStopStatus = runtimeLockEligibility?.greatStopStatus ?? result.trace.greatStopGateResult?.status ?? null
+    const greatStopFailureReasons =
+      joinReasonList(runtimeLockEligibility?.greatStopRejectionReasons) !== 'none'
+        ? joinReasonList(runtimeLockEligibility?.greatStopRejectionReasons)
+        : joinReasonList(result.trace.greatStopGateResult?.reasons)
+    const selectedDirectionId =
+      artifact.selection.directionId ??
+      result.intentProfile.selectedDirectionContext?.directionId ??
+      result.trace.selectedDistrictId ??
+      'phase-3o-local-lifecycle'
+    const selectedClusterConfirmation =
+      result.trace.selectedDistrictLabel || artifact.districtAnchorLine || 'Phase 3O local lifecycle route'
+    const persona = (result.intentProfile.persona ?? input.persona ?? 'romantic') as PersonaMode
+    const vibe = result.intentProfile.primaryAnchor as VibeAnchor
+    const staticCorpusUsed =
+      artifact.enrichment?.fieldProvenanceSummary?.sourceMode !== 'live' ||
+      artifact.enrichment?.fieldProvenanceSummary?.corpusUsed === true
+    const providerShadowUsed = artifact.enrichment?.fieldProvenanceSummary?.liveProviderUsed !== true
+    const dryPathUsed = dryItinerary.dryPathUsed || dryScoredVenues.dryPathUsed
+
+    if (!artifactBackedItinerary) {
+      const snapshot = buildRouteAuthoritySnapshot({
+        contractEntryArtifact: artifact,
+        greatStopStatus,
+        selectedDirectionId,
+        selectedArtifactId: artifact.id,
+        selectedClusterConfirmation,
+      })
+      const lockInput = buildLockInputFromRouteAuthoritySnapshot({
+        snapshot,
+        activeRole: 'start',
+        fallbackCity: 'San Jose',
+      })
+      return {
+        routeLabel: artifact.id,
+        runGeneratePlanStatus: 'produced',
+        artifactBackedItineraryStatus: 'blocked',
+        routeAuthoritySnapshotStatus: snapshot.validationStatus,
+        routeAuthoritySourceLabel: snapshot.sourceLabel,
+        routeAuthorityRejectionReasons: joinReasonList(snapshot.rejectionReasons),
+        lockInputStatus: lockInput.ok ? 'eligible' : 'blocked',
+        lockInputRejectionReason: lockInput.ok
+          ? 'none'
+          : lockInput.diagnostics.rejectionReason ?? 'missing_lock_ready_canonical_route_truth',
+        runtimeLockTruthStatus: 'blocked',
+        runtimeLockTruthReason: 'missing_artifact_backed_visible_itinerary',
+        runtimeRouteStatus: 'blocked',
+        greatStopPassFail: greatStopStatus === 'PASS' ? 'pass' : greatStopStatus === 'FAIL' ? 'fail' : 'not_evaluated',
+        greatStopFailureReasons: greatStopFailureReasons === 'none' ? 'none' : greatStopFailureReasons,
+        greatStopEvaluationStatus:
+          greatStopStatus === 'PASS' ? 'evaluated-pass' : greatStopStatus === 'FAIL' ? 'evaluated-fail' : 'not observed',
+        reviewLockStatus: lockInput.ok ? 'eligible' : 'ineligible',
+        reviewLockEligible: lockInput.ok,
+        lifecycleCaptureStatus: 'blocked',
+        contractEntryProduced: true,
+        runtimeRouteProduced: false,
+        lifecycleInputAvailability: 'missing_artifact_backed_visible_itinerary',
+        itineraryMissing: false,
+        scoredVenuesMissing: false,
+        runtimeLockEligibilityMissing: !runtimeLockEligibility,
+        greatStopStatusMissing: !greatStopStatus,
+        routeLevelLockTruthSourceMissing: true,
+        compatibilityRouteTruth: false,
+        canonicalRouteTruth: false,
+        approvedPayloadCompatibility: false,
+        pageLocalRouteUsed: false,
+        selectedRouteArtifactUsed: false,
+        curateRefinementEntryPayloadUsed: false,
+        runtimeRouteArtifactCanonical: false,
+        dryPathUsed,
+        staticCorpusUsed,
+        providerShadowUsed,
+        whyNotMvpGreen:
+          'local lifecycle generated ContractEntryArtifact but artifact-backed itinerary was unavailable; RuntimeRouteArtifact and Review/Lock remain blocked',
+      }
+    }
+
+    const lockTruth = buildContractEntryRuntimeRouteLockTruth({
+      artifact,
+      itinerary: artifactBackedItinerary,
+      scoredVenues: dryScoredVenues.scoredVenues,
+      selectedDirectionId,
+      selectedClusterConfirmation,
+      city: artifactBackedItinerary.city,
+      persona,
+      vibe,
+      mode: 'curate' as ExperienceMode,
+    })
+    const runtimeRouteArtifact: RuntimeRouteArtifact | null = lockTruth.ok ? lockTruth.finalRoute : null
+    const snapshot = buildRouteAuthoritySnapshot({
+      contractEntryArtifact: artifact,
+      runtimeRouteArtifact,
+      greatStopStatus,
+      selectedDirectionId,
+      selectedArtifactId: artifact.id,
+      selectedClusterConfirmation,
+      itinerary: lockTruth.ok ? lockTruth.itinerary : artifactBackedItinerary,
+    })
+    const lockInput = buildLockInputFromRouteAuthoritySnapshot({
+      snapshot,
+      activeRole: 'start',
+      fallbackCity: artifactBackedItinerary.city,
+    })
+    const lockReadySource = snapshot.lockReadyCanonicalRouteTruthCandidate?.source ?? null
+    const canonicalRouteTruth =
+      Boolean(runtimeRouteArtifact) &&
+      (lockReadySource === 'contract_entry_artifact.runtime_route_artifact' ||
+        lockReadySource === 'runtime_route_artifact')
+
+    return {
+      routeLabel: artifact.id,
+      runGeneratePlanStatus: 'produced',
+      artifactBackedItineraryStatus: 'produced',
+      routeAuthoritySnapshotStatus: snapshot.validationStatus,
+      routeAuthoritySourceLabel: snapshot.sourceLabel,
+      routeAuthorityRejectionReasons: joinReasonList(snapshot.rejectionReasons),
+      lockInputStatus: lockInput.ok ? 'eligible' : 'blocked',
+      lockInputRejectionReason: lockInput.ok
+        ? 'none'
+        : lockInput.diagnostics.rejectionReason ?? 'missing_lock_ready_canonical_route_truth',
+      runtimeLockTruthStatus: lockTruth.ok ? 'produced' : 'blocked',
+      runtimeLockTruthReason: lockTruth.ok ? 'RuntimeRouteArtifact produced by buildContractEntryRuntimeRouteLockTruth' : lockTruth.reason,
+      runtimeRouteStatus: lockTruth.ok ? 'produced' : 'blocked',
+      greatStopPassFail: greatStopStatus === 'PASS' ? 'pass' : greatStopStatus === 'FAIL' ? 'fail' : 'not_evaluated',
+      greatStopFailureReasons: greatStopFailureReasons === 'none' ? 'none' : greatStopFailureReasons,
+      greatStopEvaluationStatus:
+        greatStopStatus === 'PASS' ? 'evaluated-pass' : greatStopStatus === 'FAIL' ? 'evaluated-fail' : 'not observed',
+      reviewLockStatus: lockInput.ok ? 'eligible' : 'ineligible',
+      reviewLockEligible: lockInput.ok,
+      lifecycleCaptureStatus: lockTruth.ok && greatStopStatus && lockInput.ok ? 'complete' : 'partial',
+      contractEntryProduced: true,
+      runtimeRouteProduced: lockTruth.ok,
+      lifecycleInputAvailability: lockTruth.ok
+        ? 'available'
+        : `runtime_lock_truth_blocked:${lockTruth.reason}`,
+      itineraryMissing: false,
+      scoredVenuesMissing: false,
+      runtimeLockEligibilityMissing: !runtimeLockEligibility,
+      greatStopStatusMissing: !greatStopStatus,
+      routeLevelLockTruthSourceMissing: !runtimeRouteArtifact,
+      compatibilityRouteTruth: lockReadySource === 'contract_entry_artifact.approved_payload',
+      canonicalRouteTruth,
+      approvedPayloadCompatibility: false,
+      pageLocalRouteUsed: false,
+      selectedRouteArtifactUsed: false,
+      curateRefinementEntryPayloadUsed: false,
+      runtimeRouteArtifactCanonical: canonicalRouteTruth,
+      dryPathUsed,
+      staticCorpusUsed,
+      providerShadowUsed,
+      whyNotMvpGreen: [
+        staticCorpusUsed ? 'static corpus used' : null,
+        dryPathUsed ? 'dry path used' : null,
+        providerShadowUsed ? 'provider-shadow/static local source used' : null,
+        'DEMO-SPECIAL local harness row remains diagnostic-only',
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join('; '),
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const diagnostics = (error as { greatStopGateSelectionDiagnostics?: { status?: string; failureReasons?: string[]; failedTopCandidateCriteria?: string[] } })
+      .greatStopGateSelectionDiagnostics
+    const reasons = joinReasonList([
+      ...(diagnostics?.failureReasons ?? []),
+      ...(diagnostics?.failedTopCandidateCriteria ?? []),
+    ])
+    return {
+      routeLabel: 'phase-3o-local-lifecycle-generation-blocked',
+      runGeneratePlanStatus: `blocked:${message}`,
+      artifactBackedItineraryStatus: 'not_evaluated',
+      routeAuthoritySnapshotStatus: 'not_evaluated',
+      routeAuthoritySourceLabel: 'none',
+      routeAuthorityRejectionReasons: 'runGeneratePlan_blocked',
+      lockInputStatus: 'not_evaluated',
+      lockInputRejectionReason: 'runGeneratePlan_blocked',
+      runtimeLockTruthStatus: 'blocked',
+      runtimeLockTruthReason: `runGeneratePlan_blocked:${message}`,
+      runtimeRouteStatus: 'blocked',
+      greatStopPassFail: diagnostics?.status === 'FAIL' ? 'fail' : 'not_evaluated',
+      greatStopFailureReasons: reasons === 'none' ? message : reasons,
+      greatStopEvaluationStatus: diagnostics?.status === 'FAIL' ? 'evaluated-fail' : 'not observed',
+      reviewLockStatus: 'ineligible',
+      reviewLockEligible: false,
+      lifecycleCaptureStatus: 'blocked',
+      contractEntryProduced: false,
+      runtimeRouteProduced: false,
+      lifecycleInputAvailability: 'runGeneratePlan_blocked',
+      itineraryMissing: true,
+      scoredVenuesMissing: true,
+      runtimeLockEligibilityMissing: true,
+      greatStopStatusMissing: diagnostics?.status !== 'FAIL',
+      routeLevelLockTruthSourceMissing: true,
+      compatibilityRouteTruth: false,
+      canonicalRouteTruth: false,
+      approvedPayloadCompatibility: false,
+      pageLocalRouteUsed: false,
+      selectedRouteArtifactUsed: false,
+      curateRefinementEntryPayloadUsed: false,
+      runtimeRouteArtifactCanonical: false,
+      dryPathUsed: false,
+      staticCorpusUsed: true,
+      providerShadowUsed: true,
+      whyNotMvpGreen: `runGeneratePlan blocked before full lifecycle observation: ${message}`,
+    }
   }
 }
 
@@ -782,6 +1195,7 @@ const admittedLifecycle = observeLifecycleFromArtifact({
   selectedClusterConfirmation: 'Phase 3 local proof fixture direction',
   fallbackCity: 'San Jose',
 })
+const phase3OLifecycle = await observePhase3OLocalLifecycle(coffeeBooksStarterPack)
 
 const rows: ProofRow[] = [
   buildRow({
@@ -832,6 +1246,12 @@ const rows: ProofRow[] = [
     routeLevelLockTruthSourceMissing: scenarioOnlyLifecycle.routeLevelLockTruthSourceMissing,
     compatibilityRouteTruth: scenarioOnlyLifecycle.compatibilityRouteTruth,
     canonicalRouteTruth: scenarioOnlyLifecycle.canonicalRouteTruth,
+    approvedPayloadCompatibility: scenarioOnlyLifecycle.approvedPayloadCompatibility,
+    pageLocalRouteUsed: scenarioOnlyLifecycle.pageLocalRouteUsed,
+    selectedRouteArtifactUsed: scenarioOnlyLifecycle.selectedRouteArtifactUsed,
+    curateRefinementEntryPayloadUsed: scenarioOnlyLifecycle.curateRefinementEntryPayloadUsed,
+    runtimeRouteArtifactCanonical: scenarioOnlyLifecycle.runtimeRouteArtifactCanonical,
+    dryPathUsed: scenarioOnlyLifecycle.dryPathUsed,
     whyNotMvpGreen:
       'support selection failed closed before ContractEntryArtifact; RuntimeRouteArtifact, Great Stop, and Review/Lock are blocked',
   }),
@@ -890,8 +1310,73 @@ const rows: ProofRow[] = [
     routeLevelLockTruthSourceMissing: admittedLifecycle.routeLevelLockTruthSourceMissing,
     compatibilityRouteTruth: admittedLifecycle.compatibilityRouteTruth,
     canonicalRouteTruth: admittedLifecycle.canonicalRouteTruth,
+    approvedPayloadCompatibility: admittedLifecycle.approvedPayloadCompatibility,
+    pageLocalRouteUsed: admittedLifecycle.pageLocalRouteUsed,
+    selectedRouteArtifactUsed: admittedLifecycle.selectedRouteArtifactUsed,
+    curateRefinementEntryPayloadUsed: admittedLifecycle.curateRefinementEntryPayloadUsed,
+    runtimeRouteArtifactCanonical: admittedLifecycle.runtimeRouteArtifactCanonical,
+    dryPathUsed: admittedLifecycle.dryPathUsed,
     whyNotMvpGreen:
       'ContractEntryArtifact is produced and routeAuthority/lock-input are observed, but RuntimeRouteArtifact is unavailable because route-level lock inputs are missing; Great Stop is not observed; Review/Lock remains ineligible; static/DEMO-SPECIAL/app-authority flags remain',
+  }),
+  buildRow({
+    routeLabel: phase3OLifecycle.routeLabel,
+    supportSource: 'phase_3o_local_lifecycle_generation_to_lock',
+    candidateProducer: 'runGeneratePlan local no-provider generation path',
+    supportScreenProducer: 'Canonical route truth continuity pattern; no support reselection mutation',
+    materializationSource: 'runGeneratePlan -> buildArtifactBackedVisibleItinerary -> buildContractEntryRuntimeRouteLockTruth',
+    greatStopProducer:
+      phase3OLifecycle.greatStopPassFail === 'not_evaluated'
+        ? 'not_observed - generation did not carry Great Stop status'
+        : 'runGeneratePlan/buildContractEntryArtifactFromGeneration carried Great Stop status',
+    appInvolvement:
+      'Harness-only observer over AppShell-shaped lock handoff; routeAuthority observed as compatibility gate',
+    contractEntryProduced: phase3OLifecycle.contractEntryProduced,
+    runtimeRouteProduced: phase3OLifecycle.runtimeRouteProduced,
+    greatStopPassFail: phase3OLifecycle.greatStopPassFail,
+    greatStopFailureReasons: phase3OLifecycle.greatStopFailureReasons,
+    reviewLockEligible: phase3OLifecycle.reviewLockEligible,
+    staticCorpusUsed: phase3OLifecycle.staticCorpusUsed,
+    fallbackUsed: phase3OLifecycle.dryPathUsed,
+    providerShadowUsed: phase3OLifecycle.providerShadowUsed,
+    demoSpecialUsed: true,
+    appAuthorityShadowUsed: true,
+    legacyWrapperUsed: false,
+    diagnosticOnly: true,
+    honestFail: false,
+    roleScore: 'unavailable',
+    stopShapeFit: 'unavailable',
+    lensCompatibility: 'unavailable',
+    contextSpecificity: 'unavailable',
+    thresholdSource: 'generation Great Stop/runtime lock threshold; no Taste support threshold in this lifecycle row',
+    evidenceStatus: 'carried',
+    contractEntryStatus: phase3OLifecycle.contractEntryProduced ? 'produced' : 'blocked',
+    runtimeRouteStatus: phase3OLifecycle.runtimeRouteStatus,
+    greatStopEvaluationStatus: phase3OLifecycle.greatStopEvaluationStatus,
+    reviewLockStatus: phase3OLifecycle.reviewLockStatus,
+    lifecycleCaptureStatus: phase3OLifecycle.lifecycleCaptureStatus,
+    routeAuthoritySnapshotStatus: phase3OLifecycle.routeAuthoritySnapshotStatus,
+    routeAuthoritySourceLabel: phase3OLifecycle.routeAuthoritySourceLabel,
+    routeAuthorityRejectionReasons: phase3OLifecycle.routeAuthorityRejectionReasons,
+    lockInputStatus: phase3OLifecycle.lockInputStatus,
+    lockInputRejectionReason: phase3OLifecycle.lockInputRejectionReason,
+    runtimeLockTruthStatus: phase3OLifecycle.runtimeLockTruthStatus,
+    runtimeLockTruthReason: phase3OLifecycle.runtimeLockTruthReason,
+    lifecycleInputAvailability: `${phase3OLifecycle.lifecycleInputAvailability}; runGeneratePlan=${phase3OLifecycle.runGeneratePlanStatus}; artifactBackedItinerary=${phase3OLifecycle.artifactBackedItineraryStatus}`,
+    itineraryMissing: phase3OLifecycle.itineraryMissing,
+    scoredVenuesMissing: phase3OLifecycle.scoredVenuesMissing,
+    runtimeLockEligibilityMissing: phase3OLifecycle.runtimeLockEligibilityMissing,
+    greatStopStatusMissing: phase3OLifecycle.greatStopStatusMissing,
+    routeLevelLockTruthSourceMissing: phase3OLifecycle.routeLevelLockTruthSourceMissing,
+    compatibilityRouteTruth: phase3OLifecycle.compatibilityRouteTruth,
+    canonicalRouteTruth: phase3OLifecycle.canonicalRouteTruth,
+    approvedPayloadCompatibility: phase3OLifecycle.approvedPayloadCompatibility,
+    pageLocalRouteUsed: phase3OLifecycle.pageLocalRouteUsed,
+    selectedRouteArtifactUsed: phase3OLifecycle.selectedRouteArtifactUsed,
+    curateRefinementEntryPayloadUsed: phase3OLifecycle.curateRefinementEntryPayloadUsed,
+    runtimeRouteArtifactCanonical: phase3OLifecycle.runtimeRouteArtifactCanonical,
+    dryPathUsed: phase3OLifecycle.dryPathUsed,
+    whyNotMvpGreen: phase3OLifecycle.whyNotMvpGreen,
   }),
 ]
 
@@ -900,6 +1385,10 @@ const missingColumns = rows.flatMap((row, index) =>
 )
 const compatibilityRouteTruthRows = rows.filter((row) => row['compatibility route truth? yes/no'] === 'yes').length
 const canonicalRouteTruthRows = rows.filter((row) => row['canonical route truth? yes/no'] === 'yes').length
+const runtimeRouteArtifactCanonicalRows = rows.filter((row) => row['RuntimeRouteArtifact canonical? yes/no'] === 'yes').length
+const phase3ODiagnosticLifecycleRowAdded = rows.some(
+  (row) => row['support source'] === 'phase_3o_local_lifecycle_generation_to_lock',
+)
 const diagnosticCompatibilityRowAdded = rows.some(
   (row) => row['compatibility route truth? yes/no'] === 'yes' && row['diagnostic-only? yes/no'] === 'yes',
 )
@@ -918,6 +1407,18 @@ assert(missingColumns.length === 0, `Missing Phase 3 proof columns: ${JSON.strin
 assert(
   rows.every((row) => row['compatibility route truth? yes/no'] !== 'yes' || row['valid MVP pass? yes/no'] === 'no'),
   'Compatibility route truth rows must not be marked as valid MVP passes.',
+)
+assert(
+  rows.every((row) => row['dry path used? yes/no'] !== 'yes' || row['valid MVP pass? yes/no'] === 'no'),
+  'Dry-path rows must not be marked as valid MVP passes.',
+)
+assert(
+  rows.every((row) => row['static corpus used? yes/no'] !== 'yes' || row['valid MVP pass? yes/no'] === 'no'),
+  'Static/local corpus rows must not be marked as valid MVP passes.',
+)
+assert(
+  rows.every((row) => row['DEMO-SPECIAL path used? yes/no'] !== 'yes' || row['valid MVP pass? yes/no'] === 'no'),
+  'DEMO-SPECIAL rows must not be marked as valid MVP passes.',
 )
 assert(fetchCallCount === 0, `Provider/hosted fetch calls must stay zero, got ${fetchCallCount}.`)
 
@@ -946,8 +1447,30 @@ const summary = {
   lifecycleBlockedRows: rows.filter((row) => row['lifecycle capture status'] === 'blocked').length,
   compatibilityRouteTruthRows,
   canonicalRouteTruthRows,
+  runtimeRouteArtifactCanonicalRows,
   currentRow2MissingInputs,
   diagnosticCompatibilityRowAdded,
+  phase3ODiagnosticLifecycleRowAdded,
+  runtimeRouteArtifactStatusByRow: rows.map((row, index) => ({
+    row: index + 1,
+    routeLabel: row['route id / route label'],
+    status: row['RuntimeRouteArtifact status'],
+    canonical: row['RuntimeRouteArtifact canonical? yes/no'],
+  })),
+  greatStopStatusByRow: rows.map((row, index) => ({
+    row: index + 1,
+    routeLabel: row['route id / route label'],
+    status: row['Great Stop pass/fail'],
+    evaluationStatus: row['Great Stop evaluation status'],
+    reasons: row['Great Stop failure reasons'],
+  })),
+  reviewLockStatusByRow: rows.map((row, index) => ({
+    row: index + 1,
+    routeLabel: row['route id / route label'],
+    eligible: row['Review/Lock eligible? yes/no'],
+    status: row['Review/Lock status'],
+    lockInputStatus: row['lock input status'],
+  })),
   missingColumns,
   outputColumns,
 }
@@ -975,8 +1498,13 @@ writeFileSync(
     `- lifecycle-blocked rows: ${summary.lifecycleBlockedRows}`,
     `- compatibility route truth rows: ${summary.compatibilityRouteTruthRows}`,
     `- canonical route truth rows: ${summary.canonicalRouteTruthRows}`,
+    `- RuntimeRouteArtifact canonical rows: ${summary.runtimeRouteArtifactCanonicalRows}`,
+    `- Phase 3O diagnostic lifecycle row added: ${yesNo(summary.phase3ODiagnosticLifecycleRowAdded)}`,
     `- diagnostic compatibility row added: ${yesNo(summary.diagnosticCompatibilityRowAdded)}`,
     `- current Row 2 missing inputs: ${summary.currentRow2MissingInputs ? JSON.stringify(summary.currentRow2MissingInputs) : 'not_found'}`,
+    `- RuntimeRouteArtifact status by row: ${JSON.stringify(summary.runtimeRouteArtifactStatusByRow)}`,
+    `- Great Stop status by row: ${JSON.stringify(summary.greatStopStatusByRow)}`,
+    `- Review/Lock status by row: ${JSON.stringify(summary.reviewLockStatusByRow)}`,
     `- provider calls: ${summary.providerCalls}`,
     `- hosted calls: ${summary.hostedCalls}`,
     `- missing columns: ${summary.missingColumns.length}`,
@@ -997,7 +1525,7 @@ writeFileSync(
         `- lock input: ${row['lock input status']}`,
         `- runtime lock truth: ${row['runtime lock truth status']}`,
         `- input missing flags: itinerary=${row['itinerary missing? yes/no']}; scored venues=${row['scored venues missing? yes/no']}; runtime lock eligibility=${row['runtime lock eligibility missing? yes/no']}; Great Stop status=${row['Great Stop status missing? yes/no']}; route-level lock truth source=${row['route-level lock truth source missing? yes/no']}`,
-        `- route truth flags: compatibility=${row['compatibility route truth? yes/no']}; canonical=${row['canonical route truth? yes/no']}; false-green risk=${row['false-green risk? yes/no']}`,
+        `- route truth flags: compatibility=${row['compatibility route truth? yes/no']}; canonical=${row['canonical route truth? yes/no']}; approved payload compatibility=${row['approved payload compatibility? yes/no']}; page-local route=${row['page-local route used? yes/no']}; SelectedRouteArtifact=${row['SelectedRouteArtifact used? yes/no']}; CurateRefinementEntryPayload=${row['CurateRefinementEntryPayload used? yes/no']}; RuntimeRouteArtifact canonical=${row['RuntimeRouteArtifact canonical? yes/no']}; dry path=${row['dry path used? yes/no']}; false-green risk=${row['false-green risk? yes/no']}`,
         `- why not MVP green: ${row['why not MVP green']}`,
         `- proof validity: ${row['proof validity label']}`,
         '',
