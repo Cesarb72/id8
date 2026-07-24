@@ -45,6 +45,12 @@ const outputColumns = [
   'contextSpecificity',
   'threshold source',
   'evidence persisted/carried/recomputed/defaulted/unavailable',
+  'ContractEntryArtifact status',
+  'RuntimeRouteArtifact status',
+  'Great Stop evaluation status',
+  'Review/Lock status',
+  'lifecycle capture status',
+  'why not MVP green',
   'invalid false-green? yes/no',
   'proof validity label',
 ] as const
@@ -399,6 +405,17 @@ function buildRow(params: {
   contextSpecificity: string
   thresholdSource: string
   evidenceStatus: string
+  contractEntryStatus: 'produced' | 'not produced' | 'not observed' | 'diagnostic-only' | 'blocked'
+  runtimeRouteStatus: 'produced' | 'not produced' | 'not observed' | 'diagnostic-only' | 'blocked'
+  greatStopEvaluationStatus:
+    | 'evaluated-pass'
+    | 'evaluated-fail'
+    | 'not evaluated'
+    | 'not observed'
+    | 'diagnostic-only'
+  reviewLockStatus: 'eligible' | 'ineligible' | 'not evaluated' | 'not observed' | 'diagnostic-only'
+  lifecycleCaptureStatus: 'complete' | 'partial' | 'diagnostic-only' | 'blocked'
+  whyNotMvpGreen: string
 }): ProofRow {
   const lineagePopulated = [
     params.candidateProducer,
@@ -464,6 +481,12 @@ function buildRow(params: {
     contextSpecificity: params.contextSpecificity,
     'threshold source': params.thresholdSource,
     'evidence persisted/carried/recomputed/defaulted/unavailable': params.evidenceStatus,
+    'ContractEntryArtifact status': params.contractEntryStatus,
+    'RuntimeRouteArtifact status': params.runtimeRouteStatus,
+    'Great Stop evaluation status': params.greatStopEvaluationStatus,
+    'Review/Lock status': params.reviewLockStatus,
+    'lifecycle capture status': params.lifecycleCaptureStatus,
+    'why not MVP green': validMvpPass ? 'valid MVP pass' : params.whyNotMvpGreen,
     'invalid false-green? yes/no': yesNo(invalidFalseGreen),
     'proof validity label': validMvpPass
       ? 'valid_mvp_pass'
@@ -530,6 +553,11 @@ assert(
     admittedWindDown.tasteSupportVerdictPassed,
   'Admitted Taste-backed support should materialize a ContractEntryArtifact for diagnostic proof.',
 )
+const admittedArtifact = admittedSupport.candidateArtifacts[0] ?? null
+const admittedRuntimeLockEligibility = admittedArtifact?.enrichment?.runtimeLockEligibility ?? null
+const admittedRuntimeRouteArtifact = admittedRuntimeLockEligibility?.runtimeRouteArtifact ?? null
+const admittedGreatStopStatus = admittedRuntimeLockEligibility?.greatStopStatus ?? null
+const admittedReviewLockEligible = admittedRuntimeLockEligibility?.eligible ?? null
 
 const rows: ProofRow[] = [
   buildRow({
@@ -560,20 +588,32 @@ const rows: ProofRow[] = [
     thresholdSource:
       scenarioOnlyWindDown.tasteSupportVerdict?.coreFunctionName ?? 'evaluateTasteRoleIntentCore',
     evidenceStatus: 'unavailable',
+    contractEntryStatus: 'blocked',
+    runtimeRouteStatus: 'blocked',
+    greatStopEvaluationStatus: 'not evaluated',
+    reviewLockStatus: 'ineligible',
+    lifecycleCaptureStatus: 'blocked',
+    whyNotMvpGreen:
+      'support selection failed closed before ContractEntryArtifact; RuntimeRouteArtifact, Great Stop, and Review/Lock are blocked',
   }),
   buildRow({
-    routeLabel: admittedSupport.candidateArtifacts[0]?.id ?? 'phase-3-row-1-admitted-support-diagnostic-route',
+    routeLabel: admittedArtifact?.id ?? 'phase-3-row-1-admitted-support-diagnostic-route',
     supportSource: 'admitted_candidate_board',
     candidateProducer: 'Application/Curate bridge consuming Taste support verdict',
     supportScreenProducer: 'Taste evaluateTasteSupportCandidateVerdict via Curate bridge diagnostic',
     materializationSource: 'ContractEntryArtifact from scenario-backed Curate bridge',
-    greatStopProducer: 'not_evaluated - Phase 3B local harness does not run Great Stop proof',
+    greatStopProducer: admittedGreatStopStatus
+      ? 'ContractEntryArtifact runtimeLockEligibility'
+      : 'not_observed - local diagnostic harness did not reach Great Stop lifecycle output',
     appInvolvement: 'Curate bridge DEMO-SPECIAL diagnostic surface; routeAuthority not evaluated',
     contractEntryProduced: true,
-    runtimeRouteProduced: false,
-    greatStopPassFail: 'not_evaluated',
-    greatStopFailureReasons: 'Great Stop proof not run in Phase 3B harness implementation',
-    reviewLockEligible: false,
+    runtimeRouteProduced: Boolean(admittedRuntimeRouteArtifact),
+    greatStopPassFail: admittedGreatStopStatus === 'PASS' ? 'pass' : admittedGreatStopStatus === 'FAIL' ? 'fail' : 'not_evaluated',
+    greatStopFailureReasons:
+      admittedRuntimeLockEligibility?.greatStopRejectionReasons?.join('|') ||
+      admittedRuntimeLockEligibility?.greatStopFailedCriteria?.join('|') ||
+      'Great Stop lifecycle output not observed on local diagnostic ContractEntryArtifact',
+    reviewLockEligible: admittedReviewLockEligible === true,
     staticCorpusUsed: true,
     fallbackUsed: false,
     providerShadowUsed: false,
@@ -589,6 +629,25 @@ const rows: ProofRow[] = [
     thresholdSource:
       admittedWindDown.tasteSupportVerdict?.coreFunctionName ?? 'evaluateTasteRoleIntentCore',
     evidenceStatus: 'carried',
+    contractEntryStatus: 'produced',
+    runtimeRouteStatus: admittedRuntimeRouteArtifact ? 'produced' : 'not observed',
+    greatStopEvaluationStatus:
+      admittedGreatStopStatus === 'PASS'
+        ? 'evaluated-pass'
+        : admittedGreatStopStatus === 'FAIL'
+          ? 'evaluated-fail'
+          : 'not observed',
+    reviewLockStatus:
+      admittedReviewLockEligible === true
+        ? 'eligible'
+        : admittedReviewLockEligible === false
+          ? 'ineligible'
+          : 'not observed',
+    lifecycleCaptureStatus: admittedRuntimeRouteArtifact && admittedGreatStopStatus && admittedReviewLockEligible === true
+      ? 'complete'
+      : 'partial',
+    whyNotMvpGreen:
+      'ContractEntryArtifact is produced, but RuntimeRouteArtifact, Great Stop, and Review/Lock lifecycle outputs are not observed on the local diagnostic artifact; static/DEMO-SPECIAL/app-authority flags remain',
   }),
 ]
 
@@ -616,6 +675,9 @@ const summary = {
   diagnosticOnlyRows: rows.filter((row) => row['diagnostic-only? yes/no'] === 'yes').length,
   honestFails: rows.filter((row) => row['honest-fail? yes/no'] === 'yes').length,
   invalidFalseGreens: rows.filter((row) => row['invalid false-green? yes/no'] === 'yes').length,
+  lifecycleCompleteRows: rows.filter((row) => row['lifecycle capture status'] === 'complete').length,
+  lifecyclePartialRows: rows.filter((row) => row['lifecycle capture status'] === 'partial').length,
+  lifecycleBlockedRows: rows.filter((row) => row['lifecycle capture status'] === 'blocked').length,
   missingColumns,
   outputColumns,
 }
@@ -635,6 +697,9 @@ writeFileSync(
     `- diagnostic-only rows: ${summary.diagnosticOnlyRows}`,
     `- honest-fails: ${summary.honestFails}`,
     `- invalid false-greens: ${summary.invalidFalseGreens}`,
+    `- lifecycle-complete rows: ${summary.lifecycleCompleteRows}`,
+    `- lifecycle-partial rows: ${summary.lifecyclePartialRows}`,
+    `- lifecycle-blocked rows: ${summary.lifecycleBlockedRows}`,
     `- provider calls: ${summary.providerCalls}`,
     `- hosted calls: ${summary.hostedCalls}`,
     `- missing columns: ${summary.missingColumns.length}`,
@@ -650,6 +715,8 @@ writeFileSync(
         `- honest-fail: ${row['honest-fail? yes/no']}`,
         `- Great Stop: ${row['Great Stop pass/fail']}`,
         `- Review/Lock eligible: ${row['Review/Lock eligible? yes/no']}`,
+        `- lifecycle capture: ${row['lifecycle capture status']}`,
+        `- why not MVP green: ${row['why not MVP green']}`,
         `- proof validity: ${row['proof validity label']}`,
         '',
       ].join('\n'),
