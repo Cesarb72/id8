@@ -97,6 +97,31 @@ const outputColumns = [
   'why not MVP green',
   'invalid false-green? yes/no',
   'proof validity label',
+  'live data provider/source name',
+  'live data query labels',
+  'live data query center / pocket',
+  'live data provider place ids',
+  'live data venue evidence summary',
+  'live data address/location evidence',
+  'live data categories/types evidence',
+  'live data hours/open-status evidence',
+  'live data rating/review evidence',
+  'live data website/phone evidence',
+  'live data raw evidence availability flags',
+  'live data source path classification',
+  'Taste live field support',
+  'Taste missing/thin evidence',
+  'Bearings evidence summary',
+  'Bearings missing constraint evidence',
+  'selected route role sequence',
+  'Great Stop evidence source',
+  'live data came through',
+  'live data missing',
+  'live evidence sufficient',
+  'live evidence thin',
+  'local MVP representation requirements',
+  'engine ownership for gaps',
+  'another live call justified? yes/no',
 ] as const
 
 type OutputColumn = (typeof outputColumns)[number]
@@ -170,6 +195,31 @@ interface LifecycleObservation {
   curateRefinementEntryPayloadUsed: boolean
   runtimeRouteArtifactCanonical: boolean
   whyNotMvpGreen: string
+  liveDataProviderSourceName: string
+  liveDataQueryLabels: string
+  liveDataQueryCenterPocket: string
+  liveDataProviderPlaceIds: string
+  liveDataVenueEvidenceSummary: string
+  liveDataAddressLocationEvidence: string
+  liveDataCategoriesTypesEvidence: string
+  liveDataHoursOpenStatusEvidence: string
+  liveDataRatingReviewEvidence: string
+  liveDataWebsitePhoneEvidence: string
+  liveDataRawEvidenceAvailabilityFlags: string
+  liveDataSourcePathClassification: string
+  tasteLiveFieldSupport: string
+  tasteMissingThinEvidence: string
+  bearingsEvidenceSummary: string
+  bearingsMissingConstraintEvidence: string
+  selectedRouteRoleSequence: string
+  greatStopEvidenceSource: string
+  liveDataCameThrough: string
+  liveDataMissing: string
+  liveEvidenceSufficient: string
+  liveEvidenceThin: string
+  localMvpRepresentationRequirements: string
+  engineOwnershipForGaps: string
+  anotherLiveCallJustified: boolean
 }
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -221,6 +271,11 @@ function missingColumnsFor(row: ProofRow): string[] {
 function joinReasonList(values: readonly string[] | null | undefined): string {
   const reasons = [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))]
   return reasons.length > 0 ? reasons.join('|') : 'none'
+}
+
+function joinValueList(values: readonly (string | undefined | null)[]): string {
+  const filtered = [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))]
+  return filtered.length > 0 ? filtered.join('|') : 'unavailable'
 }
 
 function formatNumber(value: number | undefined): string {
@@ -306,6 +361,202 @@ function formatWindDownNumerics(scoredVenue: ScoredVenue | null): {
     lensCompatibility,
     contextSpecificity,
     summary: `roleScore=${roleScore}; stopShapeFit=${stopShapeFit}; lensCompatibility=${lensCompatibility}; contextSpecificity=${contextSpecificity}`,
+  }
+}
+
+type LiveEvidenceContractFields = Pick<
+  LifecycleObservation,
+  | 'liveDataProviderSourceName'
+  | 'liveDataQueryLabels'
+  | 'liveDataQueryCenterPocket'
+  | 'liveDataProviderPlaceIds'
+  | 'liveDataVenueEvidenceSummary'
+  | 'liveDataAddressLocationEvidence'
+  | 'liveDataCategoriesTypesEvidence'
+  | 'liveDataHoursOpenStatusEvidence'
+  | 'liveDataRatingReviewEvidence'
+  | 'liveDataWebsitePhoneEvidence'
+  | 'liveDataRawEvidenceAvailabilityFlags'
+  | 'liveDataSourcePathClassification'
+  | 'tasteLiveFieldSupport'
+  | 'tasteMissingThinEvidence'
+  | 'bearingsEvidenceSummary'
+  | 'bearingsMissingConstraintEvidence'
+  | 'selectedRouteRoleSequence'
+  | 'greatStopEvidenceSource'
+  | 'liveDataCameThrough'
+  | 'liveDataMissing'
+  | 'liveEvidenceSufficient'
+  | 'liveEvidenceThin'
+  | 'localMvpRepresentationRequirements'
+  | 'engineOwnershipForGaps'
+  | 'anotherLiveCallJustified'
+>
+
+function buildUnavailableLiveEvidenceContract(reason: string): LiveEvidenceContractFields {
+  return {
+    liveDataProviderSourceName: 'unavailable_stopped_before_provider',
+    liveDataQueryLabels: 'unavailable_stopped_before_provider',
+    liveDataQueryCenterPocket: 'unavailable_stopped_before_provider',
+    liveDataProviderPlaceIds: 'unavailable_stopped_before_provider',
+    liveDataVenueEvidenceSummary: 'unavailable_stopped_before_provider',
+    liveDataAddressLocationEvidence: 'unavailable_stopped_before_provider',
+    liveDataCategoriesTypesEvidence: 'unavailable_stopped_before_provider',
+    liveDataHoursOpenStatusEvidence: 'unavailable_stopped_before_provider',
+    liveDataRatingReviewEvidence: 'unavailable_stopped_before_provider',
+    liveDataWebsitePhoneEvidence: 'unavailable_stopped_before_provider',
+    liveDataRawEvidenceAvailabilityFlags: 'unavailable_stopped_before_provider',
+    liveDataSourcePathClassification: 'provider-shadow:stopped_before_provider',
+    tasteLiveFieldSupport: 'unavailable_stopped_before_provider',
+    tasteMissingThinEvidence: reason,
+    bearingsEvidenceSummary: 'unavailable_stopped_before_provider',
+    bearingsMissingConstraintEvidence: reason,
+    selectedRouteRoleSequence: 'unavailable_stopped_before_provider',
+    greatStopEvidenceSource: 'missing_evidence_not_evaluated',
+    liveDataCameThrough: 'none',
+    liveDataMissing: reason,
+    liveEvidenceSufficient: 'no',
+    liveEvidenceThin: 'yes',
+    localMvpRepresentationRequirements:
+      'Field readiness and governed live evidence must be captured before local MVP fixture/closeout requirements can be determined.',
+    engineOwnershipForGaps: `Field: ${reason}`,
+    anotherLiveCallJustified: true,
+  }
+}
+
+function buildLiveEvidenceContractFields(params: {
+  artifact: ContractEntryArtifact
+  counters: FetchCounters
+  fallbackUsed: boolean
+  providerShadowUsed: boolean
+  result: GeneratePlanResult
+  staticCorpusUsed: boolean
+  windDown: { stopName: string; scoredVenue: ScoredVenue | null }
+}): LiveEvidenceContractFields {
+  const fieldSummary = params.artifact.enrichment?.fieldProvenanceSummary
+  const tasteDistrictSummary = params.artifact.enrichment?.tasteDistrictSummary
+  const source = params.windDown.scoredVenue?.venue.source
+  const venue = params.windDown.scoredVenue?.venue
+  const liveScoredVenues = params.result.scoredVenues.filter(
+    (candidate) =>
+      candidate.venue.source.sourceOrigin === 'live' ||
+      Boolean(candidate.venue.source.provider) ||
+      Boolean(candidate.venue.source.providerRecordId),
+  )
+  const providerPlaceIds = liveScoredVenues.map((candidate) => candidate.venue.source.providerRecordId)
+  const queryLabels = joinValueList([
+    ...(fieldSummary?.queryLabels ?? []),
+    ...params.counters.fieldProxyLabels,
+    source?.sourceQueryLabel,
+  ])
+  const pocketValues = joinValueList([
+    params.artifact.selection.pocketId,
+    tasteDistrictSummary?.pocketId,
+    tasteDistrictSummary?.districtLabel,
+    params.artifact.enrichment?.locationContext?.areaHint,
+    ...[...params.counters.centerKeys].map((centerKey) => `center:${centerKey}`),
+  ])
+  const hasAddress = Boolean(source?.formattedAddress?.trim())
+  const hasLocation = typeof source?.latitude === 'number' && typeof source.longitude === 'number'
+  const hasHours =
+    source?.hoursKnown === true ||
+    typeof source?.openNow === 'boolean' ||
+    Boolean(source?.runtimeHoursTextHoursAvailable) ||
+    Boolean(source?.runtimeHoursStructuredPeriodCount)
+  const hasRating = typeof source?.rating === 'number' || typeof source?.reviewCount === 'number'
+  const hasSourceTypes = (source?.sourceTypes?.length ?? 0) > 0
+  const missingSourceFields = source?.missingFields ?? []
+  const thinEvidence = [
+    !hasAddress ? 'missing_address' : null,
+    !hasLocation ? 'missing_location' : null,
+    !hasHours ? 'missing_hours_open_status' : null,
+    !hasRating ? 'missing_rating_review_count' : null,
+    !hasSourceTypes ? 'missing_categories_types' : null,
+  ].filter((value): value is string => Boolean(value))
+  const sourcePathClassification = [
+    fieldSummary?.liveProviderUsed === true ? 'live_provider' : null,
+    params.staticCorpusUsed ? 'static' : null,
+    params.fallbackUsed ? 'fallback' : null,
+    params.providerShadowUsed ? 'provider-shadow' : null,
+    fieldSummary?.corpusUsed === true ? 'corpus' : null,
+  ].filter((value): value is string => Boolean(value))
+  const roleCoverage = params.artifact.enrichment?.canonicalRouteRoleCoverage
+  const roleSequence = [
+    roleCoverage?.start ? `start:${roleCoverage.start}` : null,
+    roleCoverage?.highlight ? `highlight:${roleCoverage.highlight}` : null,
+    roleCoverage?.windDown ? `windDown:${roleCoverage.windDown}` : null,
+  ].filter((value): value is string => Boolean(value))
+  const bearingsStatus = params.artifact.enrichment?.bearingsAdmissionProof?.status ?? 'not_run'
+  const runtimeEligibility = params.artifact.enrichment?.runtimeLockEligibility
+  const missingConstraintEvidence = [
+    params.artifact.selection.pocketId || tasteDistrictSummary?.pocketId ? null : 'missing_pocket',
+    typeof venue?.driveMinutes === 'number' ? null : 'missing_distance_movement',
+    hasHours ? null : 'missing_hours_feasibility',
+    bearingsStatus === 'present' ? null : `bearings_admission_${bearingsStatus}`,
+    runtimeEligibility ? null : 'missing_runtime_lock_eligibility',
+    ...missingSourceFields.map((field) => `source_missing_${field}`),
+  ].filter((value): value is string => Boolean(value))
+  const liveDataCameThrough =
+    liveScoredVenues.length > 0
+      ? `live_scored_venues=${liveScoredVenues.length}; providerCalls=${params.counters.providerCalls}; fieldProxyCalls=${params.counters.fieldProxyCalls}`
+      : 'none'
+  const liveDataMissing = [...thinEvidence, ...missingConstraintEvidence]
+  const evidenceSufficient = liveScoredVenues.length > 0 && thinEvidence.length === 0 && missingConstraintEvidence.length === 0
+
+  return {
+    liveDataProviderSourceName: fieldSummary?.provider ?? source?.provider ?? 'unavailable',
+    liveDataQueryLabels: queryLabels,
+    liveDataQueryCenterPocket: pocketValues,
+    liveDataProviderPlaceIds: joinValueList(providerPlaceIds),
+    liveDataVenueEvidenceSummary: venue
+      ? `selected=${venue.name}; liveCandidates=${liveScoredVenues.length}; sourceOrigin=${source?.sourceOrigin ?? 'unavailable'}`
+      : 'selected venue unavailable',
+    liveDataAddressLocationEvidence: `hasAddress=${yesNo(hasAddress)}; hasLocation=${yesNo(hasLocation)}; address=${hasAddress ? 'present_redacted' : 'unavailable'}; latLng=${hasLocation ? 'present' : 'unavailable'}`,
+    liveDataCategoriesTypesEvidence: `category=${venue?.category ?? 'unavailable'}; subcategory=${venue?.subcategory ?? 'unavailable'}; sourceTypes=${joinValueList(source?.sourceTypes ?? [])}`,
+    liveDataHoursOpenStatusEvidence: `hoursKnown=${yesNo(source?.hoursKnown === true)}; openNow=${typeof source?.openNow === 'boolean' ? yesNo(source.openNow) : 'unavailable'}; likelyOpenForCurrentWindow=${yesNo(source?.likelyOpenForCurrentWindow === true)}; businessStatus=${source?.businessStatus ?? 'unavailable'}; runtimeHoursPlanWindowProofStatus=${source?.runtimeHoursPlanWindowProofStatus ?? 'unavailable'}`,
+    liveDataRatingReviewEvidence: `rating=${formatNumber(source?.rating)}; reviewCount=${typeof source?.reviewCount === 'number' ? String(source.reviewCount) : 'unavailable'}`,
+    liveDataWebsitePhoneEvidence: 'not_captured_by_current_VenueSourceMetadata',
+    liveDataRawEvidenceAvailabilityFlags: `providerPlaceId=${yesNo(Boolean(source?.providerRecordId))}; address=${yesNo(hasAddress)}; location=${yesNo(hasLocation)}; categoriesTypes=${yesNo(hasSourceTypes)}; hours=${yesNo(hasHours)}; ratingReview=${yesNo(hasRating)}; websitePhone=no`,
+    liveDataSourcePathClassification: sourcePathClassification.length > 0 ? sourcePathClassification.join('|') : 'unavailable',
+    tasteLiveFieldSupport: `scores=${formatWindDownNumerics(params.windDown.scoredVenue).summary}; supportedFields=${joinValueList([
+      hasSourceTypes ? 'categories_types' : null,
+      hasAddress ? 'address' : null,
+      hasLocation ? 'location' : null,
+      hasHours ? 'hours' : null,
+      hasRating ? 'rating_review' : null,
+    ])}`,
+    tasteMissingThinEvidence: thinEvidence.length > 0 ? thinEvidence.join('|') : 'none',
+    bearingsEvidenceSummary: `district=${tasteDistrictSummary?.districtLabel ?? 'unavailable'}; pocket=${params.artifact.selection.pocketId ?? tasteDistrictSummary?.pocketId ?? 'unavailable'}; driveMinutes=${typeof venue?.driveMinutes === 'number' ? String(venue.driveMinutes) : 'unavailable'}; hoursFeasibility=${hasHours ? 'present' : 'missing'}; PlaceRight=${bearingsStatus}; requiredAnchorSurvival=${runtimeEligibility?.buildMetadata?.missingRoles?.length ? 'missing_roles' : 'not_blocked_by_missing_roles'}; admissibility=${bearingsStatus}`,
+    bearingsMissingConstraintEvidence:
+      missingConstraintEvidence.length > 0 ? missingConstraintEvidence.join('|') : 'none',
+    selectedRouteRoleSequence: roleSequence.length > 0 ? roleSequence.join(' -> ') : 'unavailable',
+    greatStopEvidenceSource:
+      fieldSummary?.liveProviderUsed === true && !params.providerShadowUsed
+        ? 'live_evidence_carried'
+        : params.providerShadowUsed
+          ? 'provider_shadow_or_missing_live_evidence'
+          : 'recomputed_or_defaulted_evidence',
+    liveDataCameThrough,
+    liveDataMissing: liveDataMissing.length > 0 ? liveDataMissing.join('|') : 'none',
+    liveEvidenceSufficient: yesNo(evidenceSufficient),
+    liveEvidenceThin: yesNo(!evidenceSufficient),
+    localMvpRepresentationRequirements: evidenceSufficient
+      ? 'Sanitized live evidence can be considered for local fixture/proof representation after explicit approval; raw provider payloads still must not be committed.'
+      : 'Represent missing/thin live evidence locally only after sanitized capture approval; do not infer absent provider fields as local truth.',
+    engineOwnershipForGaps: liveDataMissing.length > 0
+      ? [
+          thinEvidence.some((value) => value.includes('address') || value.includes('location') || value.includes('categories') || value.includes('hours') || value.includes('rating'))
+            ? `Field: ${thinEvidence.join('|')}`
+            : null,
+          missingConstraintEvidence.length > 0 ? `Bearings: ${missingConstraintEvidence.join('|')}` : null,
+          params.providerShadowUsed ? 'Field: provider-shadow/live-provider evidence missing' : null,
+          params.staticCorpusUsed ? 'Field: static corpus participation' : null,
+          params.fallbackUsed ? 'Waypoint/Application: fallback participation requires trace' : null,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join('; ')
+      : 'none',
+    anotherLiveCallJustified: !evidenceSufficient,
   }
 }
 
@@ -451,6 +702,31 @@ function buildRow(params: {
         : params.observation.diagnosticOnly
           ? 'diagnostic_only_not_mvp_green'
           : 'invalid_false_green',
+    'live data provider/source name': params.observation.liveDataProviderSourceName,
+    'live data query labels': params.observation.liveDataQueryLabels,
+    'live data query center / pocket': params.observation.liveDataQueryCenterPocket,
+    'live data provider place ids': params.observation.liveDataProviderPlaceIds,
+    'live data venue evidence summary': params.observation.liveDataVenueEvidenceSummary,
+    'live data address/location evidence': params.observation.liveDataAddressLocationEvidence,
+    'live data categories/types evidence': params.observation.liveDataCategoriesTypesEvidence,
+    'live data hours/open-status evidence': params.observation.liveDataHoursOpenStatusEvidence,
+    'live data rating/review evidence': params.observation.liveDataRatingReviewEvidence,
+    'live data website/phone evidence': params.observation.liveDataWebsitePhoneEvidence,
+    'live data raw evidence availability flags': params.observation.liveDataRawEvidenceAvailabilityFlags,
+    'live data source path classification': params.observation.liveDataSourcePathClassification,
+    'Taste live field support': params.observation.tasteLiveFieldSupport,
+    'Taste missing/thin evidence': params.observation.tasteMissingThinEvidence,
+    'Bearings evidence summary': params.observation.bearingsEvidenceSummary,
+    'Bearings missing constraint evidence': params.observation.bearingsMissingConstraintEvidence,
+    'selected route role sequence': params.observation.selectedRouteRoleSequence,
+    'Great Stop evidence source': params.observation.greatStopEvidenceSource,
+    'live data came through': params.observation.liveDataCameThrough,
+    'live data missing': params.observation.liveDataMissing,
+    'live evidence sufficient': params.observation.liveEvidenceSufficient,
+    'live evidence thin': params.observation.liveEvidenceThin,
+    'local MVP representation requirements': params.observation.localMvpRepresentationRequirements,
+    'engine ownership for gaps': params.observation.engineOwnershipForGaps,
+    'another live call justified? yes/no': yesNo(params.observation.anotherLiveCallJustified),
   }
 }
 
@@ -507,6 +783,7 @@ function buildStoppedBeforeProviderObservation(reason: string): LifecycleObserva
     curateRefinementEntryPayloadUsed: false,
     runtimeRouteArtifactCanonical: false,
     whyNotMvpGreen: `stopped before provider: ${reason}`,
+    ...buildUnavailableLiveEvidenceContract(reason),
   }
 }
 
@@ -548,12 +825,42 @@ async function dispatchFieldProxyRequest(body: unknown): Promise<Response> {
   })
 }
 
+function normalizeUrlPrefix(value: string | undefined): string | null {
+  if (!value?.trim()) {
+    return null
+  }
+  try {
+    return new URL(value.trim()).href.replace(/\/+$/g, '')
+  } catch {
+    return null
+  }
+}
+
+function isConfiguredKvRestUrl(url: string, configuredKvRestUrl: string | null): boolean {
+  if (!configuredKvRestUrl) {
+    return false
+  }
+  try {
+    const normalizedUrl = new URL(url).href.replace(/\/+$/g, '')
+    return normalizedUrl === configuredKvRestUrl || normalizedUrl.startsWith(`${configuredKvRestUrl}/`)
+  } catch {
+    return false
+  }
+}
+
+function redactNetworkUrl(url: string): string {
+  return isConfiguredKvRestUrl(url, normalizeUrlPrefix(process.env.KV_REST_API_URL))
+    ? '<redacted KV_REST_API_URL>'
+    : url
+}
+
 function installGovernedFetch(counters: FetchCounters, originalFetch: typeof fetch): void {
+  const configuredKvRestUrl = normalizeUrlPrefix(process.env.KV_REST_API_URL)
   globalThis.fetch = (async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     if (url.includes('vercel.app') || url.includes('vercel.com')) {
       counters.hostedCalls += 1
-      throw new Error(`Hosted/Vercel URL is not approved for Phase 3R: ${url}`)
+      throw new Error(`Hosted/Vercel URL is not approved for Phase 3R: ${redactNetworkUrl(url)}`)
     }
     if (url === fieldProxyPath || url.endsWith(fieldProxyPath)) {
       counters.fieldProxyCalls += 1
@@ -581,7 +888,10 @@ function installGovernedFetch(counters: FetchCounters, originalFetch: typeof fet
       }
       return originalFetch(input, init)
     }
-    throw new Error(`Unexpected network URL in local governed live proof runner: ${url}`)
+    if (isConfiguredKvRestUrl(url, configuredKvRestUrl)) {
+      return originalFetch(input, init)
+    }
+    throw new Error(`Unexpected network URL in local governed live proof runner: ${redactNetworkUrl(url)}`)
   }) as typeof fetch
 }
 
@@ -634,6 +944,15 @@ async function observeLiveLifecycle(params: {
     fieldSummary?.liveProviderUsed !== true ||
     !params.counters.providerStatuses.every((status) => status === 'google_places_text_search')
   const fallbackUsed = detectFallbackUsed(params.result)
+  const evidenceContract = buildLiveEvidenceContractFields({
+    artifact,
+    counters: params.counters,
+    fallbackUsed,
+    providerShadowUsed,
+    result: params.result,
+    staticCorpusUsed,
+    windDown,
+  })
 
   if (!artifactBackedItinerary) {
     const snapshot = buildRouteAuthoritySnapshot({
@@ -703,6 +1022,7 @@ async function observeLiveLifecycle(params: {
       curateRefinementEntryPayloadUsed: false,
       runtimeRouteArtifactCanonical: false,
       whyNotMvpGreen: 'artifact-backed itinerary unavailable; RuntimeRouteArtifact blocked',
+      ...evidenceContract,
     }
   }
 
@@ -803,6 +1123,7 @@ async function observeLiveLifecycle(params: {
     ]
       .filter((value): value is string => Boolean(value))
       .join('; ') || 'valid live proof pass',
+    ...evidenceContract,
   }
 }
 
@@ -1033,6 +1354,30 @@ writeFileSync(
         `- Review/Lock status: ${row['Review/Lock status']}`,
         `- false-green risk: ${row['false-green risk? yes/no']}`,
         `- why not MVP green: ${row['why not MVP green']}`,
+      ].join('\n'),
+    ),
+    '',
+    '## Live Data Evidence / MVP Local Build Requirements',
+    '',
+    ...rows.map((row, index) =>
+      [
+        `### Row ${index + 1} - ${row['route id / route label']}`,
+        '',
+        `- provider/source: ${row['live data provider/source name']}`,
+        `- query labels: ${row['live data query labels']}`,
+        `- query center / pocket: ${row['live data query center / pocket']}`,
+        `- live data came through: ${row['live data came through']}`,
+        `- live data missing: ${row['live data missing']}`,
+        `- evidence sufficient: ${row['live evidence sufficient']}`,
+        `- evidence thin: ${row['live evidence thin']}`,
+        `- Taste support: ${row['Taste live field support']}`,
+        `- Taste missing/thin evidence: ${row['Taste missing/thin evidence']}`,
+        `- Bearings evidence: ${row['Bearings evidence summary']}`,
+        `- Bearings missing constraints: ${row['Bearings missing constraint evidence']}`,
+        `- Great Stop evidence source: ${row['Great Stop evidence source']}`,
+        `- local MVP representation requirements: ${row['local MVP representation requirements']}`,
+        `- engine ownership for gaps: ${row['engine ownership for gaps']}`,
+        `- another live call justified: ${row['another live call justified? yes/no']}`,
       ].join('\n'),
     ),
     '',
