@@ -1,8 +1,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import type {
   CurateBuildAdmittedSupportCandidate,
 } from '../src/app/services/curate/buildCurateScenarioBackedArtifactBridge.ts'
+import type { ContractEntryArtifact } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import type {
   BuiltScenarioNight,
   BuiltScenarioStop,
@@ -50,6 +52,14 @@ const outputColumns = [
   'Great Stop evaluation status',
   'Review/Lock status',
   'lifecycle capture status',
+  'routeAuthority snapshot status',
+  'routeAuthority source label',
+  'routeAuthority rejection reasons',
+  'lock input status',
+  'lock input rejection reason',
+  'runtime lock truth status',
+  'runtime lock truth reason',
+  'lifecycle input availability',
   'why not MVP green',
   'invalid false-green? yes/no',
   'proof validity label',
@@ -73,6 +83,24 @@ function assert(condition: unknown, message: string): asserts condition {
 function yesNo(value: boolean): YesNo {
   return value ? 'yes' : 'no'
 }
+
+function readGitMetadata(args: string[]): string | null {
+  try {
+    const value = execFileSync('git', args, {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    return value.length > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
+const PROOF_PHASE_LABEL = 'Phase 3I lifecycle observation harness implementation/run'
+const metadataHead = readGitMetadata(['rev-parse', '--short', 'HEAD'])
+const metadataBranch = readGitMetadata(['branch', '--show-current'])
+const metadataStatus = metadataHead ? 'available' : 'unavailable'
 
 function escapeCsv(value: string): string {
   return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
@@ -406,15 +434,36 @@ function buildRow(params: {
   thresholdSource: string
   evidenceStatus: string
   contractEntryStatus: 'produced' | 'not produced' | 'not observed' | 'diagnostic-only' | 'blocked'
-  runtimeRouteStatus: 'produced' | 'not produced' | 'not observed' | 'diagnostic-only' | 'blocked'
+  runtimeRouteStatus:
+    | 'produced'
+    | 'not produced'
+    | 'not observed'
+    | 'unavailable_missing_inputs'
+    | 'diagnostic-only'
+    | 'blocked'
   greatStopEvaluationStatus:
     | 'evaluated-pass'
     | 'evaluated-fail'
     | 'not evaluated'
     | 'not observed'
+    | 'unavailable_missing_inputs'
     | 'diagnostic-only'
-  reviewLockStatus: 'eligible' | 'ineligible' | 'not evaluated' | 'not observed' | 'diagnostic-only'
+  reviewLockStatus:
+    | 'eligible'
+    | 'ineligible'
+    | 'not evaluated'
+    | 'not observed'
+    | 'unavailable_missing_inputs'
+    | 'diagnostic-only'
   lifecycleCaptureStatus: 'complete' | 'partial' | 'diagnostic-only' | 'blocked'
+  routeAuthoritySnapshotStatus: string
+  routeAuthoritySourceLabel: string
+  routeAuthorityRejectionReasons: string
+  lockInputStatus: string
+  lockInputRejectionReason: string
+  runtimeLockTruthStatus: string
+  runtimeLockTruthReason: string
+  lifecycleInputAvailability: string
   whyNotMvpGreen: string
 }): ProofRow {
   const lineagePopulated = [
@@ -486,6 +535,14 @@ function buildRow(params: {
     'Great Stop evaluation status': params.greatStopEvaluationStatus,
     'Review/Lock status': params.reviewLockStatus,
     'lifecycle capture status': params.lifecycleCaptureStatus,
+    'routeAuthority snapshot status': params.routeAuthoritySnapshotStatus,
+    'routeAuthority source label': params.routeAuthoritySourceLabel,
+    'routeAuthority rejection reasons': params.routeAuthorityRejectionReasons,
+    'lock input status': params.lockInputStatus,
+    'lock input rejection reason': params.lockInputRejectionReason,
+    'runtime lock truth status': params.runtimeLockTruthStatus,
+    'runtime lock truth reason': params.runtimeLockTruthReason,
+    'lifecycle input availability': params.lifecycleInputAvailability,
     'why not MVP green': validMvpPass ? 'valid MVP pass' : params.whyNotMvpGreen,
     'invalid false-green? yes/no': yesNo(invalidFalseGreen),
     'proof validity label': validMvpPass
@@ -501,7 +558,112 @@ function buildRow(params: {
 const { buildCurateScenarioBackedArtifactBridge } = await import(
   '../src/app/services/curate/buildCurateScenarioBackedArtifactBridge.ts'
 )
+const { buildLockInputFromRouteAuthoritySnapshot, buildRouteAuthoritySnapshot } = await import(
+  '../src/app/services/routeAuthority/routeAuthorityService.ts'
+)
 const { starterPacks } = await import('../src/data/starterPacks.ts')
+
+function joinReasonList(values: readonly string[] | null | undefined): string {
+  const reasons = [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))]
+  return reasons.length > 0 ? reasons.join('|') : 'none'
+}
+
+function observeLifecycleFromArtifact(params: {
+  artifact: ContractEntryArtifact | null
+  selectedClusterConfirmation: string
+  fallbackCity: string
+}): {
+  routeAuthoritySnapshotStatus: string
+  routeAuthoritySourceLabel: string
+  routeAuthorityRejectionReasons: string
+  lockInputStatus: string
+  lockInputRejectionReason: string
+  runtimeLockTruthStatus: 'produced' | 'blocked' | 'not observed' | 'unavailable_missing_inputs' | 'diagnostic_only'
+  runtimeLockTruthReason: string
+  runtimeRouteStatus: 'produced' | 'blocked' | 'not observed' | 'unavailable_missing_inputs' | 'diagnostic-only'
+  greatStopEvaluationStatus:
+    | 'evaluated-pass'
+    | 'evaluated-fail'
+    | 'not evaluated'
+    | 'not observed'
+    | 'unavailable_missing_inputs'
+    | 'diagnostic-only'
+  reviewLockStatus: 'eligible' | 'ineligible' | 'not observed' | 'unavailable_missing_inputs'
+  reviewLockEligible: boolean
+  lifecycleInputAvailability: string
+} {
+  if (!params.artifact) {
+    return {
+      routeAuthoritySnapshotStatus: 'not_evaluated',
+      routeAuthoritySourceLabel: 'none',
+      routeAuthorityRejectionReasons: 'no_contract_entry_artifact',
+      lockInputStatus: 'not_evaluated',
+      lockInputRejectionReason: 'no_contract_entry_artifact',
+      runtimeLockTruthStatus: 'not observed',
+      runtimeLockTruthReason: 'no_contract_entry_artifact',
+      runtimeRouteStatus: 'blocked',
+      greatStopEvaluationStatus: 'not evaluated',
+      reviewLockStatus: 'ineligible',
+      reviewLockEligible: false,
+      lifecycleInputAvailability: 'not_applicable_no_contract_entry_artifact',
+    }
+  }
+
+  const embeddedRuntimeLockEligibility = params.artifact.enrichment?.runtimeLockEligibility ?? null
+  const embeddedRuntimeRouteArtifact = embeddedRuntimeLockEligibility?.runtimeRouteArtifact ?? null
+  const embeddedGreatStopStatus = embeddedRuntimeLockEligibility?.greatStopStatus ?? null
+  const lifecycleMissingInputs = [
+    'missing_itinerary',
+    'missing_scored_venues',
+    embeddedRuntimeLockEligibility ? null : 'missing_runtime_lock_eligibility',
+  ].filter((value): value is string => Boolean(value))
+  const snapshot = buildRouteAuthoritySnapshot({
+    contractEntryArtifact: params.artifact,
+    selectedDirectionId: params.artifact.selection.directionId ?? null,
+    selectedArtifactId: params.artifact.id,
+    selectedClusterConfirmation: params.selectedClusterConfirmation,
+  })
+  const lockInput = buildLockInputFromRouteAuthoritySnapshot({
+    snapshot,
+    activeRole: 'start',
+    fallbackCity: params.fallbackCity,
+  })
+
+  const runtimeLockTruthStatus = embeddedRuntimeRouteArtifact
+    ? 'produced'
+    : lifecycleMissingInputs.length > 0
+      ? 'unavailable_missing_inputs'
+      : 'not observed'
+  const runtimeLockTruthReason =
+    runtimeLockTruthStatus === 'produced'
+      ? 'embedded_runtime_route_artifact_observed'
+      : runtimeLockTruthStatus === 'unavailable_missing_inputs'
+        ? lifecycleMissingInputs.join('|')
+        : 'runtime_lock_truth_not_observed'
+
+  return {
+    routeAuthoritySnapshotStatus: snapshot.validationStatus,
+    routeAuthoritySourceLabel: snapshot.sourceLabel,
+    routeAuthorityRejectionReasons: joinReasonList(snapshot.rejectionReasons),
+    lockInputStatus: lockInput.ok ? 'eligible' : 'blocked',
+    lockInputRejectionReason: lockInput.ok
+      ? 'none'
+      : lockInput.diagnostics.rejectionReason ?? 'missing_lock_ready_canonical_route_truth',
+    runtimeLockTruthStatus,
+    runtimeLockTruthReason,
+    runtimeRouteStatus: embeddedRuntimeRouteArtifact ? 'produced' : 'unavailable_missing_inputs',
+    greatStopEvaluationStatus:
+      embeddedGreatStopStatus === 'PASS'
+        ? 'evaluated-pass'
+        : embeddedGreatStopStatus === 'FAIL'
+          ? 'evaluated-fail'
+          : 'not observed',
+    reviewLockStatus: lockInput.ok ? 'eligible' : 'ineligible',
+    reviewLockEligible: lockInput.ok,
+    lifecycleInputAvailability:
+      lifecycleMissingInputs.length > 0 ? lifecycleMissingInputs.join('|') : 'available',
+  }
+}
 
 const coffeeBooksStarterPack = starterPacks.find((pack) => pack.id === 'coffee-books')
 assert(coffeeBooksStarterPack, 'Missing Coffee & Books starter pack fixture.')
@@ -558,6 +720,16 @@ const admittedRuntimeLockEligibility = admittedArtifact?.enrichment?.runtimeLock
 const admittedRuntimeRouteArtifact = admittedRuntimeLockEligibility?.runtimeRouteArtifact ?? null
 const admittedGreatStopStatus = admittedRuntimeLockEligibility?.greatStopStatus ?? null
 const admittedReviewLockEligible = admittedRuntimeLockEligibility?.eligible ?? null
+const scenarioOnlyLifecycle = observeLifecycleFromArtifact({
+  artifact: null,
+  selectedClusterConfirmation: 'Phase 3 local proof fixture direction',
+  fallbackCity: 'San Jose',
+})
+const admittedLifecycle = observeLifecycleFromArtifact({
+  artifact: admittedArtifact,
+  selectedClusterConfirmation: 'Phase 3 local proof fixture direction',
+  fallbackCity: 'San Jose',
+})
 
 const rows: ProofRow[] = [
   buildRow({
@@ -593,6 +765,14 @@ const rows: ProofRow[] = [
     greatStopEvaluationStatus: 'not evaluated',
     reviewLockStatus: 'ineligible',
     lifecycleCaptureStatus: 'blocked',
+    routeAuthoritySnapshotStatus: scenarioOnlyLifecycle.routeAuthoritySnapshotStatus,
+    routeAuthoritySourceLabel: scenarioOnlyLifecycle.routeAuthoritySourceLabel,
+    routeAuthorityRejectionReasons: scenarioOnlyLifecycle.routeAuthorityRejectionReasons,
+    lockInputStatus: scenarioOnlyLifecycle.lockInputStatus,
+    lockInputRejectionReason: scenarioOnlyLifecycle.lockInputRejectionReason,
+    runtimeLockTruthStatus: scenarioOnlyLifecycle.runtimeLockTruthStatus,
+    runtimeLockTruthReason: scenarioOnlyLifecycle.runtimeLockTruthReason,
+    lifecycleInputAvailability: scenarioOnlyLifecycle.lifecycleInputAvailability,
     whyNotMvpGreen:
       'support selection failed closed before ContractEntryArtifact; RuntimeRouteArtifact, Great Stop, and Review/Lock are blocked',
   }),
@@ -605,7 +785,7 @@ const rows: ProofRow[] = [
     greatStopProducer: admittedGreatStopStatus
       ? 'ContractEntryArtifact runtimeLockEligibility'
       : 'not_observed - local diagnostic harness did not reach Great Stop lifecycle output',
-    appInvolvement: 'Curate bridge DEMO-SPECIAL diagnostic surface; routeAuthority not evaluated',
+    appInvolvement: 'Curate bridge DEMO-SPECIAL diagnostic surface; routeAuthority observed as compatibility gate',
     contractEntryProduced: true,
     runtimeRouteProduced: Boolean(admittedRuntimeRouteArtifact),
     greatStopPassFail: admittedGreatStopStatus === 'PASS' ? 'pass' : admittedGreatStopStatus === 'FAIL' ? 'fail' : 'not_evaluated',
@@ -613,7 +793,7 @@ const rows: ProofRow[] = [
       admittedRuntimeLockEligibility?.greatStopRejectionReasons?.join('|') ||
       admittedRuntimeLockEligibility?.greatStopFailedCriteria?.join('|') ||
       'Great Stop lifecycle output not observed on local diagnostic ContractEntryArtifact',
-    reviewLockEligible: admittedReviewLockEligible === true,
+    reviewLockEligible: admittedLifecycle.reviewLockEligible,
     staticCorpusUsed: true,
     fallbackUsed: false,
     providerShadowUsed: false,
@@ -630,24 +810,22 @@ const rows: ProofRow[] = [
       admittedWindDown.tasteSupportVerdict?.coreFunctionName ?? 'evaluateTasteRoleIntentCore',
     evidenceStatus: 'carried',
     contractEntryStatus: 'produced',
-    runtimeRouteStatus: admittedRuntimeRouteArtifact ? 'produced' : 'not observed',
-    greatStopEvaluationStatus:
-      admittedGreatStopStatus === 'PASS'
-        ? 'evaluated-pass'
-        : admittedGreatStopStatus === 'FAIL'
-          ? 'evaluated-fail'
-          : 'not observed',
-    reviewLockStatus:
-      admittedReviewLockEligible === true
-        ? 'eligible'
-        : admittedReviewLockEligible === false
-          ? 'ineligible'
-          : 'not observed',
+    runtimeRouteStatus: admittedLifecycle.runtimeRouteStatus,
+    greatStopEvaluationStatus: admittedLifecycle.greatStopEvaluationStatus,
+    reviewLockStatus: admittedLifecycle.reviewLockStatus,
     lifecycleCaptureStatus: admittedRuntimeRouteArtifact && admittedGreatStopStatus && admittedReviewLockEligible === true
       ? 'complete'
       : 'partial',
+    routeAuthoritySnapshotStatus: admittedLifecycle.routeAuthoritySnapshotStatus,
+    routeAuthoritySourceLabel: admittedLifecycle.routeAuthoritySourceLabel,
+    routeAuthorityRejectionReasons: admittedLifecycle.routeAuthorityRejectionReasons,
+    lockInputStatus: admittedLifecycle.lockInputStatus,
+    lockInputRejectionReason: admittedLifecycle.lockInputRejectionReason,
+    runtimeLockTruthStatus: admittedLifecycle.runtimeLockTruthStatus,
+    runtimeLockTruthReason: admittedLifecycle.runtimeLockTruthReason,
+    lifecycleInputAvailability: admittedLifecycle.lifecycleInputAvailability,
     whyNotMvpGreen:
-      'ContractEntryArtifact is produced, but RuntimeRouteArtifact, Great Stop, and Review/Lock lifecycle outputs are not observed on the local diagnostic artifact; static/DEMO-SPECIAL/app-authority flags remain',
+      'ContractEntryArtifact is produced and routeAuthority/lock-input are observed, but RuntimeRouteArtifact is unavailable because route-level lock inputs are missing; Great Stop is not observed; Review/Lock remains ineligible; static/DEMO-SPECIAL/app-authority flags remain',
   }),
 ]
 
@@ -666,8 +844,10 @@ const markdownPath = join(outputDir, 'phase-3-mvp-proof-gate-summary.md')
 
 const summary = {
   generatedAt: new Date().toISOString(),
-  head: '8a7c3e5',
-  phase: '3B local no-provider proof harness',
+  head: metadataHead ?? 'unknown',
+  branch: metadataBranch ?? 'unknown',
+  metadataStatus,
+  phase: PROOF_PHASE_LABEL,
   providerCalls: fetchCallCount,
   hostedCalls: 0,
   rowsProduced: rows.length,
@@ -690,7 +870,10 @@ writeFileSync(
   [
     '# Phase 3 MVP Proof Gate Summary',
     '',
-    '- phase: 3B local no-provider proof harness',
+    `- phase: ${summary.phase}`,
+    `- head: ${summary.head}`,
+    `- branch: ${summary.branch}`,
+    `- metadata status: ${summary.metadataStatus}`,
     '- claim: diagnostic-only harness implementation, not MVP green',
     `- rows produced: ${summary.rowsProduced}`,
     `- valid MVP passes: ${summary.validMvpPasses}`,
@@ -716,6 +899,9 @@ writeFileSync(
         `- Great Stop: ${row['Great Stop pass/fail']}`,
         `- Review/Lock eligible: ${row['Review/Lock eligible? yes/no']}`,
         `- lifecycle capture: ${row['lifecycle capture status']}`,
+        `- routeAuthority snapshot: ${row['routeAuthority snapshot status']}`,
+        `- lock input: ${row['lock input status']}`,
+        `- runtime lock truth: ${row['runtime lock truth status']}`,
         `- why not MVP green: ${row['why not MVP green']}`,
         `- proof validity: ${row['proof validity label']}`,
         '',
