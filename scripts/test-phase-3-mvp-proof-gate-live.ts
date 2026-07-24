@@ -954,12 +954,22 @@ const ndjsonPath = join(outputDir, 'phase-3-mvp-proof-gate-live.ndjson')
 const jsonPath = join(outputDir, 'phase-3-mvp-proof-gate-live.json')
 const markdownPath = join(outputDir, 'phase-3-mvp-proof-gate-live-summary.md')
 
+const liveApprovalFlagPresent = process.env[liveApprovalEnvKey] === '1'
+const stopReason =
+  rows.map((row) => row['Great Stop failure reasons']).find((reason) => reason !== 'none') ?? 'none'
+const runLabel = liveApprovalFlagPresent
+  ? result.valveOpened
+    ? 'live-approved run'
+    : 'live-readiness stopped before provider'
+  : 'dry/default run'
+
 const summary = {
   generatedAt: new Date().toISOString(),
   head: readGitMetadata(['rev-parse', '--short', 'HEAD']),
   branch: readGitMetadata(['branch', '--show-current']),
-  phase: 'Phase 3T governed live proof runner dry/default run',
-  liveApprovalFlagPresent: process.env[liveApprovalEnvKey] === '1',
+  phase: `Phase 3T governed live proof runner ${runLabel}`,
+  liveApprovalFlagPresent,
+  stopReason,
   providerCalls: result.counters.providerCalls,
   fieldProxyCalls: result.counters.fieldProxyCalls,
   hostedCalls: result.counters.hostedCalls,
@@ -991,6 +1001,7 @@ writeFileSync(
     `- head: ${summary.head}`,
     `- branch: ${summary.branch}`,
     `- live approval flag present: ${yesNo(summary.liveApprovalFlagPresent)}`,
+    `- stop reason: ${summary.stopReason}`,
     `- provider calls: ${summary.providerCalls}`,
     `- field proxy calls: ${summary.fieldProxyCalls}`,
     `- hosted calls: ${summary.hostedCalls}`,
@@ -1030,5 +1041,5 @@ writeFileSync(
 )
 
 process.stdout.write(
-  `phase 3 governed live proof runner: dry/default completed with provider calls=${summary.providerCalls}, valveOpened=${yesNo(summary.valveOpened)}, valveDisarmed=${yesNo(summary.valveDisarmed)}\n`,
+  `phase 3 governed live proof runner: ${runLabel} completed with liveApprovalFlagPresent=${yesNo(summary.liveApprovalFlagPresent)}, stopReason=${summary.stopReason}, provider calls=${summary.providerCalls}, valveOpened=${yesNo(summary.valveOpened)}, valveDisarmed=${yesNo(summary.valveDisarmed)}\n`,
 )
