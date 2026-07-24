@@ -623,7 +623,7 @@ function assertOutOfPocketSelectedProofStopIsDiagnosticOnly(): void {
   process.stdout.write('Coffee & Books out-of-pocket literal evidence diagnostic: passed\n')
 }
 
-function assertBuildRequiredAnchorSupportSelectionReselectsStaleSupports(): void {
+function assertBuildRequiredAnchorSupportSelectionRejectsScenarioOnlyWindDownWithoutTasteEvidence(): void {
   const opportunity = buildSupportReselectionOpportunity({
     includeCompactAlternatives: true,
   })
@@ -646,60 +646,43 @@ function assertBuildRequiredAnchorSupportSelectionReselectsStaleSupports(): void
     starterPack: coffeeBooksStarterPack,
     proofTarget: buildBuildRequiredAnchorProofTarget(),
   })
-  const artifact = first.candidateArtifacts[0]
   const diagnostic = first.diagnostics[0]?.buildRequiredAnchorSupportSelection
-  assert(artifact, 'Build required-anchor support reselection must still materialize an artifact.')
-  assert(diagnostic?.status === 'passed', `Support selection must pass, received ${diagnostic?.status}.`)
+  assert(first.candidateArtifacts.length === 0, 'Scenario-only windDown support without Taste evidence must not materialize.')
   assert(
-    diagnostic.reason === 'anchor_centered_support_selection_applied',
-    `Expected anchor-centered applied reason, received ${diagnostic.reason}.`,
+    second.candidateArtifacts.length === 0,
+    'Scenario-only windDown fail-closed behavior must be deterministic for the same inputs.',
   )
   assert(
-    artifact.anchorVenueId === 'sj-willow-glen-bookhouse' &&
-      artifact.storySpine.highlight === 'Willow Glen Bookhouse',
-    'Required anchor must be preserved with its highlight role.',
+    diagnostic?.status === 'failed' &&
+      diagnostic.reason === 'anchor_centered_support_selection_failed' &&
+      diagnostic.scenarioSupportCandidateCountByRole.windDown === 0 &&
+      diagnostic.admittedFallbackCandidateCountByRole.windDown === 0,
+    `Scenario-only windDown without Taste evidence must fail closed: ${JSON.stringify(diagnostic)}`,
   )
   assert(
-    artifact.storySpine.start === 'Willow Glen Tea Atelier' &&
-      artifact.storySpine.windDown === 'Willow Glen Bakehouse',
-    `Stale support stops must be replaced around the required anchor pocket. route=${JSON.stringify(artifact.storySpine)} diagnostics=${JSON.stringify(diagnostic)}`,
-  )
-  assert(
-    artifact.storySpine.highlight === 'Willow Glen Bookhouse',
-    'Replacement must preserve start/highlight/windDown route shape.',
-  )
-  assert(
-    second.candidateArtifacts[0]?.storySpine.start === artifact.storySpine.start &&
-      second.candidateArtifacts[0]?.storySpine.windDown === artifact.storySpine.windDown,
-    'Support replacement must be deterministic for the same inputs.',
-  )
-  assert(
-    diagnostic.replacementSupportStops.some(
+    diagnostic.windDownCandidateDiagnostics.some(
       (entry) =>
-        entry.replaced &&
-        entry.reason === 'support_stop_replaced_for_route_compactness' &&
-        entry.replacementPocketLabel === 'Willow Glen Pocket',
+        entry.name === 'Willow Glen Bakehouse' &&
+        entry.source === 'scenario_stop' &&
+        entry.anchorPocketMatch &&
+        entry.roleSemanticsPassed &&
+        entry.roleContractPassed &&
+        entry.tasteSupportVerdict?.owner === 'taste' &&
+        entry.tasteSupportVerdict.coreFunctionName === 'evaluateTasteRoleIntentCore' &&
+        entry.tasteSupportVerdict.failedReasons.includes('taste_support_evidence_missing') &&
+        entry.tasteSupportVerdict.failures.some(
+          (failure) =>
+            !failure.evidencePresent &&
+            failure.reasonCode === 'taste_support_evidence_missing' &&
+            failure.thresholdOwner === 'taste' &&
+            failure.thresholdSource === 'evaluateTasteRoleIntentCore',
+        ) &&
+        !entry.tasteSupportVerdictPassed &&
+        entry.rejectedReason === 'taste_verdict_evidence_missing',
     ),
-    'Support replacement diagnostics must emit reason codes and replacement pockets.',
+    `Scenario support diagnostics must expose missing Taste evidence: ${JSON.stringify(diagnostic.windDownCandidateDiagnostics)}`,
   )
-  assert(
-    diagnostic.movementTotalBefore !== null &&
-      diagnostic.movementTotalAfter !== null &&
-      diagnostic.movementTotalAfter < diagnostic.movementTotalBefore,
-    'Anchor-centered support selection must improve route movement before Great Stop.',
-  )
-  assert(
-    diagnostic.neighborhoodsAfter.length === 1 &&
-      diagnostic.neighborhoodsAfter[0] === 'Willow Glen Pocket' &&
-      diagnostic.anchorCentered &&
-      diagnostic.greatStopInputUsesReplacedSupports,
-    'Diagnostics must show the Great Stop input route is anchor-centered with replaced supports.',
-  )
-  assert(
-    !artifact.qualification?.approvedRefinementEntryPayload,
-    'Support replacement alone must not create an approved payload.',
-  )
-  process.stdout.write('Build required-anchor support reselection: passed\n')
+  process.stdout.write('Build scenario-only windDown Taste evidence fail-closed: passed\n')
 }
 
 function assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply(): void {
@@ -1565,7 +1548,7 @@ function main(): void {
   assertHardPocketAssertionRejectsMismatchedActivePocket()
   assertEquivalentPocketLabelsRemainHardPocketConsistent()
   assertOutOfPocketSelectedProofStopIsDiagnosticOnly()
-  assertBuildRequiredAnchorSupportSelectionReselectsStaleSupports()
+  assertBuildRequiredAnchorSupportSelectionRejectsScenarioOnlyWindDownWithoutTasteEvidence()
   assertBuildRequiredAnchorSupportSelectionUsesAdmittedWindDownSupply()
   assertBuildRequiredAnchorSupportSelectionFailsClosedWithoutAlternatives()
   assertBuildRequiredAnchorSupportSelectionRejectsLowFitAdmittedWindDown()

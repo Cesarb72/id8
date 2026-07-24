@@ -1102,6 +1102,13 @@ function collectBuildAnchorSupportCandidates(params: {
           stop,
           role: params.role,
         })
+      const tasteSupportVerdict =
+        params.role === 'windDown'
+          ? evaluateTasteSupportCandidateVerdict({
+              role: params.role,
+              evidence: null,
+            })
+          : null
       const rejectedReason: CurateBuildAnchorSupportCandidateRejectedReason | null = !venueIdPresent
         ? 'missing_venue_id'
         : usedIdConflict
@@ -1112,6 +1119,8 @@ function collectBuildAnchorSupportCandidates(params: {
               ? 'role_semantics_failed'
               : !roleContractPassed
                 ? 'role_contract_failed'
+                : tasteSupportVerdict && !tasteSupportVerdict.passed
+                  ? mapTasteSupportVerdictRejectedReason(tasteSupportVerdict)
                 : null
       if (params.role === 'windDown') {
         diagnostics.push(
@@ -1129,6 +1138,7 @@ function collectBuildAnchorSupportCandidates(params: {
             anchorPocketMatch,
             roleSemanticsPassed,
             roleContractPassed,
+            tasteSupportVerdict,
             rejectedReason,
           }),
         )
@@ -1139,7 +1149,8 @@ function collectBuildAnchorSupportCandidates(params: {
         !roleMatched ||
         !anchorPocketMatch ||
         !roleSemanticsPassed ||
-        !roleContractPassed
+        !roleContractPassed ||
+        (tasteSupportVerdict && !tasteSupportVerdict.passed)
       ) {
         continue
       }
