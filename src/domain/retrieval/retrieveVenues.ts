@@ -98,6 +98,124 @@ function ensureVenueHasHappenings(venue: Venue): Venue {
   }
 }
 
+export type FieldLiveCandidateSurvivalStatus =
+  | 'eligible'
+  | 'blocked_not_live'
+  | 'blocked_suppressed'
+  | 'blocked_demoted'
+  | 'blocked_missing_evidence'
+
+export interface FieldLiveCandidateSurvivalDecision {
+  status: FieldLiveCandidateSurvivalStatus
+  reasons: string[]
+}
+
+export interface FieldLiveCandidateSurvivalDiagnostic {
+  venueId: string
+  venueName: string
+  status: FieldLiveCandidateSurvivalStatus
+  dropReason: string
+  reasons: string[]
+  qualityGateStatus: Venue['source']['qualityGateStatus']
+  sourceOrigin: Venue['source']['sourceOrigin']
+  proofEligible: boolean
+  diagnosticOnly: boolean
+}
+
+function hasFiniteCoordinate(value: number | undefined): boolean {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+export function classifyFieldLiveCandidateSurvival(
+  venue: Venue,
+): FieldLiveCandidateSurvivalDecision {
+  if (venue.source.sourceOrigin !== 'live') {
+    return { status: 'blocked_not_live', reasons: ['not_live_source'] }
+  }
+  if (venue.source.qualityGateStatus === 'suppressed') {
+    return { status: 'blocked_suppressed', reasons: ['quality_gate_suppressed'] }
+  }
+
+  const missingEvidence = [
+    venue.source.providerRecordId?.trim() ? null : 'missing_provider_record_id',
+    venue.source.formattedAddress?.trim() ? null : 'missing_formatted_address',
+    hasFiniteCoordinate(venue.source.latitude) && hasFiniteCoordinate(venue.source.longitude)
+      ? null
+      : 'missing_coordinates',
+    venue.source.sourceTypes.length > 0 ? null : 'missing_provider_source_types',
+  ].filter((reason): reason is string => Boolean(reason))
+
+  if (missingEvidence.length > 0) {
+    return { status: 'blocked_missing_evidence', reasons: missingEvidence }
+  }
+  if (venue.source.qualityGateStatus === 'demoted') {
+    return { status: 'blocked_demoted', reasons: ['quality_gate_demoted'] }
+  }
+
+  return { status: 'eligible', reasons: [] }
+}
+
+function formatFieldLiveCandidateDropReason(
+  status: FieldLiveCandidateSurvivalStatus,
+): string {
+  if (status === 'eligible') {
+    return 'admitted_evidence_bearing_live_candidate'
+  }
+  if (status === 'blocked_demoted') {
+    return 'retrieval_live_candidate_blocked:demoted'
+  }
+  if (status === 'blocked_suppressed') {
+    return 'retrieval_live_candidate_blocked:suppressed'
+  }
+  if (status === 'blocked_missing_evidence') {
+    return 'retrieval_live_candidate_blocked:missing_evidence'
+  }
+  return 'retrieval_live_candidate_blocked:not_live'
+}
+
+export function buildFieldLiveCandidateSurvivalDiagnostics(
+  liveVenues: Venue[],
+): FieldLiveCandidateSurvivalDiagnostic[] {
+  return liveVenues.map((venue) => {
+    const decision = classifyFieldLiveCandidateSurvival(venue)
+    const proofEligible = decision.status === 'eligible'
+    return {
+      venueId: venue.id,
+      venueName: venue.name,
+      status: decision.status,
+      dropReason: formatFieldLiveCandidateDropReason(decision.status),
+      reasons: decision.reasons,
+      qualityGateStatus: venue.source.qualityGateStatus,
+      sourceOrigin: venue.source.sourceOrigin,
+      proofEligible,
+      diagnosticOnly: !proofEligible,
+    }
+  })
+}
+
+export function mergeEvidenceBearingLiveCandidatesForRetrieval(
+  primaryVenues: Venue[],
+  liveVenues: Venue[],
+): Venue[] {
+  if (liveVenues.length === 0) {
+    return primaryVenues
+  }
+
+  const merged = [...primaryVenues]
+  const seenIds = new Set(primaryVenues.map((venue) => venue.id))
+  for (const venue of liveVenues) {
+    if (seenIds.has(venue.id)) {
+      continue
+    }
+    if (classifyFieldLiveCandidateSurvival(venue).status !== 'eligible') {
+      continue
+    }
+    merged.push(venue)
+    seenIds.add(venue.id)
+  }
+  return merged
+}
+
 function deriveDistrictIntelligencePocketHint(params: {
   city: string
   venues: Venue[]
@@ -254,6 +372,7 @@ export interface RetrieveVenuesResult {
     providerAuthoritySummary?: ProviderAuthoritySummary
     curateStaticCorpus?: CurateStaticFieldCorpusDiagnostics
     bearingsRuntimeHours?: BearingsRuntimeHoursDiagnostics
+    liveCandidateSurvivalDiagnostics?: FieldLiveCandidateSurvivalDiagnostic[]
   }
   stageCounts: {
     totalSeed: number
@@ -871,6 +990,8 @@ export async function retrieveVenues(
     (venue) =>
       venue.source.sourceOrigin === 'live' && venue.source.qualityGateStatus !== 'suppressed',
   ).length
+  const liveCandidateSurvivalDiagnostics =
+    buildFieldLiveCandidateSurvivalDiagnostics(effectiveLiveVenues)
   const liveUsableInventory = effectiveLiveUsableCount > 0
   const hasEffectiveLiveCoverage = liveFetch.diagnostics.success || effectiveLiveVenues.length > 0
   const allowCuratedFallbackForCity = resolveAllowCuratedFallback({
@@ -1150,6 +1271,7 @@ export async function retrieveVenues(
         ...(bearingsRuntimeHours.requiredVenueCount > 0
           ? { bearingsRuntimeHours }
           : {}),
+        liveCandidateSurvivalDiagnostics,
         ...(curateStaticCorpus.diagnostics.enabled
           ? { curateStaticCorpus: curateStaticCorpus.diagnostics }
           : {}),
@@ -1210,10 +1332,13 @@ export async function retrieveVenues(
 
   if (!normalizedNeighborhood) {
     return buildResult(
-      mergeRequiredVenues(localFirstLensShapedVenues, [
-        ...requiredInventoryVenues,
-        ...curatedFixtureVenues,
-      ]),
+      mergeEvidenceBearingLiveCandidatesForRetrieval(
+        mergeRequiredVenues(localFirstLensShapedVenues, [
+          ...requiredInventoryVenues,
+          ...curatedFixtureVenues,
+        ]),
+        effectiveLiveVenues,
+      ),
       0,
     )
   }
@@ -1227,19 +1352,25 @@ export async function retrieveVenues(
 
   if (intent.distanceMode === 'nearby' && neighborhoodMatches.length > 0) {
     return buildResult(
-      mergeRequiredVenues([...neighborhoodMatches, ...nearbyMatches], [
-        ...requiredInventoryVenues,
-        ...curatedFixtureVenues,
-      ]),
+      mergeEvidenceBearingLiveCandidatesForRetrieval(
+        mergeRequiredVenues([...neighborhoodMatches, ...nearbyMatches], [
+          ...requiredInventoryVenues,
+          ...curatedFixtureVenues,
+        ]),
+        effectiveLiveVenues,
+      ),
       neighborhoodMatches.length,
     )
   }
 
   return buildResult(
-    mergeRequiredVenues(localFirstLensShapedVenues, [
-      ...requiredInventoryVenues,
-      ...curatedFixtureVenues,
-    ]),
+    mergeEvidenceBearingLiveCandidatesForRetrieval(
+      mergeRequiredVenues(localFirstLensShapedVenues, [
+        ...requiredInventoryVenues,
+        ...curatedFixtureVenues,
+      ]),
+      effectiveLiveVenues,
+    ),
     neighborhoodMatches.length,
   )
 }
