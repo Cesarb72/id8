@@ -122,6 +122,19 @@ const outputColumns = [
   'selected stop source origins',
   'selected windDown evidence availability flags',
   'surviving live candidate evidence availability flags',
+  'perQueryRawProviderRecords',
+  'perQueryMappedProviderRecords',
+  'perQueryPreFilterNormalizedRecords',
+  'aggregateEffectiveLiveVenues',
+  'aggregateQualityApprovedLiveVenues',
+  'aggregateDemotedLiveVenues',
+  'aggregateSuppressedLiveVenues',
+  'aggregateMergedLiveVenues',
+  'aggregateScoredRetrievalLiveVenues',
+  'aggregateRolePoolLiveVenues',
+  'aggregateFinalRouteLiveStops',
+  'field attrition substage counts',
+  'field attrition drop reasons by stage',
   'Taste live field support',
   'Taste missing/thin evidence',
   'Bearings evidence summary',
@@ -234,6 +247,19 @@ interface LifecycleObservation {
   selectedStopSourceOrigins: string
   selectedWindDownEvidenceAvailabilityFlags: string
   survivingLiveCandidateEvidenceAvailabilityFlags: string
+  perQueryRawProviderRecords: string
+  perQueryMappedProviderRecords: string
+  perQueryPreFilterNormalizedRecords: string
+  aggregateEffectiveLiveVenues: string
+  aggregateQualityApprovedLiveVenues: string
+  aggregateDemotedLiveVenues: string
+  aggregateSuppressedLiveVenues: string
+  aggregateMergedLiveVenues: string
+  aggregateScoredRetrievalLiveVenues: string
+  aggregateRolePoolLiveVenues: string
+  aggregateFinalRouteLiveStops: string
+  fieldAttritionSubstageCounts: string
+  fieldAttritionDropReasonsByStage: string
   tasteLiveFieldSupport: string
   tasteMissingThinEvidence: string
   bearingsEvidenceSummary: string
@@ -467,6 +493,19 @@ type LiveEvidenceContractFields = Pick<
   | 'selectedStopSourceOrigins'
   | 'selectedWindDownEvidenceAvailabilityFlags'
   | 'survivingLiveCandidateEvidenceAvailabilityFlags'
+  | 'perQueryRawProviderRecords'
+  | 'perQueryMappedProviderRecords'
+  | 'perQueryPreFilterNormalizedRecords'
+  | 'aggregateEffectiveLiveVenues'
+  | 'aggregateQualityApprovedLiveVenues'
+  | 'aggregateDemotedLiveVenues'
+  | 'aggregateSuppressedLiveVenues'
+  | 'aggregateMergedLiveVenues'
+  | 'aggregateScoredRetrievalLiveVenues'
+  | 'aggregateRolePoolLiveVenues'
+  | 'aggregateFinalRouteLiveStops'
+  | 'fieldAttritionSubstageCounts'
+  | 'fieldAttritionDropReasonsByStage'
   | 'tasteLiveFieldSupport'
   | 'tasteMissingThinEvidence'
   | 'bearingsEvidenceSummary'
@@ -503,6 +542,19 @@ function buildUnavailableLiveEvidenceContract(reason: string): LiveEvidenceContr
     selectedStopSourceOrigins: 'unavailable_stopped_before_provider',
     selectedWindDownEvidenceAvailabilityFlags: 'unavailable_stopped_before_provider',
     survivingLiveCandidateEvidenceAvailabilityFlags: 'unavailable_stopped_before_provider',
+    perQueryRawProviderRecords: 'unavailable_stopped_before_provider',
+    perQueryMappedProviderRecords: 'unavailable_stopped_before_provider',
+    perQueryPreFilterNormalizedRecords: 'unavailable_stopped_before_provider',
+    aggregateEffectiveLiveVenues: 'unavailable_stopped_before_provider',
+    aggregateQualityApprovedLiveVenues: 'unavailable_stopped_before_provider',
+    aggregateDemotedLiveVenues: 'unavailable_stopped_before_provider',
+    aggregateSuppressedLiveVenues: 'unavailable_stopped_before_provider',
+    aggregateMergedLiveVenues: 'unavailable_stopped_before_provider',
+    aggregateScoredRetrievalLiveVenues: 'unavailable_stopped_before_provider',
+    aggregateRolePoolLiveVenues: 'unavailable_stopped_before_provider',
+    aggregateFinalRouteLiveStops: 'unavailable_stopped_before_provider',
+    fieldAttritionSubstageCounts: 'unavailable_stopped_before_provider',
+    fieldAttritionDropReasonsByStage: reason,
     tasteLiveFieldSupport: 'unavailable_stopped_before_provider',
     tasteMissingThinEvidence: reason,
     bearingsEvidenceSummary: 'unavailable_stopped_before_provider',
@@ -686,6 +738,139 @@ function formatProviderCandidateRejectionReasons(result: GeneratePlanResult): st
   ])
 }
 
+function formatPerQueryRawProviderRecords(result: GeneratePlanResult): string {
+  const queries = result.trace.retrievalDiagnostics.liveSource.liveCandidatesByQuery
+  return queries.length > 0
+    ? queries.map((query) => `${query.label}=${query.fetchedCount}`).join('|')
+    : 'unavailable'
+}
+
+function formatPerQueryMappedProviderRecords(result: GeneratePlanResult): string {
+  const queries = result.trace.retrievalDiagnostics.liveSource.liveCandidatesByQuery
+  return queries.length > 0
+    ? queries.map((query) => `${query.label}=${query.mappedCount}`).join('|')
+    : 'unavailable'
+}
+
+function formatPerQueryPreFilterNormalizedRecords(result: GeneratePlanResult): string {
+  const queries = result.trace.retrievalDiagnostics.liveSource.liveCandidatesByQuery
+  return queries.length > 0
+    ? queries.map((query) => `${query.label}=${query.normalizedCount}`).join('|')
+    : 'unavailable'
+}
+
+function countPerQueryPreFilterNormalizedRecords(result: GeneratePlanResult): number {
+  return result.trace.retrievalDiagnostics.liveSource.liveCandidatesByQuery.reduce(
+    (sum, query) => sum + query.normalizedCount,
+    0,
+  )
+}
+
+function countLiveSourceScoredVenues(result: GeneratePlanResult): number {
+  return result.scoredVenues.filter((candidate) => candidate.venue.source.sourceOrigin === 'live').length
+}
+
+function formatReasonCounts(reasons: string[]): string {
+  const counts = reasons.reduce<Record<string, number>>((acc, reason) => {
+    const normalized = reason.trim() || 'unspecified'
+    acc[normalized] = (acc[normalized] ?? 0) + 1
+    return acc
+  }, {})
+  const entries = Object.entries(counts)
+  return entries.length > 0
+    ? entries.map(([reason, count]) => `${reason}=${count}`).join('; ')
+    : 'none'
+}
+
+function getLiveAttritionStageNotes(
+  result: GeneratePlanResult,
+  stageName: string,
+): string[] {
+  return result.trace.retrievalDiagnostics.liveSource.liveAttritionTrace.stages
+    .filter((stage) => stage.stage === stageName)
+    .flatMap((stage) => stage.notes.map((note) => `${stage.stage}:${note}`))
+}
+
+function formatFieldAttritionSubstageCounts(result: GeneratePlanResult): string {
+  const liveSource = result.trace.retrievalDiagnostics.liveSource
+  const prePocketFilterCount = countPerQueryPreFilterNormalizedRecords(result)
+  const postPocketFilterCount = liveSource.normalizedCount
+  const postQualityNonSuppressed = liveSource.approvedCount + liveSource.demotedCount
+  const postMergePreDedupeLiveCount = liveSource.liveRetrievedCount + liveSource.dedupedLiveCount
+  const rolePoolLiveCount = sumRecordNumbers(liveSource.liveRolePoolCounts)
+  const finalRouteLiveStops = sumRecordNumbers(liveSource.liveRoleWinCounts)
+  return [
+    `prePocketFilterCount=${prePocketFilterCount}`,
+    `postPocketFilterCount=${postPocketFilterCount}`,
+    `postSourceAdmissionCount=not_separately_exposed_in_generation_diagnostics; aggregateEffectiveLiveVenues=${postPocketFilterCount}`,
+    `postQualityGateApproved=${liveSource.approvedCount}`,
+    `postQualityGateDemoted=${liveSource.demotedCount}`,
+    `postQualityGateSuppressed=${liveSource.suppressedCount}`,
+    `postQualityGateNonSuppressed=${postQualityNonSuppressed}`,
+    `postMergeCount=${postMergePreDedupeLiveCount}`,
+    `postDedupeCount=${liveSource.liveRetrievedCount}`,
+    `scoredRetrievalLiveCount=${countLiveSourceScoredVenues(result)}`,
+    `rolePoolLiveCount=${rolePoolLiveCount}`,
+    `finalSelectedLiveCount=${finalRouteLiveStops}`,
+  ].join('; ')
+}
+
+function formatFieldAttritionDropReasonsByStage(result: GeneratePlanResult): string {
+  const liveSource = result.trace.retrievalDiagnostics.liveSource
+  const queryCandidates = liveSource.liveCandidatesByQuery.flatMap((query) => query.candidates ?? [])
+  const normalizationReasons = queryCandidates
+    .filter(
+      (candidate) =>
+        candidate.dropReason === 'normalization_or_dedupe_drop' ||
+        candidate.pocketProofDiagnostic?.candidateBoardAdmissionFalseSource === 'normalization_or_dedupe',
+    )
+    .map(
+      (candidate) =>
+        candidate.dropReason ??
+        candidate.pocketProofDiagnostic?.candidateBoardAdmissionFalseSource ??
+        'normalization_or_dedupe',
+    )
+  const pocketReasons = queryCandidates
+    .filter((candidate) => candidate.pocketFilter === 'outside_pocket_envelope')
+    .map(
+      (candidate) =>
+        candidate.pocketProofDiagnostic?.fieldSourceDecision.reason ??
+        'field_source_pocket_filter_outside_selected_envelope',
+    )
+  const sourceAdmissionReasons = queryCandidates
+    .filter((candidate) => !candidate.candidateBoardAdmission)
+    .map(
+      (candidate) =>
+        candidate.pocketProofDiagnostic?.candidateBoardAdmissionFalseSource ??
+        candidate.dropReason ??
+        'candidate_board_admission_false',
+    )
+  const qualityGateReasons = getLiveAttritionStageNotes(result, 'quality-gate')
+  const mergeDedupeReasons = [
+    ...getLiveAttritionStageNotes(result, 'dedupe'),
+    ...liveSource.dedupeNoveltyLoss.dedupeLossReason,
+  ]
+  const retrievalReasons = getLiveAttritionStageNotes(result, 'retrieval')
+  const rolePoolReasons = getLiveAttritionStageNotes(result, 'role-pool')
+  const finalRouteReasons = [
+    ...getLiveAttritionStageNotes(result, 'final-route-winner'),
+    ...liveSource.sourceBalanceNotes,
+    ...liveSource.curatedVsLiveWinnerNotes,
+  ]
+  return [
+    `mapping/normalization:${formatReasonCounts(normalizationReasons)}`,
+    `pocket/district filter:${formatReasonCounts(pocketReasons)}`,
+    `source admission:${formatReasonCounts(sourceAdmissionReasons)}`,
+    `quality gate:${formatReasonCounts(qualityGateReasons)}`,
+    `suppression:suppressed=${liveSource.suppressedCount}; hoursSuppressed=${liveSource.liveHoursSuppressedCount}`,
+    `demotion:demoted=${liveSource.demotedCount}; hoursDemoted=${liveSource.liveHoursDemotedCount}`,
+    `merge/dedupe:${formatReasonCounts(mergeDedupeReasons)}`,
+    `retrieval scoring/filtering:${formatReasonCounts(retrievalReasons)}`,
+    `role-pool eligibility:${formatReasonCounts(rolePoolReasons)}`,
+    `final route selection:${formatReasonCounts(finalRouteReasons)}`,
+  ].join(' | ')
+}
+
 function buildLiveEvidenceContractFields(params: {
   artifact: ContractEntryArtifact
   counters: FetchCounters
@@ -783,6 +968,26 @@ function buildLiveEvidenceContractFields(params: {
     selectedWindDownEvidenceAvailabilityFlags: formatSelectedVenueEvidenceFlags(params.windDown.scoredVenue),
     survivingLiveCandidateEvidenceAvailabilityFlags:
       formatSurvivingLiveCandidateEvidenceFlags(params.result.scoredVenues),
+    perQueryRawProviderRecords: formatPerQueryRawProviderRecords(params.result),
+    perQueryMappedProviderRecords: formatPerQueryMappedProviderRecords(params.result),
+    perQueryPreFilterNormalizedRecords: formatPerQueryPreFilterNormalizedRecords(params.result),
+    aggregateEffectiveLiveVenues: String(params.result.trace.retrievalDiagnostics.liveSource.normalizedCount),
+    aggregateQualityApprovedLiveVenues: String(params.result.trace.retrievalDiagnostics.liveSource.approvedCount),
+    aggregateDemotedLiveVenues: String(params.result.trace.retrievalDiagnostics.liveSource.demotedCount),
+    aggregateSuppressedLiveVenues: String(params.result.trace.retrievalDiagnostics.liveSource.suppressedCount),
+    aggregateMergedLiveVenues: String(
+      params.result.trace.retrievalDiagnostics.liveSource.liveRetrievedCount +
+        params.result.trace.retrievalDiagnostics.liveSource.dedupedLiveCount,
+    ),
+    aggregateScoredRetrievalLiveVenues: String(countLiveSourceScoredVenues(params.result)),
+    aggregateRolePoolLiveVenues: String(
+      sumRecordNumbers(params.result.trace.retrievalDiagnostics.liveSource.liveRolePoolCounts),
+    ),
+    aggregateFinalRouteLiveStops: String(
+      sumRecordNumbers(params.result.trace.retrievalDiagnostics.liveSource.liveRoleWinCounts),
+    ),
+    fieldAttritionSubstageCounts: formatFieldAttritionSubstageCounts(params.result),
+    fieldAttritionDropReasonsByStage: formatFieldAttritionDropReasonsByStage(params.result),
     tasteLiveFieldSupport: `scores=${formatWindDownNumerics(params.windDown.scoredVenue).summary}; supportedFields=${joinValueList([
       hasSourceTypes ? 'categories_types' : null,
       hasAddress ? 'address' : null,
@@ -991,6 +1196,19 @@ function buildRow(params: {
     'selected stop source origins': params.observation.selectedStopSourceOrigins,
     'selected windDown evidence availability flags': params.observation.selectedWindDownEvidenceAvailabilityFlags,
     'surviving live candidate evidence availability flags': params.observation.survivingLiveCandidateEvidenceAvailabilityFlags,
+    perQueryRawProviderRecords: params.observation.perQueryRawProviderRecords,
+    perQueryMappedProviderRecords: params.observation.perQueryMappedProviderRecords,
+    perQueryPreFilterNormalizedRecords: params.observation.perQueryPreFilterNormalizedRecords,
+    aggregateEffectiveLiveVenues: params.observation.aggregateEffectiveLiveVenues,
+    aggregateQualityApprovedLiveVenues: params.observation.aggregateQualityApprovedLiveVenues,
+    aggregateDemotedLiveVenues: params.observation.aggregateDemotedLiveVenues,
+    aggregateSuppressedLiveVenues: params.observation.aggregateSuppressedLiveVenues,
+    aggregateMergedLiveVenues: params.observation.aggregateMergedLiveVenues,
+    aggregateScoredRetrievalLiveVenues: params.observation.aggregateScoredRetrievalLiveVenues,
+    aggregateRolePoolLiveVenues: params.observation.aggregateRolePoolLiveVenues,
+    aggregateFinalRouteLiveStops: params.observation.aggregateFinalRouteLiveStops,
+    'field attrition substage counts': params.observation.fieldAttritionSubstageCounts,
+    'field attrition drop reasons by stage': params.observation.fieldAttritionDropReasonsByStage,
     'Taste live field support': params.observation.tasteLiveFieldSupport,
     'Taste missing/thin evidence': params.observation.tasteMissingThinEvidence,
     'Bearings evidence summary': params.observation.bearingsEvidenceSummary,
@@ -1675,6 +1893,7 @@ writeFileSync(
         `- why not MVP green: ${row['why not MVP green']}`,
         `- provider attrition totals: ${row['provider attrition totals']}`,
         `- provider candidate selection counts: ${row['provider candidate selection counts']}`,
+        `- field attrition substage counts: ${row['field attrition substage counts']}`,
         `- selected stop source origins: ${row['selected stop source origins']}`,
       ].join('\n'),
     ),
@@ -1689,6 +1908,11 @@ writeFileSync(
         `- query labels: ${row['live data query labels']}`,
         `- query center / pocket: ${row['live data query center / pocket']}`,
         `- provider attrition by query: ${row['provider attrition by query']}`,
+        `- per-query raw provider records: ${row.perQueryRawProviderRecords}`,
+        `- per-query mapped provider records: ${row.perQueryMappedProviderRecords}`,
+        `- per-query pre-filter normalized records: ${row.perQueryPreFilterNormalizedRecords}`,
+        `- clarified aggregate live counts: effective=${row.aggregateEffectiveLiveVenues}; qualityApproved=${row.aggregateQualityApprovedLiveVenues}; demoted=${row.aggregateDemotedLiveVenues}; suppressed=${row.aggregateSuppressedLiveVenues}; merged=${row.aggregateMergedLiveVenues}; scoredRetrieval=${row.aggregateScoredRetrievalLiveVenues}; rolePool=${row.aggregateRolePoolLiveVenues}; finalRoute=${row.aggregateFinalRouteLiveStops}`,
+        `- field attrition drop reasons by stage: ${row['field attrition drop reasons by stage']}`,
         `- provider rejection/attrition reasons: ${row['provider candidate rejection reasons']}`,
         `- selected windDown evidence flags: ${row['selected windDown evidence availability flags']}`,
         `- surviving live candidate evidence flags: ${row['surviving live candidate evidence availability flags']}`,
