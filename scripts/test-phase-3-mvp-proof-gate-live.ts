@@ -115,6 +115,13 @@ const outputColumns = [
   'live data website/phone evidence',
   'live data raw evidence availability flags',
   'live data source path classification',
+  'provider attrition by query',
+  'provider attrition totals',
+  'provider candidate selection counts',
+  'provider candidate rejection reasons',
+  'selected stop source origins',
+  'selected windDown evidence availability flags',
+  'surviving live candidate evidence availability flags',
   'Taste live field support',
   'Taste missing/thin evidence',
   'Bearings evidence summary',
@@ -220,6 +227,13 @@ interface LifecycleObservation {
   liveDataWebsitePhoneEvidence: string
   liveDataRawEvidenceAvailabilityFlags: string
   liveDataSourcePathClassification: string
+  providerAttritionByQuery: string
+  providerAttritionTotals: string
+  providerCandidateSelectionCounts: string
+  providerCandidateRejectionReasons: string
+  selectedStopSourceOrigins: string
+  selectedWindDownEvidenceAvailabilityFlags: string
+  survivingLiveCandidateEvidenceAvailabilityFlags: string
   tasteLiveFieldSupport: string
   tasteMissingThinEvidence: string
   bearingsEvidenceSummary: string
@@ -446,6 +460,13 @@ type LiveEvidenceContractFields = Pick<
   | 'liveDataWebsitePhoneEvidence'
   | 'liveDataRawEvidenceAvailabilityFlags'
   | 'liveDataSourcePathClassification'
+  | 'providerAttritionByQuery'
+  | 'providerAttritionTotals'
+  | 'providerCandidateSelectionCounts'
+  | 'providerCandidateRejectionReasons'
+  | 'selectedStopSourceOrigins'
+  | 'selectedWindDownEvidenceAvailabilityFlags'
+  | 'survivingLiveCandidateEvidenceAvailabilityFlags'
   | 'tasteLiveFieldSupport'
   | 'tasteMissingThinEvidence'
   | 'bearingsEvidenceSummary'
@@ -475,6 +496,13 @@ function buildUnavailableLiveEvidenceContract(reason: string): LiveEvidenceContr
     liveDataWebsitePhoneEvidence: 'unavailable_stopped_before_provider',
     liveDataRawEvidenceAvailabilityFlags: 'unavailable_stopped_before_provider',
     liveDataSourcePathClassification: 'provider-shadow:stopped_before_provider',
+    providerAttritionByQuery: 'unavailable_stopped_before_provider',
+    providerAttritionTotals: 'unavailable_stopped_before_provider',
+    providerCandidateSelectionCounts: 'unavailable_stopped_before_provider',
+    providerCandidateRejectionReasons: reason,
+    selectedStopSourceOrigins: 'unavailable_stopped_before_provider',
+    selectedWindDownEvidenceAvailabilityFlags: 'unavailable_stopped_before_provider',
+    survivingLiveCandidateEvidenceAvailabilityFlags: 'unavailable_stopped_before_provider',
     tasteLiveFieldSupport: 'unavailable_stopped_before_provider',
     tasteMissingThinEvidence: reason,
     bearingsEvidenceSummary: 'unavailable_stopped_before_provider',
@@ -492,6 +520,172 @@ function buildUnavailableLiveEvidenceContract(reason: string): LiveEvidenceContr
   }
 }
 
+function countAvailability<T>(items: T[], predicate: (item: T) => boolean): string {
+  const yesCount = items.filter(predicate).length
+  return `yes=${yesCount}/no=${items.length - yesCount}`
+}
+
+function isLiveScoredVenue(candidate: ScoredVenue): boolean {
+  return (
+    candidate.venue.source.sourceOrigin === 'live' ||
+    Boolean(candidate.venue.source.provider) ||
+    Boolean(candidate.venue.source.providerRecordId)
+  )
+}
+
+function hasHoursOpenStatus(source: ScoredVenue['venue']['source'] | undefined): boolean {
+  return Boolean(
+    source?.hoursKnown === true ||
+      typeof source?.openNow === 'boolean' ||
+      source?.runtimeHoursTextHoursAvailable ||
+      source?.runtimeHoursStructuredPeriodCount,
+  )
+}
+
+function formatSelectedVenueEvidenceFlags(scoredVenue: ScoredVenue | null): string {
+  const source = scoredVenue?.venue.source
+  if (!source) {
+    return 'selectedWindDown=unavailable'
+  }
+  return [
+    `hasProviderPlaceId=${yesNo(Boolean(source.providerRecordId?.trim()))}`,
+    `hasFormattedAddress=${yesNo(Boolean(source.formattedAddress?.trim()))}`,
+    `hasLocation=${yesNo(typeof source.latitude === 'number' && typeof source.longitude === 'number')}`,
+    `hasCategoriesTypes=${yesNo((source.sourceTypes?.length ?? 0) > 0)}`,
+    `hasHoursOpenStatus=${yesNo(hasHoursOpenStatus(source))}`,
+    `hasRating=${yesNo(typeof source.rating === 'number')}`,
+    `hasUserRatingCount=${yesNo(typeof source.reviewCount === 'number')}`,
+    'hasWebsite=no',
+    'hasPhone=no',
+  ].join('; ')
+}
+
+function formatSurvivingLiveCandidateEvidenceFlags(scoredVenues: ScoredVenue[]): string {
+  const liveCandidates = scoredVenues.filter(isLiveScoredVenue)
+  if (liveCandidates.length === 0) {
+    return 'liveCandidates=0'
+  }
+  return [
+    `liveCandidates=${liveCandidates.length}`,
+    `hasProviderPlaceId:${countAvailability(liveCandidates, (candidate) => Boolean(candidate.venue.source.providerRecordId?.trim()))}`,
+    `hasFormattedAddress:${countAvailability(liveCandidates, (candidate) => Boolean(candidate.venue.source.formattedAddress?.trim()))}`,
+    `hasLocation:${countAvailability(liveCandidates, (candidate) => typeof candidate.venue.source.latitude === 'number' && typeof candidate.venue.source.longitude === 'number')}`,
+    `hasCategoriesTypes:${countAvailability(liveCandidates, (candidate) => (candidate.venue.source.sourceTypes?.length ?? 0) > 0)}`,
+    `hasHoursOpenStatus:${countAvailability(liveCandidates, (candidate) => hasHoursOpenStatus(candidate.venue.source))}`,
+    `hasRating:${countAvailability(liveCandidates, (candidate) => typeof candidate.venue.source.rating === 'number')}`,
+    `hasUserRatingCount:${countAvailability(liveCandidates, (candidate) => typeof candidate.venue.source.reviewCount === 'number')}`,
+    'hasWebsite:no_field_in_current_VenueSourceMetadata',
+    'hasPhone:no_field_in_current_VenueSourceMetadata',
+  ].join('; ')
+}
+
+function sumRecordNumbers(record: Partial<Record<string, number>> | undefined): number {
+  return Object.values(record ?? {}).reduce((sum, value) => {
+    return typeof value === 'number' && Number.isFinite(value) ? sum + value : sum
+  }, 0)
+}
+
+function formatProviderAttritionByQuery(result: GeneratePlanResult, counters: FetchCounters): string {
+  const liveSource = result.trace.retrievalDiagnostics.liveSource
+  if (liveSource.liveCandidatesByQuery.length === 0) {
+    return liveSource.liveFetchAttempted
+      ? `providerCallAttempted=yes; providerCallSucceeded=${yesNo(liveSource.liveFetchSucceeded)}; queryBreakdown=unavailable`
+      : 'providerCallAttempted=no; providerCallSucceeded=no; queryBreakdown=not_attempted'
+  }
+  const attemptedLabels = new Set([...liveSource.liveQueryLabelsUsed, ...counters.fieldProxyLabels])
+  return liveSource.liveCandidatesByQuery
+    .map((query) => {
+      const attempted =
+        attemptedLabels.has(query.label) ||
+        query.fetchedCount > 0 ||
+        query.mappedCount > 0 ||
+        query.normalizedCount > 0 ||
+        query.approvedCount > 0
+      const succeeded = attempted
+        ? liveSource.liveFetchSucceeded
+          ? 'yes'
+          : 'unknown'
+        : 'no'
+      const rejectedCount = query.demotedCount + query.suppressedCount
+      return [
+        `${query.label}:attempted=${yesNo(attempted)}`,
+        `succeeded=${succeeded}`,
+        `raw=${query.fetchedCount}`,
+        `normalized=${query.normalizedCount}`,
+        `admitted=${query.approvedCount}`,
+        `demoted=${query.demotedCount}`,
+        `suppressed=${query.suppressedCount}`,
+        `rejected=${rejectedCount}`,
+      ].join(';')
+    })
+    .join(' | ')
+}
+
+function formatSelectedStopSourceOrigins(result: GeneratePlanResult): string {
+  const entries = Object.entries(result.trace.retrievalDiagnostics.liveSource.selectedStopSources)
+  return entries.length > 0
+    ? entries.map(([role, sourceOrigin]) => `${role}:${sourceOrigin}`).join('|')
+    : 'unavailable'
+}
+
+function formatProviderAttritionTotals(result: GeneratePlanResult): string {
+  const liveSource = result.trace.retrievalDiagnostics.liveSource
+  const trace = liveSource.liveAttritionTrace
+  const supportRoleEligible =
+    trace.liveEnteredRolePoolStart +
+    trace.liveEnteredRolePoolHighlight +
+    trace.liveEnteredRolePoolSurprise +
+    trace.liveEnteredRolePoolWindDown
+  const rejectedOrLost = trace.stages.reduce((sum, stage) => sum + stage.droppedFromPrevious, 0)
+  return [
+    `providerCallAttempted=${yesNo(liveSource.liveFetchAttempted)}`,
+    `providerCallSucceeded=${yesNo(liveSource.liveFetchSucceeded)}`,
+    `rawProviderCandidates=${liveSource.fetchedCount}`,
+    `mappedProviderCandidates=${liveSource.mappedCount}`,
+    `normalizedProviderCandidates=${liveSource.normalizedCount}`,
+    `dedupedMergedProviderCandidates=${liveSource.liveRetrievedCount}`,
+    `admittedProviderCandidates=${liveSource.approvedCount}`,
+    `supportRoleEligibleProviderCandidates=${supportRoleEligible}`,
+    `rejectedLiveCandidateCount=${rejectedOrLost}`,
+    `liveDedupedCount=${trace.liveDedupedCount}`,
+    `liveDedupedAgainstCuratedCount=${trace.liveDedupedAgainstCuratedCount}`,
+  ].join('; ')
+}
+
+function formatProviderCandidateSelectionCounts(result: GeneratePlanResult): string {
+  const liveSource = result.trace.retrievalDiagnostics.liveSource
+  const selectedOrigins = Object.values(liveSource.selectedStopSources)
+  const selectedProviderCandidates = selectedOrigins.filter((sourceOrigin) => sourceOrigin === 'live').length
+  const selectedStaticCuratedCandidates = selectedOrigins.filter((sourceOrigin) => sourceOrigin === 'curated').length
+  const liveCandidates = result.scoredVenues.filter(isLiveScoredVenue).length
+  const curatedCandidates = result.scoredVenues.filter(
+    (candidate) => candidate.venue.source.sourceOrigin === 'curated',
+  ).length
+  return [
+    `selectedProviderCandidates=${selectedProviderCandidates}`,
+    `selectedStaticCuratedCandidates=${selectedStaticCuratedCandidates}`,
+    `liveCandidates=${liveCandidates}`,
+    `curatedCandidates=${curatedCandidates}`,
+    `liveRolePoolCandidates=${sumRecordNumbers(liveSource.liveRolePoolCounts)}`,
+    `liveRoleWins=${sumRecordNumbers(liveSource.liveRoleWinCounts)}`,
+  ].join('; ')
+}
+
+function formatProviderCandidateRejectionReasons(result: GeneratePlanResult): string {
+  const liveSource = result.trace.retrievalDiagnostics.liveSource
+  const stageNotes = liveSource.liveAttritionTrace.stages.flatMap((stage) =>
+    stage.notes.map((note) => `${stage.stage}:${note}`),
+  )
+  return joinValueList([
+    liveSource.fallbackReason,
+    ...liveSource.errors,
+    ...liveSource.liveLostToCuratedReason,
+    ...liveSource.sourceBalanceNotes,
+    ...liveSource.curatedVsLiveWinnerNotes,
+    ...stageNotes,
+  ])
+}
+
 function buildLiveEvidenceContractFields(params: {
   artifact: ContractEntryArtifact
   counters: FetchCounters
@@ -505,12 +699,7 @@ function buildLiveEvidenceContractFields(params: {
   const tasteDistrictSummary = params.artifact.enrichment?.tasteDistrictSummary
   const source = params.windDown.scoredVenue?.venue.source
   const venue = params.windDown.scoredVenue?.venue
-  const liveScoredVenues = params.result.scoredVenues.filter(
-    (candidate) =>
-      candidate.venue.source.sourceOrigin === 'live' ||
-      Boolean(candidate.venue.source.provider) ||
-      Boolean(candidate.venue.source.providerRecordId),
-  )
+  const liveScoredVenues = params.result.scoredVenues.filter(isLiveScoredVenue)
   const providerPlaceIds = liveScoredVenues.map((candidate) => candidate.venue.source.providerRecordId)
   const queryLabels = joinValueList([
     ...(fieldSummary?.queryLabels ?? []),
@@ -586,6 +775,14 @@ function buildLiveEvidenceContractFields(params: {
     liveDataWebsitePhoneEvidence: 'not_captured_by_current_VenueSourceMetadata',
     liveDataRawEvidenceAvailabilityFlags: `providerPlaceId=${yesNo(Boolean(source?.providerRecordId))}; address=${yesNo(hasAddress)}; location=${yesNo(hasLocation)}; categoriesTypes=${yesNo(hasSourceTypes)}; hours=${yesNo(hasHours)}; ratingReview=${yesNo(hasRating)}; websitePhone=no`,
     liveDataSourcePathClassification: sourcePathClassification.length > 0 ? sourcePathClassification.join('|') : 'unavailable',
+    providerAttritionByQuery: formatProviderAttritionByQuery(params.result, params.counters),
+    providerAttritionTotals: formatProviderAttritionTotals(params.result),
+    providerCandidateSelectionCounts: formatProviderCandidateSelectionCounts(params.result),
+    providerCandidateRejectionReasons: formatProviderCandidateRejectionReasons(params.result),
+    selectedStopSourceOrigins: formatSelectedStopSourceOrigins(params.result),
+    selectedWindDownEvidenceAvailabilityFlags: formatSelectedVenueEvidenceFlags(params.windDown.scoredVenue),
+    survivingLiveCandidateEvidenceAvailabilityFlags:
+      formatSurvivingLiveCandidateEvidenceFlags(params.result.scoredVenues),
     tasteLiveFieldSupport: `scores=${formatWindDownNumerics(params.windDown.scoredVenue).summary}; supportedFields=${joinValueList([
       hasSourceTypes ? 'categories_types' : null,
       hasAddress ? 'address' : null,
@@ -787,6 +984,13 @@ function buildRow(params: {
     'live data website/phone evidence': params.observation.liveDataWebsitePhoneEvidence,
     'live data raw evidence availability flags': params.observation.liveDataRawEvidenceAvailabilityFlags,
     'live data source path classification': params.observation.liveDataSourcePathClassification,
+    'provider attrition by query': params.observation.providerAttritionByQuery,
+    'provider attrition totals': params.observation.providerAttritionTotals,
+    'provider candidate selection counts': params.observation.providerCandidateSelectionCounts,
+    'provider candidate rejection reasons': params.observation.providerCandidateRejectionReasons,
+    'selected stop source origins': params.observation.selectedStopSourceOrigins,
+    'selected windDown evidence availability flags': params.observation.selectedWindDownEvidenceAvailabilityFlags,
+    'surviving live candidate evidence availability flags': params.observation.survivingLiveCandidateEvidenceAvailabilityFlags,
     'Taste live field support': params.observation.tasteLiveFieldSupport,
     'Taste missing/thin evidence': params.observation.tasteMissingThinEvidence,
     'Bearings evidence summary': params.observation.bearingsEvidenceSummary,
@@ -1469,6 +1673,9 @@ writeFileSync(
         `- Review/Lock status: ${row['Review/Lock status']}`,
         `- false-green risk: ${row['false-green risk? yes/no']}`,
         `- why not MVP green: ${row['why not MVP green']}`,
+        `- provider attrition totals: ${row['provider attrition totals']}`,
+        `- provider candidate selection counts: ${row['provider candidate selection counts']}`,
+        `- selected stop source origins: ${row['selected stop source origins']}`,
       ].join('\n'),
     ),
     '',
@@ -1481,6 +1688,10 @@ writeFileSync(
         `- provider/source: ${row['live data provider/source name']}`,
         `- query labels: ${row['live data query labels']}`,
         `- query center / pocket: ${row['live data query center / pocket']}`,
+        `- provider attrition by query: ${row['provider attrition by query']}`,
+        `- provider rejection/attrition reasons: ${row['provider candidate rejection reasons']}`,
+        `- selected windDown evidence flags: ${row['selected windDown evidence availability flags']}`,
+        `- surviving live candidate evidence flags: ${row['surviving live candidate evidence availability flags']}`,
         `- live data came through: ${row['live data came through']}`,
         `- live data missing: ${row['live data missing']}`,
         `- evidence sufficient: ${row['live evidence sufficient']}`,
