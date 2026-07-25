@@ -140,12 +140,68 @@ function buildMockFieldResponse(queryLabel: string): FieldTextSearchResponse {
           hasRating: true,
         },
       },
+      {
+        provider: 'google_places',
+        providerRecordId: 'phase-3an-outside-envelope-live-place',
+        displayName: 'Phase 3AN Outside Envelope Coffee',
+        formattedAddress: '500 Far Away Ave, San Jose, CA',
+        shortFormattedAddress: '500 Far Away Ave',
+        primaryType: 'cafe',
+        types: ['cafe', 'coffee_shop', 'establishment'],
+        businessStatus: 'OPERATIONAL',
+        currentOpeningHours: {
+          openNow: true,
+          weekdayDescriptions: ['Friday: 7:00 AM - 10:00 PM'],
+        },
+        rating: 4.7,
+        userRatingCount: 220,
+        location: {
+          latitude: 37.365,
+          longitude: -121.925,
+        },
+        sourceMode: 'live',
+        rawPayloadAvailable: false,
+        fetchedAt: Date.UTC(2026, 6, 24),
+        completenessHints: {
+          hasAddress: true,
+          hasLocation: true,
+          hasHours: true,
+          hasPrimaryType: true,
+          hasRating: true,
+        },
+      },
+      {
+        provider: 'google_places',
+        providerRecordId: 'phase-3an-missing-location-live-place',
+        displayName: 'Phase 3AN Missing Location Coffee',
+        formattedAddress: '77 Unknown Block, San Jose, CA',
+        shortFormattedAddress: '77 Unknown Block',
+        primaryType: 'cafe',
+        types: ['cafe', 'coffee_shop', 'establishment'],
+        businessStatus: 'OPERATIONAL',
+        currentOpeningHours: {
+          openNow: true,
+          weekdayDescriptions: ['Friday: 7:00 AM - 10:00 PM'],
+        },
+        rating: 4.5,
+        userRatingCount: 180,
+        sourceMode: 'live',
+        rawPayloadAvailable: false,
+        fetchedAt: Date.UTC(2026, 6, 24),
+        completenessHints: {
+          hasAddress: true,
+          hasLocation: false,
+          hasHours: true,
+          hasPrimaryType: true,
+          hasRating: true,
+        },
+      },
     ],
     diagnostics: {
       purpose: 'retrieval_supply',
       queryHash: `phase-3aj-${queryLabel}`,
       providerStatus: 'mocked',
-      resultCount: 1,
+      resultCount: 4,
       callConsumed: false,
     },
   }
@@ -200,6 +256,13 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
         city: 'San Jose',
         locationLabel: 'Downtown San Jose, San Jose',
       },
+      starterPack: {
+        id: 'coffee-books',
+        title: 'Coffee & Books',
+        description: 'No-provider diagnostic starter pack for Field pocket diagnostics.',
+        primaryAnchor: 'cozy',
+        distanceMode: 'nearby',
+      },
     })
     assert.equal(fieldProxyCalls, 1)
     assert(
@@ -222,6 +285,57 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
       survivalDiagnostics.every((diagnostic) => typeof diagnostic.dropReason === 'string'),
       'runtime retrieval diagnostics must expose sanitized live candidate survival/drop reasons.',
     )
+    const eligibleDiagnostic = survivalDiagnostics.find(
+      (diagnostic) => diagnostic.status === 'eligible',
+    )
+    assert.equal(eligibleDiagnostic?.qualityVerdict, 'approved')
+    assert.equal(eligibleDiagnostic?.primaryQualityReason, 'approved')
+    assert.equal(eligibleDiagnostic?.hasProviderPlaceId, true)
+    assert.equal(eligibleDiagnostic?.hasFormattedAddress, true)
+    assert.equal(eligibleDiagnostic?.hasLocation, true)
+    assert.equal(eligibleDiagnostic?.hasCategoriesTypes, true)
+    assert.equal(eligibleDiagnostic?.hasHoursOpenStatus, true)
+    assert.equal(eligibleDiagnostic?.hasRating, true)
+    assert.equal(eligibleDiagnostic?.hasUserRatingCount, true)
+
+    const candidateDiagnostics = retrieval.sourceMode.liveCandidatesByQuery.flatMap(
+      (query) => query.candidates ?? [],
+    )
+    const keptCandidate = candidateDiagnostics.find((candidate) =>
+      candidate.name.includes('Live Coffee House'),
+    )
+    assert.equal(keptCandidate?.filterVerdict, 'kept')
+    assert.equal(keptCandidate?.hasLocationEvidence, true)
+    assert.equal(keptCandidate?.hasFormattedAddressEvidence, true)
+    assert.equal(keptCandidate?.hasProviderIdEvidence, true)
+    assert.equal(keptCandidate?.distanceMargin?.status, 'inside_by')
+    assert.equal(typeof keptCandidate?.candidateDistanceFromPocketCenterM, 'number')
+    assert.equal(typeof keptCandidate?.pocketRadiusThresholdM, 'number')
+    assert(
+      keptCandidate?.selectedPocketEnvelope?.includes('Downtown San Jose'),
+      'kept candidate must report the selected pocket envelope.',
+    )
+
+    const outsideCandidate = candidateDiagnostics.find((candidate) =>
+      candidate.name.includes('Outside Envelope Coffee'),
+    )
+    assert.equal(outsideCandidate?.filterVerdict, 'rejected_outside_selected_envelope')
+    assert.equal(outsideCandidate?.dropReason, 'field_source_pocket_filter_outside_selected_envelope')
+    assert.equal(outsideCandidate?.hasLocationEvidence, true)
+    assert.equal(outsideCandidate?.distanceMargin?.status, 'outside_by')
+
+    const missingLocationCandidate = candidateDiagnostics.find((candidate) =>
+      candidate.name.includes('Missing Location Coffee'),
+    )
+    assert.equal(missingLocationCandidate?.filterVerdict, 'rejected_missing_location')
+    assert.equal(missingLocationCandidate?.dropReason, 'field_source_pocket_filter_missing_location')
+    assert.equal(missingLocationCandidate?.hasLocationEvidence, false)
+    assert.equal(missingLocationCandidate?.distanceMargin?.status, 'unknown')
+
+    const rollups = retrieval.sourceMode.liveDiagnosticRollups
+    assert.equal(rollups?.rejectedOutsideSelectedEnvelopeCount, 1)
+    assert.equal(rollups?.rejectedMissingLocationCount, 1)
+    assert.equal(rollups?.liveSurvivalEligibleCount, 1)
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -273,6 +387,13 @@ async function run(): Promise<void> {
   assert.equal(demotedDiagnostic.dropReason, 'retrieval_live_candidate_blocked:demoted')
   assert.equal(demotedDiagnostic.proofEligible, false)
   assert.equal(demotedDiagnostic.diagnosticOnly, true)
+  assert.equal(demotedDiagnostic.qualityVerdict, 'demoted')
+  assert.equal(demotedDiagnostic.hasProviderPlaceId, true)
+  assert.equal(demotedDiagnostic.hasFormattedAddress, true)
+  assert.equal(demotedDiagnostic.hasLocation, true)
+  assert.equal(demotedDiagnostic.hasCategoriesTypes, true)
+  assert.equal(demotedDiagnostic.hasRating, true)
+  assert.equal(demotedDiagnostic.hasUserRatingCount, true)
   const demotedMerged = mergeEvidenceBearingLiveCandidatesForRetrieval(
     [curatedFallback],
     [demotedLive],

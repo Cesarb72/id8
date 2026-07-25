@@ -133,6 +133,26 @@ export interface LiveQueryCandidateDispositionDiagnostics {
   name: string
   venueId?: string
   providerPlaceId?: string
+  sourceStage?: 'provider_mapped' | 'normalized' | 'pocket_filter'
+  sourceOrigin?: VenueSourceOrigin
+  sourceMode?: SourceMode
+  candidatePocket?: string
+  selectedPocketEnvelope?: string
+  candidateDistanceFromPocketCenterM?: number
+  pocketRadiusThresholdM?: number
+  distanceMargin?: {
+    status: 'inside_by' | 'outside_by' | 'unknown'
+    meters?: number
+  }
+  filterVerdict?:
+    | 'kept'
+    | 'rejected_outside_selected_envelope'
+    | 'rejected_missing_location'
+    | 'rejected_unknown_distance'
+    | 'other_sanitized_reason'
+  hasLocationEvidence?: boolean
+  hasFormattedAddressEvidence?: boolean
+  hasProviderIdEvidence?: boolean
   sourceTypes: string[]
   providerResultSummary: boolean
   normalizedResult: boolean
@@ -194,6 +214,60 @@ export interface LiveQueryCandidateDiagnostics {
   demotedCount: number
   suppressedCount: number
   candidates?: LiveQueryCandidateDispositionDiagnostics[]
+}
+
+export type FieldLiveCandidateSurvivalStatus =
+  | 'eligible'
+  | 'blocked_not_live'
+  | 'blocked_suppressed'
+  | 'blocked_demoted'
+  | 'blocked_missing_evidence'
+
+export type FieldQualityPrimaryReason =
+  | 'approved'
+  | 'hours_demoted'
+  | 'hours_suppressed'
+  | 'missing_required_evidence'
+  | 'thin_evidence'
+  | 'category_mismatch'
+  | 'source_policy'
+  | 'unknown'
+  | string
+
+export interface FieldLiveCandidateSurvivalDiagnostic {
+  venueId: string
+  venueName: string
+  status: FieldLiveCandidateSurvivalStatus
+  dropReason: string
+  reasons: string[]
+  qualityGateStatus: QualityGateStatus
+  qualityVerdict: 'approved' | 'demoted' | 'suppressed' | 'blocked'
+  primaryQualityReason: FieldQualityPrimaryReason
+  sourceOrigin: VenueSourceOrigin
+  proofEligible: boolean
+  diagnosticOnly: boolean
+  hasProviderPlaceId: boolean
+  hasFormattedAddress: boolean
+  hasLocation: boolean
+  hasCategoriesTypes: boolean
+  hasHoursOpenStatus: boolean
+  hasRating: boolean
+  hasUserRatingCount: boolean
+}
+
+export interface FieldLiveDiagnosticRollups {
+  pocketFilterKeptCount: number
+  pocketFilterRejectedCount: number
+  rejectedOutsideSelectedEnvelopeCount: number
+  rejectedMissingLocationCount: number
+  rejectedUnknownDistanceCount: number
+  qualityApprovedCount: number
+  qualityDemotedCount: number
+  qualitySuppressedCount: number
+  qualityBlockedMissingEvidenceCount: number
+  hoursDemotedCount: number
+  hoursSuppressedCount: number
+  liveSurvivalEligibleCount: number
 }
 
 export type LiveCompetitionStage =
@@ -518,6 +592,8 @@ export interface RetrievalDiagnostics {
     liveQueryTemplatesUsed: string[]
     liveQueryLabelsUsed: string[]
     liveCandidatesByQuery: LiveQueryCandidateDiagnostics[]
+    liveCandidateSurvivalDiagnostics?: FieldLiveCandidateSurvivalDiagnostic[]
+    liveDiagnosticRollups?: FieldLiveDiagnosticRollups
     liveRoleIntentQueryNotes: string[]
     fetchedCount: number
     mappedCount: number

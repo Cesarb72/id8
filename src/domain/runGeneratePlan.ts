@@ -4476,6 +4476,8 @@ async function runGeneratePlanInternal(
       liveQueryTemplatesUsed: retrieval.sourceMode.liveQueryTemplatesUsed,
       liveQueryLabelsUsed: retrieval.sourceMode.liveQueryLabelsUsed,
       liveCandidatesByQuery: retrieval.sourceMode.liveCandidatesByQuery,
+      liveCandidateSurvivalDiagnostics: retrieval.sourceMode.liveCandidateSurvivalDiagnostics,
+      liveDiagnosticRollups: retrieval.sourceMode.liveDiagnosticRollups,
       liveRoleIntentQueryNotes: retrieval.sourceMode.liveRoleIntentQueryNotes,
       fetchedCount: retrieval.sourceMode.fetchedCount,
       mappedCount: retrieval.sourceMode.mappedCount,

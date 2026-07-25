@@ -48,6 +48,26 @@ interface LiveCandidatesByQueryDiagnostics {
     name: string
     venueId?: string
     providerPlaceId?: string
+    sourceStage?: 'provider_mapped' | 'normalized' | 'pocket_filter'
+    sourceOrigin?: Venue['source']['sourceOrigin']
+    sourceMode?: SourceMode
+    candidatePocket?: string
+    selectedPocketEnvelope?: string
+    candidateDistanceFromPocketCenterM?: number
+    pocketRadiusThresholdM?: number
+    distanceMargin?: {
+      status: 'inside_by' | 'outside_by' | 'unknown'
+      meters?: number
+    }
+    filterVerdict?:
+      | 'kept'
+      | 'rejected_outside_selected_envelope'
+      | 'rejected_missing_location'
+      | 'rejected_unknown_distance'
+      | 'other_sanitized_reason'
+    hasLocationEvidence?: boolean
+    hasFormattedAddressEvidence?: boolean
+    hasProviderIdEvidence?: boolean
     sourceTypes: string[]
     providerResultSummary: boolean
     normalizedResult: boolean
@@ -98,6 +118,8 @@ interface LiveCandidatesByQueryDiagnostics {
     }
   }>
 }
+
+type LiveCandidateDisposition = NonNullable<LiveCandidatesByQueryDiagnostics['candidates']>[number]
 
 export interface LiveSourceDiagnostics {
   attempted: boolean
@@ -525,6 +547,58 @@ function buildFieldPocketProofDiagnostic(params: {
     },
     candidateBoardAdmissionFalseSource,
   }
+}
+
+function buildSelectedPocketEnvelopeLabel(
+  pocketHint: LiveRetrievalPocketHint | undefined,
+  thresholdM: number | undefined,
+): string | undefined {
+  if (!pocketHint || typeof thresholdM !== 'number') {
+    return undefined
+  }
+  return [
+    `pocketId=${pocketHint.pocketId}`,
+    `label=${pocketHint.pocketLabel}`,
+    `center=${pocketHint.centroid.lat.toFixed(5)},${pocketHint.centroid.lng.toFixed(5)}`,
+    `radiusM=${thresholdM}`,
+  ].join(';')
+}
+
+function buildDistanceMargin(
+  marginToFieldAdmissionEnvelopeM: number | undefined,
+): LiveCandidateDisposition['distanceMargin'] {
+  if (typeof marginToFieldAdmissionEnvelopeM !== 'number') {
+    return { status: 'unknown' }
+  }
+  if (marginToFieldAdmissionEnvelopeM <= 0) {
+    return { status: 'inside_by', meters: roundMeter(Math.abs(marginToFieldAdmissionEnvelopeM)) }
+  }
+  return { status: 'outside_by', meters: roundMeter(marginToFieldAdmissionEnvelopeM) }
+}
+
+function resolvePocketFilterVerdict(params: {
+  candidateBoardAdmission: boolean
+  normalizedVenue: Venue | undefined
+  normalizedResult: boolean
+  pocketFilter: LiveCandidateDisposition['pocketFilter']
+  pocketHint: LiveRetrievalPocketHint | undefined
+}): NonNullable<LiveCandidateDisposition['filterVerdict']> {
+  if (params.candidateBoardAdmission) {
+    return 'kept'
+  }
+  if (!params.normalizedResult) {
+    return 'other_sanitized_reason'
+  }
+  if (params.pocketHint && params.normalizedVenue && !getVenueCoordinates(params.normalizedVenue)) {
+    return 'rejected_missing_location'
+  }
+  if (params.pocketFilter === 'outside_pocket_envelope') {
+    return 'rejected_outside_selected_envelope'
+  }
+  if (params.pocketHint) {
+    return 'rejected_unknown_distance'
+  }
+  return 'other_sanitized_reason'
 }
 
 function countByGateStatus(venues: Venue[], status: QualityGateStatus): number {
@@ -966,14 +1040,58 @@ export async function fetchLivePlaces(
           : candidateBoardAdmission
             ? 'admitted'
             : normalizedResult
-              ? 'outside_pocket_envelope'
-              : 'unknown_drop_stage'
+            ? 'outside_pocket_envelope'
+            : 'unknown_drop_stage'
+      const pocketProofDiagnostic = buildFieldPocketProofDiagnostic({
+        queryLabel: query.label,
+        queryRadiusM,
+        pocketHint,
+        normalizedVenue,
+        normalizedResult,
+        candidateBoardAdmission,
+        pocketFilter,
+      })
+      const filterVerdict = resolvePocketFilterVerdict({
+        candidateBoardAdmission,
+        normalizedVenue,
+        normalizedResult,
+        pocketFilter,
+        pocketHint,
+      })
+      const hasLocationEvidence = normalizedVenue
+        ? Boolean(getVenueCoordinates(normalizedVenue))
+        : typeof rawPlace.latitude === 'number' && typeof rawPlace.longitude === 'number'
+      const hasFormattedAddressEvidence = Boolean(
+        normalizedVenue?.source.formattedAddress?.trim() ?? rawPlace.formattedAddress?.trim(),
+      )
+      const hasProviderIdEvidence = Boolean(
+        normalizedVenue?.source.providerRecordId?.trim() ?? rawPlace.providerRecordId?.trim(),
+      )
       return {
         name: rawPlace.name,
         venueId: normalizedVenue?.id ?? rawPlace.id,
         ...((normalizedVenue?.source.providerRecordId ?? rawPlace.providerRecordId)
           ? { providerPlaceId: normalizedVenue?.source.providerRecordId ?? rawPlace.providerRecordId }
           : {}),
+        sourceStage: normalizedResult ? 'pocket_filter' : 'provider_mapped',
+        sourceOrigin: normalizedVenue?.source.sourceOrigin ?? 'live',
+        sourceMode: 'live',
+        candidatePocket: normalizedVenue?.neighborhood,
+        selectedPocketEnvelope: buildSelectedPocketEnvelopeLabel(
+          pocketHint,
+          pocketProofDiagnostic?.fieldAdmissionEnvelopeRadiusM,
+        ),
+        ...(typeof pocketProofDiagnostic?.candidateDistanceToPocketCenterM === 'number'
+          ? { candidateDistanceFromPocketCenterM: pocketProofDiagnostic.candidateDistanceToPocketCenterM }
+          : {}),
+        ...(typeof pocketProofDiagnostic?.fieldAdmissionEnvelopeRadiusM === 'number'
+          ? { pocketRadiusThresholdM: pocketProofDiagnostic.fieldAdmissionEnvelopeRadiusM }
+          : {}),
+        distanceMargin: buildDistanceMargin(pocketProofDiagnostic?.marginToFieldAdmissionEnvelopeM),
+        filterVerdict,
+        hasLocationEvidence,
+        hasFormattedAddressEvidence,
+        hasProviderIdEvidence,
         sourceTypes: normalizedVenue?.source.sourceTypes ?? rawPlace.sourceTypes ?? [],
         providerResultSummary: true,
         normalizedResult,
@@ -983,17 +1101,11 @@ export async function fetchLivePlaces(
           rawSourceTypes: rawPlace.sourceTypes ?? [],
           normalizedSourceTypes: normalizedVenue?.source.sourceTypes ?? [],
         },
-        pocketProofDiagnostic: buildFieldPocketProofDiagnostic({
-          queryLabel: query.label,
-          queryRadiusM,
-          pocketHint,
-          normalizedVenue,
-          normalizedResult,
-          candidateBoardAdmission,
-          pocketFilter,
-        }),
+        pocketProofDiagnostic,
         ...(!normalizedResult && !normalizedVenueIds.has(rawPlace.id)
           ? { dropReason: 'normalization_or_dedupe_drop' }
+          : filterVerdict === 'rejected_missing_location'
+            ? { dropReason: 'field_source_pocket_filter_missing_location' }
           : pocketFilter === 'outside_pocket_envelope'
             ? { dropReason: 'field_source_pocket_filter_outside_selected_envelope' }
             : {}),

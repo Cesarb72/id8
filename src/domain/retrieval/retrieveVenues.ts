@@ -34,6 +34,9 @@ import {
 } from './liveEnvelope'
 import { buildDistrictCandidateGeoIndex } from '../../engines/district/candidates/buildDistrictCandidateGeoIndex'
 import type {
+  FieldLiveCandidateSurvivalDiagnostic,
+  FieldLiveCandidateSurvivalStatus,
+  FieldLiveDiagnosticRollups,
   LiveDedupeLossDiagnostics,
   LiveQueryCandidateDiagnostics,
 } from '../types/diagnostics'
@@ -98,28 +101,9 @@ function ensureVenueHasHappenings(venue: Venue): Venue {
   }
 }
 
-export type FieldLiveCandidateSurvivalStatus =
-  | 'eligible'
-  | 'blocked_not_live'
-  | 'blocked_suppressed'
-  | 'blocked_demoted'
-  | 'blocked_missing_evidence'
-
 export interface FieldLiveCandidateSurvivalDecision {
   status: FieldLiveCandidateSurvivalStatus
   reasons: string[]
-}
-
-export interface FieldLiveCandidateSurvivalDiagnostic {
-  venueId: string
-  venueName: string
-  status: FieldLiveCandidateSurvivalStatus
-  dropReason: string
-  reasons: string[]
-  qualityGateStatus: Venue['source']['qualityGateStatus']
-  sourceOrigin: Venue['source']['sourceOrigin']
-  proofEligible: boolean
-  diagnosticOnly: boolean
 }
 
 function hasFiniteCoordinate(value: number | undefined): boolean {
@@ -173,12 +157,69 @@ function formatFieldLiveCandidateDropReason(
   return 'retrieval_live_candidate_blocked:not_live'
 }
 
+function hasHoursOpenStatusEvidence(source: Venue['source']): boolean {
+  return (
+    source.hoursKnown === true ||
+    typeof source.openNow === 'boolean' ||
+    Boolean(source.runtimeHoursTextHoursAvailable) ||
+    Boolean(source.runtimeHoursStructuredPeriodCount)
+  )
+}
+
+function resolveQualityPrimaryReason(
+  venue: Venue,
+  decision: FieldLiveCandidateSurvivalDecision,
+): FieldLiveCandidateSurvivalDiagnostic['primaryQualityReason'] {
+  if (venue.source.hoursDemotionApplied) {
+    return 'hours_demoted'
+  }
+  if (venue.source.hoursSuppressionApplied) {
+    return 'hours_suppressed'
+  }
+  if (decision.status === 'blocked_missing_evidence') {
+    return 'missing_required_evidence'
+  }
+  if (venue.source.qualityGateStatus === 'approved') {
+    return 'approved'
+  }
+
+  const reasons = [
+    ...venue.source.suppressionReasons,
+    ...venue.source.demotionReasons,
+    ...venue.source.approvalBlockers,
+    ...venue.source.qualityGateNotes,
+  ].map((reason) => reason.toLowerCase())
+  const joinedReasons = reasons.join('|')
+
+  if (joinedReasons.includes('category') || joinedReasons.includes('unsupported')) {
+    return 'category_mismatch'
+  }
+  if (
+    joinedReasons.includes('source') ||
+    joinedReasons.includes('confidence') ||
+    joinedReasons.includes('policy')
+  ) {
+    return 'source_policy'
+  }
+  if (
+    joinedReasons.includes('thin') ||
+    joinedReasons.includes('weak') ||
+    joinedReasons.includes('generic') ||
+    joinedReasons.includes('completeness')
+  ) {
+    return 'thin_evidence'
+  }
+
+  return reasons[0] ?? 'unknown'
+}
+
 export function buildFieldLiveCandidateSurvivalDiagnostics(
   liveVenues: Venue[],
 ): FieldLiveCandidateSurvivalDiagnostic[] {
   return liveVenues.map((venue) => {
     const decision = classifyFieldLiveCandidateSurvival(venue)
     const proofEligible = decision.status === 'eligible'
+    const hasLocation = hasFiniteCoordinate(venue.source.latitude) && hasFiniteCoordinate(venue.source.longitude)
     return {
       venueId: venue.id,
       venueName: venue.name,
@@ -186,11 +227,63 @@ export function buildFieldLiveCandidateSurvivalDiagnostics(
       dropReason: formatFieldLiveCandidateDropReason(decision.status),
       reasons: decision.reasons,
       qualityGateStatus: venue.source.qualityGateStatus,
+      qualityVerdict: venue.source.qualityGateStatus,
+      primaryQualityReason: resolveQualityPrimaryReason(venue, decision),
       sourceOrigin: venue.source.sourceOrigin,
       proofEligible,
       diagnosticOnly: !proofEligible,
+      hasProviderPlaceId: Boolean(venue.source.providerRecordId?.trim()),
+      hasFormattedAddress: Boolean(venue.source.formattedAddress?.trim()),
+      hasLocation,
+      hasCategoriesTypes: venue.source.sourceTypes.length > 0,
+      hasHoursOpenStatus: hasHoursOpenStatusEvidence(venue.source),
+      hasRating: typeof venue.source.rating === 'number',
+      hasUserRatingCount: typeof venue.source.reviewCount === 'number',
     }
   })
+}
+
+function buildFieldLiveDiagnosticRollups(params: {
+  liveCandidatesByQuery: LiveQueryCandidateDiagnostics[]
+  survivalDiagnostics: FieldLiveCandidateSurvivalDiagnostic[]
+  hoursDemotedCount: number
+  hoursSuppressedCount: number
+}): FieldLiveDiagnosticRollups {
+  const candidates = params.liveCandidatesByQuery.flatMap((query) => query.candidates ?? [])
+  const pocketFilterKeptCount = candidates.filter((candidate) => candidate.filterVerdict === 'kept').length
+  const rejectedOutsideSelectedEnvelopeCount = candidates.filter(
+    (candidate) => candidate.filterVerdict === 'rejected_outside_selected_envelope',
+  ).length
+  const rejectedMissingLocationCount = candidates.filter(
+    (candidate) => candidate.filterVerdict === 'rejected_missing_location',
+  ).length
+  const rejectedUnknownDistanceCount = candidates.filter(
+    (candidate) => candidate.filterVerdict === 'rejected_unknown_distance',
+  ).length
+  const pocketFilterRejectedCount =
+    rejectedOutsideSelectedEnvelopeCount + rejectedMissingLocationCount + rejectedUnknownDistanceCount
+  return {
+    pocketFilterKeptCount,
+    pocketFilterRejectedCount,
+    rejectedOutsideSelectedEnvelopeCount,
+    rejectedMissingLocationCount,
+    rejectedUnknownDistanceCount,
+    qualityApprovedCount: params.survivalDiagnostics.filter(
+      (diagnostic) => diagnostic.qualityGateStatus === 'approved',
+    ).length,
+    qualityDemotedCount: params.survivalDiagnostics.filter(
+      (diagnostic) => diagnostic.qualityGateStatus === 'demoted',
+    ).length,
+    qualitySuppressedCount: params.survivalDiagnostics.filter(
+      (diagnostic) => diagnostic.qualityGateStatus === 'suppressed',
+    ).length,
+    qualityBlockedMissingEvidenceCount: params.survivalDiagnostics.filter(
+      (diagnostic) => diagnostic.status === 'blocked_missing_evidence',
+    ).length,
+    hoursDemotedCount: params.hoursDemotedCount,
+    hoursSuppressedCount: params.hoursSuppressedCount,
+    liveSurvivalEligibleCount: params.survivalDiagnostics.filter((diagnostic) => diagnostic.proofEligible).length,
+  }
 }
 
 export function mergeEvidenceBearingLiveCandidatesForRetrieval(
@@ -373,6 +466,7 @@ export interface RetrieveVenuesResult {
     curateStaticCorpus?: CurateStaticFieldCorpusDiagnostics
     bearingsRuntimeHours?: BearingsRuntimeHoursDiagnostics
     liveCandidateSurvivalDiagnostics?: FieldLiveCandidateSurvivalDiagnostic[]
+    liveDiagnosticRollups?: FieldLiveDiagnosticRollups
   }
   stageCounts: {
     totalSeed: number
@@ -992,6 +1086,12 @@ export async function retrieveVenues(
   ).length
   const liveCandidateSurvivalDiagnostics =
     buildFieldLiveCandidateSurvivalDiagnostics(effectiveLiveVenues)
+  const liveDiagnosticRollups = buildFieldLiveDiagnosticRollups({
+    liveCandidatesByQuery: liveFetch.diagnostics.liveCandidatesByQuery,
+    survivalDiagnostics: liveCandidateSurvivalDiagnostics,
+    hoursDemotedCount: liveHoursDemotedCount,
+    hoursSuppressedCount: liveHoursSuppressedCount,
+  })
   const liveUsableInventory = effectiveLiveUsableCount > 0
   const hasEffectiveLiveCoverage = liveFetch.diagnostics.success || effectiveLiveVenues.length > 0
   const allowCuratedFallbackForCity = resolveAllowCuratedFallback({
@@ -1272,6 +1372,7 @@ export async function retrieveVenues(
           ? { bearingsRuntimeHours }
           : {}),
         liveCandidateSurvivalDiagnostics,
+        liveDiagnosticRollups,
         ...(curateStaticCorpus.diagnostics.enabled
           ? { curateStaticCorpus: curateStaticCorpus.diagnostics }
           : {}),

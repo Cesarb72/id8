@@ -135,6 +135,9 @@ const outputColumns = [
   'aggregateFinalRouteLiveStops',
   'field attrition substage counts',
   'field attrition drop reasons by stage',
+  'field pocket candidate diagnostics',
+  'field quality gate candidate diagnostics',
+  'field pocket/quality diagnostic rollups',
   'Taste live field support',
   'Taste missing/thin evidence',
   'Bearings evidence summary',
@@ -260,6 +263,9 @@ interface LifecycleObservation {
   aggregateFinalRouteLiveStops: string
   fieldAttritionSubstageCounts: string
   fieldAttritionDropReasonsByStage: string
+  fieldPocketCandidateDiagnostics: string
+  fieldQualityGateCandidateDiagnostics: string
+  fieldPocketQualityDiagnosticRollups: string
   tasteLiveFieldSupport: string
   tasteMissingThinEvidence: string
   bearingsEvidenceSummary: string
@@ -506,6 +512,9 @@ type LiveEvidenceContractFields = Pick<
   | 'aggregateFinalRouteLiveStops'
   | 'fieldAttritionSubstageCounts'
   | 'fieldAttritionDropReasonsByStage'
+  | 'fieldPocketCandidateDiagnostics'
+  | 'fieldQualityGateCandidateDiagnostics'
+  | 'fieldPocketQualityDiagnosticRollups'
   | 'tasteLiveFieldSupport'
   | 'tasteMissingThinEvidence'
   | 'bearingsEvidenceSummary'
@@ -555,6 +564,9 @@ function buildUnavailableLiveEvidenceContract(reason: string): LiveEvidenceContr
     aggregateFinalRouteLiveStops: 'unavailable_stopped_before_provider',
     fieldAttritionSubstageCounts: 'unavailable_stopped_before_provider',
     fieldAttritionDropReasonsByStage: reason,
+    fieldPocketCandidateDiagnostics: 'unavailable_stopped_before_provider',
+    fieldQualityGateCandidateDiagnostics: 'unavailable_stopped_before_provider',
+    fieldPocketQualityDiagnosticRollups: 'unavailable_stopped_before_provider',
     tasteLiveFieldSupport: 'unavailable_stopped_before_provider',
     tasteMissingThinEvidence: reason,
     bearingsEvidenceSummary: 'unavailable_stopped_before_provider',
@@ -871,6 +883,92 @@ function formatFieldAttritionDropReasonsByStage(result: GeneratePlanResult): str
   ].join(' | ')
 }
 
+function formatDistanceMargin(candidate: {
+  distanceMargin?: { status: string; meters?: number }
+}): string {
+  const margin = candidate.distanceMargin
+  if (!margin) {
+    return 'unknown'
+  }
+  return typeof margin.meters === 'number'
+    ? `${margin.status}:${margin.meters.toFixed(1)}m`
+    : margin.status
+}
+
+function formatFieldPocketCandidateDiagnostics(result: GeneratePlanResult): string {
+  const queries = result.trace.retrievalDiagnostics.liveSource.liveCandidatesByQuery
+  const entries = queries.flatMap((query) =>
+    (query.candidates ?? []).map((candidate) =>
+      [
+        `query=${query.label}`,
+        `candidate=${candidate.name}`,
+        `stage=${candidate.sourceStage ?? 'unknown'}`,
+        `sourceOrigin=${candidate.sourceOrigin ?? 'unknown'}`,
+        `sourceMode=${candidate.sourceMode ?? 'unknown'}`,
+        `candidatePocket=${candidate.candidatePocket ?? 'unknown'}`,
+        `selectedEnvelope=${candidate.selectedPocketEnvelope ?? 'none'}`,
+        `distanceM=${typeof candidate.candidateDistanceFromPocketCenterM === 'number' ? candidate.candidateDistanceFromPocketCenterM.toFixed(1) : 'unknown'}`,
+        `radiusM=${typeof candidate.pocketRadiusThresholdM === 'number' ? String(candidate.pocketRadiusThresholdM) : 'unknown'}`,
+        `margin=${formatDistanceMargin(candidate)}`,
+        `verdict=${candidate.filterVerdict ?? 'unknown'}`,
+        `hasLocation=${yesNo(candidate.hasLocationEvidence === true)}`,
+        `hasFormattedAddress=${yesNo(candidate.hasFormattedAddressEvidence === true)}`,
+        `hasProviderId=${yesNo(candidate.hasProviderIdEvidence === true)}`,
+      ].join(';'),
+    ),
+  )
+  return entries.length > 0 ? entries.join(' | ') : 'unavailable'
+}
+
+function formatFieldQualityGateCandidateDiagnostics(result: GeneratePlanResult): string {
+  const diagnostics =
+    result.trace.retrievalDiagnostics.liveSource.liveCandidateSurvivalDiagnostics ?? []
+  if (diagnostics.length === 0) {
+    return 'unavailable'
+  }
+  return diagnostics
+    .map((diagnostic) =>
+      [
+        `candidate=${diagnostic.venueName}`,
+        `qualityVerdict=${diagnostic.qualityVerdict}`,
+        `proofEligible=${yesNo(diagnostic.proofEligible)}`,
+        `diagnosticOnly=${yesNo(diagnostic.diagnosticOnly)}`,
+        `primaryQualityReason=${diagnostic.primaryQualityReason}`,
+        `survivalStatus=${diagnostic.status}`,
+        `dropReason=${diagnostic.dropReason}`,
+        `hasProviderPlaceId=${yesNo(diagnostic.hasProviderPlaceId)}`,
+        `hasFormattedAddress=${yesNo(diagnostic.hasFormattedAddress)}`,
+        `hasLocation=${yesNo(diagnostic.hasLocation)}`,
+        `hasCategoriesTypes=${yesNo(diagnostic.hasCategoriesTypes)}`,
+        `hasHoursOpenStatus=${yesNo(diagnostic.hasHoursOpenStatus)}`,
+        `hasRating=${yesNo(diagnostic.hasRating)}`,
+        `hasUserRatingCount=${yesNo(diagnostic.hasUserRatingCount)}`,
+      ].join(';'),
+    )
+    .join(' | ')
+}
+
+function formatFieldPocketQualityDiagnosticRollups(result: GeneratePlanResult): string {
+  const rollups = result.trace.retrievalDiagnostics.liveSource.liveDiagnosticRollups
+  if (!rollups) {
+    return 'unavailable'
+  }
+  return [
+    `pocketFilterKept=${rollups.pocketFilterKeptCount}`,
+    `pocketFilterRejected=${rollups.pocketFilterRejectedCount}`,
+    `rejectedOutsideSelectedEnvelope=${rollups.rejectedOutsideSelectedEnvelopeCount}`,
+    `rejectedMissingLocation=${rollups.rejectedMissingLocationCount}`,
+    `rejectedUnknownDistance=${rollups.rejectedUnknownDistanceCount}`,
+    `qualityApproved=${rollups.qualityApprovedCount}`,
+    `qualityDemoted=${rollups.qualityDemotedCount}`,
+    `qualitySuppressed=${rollups.qualitySuppressedCount}`,
+    `qualityBlockedMissingEvidence=${rollups.qualityBlockedMissingEvidenceCount}`,
+    `hoursDemoted=${rollups.hoursDemotedCount}`,
+    `hoursSuppressed=${rollups.hoursSuppressedCount}`,
+    `liveSurvivalEligible=${rollups.liveSurvivalEligibleCount}`,
+  ].join('; ')
+}
+
 function buildLiveEvidenceContractFields(params: {
   artifact: ContractEntryArtifact
   counters: FetchCounters
@@ -988,6 +1086,9 @@ function buildLiveEvidenceContractFields(params: {
     ),
     fieldAttritionSubstageCounts: formatFieldAttritionSubstageCounts(params.result),
     fieldAttritionDropReasonsByStage: formatFieldAttritionDropReasonsByStage(params.result),
+    fieldPocketCandidateDiagnostics: formatFieldPocketCandidateDiagnostics(params.result),
+    fieldQualityGateCandidateDiagnostics: formatFieldQualityGateCandidateDiagnostics(params.result),
+    fieldPocketQualityDiagnosticRollups: formatFieldPocketQualityDiagnosticRollups(params.result),
     tasteLiveFieldSupport: `scores=${formatWindDownNumerics(params.windDown.scoredVenue).summary}; supportedFields=${joinValueList([
       hasSourceTypes ? 'categories_types' : null,
       hasAddress ? 'address' : null,
@@ -1209,6 +1310,9 @@ function buildRow(params: {
     aggregateFinalRouteLiveStops: params.observation.aggregateFinalRouteLiveStops,
     'field attrition substage counts': params.observation.fieldAttritionSubstageCounts,
     'field attrition drop reasons by stage': params.observation.fieldAttritionDropReasonsByStage,
+    'field pocket candidate diagnostics': params.observation.fieldPocketCandidateDiagnostics,
+    'field quality gate candidate diagnostics': params.observation.fieldQualityGateCandidateDiagnostics,
+    'field pocket/quality diagnostic rollups': params.observation.fieldPocketQualityDiagnosticRollups,
     'Taste live field support': params.observation.tasteLiveFieldSupport,
     'Taste missing/thin evidence': params.observation.tasteMissingThinEvidence,
     'Bearings evidence summary': params.observation.bearingsEvidenceSummary,
@@ -1913,6 +2017,9 @@ writeFileSync(
         `- per-query pre-filter normalized records: ${row.perQueryPreFilterNormalizedRecords}`,
         `- clarified aggregate live counts: effective=${row.aggregateEffectiveLiveVenues}; qualityApproved=${row.aggregateQualityApprovedLiveVenues}; demoted=${row.aggregateDemotedLiveVenues}; suppressed=${row.aggregateSuppressedLiveVenues}; merged=${row.aggregateMergedLiveVenues}; scoredRetrieval=${row.aggregateScoredRetrievalLiveVenues}; rolePool=${row.aggregateRolePoolLiveVenues}; finalRoute=${row.aggregateFinalRouteLiveStops}`,
         `- field attrition drop reasons by stage: ${row['field attrition drop reasons by stage']}`,
+        `- field pocket candidate diagnostics: ${row['field pocket candidate diagnostics']}`,
+        `- field quality gate candidate diagnostics: ${row['field quality gate candidate diagnostics']}`,
+        `- field pocket/quality diagnostic rollups: ${row['field pocket/quality diagnostic rollups']}`,
         `- provider rejection/attrition reasons: ${row['provider candidate rejection reasons']}`,
         `- selected windDown evidence flags: ${row['selected windDown evidence availability flags']}`,
         `- surviving live candidate evidence flags: ${row['surviving live candidate evidence availability flags']}`,
