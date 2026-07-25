@@ -8,6 +8,7 @@ import type { GeneratePlanResult } from '../src/domain/runGeneratePlan.ts'
 import type { ScoredVenue } from '../src/domain/types/arc.ts'
 import type { ExperienceMode, IntentInput, PersonaMode, VibeAnchor } from '../src/domain/types/intent.ts'
 import type { Itinerary } from '../src/domain/types/itinerary.ts'
+import type { StarterPack } from '../src/domain/types/starterPack.ts'
 
 type YesNo = 'yes' | 'no'
 type PassFail = 'pass' | 'fail' | 'not_evaluated'
@@ -97,6 +98,11 @@ const outputColumns = [
   'why not MVP green',
   'invalid false-green? yes/no',
   'proof validity label',
+  'mode context adapter',
+  'Curate starter context supplied? yes/no',
+  'Surprise context carrier exercised? yes/no',
+  'Build context carrier exercised? yes/no',
+  'future mode context requirement',
   'live data provider/source name',
   'live data query labels',
   'live data query center / pocket',
@@ -144,6 +150,8 @@ interface FetchCounters {
 }
 
 interface LifecycleObservation {
+  mode: ExperienceMode
+  starterFamily: string
   routeLabel: string
   contractEntryProduced: boolean
   runtimeRouteProduced: boolean
@@ -195,6 +203,11 @@ interface LifecycleObservation {
   curateRefinementEntryPayloadUsed: boolean
   runtimeRouteArtifactCanonical: boolean
   whyNotMvpGreen: string
+  modeContextAdapter: string
+  curateStarterContextSupplied: boolean
+  surpriseContextCarrierExercised: boolean
+  buildContextCarrierExercised: boolean
+  futureModeContextRequirement: string
   liveDataProviderSourceName: string
   liveDataQueryLabels: string
   liveDataQueryCenterPocket: string
@@ -220,6 +233,24 @@ interface LifecycleObservation {
   localMvpRepresentationRequirements: string
   engineOwnershipForGaps: string
   anotherLiveCallJustified: boolean
+}
+
+type RunnerContextStatus = 'supplied' | 'missing' | 'not_applicable' | 'not_exercised'
+
+interface RunnerModeContext {
+  mode: ExperienceMode
+  curate: {
+    starterPack: StarterPack | null
+    status: RunnerContextStatus
+  }
+  surprise: {
+    status: RunnerContextStatus
+    selectedDirectionContextStatus: RunnerContextStatus
+  }
+  build: {
+    status: RunnerContextStatus
+    anchorContextStatus: RunnerContextStatus
+  }
 }
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -306,7 +337,7 @@ function restoreManagedEnv(snapshot: Map<string, string | undefined>): void {
   }
 }
 
-function buildCurateCoffeeBooksInput(starterPack: { personaBias?: PersonaMode | null; primaryAnchor: VibeAnchor; secondaryAnchors?: VibeAnchor[]; distanceMode?: IntentInput['distanceMode']; lensPreset?: { discoveryBias?: string } }): IntentInput {
+function buildCurateStarterPackInput(starterPack: { personaBias?: PersonaMode | null; primaryAnchor: VibeAnchor; secondaryAnchors?: VibeAnchor[]; distanceMode?: IntentInput['distanceMode']; lensPreset?: { discoveryBias?: string } }): IntentInput {
   return {
     mode: 'curate',
     persona: starterPack.personaBias ?? null,
@@ -316,6 +347,43 @@ function buildCurateCoffeeBooksInput(starterPack: { personaBias?: PersonaMode | 
     distanceMode: starterPack.distanceMode ?? 'nearby',
     prefersHiddenGems: starterPack.lensPreset?.discoveryBias === 'high',
   }
+}
+
+function buildCurateRunnerModeContext(starterPack: StarterPack | null): RunnerModeContext {
+  return {
+    mode: 'curate',
+    curate: {
+      starterPack,
+      status: starterPack ? 'supplied' : 'missing',
+    },
+    surprise: {
+      status: 'not_exercised',
+      selectedDirectionContextStatus: 'not_exercised',
+    },
+    build: {
+      status: 'not_exercised',
+      anchorContextStatus: 'not_exercised',
+    },
+  }
+}
+
+function formatModeContextAdapter(context: RunnerModeContext): string {
+  return [
+    `mode=${context.mode}`,
+    `curateStarter=${context.curate.status}`,
+    `surpriseContext=${context.surprise.status}`,
+    `buildContext=${context.build.status}`,
+  ].join('; ')
+}
+
+function futureModeContextRequirement(context: RunnerModeContext): string {
+  if (context.mode === 'curate') {
+    return 'Curate rows must carry activeStarterPack/starterPack into artifact-backed itinerary validation.'
+  }
+  if (context.mode === 'surprise') {
+    return 'Surprise rows must carry selectedDirectionContext/selectedDirectionId before artifact-backed itinerary, RuntimeRouteArtifact, and Review-Lock validation.'
+  }
+  return 'Build rows must carry selected anchor, required anchor role, and buildContext before artifact-backed itinerary, RuntimeRouteArtifact, and Review-Lock validation.'
 }
 
 function findScoredVenueForVenueId(scoredVenues: ScoredVenue[], venueId: string | undefined): ScoredVenue | null {
@@ -630,8 +698,8 @@ function buildRow(params: {
     !params.observation.honestFail
 
   return {
-    mode: 'curate',
-    'starter/family': 'Coffee & Books / coffee-books',
+    mode: params.observation.mode,
+    'starter/family': params.observation.starterFamily,
     'route id / route label': params.observation.routeLabel,
     'support source': 'governed_live_field_route_ingress',
     'candidate producer': 'runGovernedFieldProxyRoutePlanBuild',
@@ -702,6 +770,11 @@ function buildRow(params: {
         : params.observation.diagnosticOnly
           ? 'diagnostic_only_not_mvp_green'
           : 'invalid_false_green',
+    'mode context adapter': params.observation.modeContextAdapter,
+    'Curate starter context supplied? yes/no': yesNo(params.observation.curateStarterContextSupplied),
+    'Surprise context carrier exercised? yes/no': yesNo(params.observation.surpriseContextCarrierExercised),
+    'Build context carrier exercised? yes/no': yesNo(params.observation.buildContextCarrierExercised),
+    'future mode context requirement': params.observation.futureModeContextRequirement,
     'live data provider/source name': params.observation.liveDataProviderSourceName,
     'live data query labels': params.observation.liveDataQueryLabels,
     'live data query center / pocket': params.observation.liveDataQueryCenterPocket,
@@ -732,6 +805,8 @@ function buildRow(params: {
 
 function buildStoppedBeforeProviderObservation(reason: string): LifecycleObservation {
   return {
+    mode: 'curate',
+    starterFamily: 'not_exercised_before_provider',
     routeLabel: 'phase-3r-live-proof-stopped-before-provider',
     contractEntryProduced: false,
     runtimeRouteProduced: false,
@@ -783,6 +858,13 @@ function buildStoppedBeforeProviderObservation(reason: string): LifecycleObserva
     curateRefinementEntryPayloadUsed: false,
     runtimeRouteArtifactCanonical: false,
     whyNotMvpGreen: `stopped before provider: ${reason}`,
+    modeContextAdapter:
+      'mode=curate; curateStarter=not_exercised; surpriseContext=not_exercised; buildContext=not_exercised',
+    curateStarterContextSupplied: false,
+    surpriseContextCarrierExercised: false,
+    buildContextCarrierExercised: false,
+    futureModeContextRequirement:
+      'Provider-consuming rows must build and pass runner-local mode context before artifact-backed itinerary, RuntimeRouteArtifact, and Review-Lock validation.',
     ...buildUnavailableLiveEvidenceContract(reason),
   }
 }
@@ -898,11 +980,12 @@ function installGovernedFetch(counters: FetchCounters, originalFetch: typeof fet
 async function observeLiveLifecycle(params: {
   result: GeneratePlanResult
   counters: FetchCounters
+  modeContext: RunnerModeContext
 }): Promise<LifecycleObservation> {
   const { buildLockInputFromRouteAuthoritySnapshot, buildRouteAuthoritySnapshot } = await import(
     '../src/app/services/routeAuthority/routeAuthorityService.ts'
   )
-  const { buildArtifactBackedVisibleItinerary } = await import(
+  const { buildArtifactBackedVisibleItinerary, validatePublicContractEntryArtifactTruth } = await import(
     '../src/app/services/canonicalPublicRouteTruthService.ts'
   )
   const { buildContractEntryRuntimeRouteLockTruth } = await import(
@@ -925,14 +1008,25 @@ async function observeLiveLifecycle(params: {
     params.result.trace.selectedDistrictLabel || artifact.districtAnchorLine || 'Phase 3R live proof route'
   const persona = (params.result.intentProfile.persona ?? 'romantic') as PersonaMode
   const vibe = params.result.intentProfile.primaryAnchor as VibeAnchor
+  const artifactTruthContext = {
+    mode: params.modeContext.mode,
+    starterPack:
+      params.modeContext.mode === 'curate'
+        ? params.modeContext.curate.starterPack
+        : null,
+  }
+  const artifactTruth = validatePublicContractEntryArtifactTruth(artifact, artifactTruthContext)
   const artifactBackedItinerary = buildArtifactBackedVisibleItinerary({
     artifact,
     itinerary: params.result.itinerary,
-    context: {
-      mode: 'curate',
-      starterPack: params.result.trace.selectedArtifactLineage ? undefined : undefined,
-    },
+    context: artifactTruthContext,
   })
+  const artifactBackedItineraryRejectionReason =
+    artifactTruth.allowedToRender
+      ? artifactBackedItinerary
+        ? 'none'
+        : 'artifact_backed_itinerary_role_mismatch'
+      : joinReasonList(artifactTruth.rejectionReasons)
   const windDown = findWindDownScoredVenue(params.result)
   const windDownNumerics = formatWindDownNumerics(windDown.scoredVenue)
   const philzScoredVenue = findPhilzScoredVenue(params.result.scoredVenues)
@@ -968,6 +1062,11 @@ async function observeLiveLifecycle(params: {
       fallbackCity: 'San Jose',
     })
     return {
+      mode: params.modeContext.mode,
+      starterFamily:
+        params.modeContext.curate.starterPack
+          ? `${params.modeContext.curate.starterPack.title} / ${params.modeContext.curate.starterPack.id}`
+          : `${params.modeContext.mode} / no-starter-context`,
       routeLabel: artifact.id,
       contractEntryProduced: true,
       runtimeRouteProduced: false,
@@ -1007,8 +1106,8 @@ async function observeLiveLifecycle(params: {
         ? 'none'
         : lockInput.diagnostics.rejectionReason ?? 'missing_lock_ready_canonical_route_truth',
       runtimeLockTruthStatus: 'blocked',
-      runtimeLockTruthReason: 'missing_artifact_backed_visible_itinerary',
-      lifecycleInputAvailability: 'missing_artifact_backed_visible_itinerary',
+      runtimeLockTruthReason: `missing_artifact_backed_visible_itinerary:${artifactBackedItineraryRejectionReason}`,
+      lifecycleInputAvailability: `missing_artifact_backed_visible_itinerary:${artifactBackedItineraryRejectionReason}`,
       itineraryMissing: false,
       scoredVenuesMissing: false,
       runtimeLockEligibilityMissing: !runtimeLockEligibility,
@@ -1021,7 +1120,12 @@ async function observeLiveLifecycle(params: {
       selectedRouteArtifactUsed: false,
       curateRefinementEntryPayloadUsed: false,
       runtimeRouteArtifactCanonical: false,
-      whyNotMvpGreen: 'artifact-backed itinerary unavailable; RuntimeRouteArtifact blocked',
+      whyNotMvpGreen: `artifact-backed itinerary unavailable (${artifactBackedItineraryRejectionReason}); RuntimeRouteArtifact blocked`,
+      modeContextAdapter: formatModeContextAdapter(params.modeContext),
+      curateStarterContextSupplied: params.modeContext.curate.status === 'supplied',
+      surpriseContextCarrierExercised: params.modeContext.surprise.status === 'supplied',
+      buildContextCarrierExercised: params.modeContext.build.status === 'supplied',
+      futureModeContextRequirement: futureModeContextRequirement(params.modeContext),
       ...evidenceContract,
     }
   }
@@ -1035,7 +1139,7 @@ async function observeLiveLifecycle(params: {
     city: artifactBackedItinerary.city,
     persona,
     vibe,
-    mode: 'curate' as ExperienceMode,
+    mode: params.modeContext.mode,
   })
   const runtimeRouteArtifact: RuntimeRouteArtifact | null = lockTruth.ok ? lockTruth.finalRoute : null
   const snapshot = buildRouteAuthoritySnapshot({
@@ -1060,6 +1164,11 @@ async function observeLiveLifecycle(params: {
   const appAuthorityShadowUsed = !canonicalRouteTruth || snapshot.sourceLabel !== 'contract_entry_artifact.runtime_route_artifact'
 
   return {
+    mode: params.modeContext.mode,
+    starterFamily:
+      params.modeContext.curate.starterPack
+        ? `${params.modeContext.curate.starterPack.title} / ${params.modeContext.curate.starterPack.id}`
+        : `${params.modeContext.mode} / no-starter-context`,
     routeLabel: artifact.id,
     contractEntryProduced: true,
     runtimeRouteProduced: lockTruth.ok,
@@ -1123,6 +1232,11 @@ async function observeLiveLifecycle(params: {
     ]
       .filter((value): value is string => Boolean(value))
       .join('; ') || 'valid live proof pass',
+    modeContextAdapter: formatModeContextAdapter(params.modeContext),
+    curateStarterContextSupplied: params.modeContext.curate.status === 'supplied',
+    surpriseContextCarrierExercised: params.modeContext.surprise.status === 'supplied',
+    buildContextCarrierExercised: params.modeContext.build.status === 'supplied',
+    futureModeContextRequirement: futureModeContextRequirement(params.modeContext),
     ...evidenceContract,
   }
 }
@@ -1187,13 +1301,14 @@ async function runLiveProof(): Promise<{
     const { runGovernedFieldProxyRoutePlanBuild } = await import('../src/app/services/arcApplicationService.ts')
     const starterPack = starterPacks.find((pack) => pack.id === 'coffee-books')
     assert(starterPack, 'coffee_books_starter_pack_missing')
-    const result = await runGovernedFieldProxyRoutePlanBuild(buildCurateCoffeeBooksInput(starterPack), {
+    const modeContext = buildCurateRunnerModeContext(starterPack)
+    const result = await runGovernedFieldProxyRoutePlanBuild(buildCurateStarterPackInput(starterPack), {
       starterPack,
     })
     assert(counters.fieldProxyCalls <= 3, `field_proxy_calls_exceeded_3:${counters.fieldProxyCalls}`)
     assert(counters.providerCalls <= 3, `provider_calls_exceeded_3:${counters.providerCalls}`)
     assert(counters.centerKeys.size <= 1, `maxCenters_exceeded_1:${counters.centerKeys.size}`)
-    const observation = await observeLiveLifecycle({ result, counters })
+    const observation = await observeLiveLifecycle({ result, counters, modeContext })
     budgetAfter = await readBudgetSnapshot(dailyCap)
     assert(
       budgetAfter.used - budgetBefore.used <= 3,
