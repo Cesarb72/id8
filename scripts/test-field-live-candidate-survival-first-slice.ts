@@ -329,6 +329,41 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
     assert.equal(outsideCandidate?.dropReason, 'field_source_pocket_filter_outside_selected_envelope')
     assert.equal(outsideCandidate?.hasLocationEvidence, true)
     assert.equal(outsideCandidate?.distanceMargin?.status, 'outside_by')
+    assert.equal(outsideCandidate?.fieldToBearingsProvisionalHandoff?.candidateClass, 'provisional_live_candidate')
+    assert.equal(outsideCandidate?.fieldToBearingsProvisionalHandoff?.proofEligible, false)
+    assert.equal(outsideCandidate?.fieldToBearingsProvisionalHandoff?.diagnosticOnly, true)
+    assert.equal(
+      outsideCandidate?.fieldToBearingsProvisionalHandoff?.futureOwnerHint,
+      'bearings_spatial_admissibility_required',
+    )
+    assert.equal(
+      outsideCandidate?.fieldToBearingsProvisionalHandoff?.currentOwner,
+      'Field evidence / source diagnostics',
+    )
+    assert.equal(
+      outsideCandidate?.fieldToBearingsProvisionalHandoff?.primaryProvisionalReason,
+      'outside_selected_pocket_envelope',
+    )
+    assert.equal(outsideCandidate?.fieldToBearingsProvisionalHandoff?.pocketVerdict, 'rejected_outside_selected_envelope')
+    assert.equal(outsideCandidate?.fieldToBearingsProvisionalHandoff?.hasProviderPlaceId, true)
+    assert.equal(outsideCandidate?.fieldToBearingsProvisionalHandoff?.hasFormattedAddress, true)
+    assert.equal(outsideCandidate?.fieldToBearingsProvisionalHandoff?.hasLocation, true)
+    assert.equal(outsideCandidate?.fieldToBearingsProvisionalHandoff?.hasCategoriesTypes, true)
+    assert.equal(outsideCandidate?.fieldToBearingsProvisionalHandoff?.hasHoursOpenStatus, true)
+    assert.equal(outsideCandidate?.fieldToBearingsProvisionalHandoff?.hasRating, true)
+    assert.equal(outsideCandidate?.fieldToBearingsProvisionalHandoff?.hasUserRatingCount, true)
+    assert.equal(
+      outsideCandidate?.fieldToBearingsProvisionalHandoff?.distanceMargin.status,
+      'outside_by',
+    )
+    assert.equal(
+      typeof outsideCandidate?.fieldToBearingsProvisionalHandoff?.distanceFromPocketCenterM,
+      'number',
+    )
+    assert.equal(
+      typeof outsideCandidate?.fieldToBearingsProvisionalHandoff?.pocketRadiusThresholdM,
+      'number',
+    )
     assert.equal(
       retrieval.venues.some((venue) => venue.id === outsideCandidate?.venueId),
       false,
@@ -353,6 +388,12 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
     assert.equal(rollups?.canonicalLiveCandidateCount, 1)
     assert.equal(rollups?.provisionalLiveCandidateCount, 1)
     assert.equal(rollups?.blockedLiveCandidateCount >= 1, true)
+    assert.equal(rollups?.provisionalHandoffCandidateCount, 1)
+    assert.equal(rollups?.provisionalHandoffWithLocationCount, 1)
+    assert.equal(rollups?.provisionalHandoffWithFormattedAddressCount, 1)
+    assert.equal(rollups?.provisionalHandoffOutsideEnvelopeCount, 1)
+    assert.equal(rollups?.provisionalHandoffMissingLocationCount, 0)
+    assert.equal(rollups?.provisionalHandoffRequiresBearingsAdmissibilityCount, 1)
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -498,7 +539,9 @@ async function run(): Promise<void> {
       liveRunnerSource.includes('provisionalInRetrievalVenues') &&
       liveRunnerSource.includes('provisionalInRolePools') &&
       liveRunnerSource.includes('provisionalArtifactEligible') &&
-      liveRunnerSource.includes('provisionalLockEligible'),
+      liveRunnerSource.includes('provisionalLockEligible') &&
+      liveRunnerSource.includes('provisionalHandoffCandidate') &&
+      liveRunnerSource.includes('provisionalHandoffRequiresBearingsAdmissibility'),
     'live proof runner must report whether provisional candidates leak into scored venues or route selection.',
   )
 

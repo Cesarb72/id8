@@ -264,6 +264,9 @@ function buildFieldLiveDiagnosticRollups(params: {
   hoursSuppressedCount: number
 }): FieldLiveDiagnosticRollups {
   const candidates = params.liveCandidatesByQuery.flatMap((query) => query.candidates ?? [])
+  const provisionalHandoffs = candidates
+    .map((candidate) => candidate.fieldToBearingsProvisionalHandoff)
+    .filter((handoff): handoff is NonNullable<typeof handoff> => Boolean(handoff))
   const countClass = (candidateClass: FieldCandidateClass): number =>
     candidates.filter((candidate) => candidate.fieldCandidateClass === candidateClass).length
   const pocketFilterKeptCount = candidates.filter((candidate) => candidate.filterVerdict === 'kept').length
@@ -304,6 +307,20 @@ function buildFieldLiveDiagnosticRollups(params: {
     blockedLiveCandidateCount: countClass('blocked_live_candidate'),
     curatedStaticCandidateCount: params.survivalDiagnostics.filter(
       (diagnostic) => diagnostic.fieldCandidateClass === 'curated_static_candidate',
+    ).length,
+    provisionalHandoffCandidateCount: provisionalHandoffs.length,
+    provisionalHandoffWithLocationCount: provisionalHandoffs.filter((handoff) => handoff.hasLocation).length,
+    provisionalHandoffWithFormattedAddressCount: provisionalHandoffs.filter(
+      (handoff) => handoff.hasFormattedAddress,
+    ).length,
+    provisionalHandoffOutsideEnvelopeCount: provisionalHandoffs.filter(
+      (handoff) => handoff.pocketVerdict === 'rejected_outside_selected_envelope',
+    ).length,
+    provisionalHandoffMissingLocationCount: provisionalHandoffs.filter(
+      (handoff) => !handoff.hasLocation || handoff.pocketVerdict === 'rejected_missing_location',
+    ).length,
+    provisionalHandoffRequiresBearingsAdmissibilityCount: provisionalHandoffs.filter(
+      (handoff) => handoff.futureOwnerHint === 'bearings_spatial_admissibility_required',
     ).length,
   }
 }

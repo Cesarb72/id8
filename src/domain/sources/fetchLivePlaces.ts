@@ -22,7 +22,10 @@ import type { SourceMode } from '../types/sourceMode'
 import type { StarterPack } from '../types/starterPack'
 import type { Venue } from '../types/venue'
 import type { LiveRetrievalPocketHint } from '../retrieval/liveEnvelope'
-import type { FieldCandidateClass } from '../types/diagnostics'
+import type {
+  FieldCandidateClass,
+  FieldToBearingsProvisionalHandoffDiagnostic,
+} from '../types/diagnostics'
 
 type LivePlaceMapperInput = Parameters<typeof mapLivePlaceToRawPlaceWithDiagnostics>[0]
 
@@ -78,6 +81,7 @@ interface LiveCandidatesByQueryDiagnostics {
     candidateBoardAdmission: boolean
     pocketFilter: 'admitted' | 'outside_pocket_envelope' | 'not_applicable' | 'unknown_drop_stage'
     dropReason?: string
+    fieldToBearingsProvisionalHandoff?: FieldToBearingsProvisionalHandoffDiagnostic
     sourceCategoryEvidence?: {
       rawSourceTypes: string[]
       normalizedSourceTypes: string[]
@@ -651,6 +655,111 @@ function classifyFieldCandidate(params: {
   return 'provisional_live_candidate'
 }
 
+function hasRawOrNormalizedHoursEvidence(params: {
+  normalizedVenue: Venue | undefined
+  rawPlace: RawPlace
+}): boolean {
+  const source = params.normalizedVenue?.source
+  return Boolean(
+    source?.hoursKnown === true ||
+      typeof source?.openNow === 'boolean' ||
+      source?.runtimeHoursTextHoursAvailable ||
+      source?.runtimeHoursStructuredPeriodCount ||
+      typeof params.rawPlace.openNow === 'boolean' ||
+      (params.rawPlace.hoursPeriods?.length ?? 0) > 0 ||
+      (params.rawPlace.regularOpeningHoursText?.length ?? 0) > 0 ||
+      (params.rawPlace.currentOpeningHoursText?.length ?? 0) > 0,
+  )
+}
+
+function buildPrimaryProvisionalReason(params: {
+  filterVerdict: NonNullable<LiveCandidateDisposition['filterVerdict']>
+  pocketFilter: LiveCandidateDisposition['pocketFilter']
+}): string {
+  if (params.filterVerdict === 'rejected_outside_selected_envelope') {
+    return 'outside_selected_pocket_envelope'
+  }
+  if (params.filterVerdict === 'rejected_unknown_distance') {
+    return 'unknown_distance_to_selected_pocket_envelope'
+  }
+  if (params.filterVerdict === 'rejected_missing_location') {
+    return 'missing_location_for_selected_pocket_envelope'
+  }
+  if (params.pocketFilter === 'not_applicable') {
+    return 'no_active_pocket_envelope'
+  }
+  return 'field_source_candidate_requires_bearings_spatial_admissibility'
+}
+
+function buildFieldToBearingsProvisionalHandoff(params: {
+  fieldCandidateClass: FieldCandidateClass
+  normalizedVenue: Venue | undefined
+  rawPlace: RawPlace
+  filterVerdict: NonNullable<LiveCandidateDisposition['filterVerdict']>
+  hasLocationEvidence: boolean
+  hasFormattedAddressEvidence: boolean
+  hasProviderIdEvidence: boolean
+  sourceTypes: string[]
+  selectedPocketEnvelope: string | undefined
+  pocketProofDiagnostic: LiveCandidateDisposition['pocketProofDiagnostic']
+  distanceMargin: NonNullable<LiveCandidateDisposition['distanceMargin']>
+  pocketFilter: LiveCandidateDisposition['pocketFilter']
+}): FieldToBearingsProvisionalHandoffDiagnostic | undefined {
+  if (params.fieldCandidateClass !== 'provisional_live_candidate') {
+    return undefined
+  }
+  const hasCategoriesTypes = params.sourceTypes.length > 0
+  const hasRating =
+    typeof params.normalizedVenue?.source.rating === 'number' || typeof params.rawPlace.rating === 'number'
+  const hasUserRatingCount =
+    typeof params.normalizedVenue?.source.reviewCount === 'number' ||
+    typeof params.rawPlace.ratingCount === 'number'
+  return {
+    candidateClass: 'provisional_live_candidate',
+    proofEligible: false,
+    diagnosticOnly: true,
+    sourceEvidenceStatus:
+      params.hasLocationEvidence &&
+      params.hasFormattedAddressEvidence &&
+      params.hasProviderIdEvidence &&
+      hasCategoriesTypes
+        ? 'source_evidence_available'
+        : 'source_evidence_incomplete',
+    hasProviderPlaceId: params.hasProviderIdEvidence,
+    hasFormattedAddress: params.hasFormattedAddressEvidence,
+    hasLocation: params.hasLocationEvidence,
+    hasCategoriesTypes,
+    hasHoursOpenStatus: hasRawOrNormalizedHoursEvidence({
+      normalizedVenue: params.normalizedVenue,
+      rawPlace: params.rawPlace,
+    }),
+    hasRating,
+    hasUserRatingCount,
+    ...(params.selectedPocketEnvelope ? { selectedPocketEnvelope: params.selectedPocketEnvelope } : {}),
+    ...(params.pocketProofDiagnostic?.activePocketId
+      ? { activePocketId: params.pocketProofDiagnostic.activePocketId }
+      : {}),
+    ...(params.pocketProofDiagnostic?.activePocketLabel
+      ? { activePocketLabel: params.pocketProofDiagnostic.activePocketLabel }
+      : {}),
+    ...(typeof params.pocketProofDiagnostic?.candidateDistanceToPocketCenterM === 'number'
+      ? { distanceFromPocketCenterM: params.pocketProofDiagnostic.candidateDistanceToPocketCenterM }
+      : {}),
+    ...(typeof params.pocketProofDiagnostic?.fieldAdmissionEnvelopeRadiusM === 'number'
+      ? { pocketRadiusThresholdM: params.pocketProofDiagnostic.fieldAdmissionEnvelopeRadiusM }
+      : {}),
+    distanceMargin: params.distanceMargin,
+    pocketVerdict:
+      params.filterVerdict === 'kept' ? 'other_sanitized_reason' : params.filterVerdict,
+    primaryProvisionalReason: buildPrimaryProvisionalReason({
+      filterVerdict: params.filterVerdict,
+      pocketFilter: params.pocketFilter,
+    }),
+    futureOwnerHint: 'bearings_spatial_admissibility_required',
+    currentOwner: 'Field evidence / source diagnostics',
+  }
+}
+
 function countByGateStatus(venues: Venue[], status: QualityGateStatus): number {
   return venues.filter((venue) => venue.source.qualityGateStatus === status).length
 }
@@ -1127,6 +1236,26 @@ export async function fetchLivePlaces(
         hasProviderIdEvidence,
       })
       const proofEligible = fieldCandidateClass === 'canonical_live_candidate'
+      const selectedPocketEnvelope = buildSelectedPocketEnvelopeLabel(
+        pocketHint,
+        pocketProofDiagnostic?.fieldAdmissionEnvelopeRadiusM,
+      )
+      const distanceMargin = buildDistanceMargin(pocketProofDiagnostic?.marginToFieldAdmissionEnvelopeM)
+      const sourceTypes = normalizedVenue?.source.sourceTypes ?? rawPlace.sourceTypes ?? []
+      const fieldToBearingsProvisionalHandoff = buildFieldToBearingsProvisionalHandoff({
+        fieldCandidateClass,
+        normalizedVenue,
+        rawPlace,
+        filterVerdict,
+        hasLocationEvidence,
+        hasFormattedAddressEvidence,
+        hasProviderIdEvidence,
+        sourceTypes,
+        selectedPocketEnvelope,
+        pocketProofDiagnostic,
+        distanceMargin,
+        pocketFilter,
+      })
       return {
         name: rawPlace.name,
         venueId: normalizedVenue?.id ?? rawPlace.id,
@@ -1140,26 +1269,24 @@ export async function fetchLivePlaces(
         proofEligible,
         diagnosticOnly: !proofEligible,
         candidatePocket: normalizedVenue?.neighborhood,
-        selectedPocketEnvelope: buildSelectedPocketEnvelopeLabel(
-          pocketHint,
-          pocketProofDiagnostic?.fieldAdmissionEnvelopeRadiusM,
-        ),
+        selectedPocketEnvelope,
         ...(typeof pocketProofDiagnostic?.candidateDistanceToPocketCenterM === 'number'
           ? { candidateDistanceFromPocketCenterM: pocketProofDiagnostic.candidateDistanceToPocketCenterM }
           : {}),
         ...(typeof pocketProofDiagnostic?.fieldAdmissionEnvelopeRadiusM === 'number'
           ? { pocketRadiusThresholdM: pocketProofDiagnostic.fieldAdmissionEnvelopeRadiusM }
           : {}),
-        distanceMargin: buildDistanceMargin(pocketProofDiagnostic?.marginToFieldAdmissionEnvelopeM),
+        distanceMargin,
         filterVerdict,
         hasLocationEvidence,
         hasFormattedAddressEvidence,
         hasProviderIdEvidence,
-        sourceTypes: normalizedVenue?.source.sourceTypes ?? rawPlace.sourceTypes ?? [],
+        sourceTypes,
         providerResultSummary: true,
         normalizedResult,
         candidateBoardAdmission,
         pocketFilter,
+        ...(fieldToBearingsProvisionalHandoff ? { fieldToBearingsProvisionalHandoff } : {}),
         sourceCategoryEvidence: {
           rawSourceTypes: rawPlace.sourceTypes ?? [],
           normalizedSourceTypes: normalizedVenue?.source.sourceTypes ?? [],

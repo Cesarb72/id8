@@ -135,6 +135,37 @@ export type FieldCandidateClass =
   | 'blocked_live_candidate'
   | 'curated_static_candidate'
 
+export interface FieldToBearingsProvisionalHandoffDiagnostic {
+  candidateClass: 'provisional_live_candidate'
+  proofEligible: false
+  diagnosticOnly: true
+  sourceEvidenceStatus: 'source_evidence_available' | 'source_evidence_incomplete'
+  hasProviderPlaceId: boolean
+  hasFormattedAddress: boolean
+  hasLocation: boolean
+  hasCategoriesTypes: boolean
+  hasHoursOpenStatus: boolean
+  hasRating: boolean
+  hasUserRatingCount: boolean
+  selectedPocketEnvelope?: string
+  activePocketId?: string
+  activePocketLabel?: string
+  distanceFromPocketCenterM?: number
+  pocketRadiusThresholdM?: number
+  distanceMargin: {
+    status: 'inside_by' | 'outside_by' | 'unknown'
+    meters?: number
+  }
+  pocketVerdict:
+    | 'rejected_outside_selected_envelope'
+    | 'rejected_missing_location'
+    | 'rejected_unknown_distance'
+    | 'other_sanitized_reason'
+  primaryProvisionalReason: string
+  futureOwnerHint: 'bearings_spatial_admissibility_required'
+  currentOwner: 'Field evidence / source diagnostics'
+}
+
 export interface LiveQueryCandidateDispositionDiagnostics {
   name: string
   venueId?: string
@@ -168,6 +199,7 @@ export interface LiveQueryCandidateDispositionDiagnostics {
   candidateBoardAdmission: boolean
   pocketFilter: 'admitted' | 'outside_pocket_envelope' | 'not_applicable' | 'unknown_drop_stage'
   dropReason?: string
+  fieldToBearingsProvisionalHandoff?: FieldToBearingsProvisionalHandoffDiagnostic
   sourceCategoryEvidence?: {
     rawSourceTypes: string[]
     normalizedSourceTypes: string[]
@@ -282,6 +314,12 @@ export interface FieldLiveDiagnosticRollups {
   provisionalLiveCandidateCount: number
   blockedLiveCandidateCount: number
   curatedStaticCandidateCount: number
+  provisionalHandoffCandidateCount: number
+  provisionalHandoffWithLocationCount: number
+  provisionalHandoffWithFormattedAddressCount: number
+  provisionalHandoffOutsideEnvelopeCount: number
+  provisionalHandoffMissingLocationCount: number
+  provisionalHandoffRequiresBearingsAdmissibilityCount: number
 }
 
 export type LiveCompetitionStage =
