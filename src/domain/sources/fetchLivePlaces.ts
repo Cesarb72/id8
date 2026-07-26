@@ -577,7 +577,7 @@ function buildSelectedPocketEnvelopeLabel(
 
 function buildDistanceMargin(
   marginToFieldAdmissionEnvelopeM: number | undefined,
-): LiveCandidateDisposition['distanceMargin'] {
+): NonNullable<LiveCandidateDisposition['distanceMargin']> {
   if (typeof marginToFieldAdmissionEnvelopeM !== 'number') {
     return { status: 'unknown' }
   }
@@ -1190,7 +1190,7 @@ export async function fetchLivePlaces(
       (venue) => venue.source.sourceQueryLabel === query.label,
     )
     const normalizedByRawId = new Map(normalizedForQuery.map((venue) => [venue.id, venue]))
-    const candidates = mapped.map((rawPlace) => {
+    const candidates: LiveCandidateDisposition[] = mapped.map((rawPlace) => {
       const normalizedVenue = normalizedByRawId.get(rawPlace.id)
       const normalizedResult = Boolean(normalizedVenue)
       const candidateBoardAdmission = Boolean(normalizedVenue && selectedVenueIds.has(normalizedVenue.id))
