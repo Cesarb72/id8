@@ -1,6 +1,8 @@
 import type {
   BearingsCandidateAdmissibilityDiagnostic,
   BearingsCandidateAdmissibilityStatus,
+  BearingsCandidateSourceEvidenceStatus,
+  BearingsDistrictSpatialStructureStatus,
   FieldToBearingsProvisionalHandoffDiagnostic,
 } from '../types/diagnostics'
 
@@ -12,6 +14,10 @@ export interface BearingsCandidateAdmissibilityRollups {
   bearingsPlaceRightRequiredCount: number
   bearingsBlockedCandidateCount: number
   bearingsProvisionalOnlyCandidateCount: number
+  bearingsOutsideEnvelopeCount: number
+  bearingsMissingLocationCount: number
+  bearingsAdmissibilityNotEvaluatedCount: number
+  bearingsCandidateUpgradeRequiredCount: number
 }
 
 function resolveSpatialStatus(
@@ -33,6 +39,22 @@ function resolveOverallStatus(
     return 'bearings_blocked'
   }
   return 'bearings_provisional_only'
+}
+
+function resolveSourceEvidenceStatus(
+  handoff: FieldToBearingsProvisionalHandoffDiagnostic,
+): BearingsCandidateSourceEvidenceStatus {
+  return handoff.sourceEvidenceStatus === 'source_evidence_available'
+    ? 'bearings_source_evidence_available'
+    : 'bearings_source_evidence_incomplete'
+}
+
+function resolveDistrictSpatialStructureStatus(
+  handoff: FieldToBearingsProvisionalHandoffDiagnostic,
+): BearingsDistrictSpatialStructureStatus {
+  return handoff.selectedPocketEnvelope || handoff.activePocketId || handoff.activePocketLabel
+    ? 'district_spatial_structure_available'
+    : 'district_spatial_structure_missing'
 }
 
 function resolveDistanceMarginInterpretation(
@@ -69,6 +91,8 @@ export function buildCandidateAdmissibilityDiagnostic(
     routeEligibilityChanged: false,
     overallStatus,
     spatialAdmissibilityStatus,
+    sourceEvidenceStatus: resolveSourceEvidenceStatus(handoff),
+    districtSpatialStructureStatus: resolveDistrictSpatialStructureStatus(handoff),
     planTimeHoursFeasibilityStatus: 'bearings_plan_time_hours_feasibility_required',
     movementFeasibilityStatus: handoff.hasLocation
       ? 'bearings_movement_feasibility_required'
@@ -76,6 +100,7 @@ export function buildCandidateAdmissibilityDiagnostic(
     placeRightStatus: handoff.hasLocation
       ? 'bearings_place_right_required'
       : 'bearings_admissibility_not_evaluated',
+    requiredStopSurvivalStatus: 'bearings_admissibility_not_evaluated',
     distanceMarginInterpretation: resolveDistanceMarginInterpretation(handoff),
     fieldCurrentHoursEvidenceStatus: handoff.hasHoursOpenStatus
       ? 'field_current_hours_evidence_available'
@@ -91,8 +116,9 @@ export function buildCandidateAdmissibilityDiagnostic(
         ? { blockReason: 'outside_selected_envelope' as const }
         : {}),
     notes: [
-      'diagnostic_only_bearings_scaffold',
+      'diagnostic_only_bearings_candidate_admissibility_evaluator',
       'field_current_reality_not_collapsed_into_bearings_plan_time_feasibility',
+      'district_spatial_structure_not_collapsed_into_route_admission',
       'no_route_artifact_or_lock_eligibility_change',
     ],
   }
@@ -101,6 +127,13 @@ export function buildCandidateAdmissibilityDiagnostic(
 export function buildCandidateAdmissibilityRollups(
   diagnostics: readonly BearingsCandidateAdmissibilityDiagnostic[],
 ): BearingsCandidateAdmissibilityRollups {
+  const notEvaluatedStatuses = (diagnostic: BearingsCandidateAdmissibilityDiagnostic): number =>
+    [
+      diagnostic.movementFeasibilityStatus,
+      diagnostic.placeRightStatus,
+      diagnostic.requiredStopSurvivalStatus,
+    ].filter((status) => status === 'bearings_admissibility_not_evaluated').length
+
   return {
     bearingsCandidateAdmissibilityDiagnosticCount: diagnostics.length,
     bearingsSpatialAdmissibilityRequiredCount: diagnostics.filter(
@@ -125,6 +158,21 @@ export function buildCandidateAdmissibilityRollups(
     ).length,
     bearingsProvisionalOnlyCandidateCount: diagnostics.filter(
       (diagnostic) => diagnostic.overallStatus === 'bearings_provisional_only',
+    ).length,
+    bearingsOutsideEnvelopeCount: diagnostics.filter(
+      (diagnostic) => diagnostic.spatialAdmissibilityStatus === 'bearings_outside_selected_envelope',
+    ).length,
+    bearingsMissingLocationCount: diagnostics.filter(
+      (diagnostic) => diagnostic.spatialAdmissibilityStatus === 'bearings_missing_location',
+    ).length,
+    bearingsAdmissibilityNotEvaluatedCount: diagnostics.reduce(
+      (count, diagnostic) => count + notEvaluatedStatuses(diagnostic),
+      0,
+    ),
+    bearingsCandidateUpgradeRequiredCount: diagnostics.filter(
+      (diagnostic) =>
+        diagnostic.upgradeRequirement === 'future_bearings_admissibility_evaluation_required' ||
+        diagnostic.upgradeRequirement === 'blocked_outside_selected_envelope',
     ).length,
   }
 }

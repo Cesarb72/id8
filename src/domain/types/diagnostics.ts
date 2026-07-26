@@ -177,6 +177,14 @@ export type BearingsCandidateAdmissibilityStatus =
   | 'bearings_blocked'
   | 'bearings_provisional_only'
 
+export type BearingsCandidateSourceEvidenceStatus =
+  | 'bearings_source_evidence_available'
+  | 'bearings_source_evidence_incomplete'
+
+export type BearingsDistrictSpatialStructureStatus =
+  | 'district_spatial_structure_available'
+  | 'district_spatial_structure_missing'
+
 export interface BearingsCandidateAdmissibilityDiagnostic {
   owner: 'Bearings'
   inputSource: 'fieldToBearingsProvisionalHandoff'
@@ -187,9 +195,12 @@ export interface BearingsCandidateAdmissibilityDiagnostic {
   routeEligibilityChanged: false
   overallStatus: BearingsCandidateAdmissibilityStatus
   spatialAdmissibilityStatus: BearingsCandidateAdmissibilityStatus
+  sourceEvidenceStatus: BearingsCandidateSourceEvidenceStatus
+  districtSpatialStructureStatus: BearingsDistrictSpatialStructureStatus
   planTimeHoursFeasibilityStatus: BearingsCandidateAdmissibilityStatus
   movementFeasibilityStatus: BearingsCandidateAdmissibilityStatus
   placeRightStatus: BearingsCandidateAdmissibilityStatus
+  requiredStopSurvivalStatus: BearingsCandidateAdmissibilityStatus
   distanceMarginInterpretation: 'outside_selected_envelope' | 'inside_field_envelope_but_not_bearings_evaluated' | 'unknown'
   fieldCurrentHoursEvidenceStatus: 'field_current_hours_evidence_available' | 'field_current_hours_evidence_missing'
   upgradeRequirement: 'future_bearings_admissibility_evaluation_required' | 'blocked_missing_location' | 'blocked_outside_selected_envelope'
@@ -359,6 +370,10 @@ export interface FieldLiveDiagnosticRollups {
   bearingsPlaceRightRequiredCount: number
   bearingsBlockedCandidateCount: number
   bearingsProvisionalOnlyCandidateCount: number
+  bearingsOutsideEnvelopeCount: number
+  bearingsMissingLocationCount: number
+  bearingsAdmissibilityNotEvaluatedCount: number
+  bearingsCandidateUpgradeRequiredCount: number
 }
 
 export type LiveCompetitionStage =

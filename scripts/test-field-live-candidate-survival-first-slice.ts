@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 import { curatedVenues } from '../src/data/venues.ts'
+import { buildCandidateAdmissibilityDiagnostic } from '../src/domain/bearings/buildCandidateAdmissibilityDiagnostics.ts'
 import { buildExperienceLens } from '../src/domain/intent/buildExperienceLens.ts'
 import { normalizeIntent } from '../src/domain/intent/normalizeIntent.ts'
 import {
@@ -11,6 +12,7 @@ import {
   retrieveVenues,
 } from '../src/domain/retrieval/retrieveVenues.ts'
 import type { FieldTextSearchResponse } from '../src/domain/field/fieldProxyTypes.ts'
+import type { FieldToBearingsProvisionalHandoffDiagnostic } from '../src/domain/types/diagnostics.ts'
 import type { QualityGateStatus } from '../src/domain/types/normalization.ts'
 import type { Venue } from '../src/domain/types/venue.ts'
 
@@ -383,6 +385,14 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
       'bearings_outside_selected_envelope',
     )
     assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.sourceEvidenceStatus,
+      'bearings_source_evidence_available',
+    )
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.districtSpatialStructureStatus,
+      'district_spatial_structure_available',
+    )
+    assert.equal(
       outsideCandidate?.bearingsCandidateAdmissibility?.planTimeHoursFeasibilityStatus,
       'bearings_plan_time_hours_feasibility_required',
     )
@@ -395,6 +405,10 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
       'bearings_place_right_required',
     )
     assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.requiredStopSurvivalStatus,
+      'bearings_admissibility_not_evaluated',
+    )
+    assert.equal(
       outsideCandidate?.bearingsCandidateAdmissibility?.fieldCurrentHoursEvidenceStatus,
       'field_current_hours_evidence_available',
     )
@@ -405,6 +419,12 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
     assert.equal(
       outsideCandidate?.bearingsCandidateAdmissibility?.notes.includes(
         'field_current_reality_not_collapsed_into_bearings_plan_time_feasibility',
+      ),
+      true,
+    )
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.notes.includes(
+        'district_spatial_structure_not_collapsed_into_route_admission',
       ),
       true,
     )
@@ -445,9 +465,54 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
     assert.equal(rollups?.bearingsPlaceRightRequiredCount, 1)
     assert.equal(rollups?.bearingsBlockedCandidateCount, 0)
     assert.equal(rollups?.bearingsProvisionalOnlyCandidateCount, 1)
+    assert.equal(rollups?.bearingsOutsideEnvelopeCount, 1)
+    assert.equal(rollups?.bearingsMissingLocationCount, 0)
+    assert.equal(rollups?.bearingsAdmissibilityNotEvaluatedCount, 1)
+    assert.equal(rollups?.bearingsCandidateUpgradeRequiredCount, 1)
   } finally {
     globalThis.fetch = originalFetch
   }
+}
+
+function assertBearingsMissingLocationDiagnostic(): void {
+  const missingLocationHandoff: FieldToBearingsProvisionalHandoffDiagnostic = {
+    candidateClass: 'provisional_live_candidate',
+    proofEligible: false,
+    diagnosticOnly: true,
+    sourceEvidenceStatus: 'source_evidence_incomplete',
+    hasProviderPlaceId: true,
+    hasFormattedAddress: true,
+    hasLocation: false,
+    hasCategoriesTypes: true,
+    hasHoursOpenStatus: true,
+    hasRating: true,
+    hasUserRatingCount: true,
+    selectedPocketEnvelope: 'Downtown San Jose (650m)',
+    activePocketId: 'downtown-san-jose',
+    activePocketLabel: 'Downtown San Jose',
+    distanceMargin: { status: 'unknown' },
+    pocketVerdict: 'rejected_missing_location',
+    primaryProvisionalReason: 'missing_location_for_selected_pocket_envelope',
+    futureOwnerHint: 'bearings_spatial_admissibility_required',
+    currentOwner: 'Field evidence / source diagnostics',
+  }
+  const diagnostic = buildCandidateAdmissibilityDiagnostic(missingLocationHandoff)
+  assert.equal(diagnostic?.owner, 'Bearings')
+  assert.equal(diagnostic?.overallStatus, 'bearings_blocked')
+  assert.equal(diagnostic?.spatialAdmissibilityStatus, 'bearings_missing_location')
+  assert.equal(diagnostic?.sourceEvidenceStatus, 'bearings_source_evidence_incomplete')
+  assert.equal(diagnostic?.districtSpatialStructureStatus, 'district_spatial_structure_available')
+  assert.equal(diagnostic?.planTimeHoursFeasibilityStatus, 'bearings_plan_time_hours_feasibility_required')
+  assert.equal(diagnostic?.movementFeasibilityStatus, 'bearings_admissibility_not_evaluated')
+  assert.equal(diagnostic?.placeRightStatus, 'bearings_admissibility_not_evaluated')
+  assert.equal(diagnostic?.requiredStopSurvivalStatus, 'bearings_admissibility_not_evaluated')
+  assert.equal(diagnostic?.fieldCurrentHoursEvidenceStatus, 'field_current_hours_evidence_available')
+  assert.equal(diagnostic?.upgradeRequirement, 'blocked_missing_location')
+  assert.equal(diagnostic?.blockReason, 'missing_location')
+  assert.equal(diagnostic?.proofEligible, false)
+  assert.equal(diagnostic?.diagnosticOnly, true)
+  assert.equal(diagnostic?.behaviorImpact, false)
+  assert.equal(diagnostic?.routeEligibilityChanged, false)
 }
 
 async function run(): Promise<void> {
@@ -598,10 +663,18 @@ async function run(): Promise<void> {
       liveRunnerSource.includes('bearingsPlanTimeHoursFeasibilityRequired') &&
       liveRunnerSource.includes('bearingsMovementFeasibilityRequired') &&
       liveRunnerSource.includes('bearingsPlaceRightRequired') &&
-      liveRunnerSource.includes('bearingsProvisionalOnlyCandidate'),
+      liveRunnerSource.includes('bearingsProvisionalOnlyCandidate') &&
+      liveRunnerSource.includes('bearingsOutsideEnvelope') &&
+      liveRunnerSource.includes('bearingsMissingLocation') &&
+      liveRunnerSource.includes('bearingsAdmissibilityNotEvaluated') &&
+      liveRunnerSource.includes('bearingsCandidateUpgradeRequired') &&
+      liveRunnerSource.includes('bearingsSourceEvidence') &&
+      liveRunnerSource.includes('bearingsDistrictSpatialStructure') &&
+      liveRunnerSource.includes('bearingsRequiredStopSurvival'),
     'live proof runner must report whether provisional candidates leak into scored venues or route selection.',
   )
 
+  assertBearingsMissingLocationDiagnostic()
   await assertRetrieveVenuesUsesSurvivalCarrier()
 
   console.log('phase 3AJ field live candidate survival first slice: PASS')
