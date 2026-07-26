@@ -185,6 +185,25 @@ export type BearingsDistrictSpatialStructureStatus =
   | 'district_spatial_structure_available'
   | 'district_spatial_structure_missing'
 
+export type BearingsOutsideEnvelopeCorrectnessClassification =
+  | 'legitimately_outside_envelope'
+  | 'near_boundary_or_ambiguous'
+  | 'possibly_false_drop'
+  | 'insufficient_data'
+  | 'not_applicable'
+
+export interface BearingsOutsideEnvelopeCorrectnessDiagnostic {
+  diagnosticOnly: true
+  classification: BearingsOutsideEnvelopeCorrectnessClassification
+  evidenceBasis:
+    | 'distance_margin'
+    | 'missing_distance_or_envelope'
+    | 'field_verdict_contradicts_margin'
+    | 'not_outside_envelope_verdict'
+  nearBoundaryThresholdM: number
+  notes: string[]
+}
+
 export interface BearingsCandidateAdmissibilityDiagnostic {
   owner: 'Bearings'
   inputSource: 'fieldToBearingsProvisionalHandoff'
@@ -204,6 +223,7 @@ export interface BearingsCandidateAdmissibilityDiagnostic {
   distanceMarginInterpretation: 'outside_selected_envelope' | 'inside_field_envelope_but_not_bearings_evaluated' | 'unknown'
   fieldCurrentHoursEvidenceStatus: 'field_current_hours_evidence_available' | 'field_current_hours_evidence_missing'
   upgradeRequirement: 'future_bearings_admissibility_evaluation_required' | 'blocked_missing_location' | 'blocked_outside_selected_envelope'
+  q5OutsideEnvelopeCorrectness: BearingsOutsideEnvelopeCorrectnessDiagnostic
   blockReason?: 'missing_location' | 'outside_selected_envelope'
   notes: string[]
 }
@@ -374,6 +394,11 @@ export interface FieldLiveDiagnosticRollups {
   bearingsMissingLocationCount: number
   bearingsAdmissibilityNotEvaluatedCount: number
   bearingsCandidateUpgradeRequiredCount: number
+  q5LegitimatelyOutsideEnvelopeCount: number
+  q5NearBoundaryOrAmbiguousCount: number
+  q5PossiblyFalseDropCount: number
+  q5InsufficientDataCount: number
+  q5UnknownExact22DueToMissingSavedCandidateDetailsCount: number
 }
 
 export type LiveCompetitionStage =

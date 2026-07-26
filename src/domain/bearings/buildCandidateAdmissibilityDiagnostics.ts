@@ -1,10 +1,13 @@
 import type {
   BearingsCandidateAdmissibilityDiagnostic,
   BearingsCandidateAdmissibilityStatus,
+  BearingsOutsideEnvelopeCorrectnessClassification,
   BearingsCandidateSourceEvidenceStatus,
   BearingsDistrictSpatialStructureStatus,
   FieldToBearingsProvisionalHandoffDiagnostic,
 } from '../types/diagnostics'
+
+const Q5_NEAR_BOUNDARY_MARGIN_M = 75
 
 export interface BearingsCandidateAdmissibilityRollups {
   bearingsCandidateAdmissibilityDiagnosticCount: number
@@ -18,6 +21,11 @@ export interface BearingsCandidateAdmissibilityRollups {
   bearingsMissingLocationCount: number
   bearingsAdmissibilityNotEvaluatedCount: number
   bearingsCandidateUpgradeRequiredCount: number
+  q5LegitimatelyOutsideEnvelopeCount: number
+  q5NearBoundaryOrAmbiguousCount: number
+  q5PossiblyFalseDropCount: number
+  q5InsufficientDataCount: number
+  q5UnknownExact22DueToMissingSavedCandidateDetailsCount: number
 }
 
 function resolveSpatialStatus(
@@ -69,6 +77,74 @@ function resolveDistanceMarginInterpretation(
   return 'unknown'
 }
 
+function resolveQ5Classification(
+  handoff: FieldToBearingsProvisionalHandoffDiagnostic,
+): BearingsOutsideEnvelopeCorrectnessClassification {
+  if (handoff.pocketVerdict !== 'rejected_outside_selected_envelope') {
+    return handoff.pocketVerdict === 'rejected_missing_location' ? 'insufficient_data' : 'not_applicable'
+  }
+  if (handoff.distanceMargin.status === 'inside_by') {
+    return 'possibly_false_drop'
+  }
+  if (
+    handoff.distanceMargin.status !== 'outside_by' ||
+    typeof handoff.distanceMargin.meters !== 'number' ||
+    typeof handoff.distanceFromPocketCenterM !== 'number' ||
+    typeof handoff.pocketRadiusThresholdM !== 'number'
+  ) {
+    return 'insufficient_data'
+  }
+  if (handoff.distanceMargin.meters <= Q5_NEAR_BOUNDARY_MARGIN_M) {
+    return 'near_boundary_or_ambiguous'
+  }
+  return 'legitimately_outside_envelope'
+}
+
+function buildQ5Notes(params: {
+  handoff: FieldToBearingsProvisionalHandoffDiagnostic
+  classification: BearingsOutsideEnvelopeCorrectnessClassification
+}): string[] {
+  const notes = ['q5_correctness_check_diagnostic_only']
+  if (params.handoff.pocketVerdict !== 'rejected_outside_selected_envelope') {
+    notes.push('not_an_outside_envelope_verdict')
+  }
+  if (params.classification === 'near_boundary_or_ambiguous') {
+    notes.push(`outside_margin_within_${Q5_NEAR_BOUNDARY_MARGIN_M}m_near_boundary_threshold`)
+  }
+  if (params.classification === 'possibly_false_drop') {
+    notes.push('field_outside_verdict_conflicts_with_inside_distance_margin')
+  }
+  if (params.classification === 'insufficient_data') {
+    notes.push('missing_distance_margin_or_envelope_evidence_for_exact_correctness')
+  }
+  if (params.classification === 'legitimately_outside_envelope') {
+    notes.push('distance_margin_places_candidate_beyond_selected_envelope')
+  }
+  return notes
+}
+
+function buildQ5CorrectnessDiagnostic(
+  handoff: FieldToBearingsProvisionalHandoffDiagnostic,
+): BearingsCandidateAdmissibilityDiagnostic['q5OutsideEnvelopeCorrectness'] {
+  const classification = resolveQ5Classification(handoff)
+  const evidenceBasis =
+    handoff.pocketVerdict !== 'rejected_outside_selected_envelope'
+      ? 'not_outside_envelope_verdict'
+      : handoff.distanceMargin.status === 'inside_by'
+        ? 'field_verdict_contradicts_margin'
+        : classification === 'insufficient_data'
+          ? 'missing_distance_or_envelope'
+          : 'distance_margin'
+
+  return {
+    diagnosticOnly: true,
+    classification,
+    evidenceBasis,
+    nearBoundaryThresholdM: Q5_NEAR_BOUNDARY_MARGIN_M,
+    notes: buildQ5Notes({ handoff, classification }),
+  }
+}
+
 export function buildCandidateAdmissibilityDiagnostic(
   handoff: FieldToBearingsProvisionalHandoffDiagnostic | undefined,
 ): BearingsCandidateAdmissibilityDiagnostic | undefined {
@@ -110,6 +186,7 @@ export function buildCandidateAdmissibilityDiagnostic(
       : outsideSelectedEnvelope
         ? 'blocked_outside_selected_envelope'
         : 'future_bearings_admissibility_evaluation_required',
+    q5OutsideEnvelopeCorrectness: buildQ5CorrectnessDiagnostic(handoff),
     ...(blockedMissingLocation
       ? { blockReason: 'missing_location' as const }
       : outsideSelectedEnvelope
@@ -174,5 +251,20 @@ export function buildCandidateAdmissibilityRollups(
         diagnostic.upgradeRequirement === 'future_bearings_admissibility_evaluation_required' ||
         diagnostic.upgradeRequirement === 'blocked_outside_selected_envelope',
     ).length,
+    q5LegitimatelyOutsideEnvelopeCount: diagnostics.filter(
+      (diagnostic) =>
+        diagnostic.q5OutsideEnvelopeCorrectness.classification === 'legitimately_outside_envelope',
+    ).length,
+    q5NearBoundaryOrAmbiguousCount: diagnostics.filter(
+      (diagnostic) =>
+        diagnostic.q5OutsideEnvelopeCorrectness.classification === 'near_boundary_or_ambiguous',
+    ).length,
+    q5PossiblyFalseDropCount: diagnostics.filter(
+      (diagnostic) => diagnostic.q5OutsideEnvelopeCorrectness.classification === 'possibly_false_drop',
+    ).length,
+    q5InsufficientDataCount: diagnostics.filter(
+      (diagnostic) => diagnostic.q5OutsideEnvelopeCorrectness.classification === 'insufficient_data',
+    ).length,
+    q5UnknownExact22DueToMissingSavedCandidateDetailsCount: 0,
   }
 }

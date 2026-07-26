@@ -417,6 +417,18 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
       'blocked_outside_selected_envelope',
     )
     assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.q5OutsideEnvelopeCorrectness.classification,
+      'legitimately_outside_envelope',
+    )
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.q5OutsideEnvelopeCorrectness.evidenceBasis,
+      'distance_margin',
+    )
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.q5OutsideEnvelopeCorrectness.diagnosticOnly,
+      true,
+    )
+    assert.equal(
       outsideCandidate?.bearingsCandidateAdmissibility?.notes.includes(
         'field_current_reality_not_collapsed_into_bearings_plan_time_feasibility',
       ),
@@ -469,6 +481,11 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
     assert.equal(rollups?.bearingsMissingLocationCount, 0)
     assert.equal(rollups?.bearingsAdmissibilityNotEvaluatedCount, 1)
     assert.equal(rollups?.bearingsCandidateUpgradeRequiredCount, 1)
+    assert.equal(rollups?.q5LegitimatelyOutsideEnvelopeCount, 1)
+    assert.equal(rollups?.q5NearBoundaryOrAmbiguousCount, 0)
+    assert.equal(rollups?.q5PossiblyFalseDropCount, 0)
+    assert.equal(rollups?.q5InsufficientDataCount, 0)
+    assert.equal(rollups?.q5UnknownExact22DueToMissingSavedCandidateDetailsCount, 0)
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -509,10 +526,90 @@ function assertBearingsMissingLocationDiagnostic(): void {
   assert.equal(diagnostic?.fieldCurrentHoursEvidenceStatus, 'field_current_hours_evidence_available')
   assert.equal(diagnostic?.upgradeRequirement, 'blocked_missing_location')
   assert.equal(diagnostic?.blockReason, 'missing_location')
+  assert.equal(diagnostic?.q5OutsideEnvelopeCorrectness.classification, 'insufficient_data')
+  assert.equal(diagnostic?.q5OutsideEnvelopeCorrectness.evidenceBasis, 'not_outside_envelope_verdict')
   assert.equal(diagnostic?.proofEligible, false)
   assert.equal(diagnostic?.diagnosticOnly, true)
   assert.equal(diagnostic?.behaviorImpact, false)
   assert.equal(diagnostic?.routeEligibilityChanged, false)
+}
+
+function assertQ5BoundaryClassifications(): void {
+  const baseHandoff: FieldToBearingsProvisionalHandoffDiagnostic = {
+    candidateClass: 'provisional_live_candidate',
+    proofEligible: false,
+    diagnosticOnly: true,
+    sourceEvidenceStatus: 'source_evidence_available',
+    hasProviderPlaceId: true,
+    hasFormattedAddress: true,
+    hasLocation: true,
+    hasCategoriesTypes: true,
+    hasHoursOpenStatus: true,
+    hasRating: true,
+    hasUserRatingCount: true,
+    selectedPocketEnvelope: 'Downtown San Jose (650m)',
+    activePocketId: 'downtown-san-jose',
+    activePocketLabel: 'Downtown San Jose',
+    distanceFromPocketCenterM: 675,
+    pocketRadiusThresholdM: 650,
+    distanceMargin: { status: 'outside_by', meters: 25 },
+    pocketVerdict: 'rejected_outside_selected_envelope',
+    primaryProvisionalReason: 'outside_selected_pocket_envelope',
+    futureOwnerHint: 'bearings_spatial_admissibility_required',
+    currentOwner: 'Field evidence / source diagnostics',
+  }
+
+  const nearBoundary = buildCandidateAdmissibilityDiagnostic(baseHandoff)
+  assert.equal(
+    nearBoundary?.q5OutsideEnvelopeCorrectness.classification,
+    'near_boundary_or_ambiguous',
+  )
+  assert.equal(nearBoundary?.q5OutsideEnvelopeCorrectness.evidenceBasis, 'distance_margin')
+  assert.equal(nearBoundary?.proofEligible, false)
+  assert.equal(nearBoundary?.diagnosticOnly, true)
+  assert.equal(nearBoundary?.routeEligibilityChanged, false)
+
+  const contradictoryInsideMargin = buildCandidateAdmissibilityDiagnostic({
+    ...baseHandoff,
+    distanceFromPocketCenterM: 625,
+    distanceMargin: { status: 'inside_by', meters: 25 },
+  })
+  assert.equal(
+    contradictoryInsideMargin?.q5OutsideEnvelopeCorrectness.classification,
+    'possibly_false_drop',
+  )
+  assert.equal(
+    contradictoryInsideMargin?.q5OutsideEnvelopeCorrectness.evidenceBasis,
+    'field_verdict_contradicts_margin',
+  )
+
+  const baseHandoffWithoutDistance: FieldToBearingsProvisionalHandoffDiagnostic = {
+    candidateClass: baseHandoff.candidateClass,
+    proofEligible: baseHandoff.proofEligible,
+    diagnosticOnly: baseHandoff.diagnosticOnly,
+    sourceEvidenceStatus: baseHandoff.sourceEvidenceStatus,
+    hasProviderPlaceId: baseHandoff.hasProviderPlaceId,
+    hasFormattedAddress: baseHandoff.hasFormattedAddress,
+    hasLocation: baseHandoff.hasLocation,
+    hasCategoriesTypes: baseHandoff.hasCategoriesTypes,
+    hasHoursOpenStatus: baseHandoff.hasHoursOpenStatus,
+    hasRating: baseHandoff.hasRating,
+    hasUserRatingCount: baseHandoff.hasUserRatingCount,
+    selectedPocketEnvelope: baseHandoff.selectedPocketEnvelope,
+    activePocketId: baseHandoff.activePocketId,
+    activePocketLabel: baseHandoff.activePocketLabel,
+    distanceMargin: baseHandoff.distanceMargin,
+    pocketVerdict: baseHandoff.pocketVerdict,
+    primaryProvisionalReason: baseHandoff.primaryProvisionalReason,
+    futureOwnerHint: baseHandoff.futureOwnerHint,
+    currentOwner: baseHandoff.currentOwner,
+  }
+  const missingDistance = buildCandidateAdmissibilityDiagnostic({
+    ...baseHandoffWithoutDistance,
+    distanceMargin: { status: 'unknown' },
+  })
+  assert.equal(missingDistance?.q5OutsideEnvelopeCorrectness.classification, 'insufficient_data')
+  assert.equal(missingDistance?.q5OutsideEnvelopeCorrectness.evidenceBasis, 'missing_distance_or_envelope')
 }
 
 async function run(): Promise<void> {
@@ -668,6 +765,12 @@ async function run(): Promise<void> {
       liveRunnerSource.includes('bearingsMissingLocation') &&
       liveRunnerSource.includes('bearingsAdmissibilityNotEvaluated') &&
       liveRunnerSource.includes('bearingsCandidateUpgradeRequired') &&
+      liveRunnerSource.includes('q5LegitimatelyOutsideEnvelope') &&
+      liveRunnerSource.includes('q5NearBoundaryOrAmbiguous') &&
+      liveRunnerSource.includes('q5PossiblyFalseDrop') &&
+      liveRunnerSource.includes('q5InsufficientData') &&
+      liveRunnerSource.includes('q5UnknownExact22DueToMissingSavedCandidateDetails') &&
+      liveRunnerSource.includes('q5OutsideEnvelopeCorrectness') &&
       liveRunnerSource.includes('bearingsSourceEvidence') &&
       liveRunnerSource.includes('bearingsDistrictSpatialStructure') &&
       liveRunnerSource.includes('bearingsRequiredStopSurvival'),
@@ -675,6 +778,7 @@ async function run(): Promise<void> {
   )
 
   assertBearingsMissingLocationDiagnostic()
+  assertQ5BoundaryClassifications()
   await assertRetrieveVenuesUsesSurvivalCarrier()
 
   console.log('phase 3AJ field live candidate survival first slice: PASS')
