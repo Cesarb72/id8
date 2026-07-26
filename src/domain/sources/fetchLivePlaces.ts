@@ -23,9 +23,11 @@ import type { StarterPack } from '../types/starterPack'
 import type { Venue } from '../types/venue'
 import type { LiveRetrievalPocketHint } from '../retrieval/liveEnvelope'
 import type {
+  BearingsCandidateAdmissibilityDiagnostic,
   FieldCandidateClass,
   FieldToBearingsProvisionalHandoffDiagnostic,
 } from '../types/diagnostics'
+import { buildCandidateAdmissibilityDiagnostic } from '../bearings/buildCandidateAdmissibilityDiagnostics'
 
 type LivePlaceMapperInput = Parameters<typeof mapLivePlaceToRawPlaceWithDiagnostics>[0]
 
@@ -82,6 +84,7 @@ interface LiveCandidatesByQueryDiagnostics {
     pocketFilter: 'admitted' | 'outside_pocket_envelope' | 'not_applicable' | 'unknown_drop_stage'
     dropReason?: string
     fieldToBearingsProvisionalHandoff?: FieldToBearingsProvisionalHandoffDiagnostic
+    bearingsCandidateAdmissibility?: BearingsCandidateAdmissibilityDiagnostic
     sourceCategoryEvidence?: {
       rawSourceTypes: string[]
       normalizedSourceTypes: string[]
@@ -1256,6 +1259,9 @@ export async function fetchLivePlaces(
         distanceMargin,
         pocketFilter,
       })
+      const bearingsCandidateAdmissibility = buildCandidateAdmissibilityDiagnostic(
+        fieldToBearingsProvisionalHandoff,
+      )
       return {
         name: rawPlace.name,
         venueId: normalizedVenue?.id ?? rawPlace.id,
@@ -1287,6 +1293,7 @@ export async function fetchLivePlaces(
         candidateBoardAdmission,
         pocketFilter,
         ...(fieldToBearingsProvisionalHandoff ? { fieldToBearingsProvisionalHandoff } : {}),
+        ...(bearingsCandidateAdmissibility ? { bearingsCandidateAdmissibility } : {}),
         sourceCategoryEvidence: {
           rawSourceTypes: rawPlace.sourceTypes ?? [],
           normalizedSourceTypes: normalizedVenue?.source.sourceTypes ?? [],

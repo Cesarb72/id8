@@ -166,6 +166,37 @@ export interface FieldToBearingsProvisionalHandoffDiagnostic {
   currentOwner: 'Field evidence / source diagnostics'
 }
 
+export type BearingsCandidateAdmissibilityStatus =
+  | 'bearings_admissibility_not_evaluated'
+  | 'bearings_spatial_admissibility_required'
+  | 'bearings_outside_selected_envelope'
+  | 'bearings_missing_location'
+  | 'bearings_plan_time_hours_feasibility_required'
+  | 'bearings_movement_feasibility_required'
+  | 'bearings_place_right_required'
+  | 'bearings_blocked'
+  | 'bearings_provisional_only'
+
+export interface BearingsCandidateAdmissibilityDiagnostic {
+  owner: 'Bearings'
+  inputSource: 'fieldToBearingsProvisionalHandoff'
+  candidateClass: 'provisional_live_candidate'
+  proofEligible: false
+  diagnosticOnly: true
+  behaviorImpact: false
+  routeEligibilityChanged: false
+  overallStatus: BearingsCandidateAdmissibilityStatus
+  spatialAdmissibilityStatus: BearingsCandidateAdmissibilityStatus
+  planTimeHoursFeasibilityStatus: BearingsCandidateAdmissibilityStatus
+  movementFeasibilityStatus: BearingsCandidateAdmissibilityStatus
+  placeRightStatus: BearingsCandidateAdmissibilityStatus
+  distanceMarginInterpretation: 'outside_selected_envelope' | 'inside_field_envelope_but_not_bearings_evaluated' | 'unknown'
+  fieldCurrentHoursEvidenceStatus: 'field_current_hours_evidence_available' | 'field_current_hours_evidence_missing'
+  upgradeRequirement: 'future_bearings_admissibility_evaluation_required' | 'blocked_missing_location' | 'blocked_outside_selected_envelope'
+  blockReason?: 'missing_location' | 'outside_selected_envelope'
+  notes: string[]
+}
+
 export interface LiveQueryCandidateDispositionDiagnostics {
   name: string
   venueId?: string
@@ -200,6 +231,7 @@ export interface LiveQueryCandidateDispositionDiagnostics {
   pocketFilter: 'admitted' | 'outside_pocket_envelope' | 'not_applicable' | 'unknown_drop_stage'
   dropReason?: string
   fieldToBearingsProvisionalHandoff?: FieldToBearingsProvisionalHandoffDiagnostic
+  bearingsCandidateAdmissibility?: BearingsCandidateAdmissibilityDiagnostic
   sourceCategoryEvidence?: {
     rawSourceTypes: string[]
     normalizedSourceTypes: string[]
@@ -320,6 +352,13 @@ export interface FieldLiveDiagnosticRollups {
   provisionalHandoffOutsideEnvelopeCount: number
   provisionalHandoffMissingLocationCount: number
   provisionalHandoffRequiresBearingsAdmissibilityCount: number
+  bearingsCandidateAdmissibilityDiagnosticCount: number
+  bearingsSpatialAdmissibilityRequiredCount: number
+  bearingsPlanTimeHoursFeasibilityRequiredCount: number
+  bearingsMovementFeasibilityRequiredCount: number
+  bearingsPlaceRightRequiredCount: number
+  bearingsBlockedCandidateCount: number
+  bearingsProvisionalOnlyCandidateCount: number
 }
 
 export type LiveCompetitionStage =

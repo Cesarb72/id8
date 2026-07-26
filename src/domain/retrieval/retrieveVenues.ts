@@ -20,6 +20,7 @@ import {
   buildRuntimeHoursValidationDiagnostics,
   type BearingsRuntimeHoursDiagnostics,
 } from '../bearings/runtimeHoursValidationDiagnostics'
+import { buildCandidateAdmissibilityRollups } from '../bearings/buildCandidateAdmissibilityDiagnostics'
 import {
   BOUNDED_NEARBY_STRETCH_DRIVE_MINUTES,
   isOutsideStrictNearbyButWithinBoundedStretch,
@@ -267,6 +268,12 @@ function buildFieldLiveDiagnosticRollups(params: {
   const provisionalHandoffs = candidates
     .map((candidate) => candidate.fieldToBearingsProvisionalHandoff)
     .filter((handoff): handoff is NonNullable<typeof handoff> => Boolean(handoff))
+  const bearingsCandidateAdmissibilityDiagnostics = candidates
+    .map((candidate) => candidate.bearingsCandidateAdmissibility)
+    .filter((diagnostic): diagnostic is NonNullable<typeof diagnostic> => Boolean(diagnostic))
+  const bearingsAdmissibilityRollups = buildCandidateAdmissibilityRollups(
+    bearingsCandidateAdmissibilityDiagnostics,
+  )
   const countClass = (candidateClass: FieldCandidateClass): number =>
     candidates.filter((candidate) => candidate.fieldCandidateClass === candidateClass).length
   const pocketFilterKeptCount = candidates.filter((candidate) => candidate.filterVerdict === 'kept').length
@@ -322,6 +329,7 @@ function buildFieldLiveDiagnosticRollups(params: {
     provisionalHandoffRequiresBearingsAdmissibilityCount: provisionalHandoffs.filter(
       (handoff) => handoff.futureOwnerHint === 'bearings_spatial_admissibility_required',
     ).length,
+    ...bearingsAdmissibilityRollups,
   }
 }
 

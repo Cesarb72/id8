@@ -364,6 +364,50 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
       typeof outsideCandidate?.fieldToBearingsProvisionalHandoff?.pocketRadiusThresholdM,
       'number',
     )
+    assert.equal(outsideCandidate?.bearingsCandidateAdmissibility?.owner, 'Bearings')
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.inputSource,
+      'fieldToBearingsProvisionalHandoff',
+    )
+    assert.equal(outsideCandidate?.bearingsCandidateAdmissibility?.candidateClass, 'provisional_live_candidate')
+    assert.equal(outsideCandidate?.bearingsCandidateAdmissibility?.proofEligible, false)
+    assert.equal(outsideCandidate?.bearingsCandidateAdmissibility?.diagnosticOnly, true)
+    assert.equal(outsideCandidate?.bearingsCandidateAdmissibility?.behaviorImpact, false)
+    assert.equal(outsideCandidate?.bearingsCandidateAdmissibility?.routeEligibilityChanged, false)
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.overallStatus,
+      'bearings_provisional_only',
+    )
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.spatialAdmissibilityStatus,
+      'bearings_outside_selected_envelope',
+    )
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.planTimeHoursFeasibilityStatus,
+      'bearings_plan_time_hours_feasibility_required',
+    )
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.movementFeasibilityStatus,
+      'bearings_movement_feasibility_required',
+    )
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.placeRightStatus,
+      'bearings_place_right_required',
+    )
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.fieldCurrentHoursEvidenceStatus,
+      'field_current_hours_evidence_available',
+    )
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.upgradeRequirement,
+      'blocked_outside_selected_envelope',
+    )
+    assert.equal(
+      outsideCandidate?.bearingsCandidateAdmissibility?.notes.includes(
+        'field_current_reality_not_collapsed_into_bearings_plan_time_feasibility',
+      ),
+      true,
+    )
     assert.equal(
       retrieval.venues.some((venue) => venue.id === outsideCandidate?.venueId),
       false,
@@ -394,6 +438,13 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
     assert.equal(rollups?.provisionalHandoffOutsideEnvelopeCount, 1)
     assert.equal(rollups?.provisionalHandoffMissingLocationCount, 0)
     assert.equal(rollups?.provisionalHandoffRequiresBearingsAdmissibilityCount, 1)
+    assert.equal(rollups?.bearingsCandidateAdmissibilityDiagnosticCount, 1)
+    assert.equal(rollups?.bearingsSpatialAdmissibilityRequiredCount, 1)
+    assert.equal(rollups?.bearingsPlanTimeHoursFeasibilityRequiredCount, 1)
+    assert.equal(rollups?.bearingsMovementFeasibilityRequiredCount, 1)
+    assert.equal(rollups?.bearingsPlaceRightRequiredCount, 1)
+    assert.equal(rollups?.bearingsBlockedCandidateCount, 0)
+    assert.equal(rollups?.bearingsProvisionalOnlyCandidateCount, 1)
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -541,7 +592,13 @@ async function run(): Promise<void> {
       liveRunnerSource.includes('provisionalArtifactEligible') &&
       liveRunnerSource.includes('provisionalLockEligible') &&
       liveRunnerSource.includes('provisionalHandoffCandidate') &&
-      liveRunnerSource.includes('provisionalHandoffRequiresBearingsAdmissibility'),
+      liveRunnerSource.includes('provisionalHandoffRequiresBearingsAdmissibility') &&
+      liveRunnerSource.includes('bearingsCandidateAdmissibilityDiagnostic') &&
+      liveRunnerSource.includes('bearingsSpatialAdmissibilityRequired') &&
+      liveRunnerSource.includes('bearingsPlanTimeHoursFeasibilityRequired') &&
+      liveRunnerSource.includes('bearingsMovementFeasibilityRequired') &&
+      liveRunnerSource.includes('bearingsPlaceRightRequired') &&
+      liveRunnerSource.includes('bearingsProvisionalOnlyCandidate'),
     'live proof runner must report whether provisional candidates leak into scored venues or route selection.',
   )
 
