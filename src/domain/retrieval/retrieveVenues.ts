@@ -34,6 +34,7 @@ import {
 } from './liveEnvelope'
 import { buildDistrictCandidateGeoIndex } from '../../engines/district/candidates/buildDistrictCandidateGeoIndex'
 import type {
+  FieldCandidateClass,
   FieldLiveCandidateSurvivalDiagnostic,
   FieldLiveCandidateSurvivalStatus,
   FieldLiveDiagnosticRollups,
@@ -213,6 +214,18 @@ function resolveQualityPrimaryReason(
   return reasons[0] ?? 'unknown'
 }
 
+function classifyFieldCandidateClassFromSurvival(
+  venue: Venue,
+  decision: FieldLiveCandidateSurvivalDecision,
+): FieldCandidateClass {
+  if (venue.source.sourceOrigin !== 'live') {
+    return 'curated_static_candidate'
+  }
+  return decision.status === 'eligible'
+    ? 'canonical_live_candidate'
+    : 'blocked_live_candidate'
+}
+
 export function buildFieldLiveCandidateSurvivalDiagnostics(
   liveVenues: Venue[],
 ): FieldLiveCandidateSurvivalDiagnostic[] {
@@ -230,6 +243,7 @@ export function buildFieldLiveCandidateSurvivalDiagnostics(
       qualityVerdict: venue.source.qualityGateStatus,
       primaryQualityReason: resolveQualityPrimaryReason(venue, decision),
       sourceOrigin: venue.source.sourceOrigin,
+      fieldCandidateClass: classifyFieldCandidateClassFromSurvival(venue, decision),
       proofEligible,
       diagnosticOnly: !proofEligible,
       hasProviderPlaceId: Boolean(venue.source.providerRecordId?.trim()),
@@ -250,6 +264,8 @@ function buildFieldLiveDiagnosticRollups(params: {
   hoursSuppressedCount: number
 }): FieldLiveDiagnosticRollups {
   const candidates = params.liveCandidatesByQuery.flatMap((query) => query.candidates ?? [])
+  const countClass = (candidateClass: FieldCandidateClass): number =>
+    candidates.filter((candidate) => candidate.fieldCandidateClass === candidateClass).length
   const pocketFilterKeptCount = candidates.filter((candidate) => candidate.filterVerdict === 'kept').length
   const rejectedOutsideSelectedEnvelopeCount = candidates.filter(
     (candidate) => candidate.filterVerdict === 'rejected_outside_selected_envelope',
@@ -283,6 +299,12 @@ function buildFieldLiveDiagnosticRollups(params: {
     hoursDemotedCount: params.hoursDemotedCount,
     hoursSuppressedCount: params.hoursSuppressedCount,
     liveSurvivalEligibleCount: params.survivalDiagnostics.filter((diagnostic) => diagnostic.proofEligible).length,
+    canonicalLiveCandidateCount: countClass('canonical_live_candidate'),
+    provisionalLiveCandidateCount: countClass('provisional_live_candidate'),
+    blockedLiveCandidateCount: countClass('blocked_live_candidate'),
+    curatedStaticCandidateCount: params.survivalDiagnostics.filter(
+      (diagnostic) => diagnostic.fieldCandidateClass === 'curated_static_candidate',
+    ).length,
   }
 }
 

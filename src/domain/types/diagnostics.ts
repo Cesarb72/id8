@@ -129,10 +129,19 @@ export interface LiveRoleLeaderDiagnostics {
   timeConfidence: number
 }
 
+export type FieldCandidateClass =
+  | 'canonical_live_candidate'
+  | 'provisional_live_candidate'
+  | 'blocked_live_candidate'
+  | 'curated_static_candidate'
+
 export interface LiveQueryCandidateDispositionDiagnostics {
   name: string
   venueId?: string
   providerPlaceId?: string
+  fieldCandidateClass: FieldCandidateClass
+  proofEligible: boolean
+  diagnosticOnly: boolean
   sourceStage?: 'provider_mapped' | 'normalized' | 'pocket_filter'
   sourceOrigin?: VenueSourceOrigin
   sourceMode?: SourceMode
@@ -244,6 +253,7 @@ export interface FieldLiveCandidateSurvivalDiagnostic {
   qualityVerdict: 'approved' | 'demoted' | 'suppressed' | 'blocked'
   primaryQualityReason: FieldQualityPrimaryReason
   sourceOrigin: VenueSourceOrigin
+  fieldCandidateClass: FieldCandidateClass
   proofEligible: boolean
   diagnosticOnly: boolean
   hasProviderPlaceId: boolean
@@ -268,6 +278,10 @@ export interface FieldLiveDiagnosticRollups {
   hoursDemotedCount: number
   hoursSuppressedCount: number
   liveSurvivalEligibleCount: number
+  canonicalLiveCandidateCount: number
+  provisionalLiveCandidateCount: number
+  blockedLiveCandidateCount: number
+  curatedStaticCandidateCount: number
 }
 
 export type LiveCompetitionStage =

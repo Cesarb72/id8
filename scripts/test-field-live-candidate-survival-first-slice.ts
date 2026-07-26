@@ -305,6 +305,9 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
       candidate.name.includes('Live Coffee House'),
     )
     assert.equal(keptCandidate?.filterVerdict, 'kept')
+    assert.equal(keptCandidate?.fieldCandidateClass, 'canonical_live_candidate')
+    assert.equal(keptCandidate?.proofEligible, true)
+    assert.equal(keptCandidate?.diagnosticOnly, false)
     assert.equal(keptCandidate?.hasLocationEvidence, true)
     assert.equal(keptCandidate?.hasFormattedAddressEvidence, true)
     assert.equal(keptCandidate?.hasProviderIdEvidence, true)
@@ -320,14 +323,25 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
       candidate.name.includes('Outside Envelope Coffee'),
     )
     assert.equal(outsideCandidate?.filterVerdict, 'rejected_outside_selected_envelope')
+    assert.equal(outsideCandidate?.fieldCandidateClass, 'provisional_live_candidate')
+    assert.equal(outsideCandidate?.proofEligible, false)
+    assert.equal(outsideCandidate?.diagnosticOnly, true)
     assert.equal(outsideCandidate?.dropReason, 'field_source_pocket_filter_outside_selected_envelope')
     assert.equal(outsideCandidate?.hasLocationEvidence, true)
     assert.equal(outsideCandidate?.distanceMargin?.status, 'outside_by')
+    assert.equal(
+      retrieval.venues.some((venue) => venue.id === outsideCandidate?.venueId),
+      false,
+      'provisional_live_candidate must remain out of retrieval.venues.',
+    )
 
     const missingLocationCandidate = candidateDiagnostics.find((candidate) =>
       candidate.name.includes('Missing Location Coffee'),
     )
     assert.equal(missingLocationCandidate?.filterVerdict, 'rejected_missing_location')
+    assert.equal(missingLocationCandidate?.fieldCandidateClass, 'blocked_live_candidate')
+    assert.equal(missingLocationCandidate?.proofEligible, false)
+    assert.equal(missingLocationCandidate?.diagnosticOnly, true)
     assert.equal(missingLocationCandidate?.dropReason, 'field_source_pocket_filter_missing_location')
     assert.equal(missingLocationCandidate?.hasLocationEvidence, false)
     assert.equal(missingLocationCandidate?.distanceMargin?.status, 'unknown')
@@ -336,6 +350,9 @@ async function assertRetrieveVenuesUsesSurvivalCarrier(): Promise<void> {
     assert.equal(rollups?.rejectedOutsideSelectedEnvelopeCount, 1)
     assert.equal(rollups?.rejectedMissingLocationCount, 1)
     assert.equal(rollups?.liveSurvivalEligibleCount, 1)
+    assert.equal(rollups?.canonicalLiveCandidateCount, 1)
+    assert.equal(rollups?.provisionalLiveCandidateCount, 1)
+    assert.equal(rollups?.blockedLiveCandidateCount >= 1, true)
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -360,6 +377,10 @@ async function run(): Promise<void> {
 
   const approvedDecision = classifyFieldLiveCandidateSurvival(approvedLive)
   assert.equal(approvedDecision.status, 'eligible')
+  const approvedDiagnostic = buildFieldLiveCandidateSurvivalDiagnostics([approvedLive])[0]
+  assert.equal(approvedDiagnostic.fieldCandidateClass, 'canonical_live_candidate')
+  assert.equal(approvedDiagnostic.proofEligible, true)
+  assert.equal(approvedDiagnostic.diagnosticOnly, false)
   const approvedMerged = mergeEvidenceBearingLiveCandidatesForRetrieval(
     [curatedFallback],
     [approvedLive],
@@ -384,6 +405,7 @@ async function run(): Promise<void> {
   assert.equal(demotedDecision.status, 'blocked_demoted')
   assert(demotedDecision.reasons.includes('quality_gate_demoted'))
   const demotedDiagnostic = buildFieldLiveCandidateSurvivalDiagnostics([demotedLive])[0]
+  assert.equal(demotedDiagnostic.fieldCandidateClass, 'blocked_live_candidate')
   assert.equal(demotedDiagnostic.dropReason, 'retrieval_live_candidate_blocked:demoted')
   assert.equal(demotedDiagnostic.proofEligible, false)
   assert.equal(demotedDiagnostic.diagnosticOnly, true)
@@ -405,6 +427,10 @@ async function run(): Promise<void> {
 
   const suppressedDecision = classifyFieldLiveCandidateSurvival(suppressedLive)
   assert.equal(suppressedDecision.status, 'blocked_suppressed')
+  const suppressedDiagnostic = buildFieldLiveCandidateSurvivalDiagnostics([suppressedLive])[0]
+  assert.equal(suppressedDiagnostic.fieldCandidateClass, 'blocked_live_candidate')
+  assert.equal(suppressedDiagnostic.proofEligible, false)
+  assert.equal(suppressedDiagnostic.diagnosticOnly, true)
   const suppressedMerged = mergeEvidenceBearingLiveCandidatesForRetrieval(
     [curatedFallback],
     [suppressedLive],
@@ -417,6 +443,10 @@ async function run(): Promise<void> {
   const missingEvidenceDecision = classifyFieldLiveCandidateSurvival(missingEvidenceLive)
   assert.equal(missingEvidenceDecision.status, 'blocked_missing_evidence')
   assert(missingEvidenceDecision.reasons.includes('missing_formatted_address'))
+  const missingEvidenceDiagnostic = buildFieldLiveCandidateSurvivalDiagnostics([missingEvidenceLive])[0]
+  assert.equal(missingEvidenceDiagnostic.fieldCandidateClass, 'blocked_live_candidate')
+  assert.equal(missingEvidenceDiagnostic.proofEligible, false)
+  assert.equal(missingEvidenceDiagnostic.diagnosticOnly, true)
   const missingEvidenceMerged = mergeEvidenceBearingLiveCandidatesForRetrieval(
     [curatedFallback],
     [missingEvidenceLive],
@@ -430,6 +460,10 @@ async function run(): Promise<void> {
   assert.equal(staticOnly.length, 1)
   assert.equal(staticOnly[0].source.sourceOrigin, 'curated')
   assert.equal(classifyFieldLiveCandidateSurvival(curatedFallback).status, 'blocked_not_live')
+  const curatedDiagnostic = buildFieldLiveCandidateSurvivalDiagnostics([curatedFallback])[0]
+  assert.equal(curatedDiagnostic.fieldCandidateClass, 'curated_static_candidate')
+  assert.equal(curatedDiagnostic.proofEligible, false)
+  assert.equal(curatedDiagnostic.diagnosticOnly, true)
 
   const lockHandoffSource = readFileSync(
     'src/app/services/live/contractEntryLockHandoff.ts',
@@ -456,6 +490,16 @@ async function run(): Promise<void> {
   assert(
     !providerTypesSource.includes('phone') && !normalizationSource.includes('phone'),
     'phone is not_supported_by_current_field_carrier.',
+  )
+  const liveRunnerSource = readFileSync('scripts/test-phase-3-mvp-proof-gate-live.ts', 'utf8')
+  assert(
+    liveRunnerSource.includes('provisionalInScoredVenues') &&
+      liveRunnerSource.includes('provisionalInSelectedRoute') &&
+      liveRunnerSource.includes('provisionalInRetrievalVenues') &&
+      liveRunnerSource.includes('provisionalInRolePools') &&
+      liveRunnerSource.includes('provisionalArtifactEligible') &&
+      liveRunnerSource.includes('provisionalLockEligible'),
+    'live proof runner must report whether provisional candidates leak into scored venues or route selection.',
   )
 
   await assertRetrieveVenuesUsesSurvivalCarrier()

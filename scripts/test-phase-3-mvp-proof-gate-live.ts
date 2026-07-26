@@ -6,6 +6,7 @@ import type { RuntimeRouteArtifact } from '../src/domain/artifacts/runtimeRouteA
 import type { FieldTextSearchRequest } from '../src/domain/field/fieldProxyTypes.ts'
 import type { GeneratePlanResult } from '../src/domain/runGeneratePlan.ts'
 import type { ScoredVenue } from '../src/domain/types/arc.ts'
+import type { FieldCandidateClass } from '../src/domain/types/diagnostics.ts'
 import type { ExperienceMode, IntentInput, PersonaMode, VibeAnchor } from '../src/domain/types/intent.ts'
 import type { Itinerary } from '../src/domain/types/itinerary.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
@@ -597,6 +598,164 @@ function isLiveScoredVenue(candidate: ScoredVenue): boolean {
   )
 }
 
+const fieldCandidateClassOrder: FieldCandidateClass[] = [
+  'canonical_live_candidate',
+  'provisional_live_candidate',
+  'blocked_live_candidate',
+  'curated_static_candidate',
+]
+
+function incrementClassCount(
+  counts: Record<FieldCandidateClass, number>,
+  candidateClass: FieldCandidateClass,
+): void {
+  counts[candidateClass] += 1
+}
+
+function buildEmptyFieldCandidateClassCounts(): Record<FieldCandidateClass, number> {
+  return {
+    canonical_live_candidate: 0,
+    provisional_live_candidate: 0,
+    blocked_live_candidate: 0,
+    curated_static_candidate: 0,
+  }
+}
+
+function fieldCandidateClassCountsFromDiagnostics(
+  result: GeneratePlanResult,
+): Record<FieldCandidateClass, number> {
+  const counts = buildEmptyFieldCandidateClassCounts()
+  for (const query of result.trace.retrievalDiagnostics.liveSource.liveCandidatesByQuery) {
+    for (const candidate of query.candidates ?? []) {
+      incrementClassCount(counts, candidate.fieldCandidateClass)
+    }
+  }
+  const curatedStaticCount =
+    result.trace.retrievalDiagnostics.liveSource.liveCandidateSurvivalDiagnostics?.filter(
+      (diagnostic) => diagnostic.fieldCandidateClass === 'curated_static_candidate',
+    ).length ?? 0
+  counts.curated_static_candidate += curatedStaticCount
+  return counts
+}
+
+function formatFieldCandidateClassCounts(counts: Record<FieldCandidateClass, number>): string {
+  return fieldCandidateClassOrder
+    .map((candidateClass) => `${candidateClass}=${counts[candidateClass]}`)
+    .join('; ')
+}
+
+function queryCandidateKeysForClass(
+  result: GeneratePlanResult,
+  candidateClass: FieldCandidateClass,
+): Set<string> {
+  const keys = new Set<string>()
+  for (const query of result.trace.retrievalDiagnostics.liveSource.liveCandidatesByQuery) {
+    for (const candidate of query.candidates ?? []) {
+      if (candidate.fieldCandidateClass !== candidateClass) {
+        continue
+      }
+      for (const key of [
+        candidate.venueId,
+        candidate.providerPlaceId,
+        candidate.name,
+      ]) {
+        if (key?.trim()) {
+          keys.add(key.trim().toLowerCase())
+        }
+      }
+    }
+  }
+  return keys
+}
+
+function scoredVenueKeys(candidate: ScoredVenue): string[] {
+  return [
+    candidate.venue.id,
+    candidate.venue.name,
+    candidate.venue.source.providerRecordId,
+    candidate.candidateIdentity.baseVenueId,
+    candidate.candidateIdentity.candidateId,
+  ]
+    .map((key) => key?.trim().toLowerCase())
+    .filter((key): key is string => Boolean(key))
+}
+
+function resolveScoredVenueCandidateClass(
+  result: GeneratePlanResult,
+  candidate: ScoredVenue | null,
+): FieldCandidateClass | 'live_candidate_class_unavailable' | 'selected_stop_class_unavailable' {
+  if (!candidate) {
+    return 'selected_stop_class_unavailable'
+  }
+  if (!isLiveScoredVenue(candidate)) {
+    return 'curated_static_candidate'
+  }
+  const scoredKeys = scoredVenueKeys(candidate)
+  for (const query of result.trace.retrievalDiagnostics.liveSource.liveCandidatesByQuery) {
+    for (const queryCandidate of query.candidates ?? []) {
+      if (
+        scoredKeys.some((key) =>
+          [
+            queryCandidate.venueId,
+            queryCandidate.providerPlaceId,
+            queryCandidate.name,
+          ]
+            .map((value) => value?.trim().toLowerCase())
+            .includes(key),
+        )
+      ) {
+        return queryCandidate.fieldCandidateClass
+      }
+    }
+  }
+  return 'live_candidate_class_unavailable'
+}
+
+function formatSelectedStopCandidateClasses(result: GeneratePlanResult): string {
+  return result.itinerary.stops
+    .map((stop) => {
+      const scoredVenue = findScoredVenueForVenueId(result.scoredVenues, stop.venueId)
+      return `${stop.role}:${resolveScoredVenueCandidateClass(result, scoredVenue)}`
+    })
+    .join('|')
+}
+
+function formatProvisionalRouteLeakage(result: GeneratePlanResult): string {
+  const provisionalKeys = queryCandidateKeysForClass(result, 'provisional_live_candidate')
+  if (provisionalKeys.size === 0) {
+    return [
+      'provisionalLeakageGuard=not_applicable:no_provisional_candidates',
+      'provisionalInRetrievalVenues=not_observable:no_provisional_candidates',
+      'provisionalInScoredVenues=0',
+      'provisionalInRolePools=not_observable:no_provisional_candidates',
+      'provisionalInSelectedRoute=0',
+      'provisionalArtifactEligible=0',
+      'provisionalLockEligible=not_observable:no_provisional_candidates',
+    ].join('; ')
+  }
+  const scoredLeaks = result.scoredVenues.filter((candidate) =>
+    scoredVenueKeys(candidate).some((key) => provisionalKeys.has(key)),
+  )
+  const routeStopKeys = new Set(
+    result.itinerary.stops
+      .flatMap((stop) => [stop.venueId, stop.venueName])
+      .map((key) => key?.trim().toLowerCase())
+      .filter((key): key is string => Boolean(key)),
+  )
+  const routeLeaks = [...provisionalKeys].filter((key) => routeStopKeys.has(key))
+  const provisionalArtifactEligible =
+    routeLeaks.length > 0 && Boolean(result.contractEntryArtifact) ? routeLeaks.length : 0
+  return [
+    `provisionalLeakageGuard=${scoredLeaks.length === 0 && routeLeaks.length === 0 ? 'pass' : 'fail'}`,
+    'provisionalInRetrievalVenues=not_observable:GeneratePlanResult_does_not_expose_retrieval_venues',
+    `provisionalInScoredVenues=${scoredLeaks.length}`,
+    'provisionalInRolePools=not_observable:no_per_candidate_role_pool_class_in_current_trace',
+    `provisionalInSelectedRoute=${routeLeaks.length}`,
+    `provisionalArtifactEligible=${provisionalArtifactEligible}`,
+    'provisionalLockEligible=not_observable:routeAuthority_lock_input_not_per_candidate_classed',
+  ].join('; ')
+}
+
 function hasHoursOpenStatus(source: ScoredVenue['venue']['source'] | undefined): boolean {
   return Boolean(
     source?.hoursKnown === true ||
@@ -725,11 +884,15 @@ function formatProviderCandidateSelectionCounts(result: GeneratePlanResult): str
   const curatedCandidates = result.scoredVenues.filter(
     (candidate) => candidate.venue.source.sourceOrigin === 'curated',
   ).length
+  const classCounts = fieldCandidateClassCountsFromDiagnostics(result)
   return [
     `selectedProviderCandidates=${selectedProviderCandidates}`,
     `selectedStaticCuratedCandidates=${selectedStaticCuratedCandidates}`,
+    `selectedStopCandidateClasses=${formatSelectedStopCandidateClasses(result) || 'unavailable'}`,
     `liveCandidates=${liveCandidates}`,
     `curatedCandidates=${curatedCandidates}`,
+    `candidateClassRollups=${formatFieldCandidateClassCounts(classCounts)}`,
+    formatProvisionalRouteLeakage(result),
     `liveRolePoolCandidates=${sumRecordNumbers(liveSource.liveRolePoolCounts)}`,
     `liveRoleWins=${sumRecordNumbers(liveSource.liveRoleWinCounts)}`,
   ].join('; ')
@@ -905,6 +1068,9 @@ function formatFieldPocketCandidateDiagnostics(result: GeneratePlanResult): stri
         `stage=${candidate.sourceStage ?? 'unknown'}`,
         `sourceOrigin=${candidate.sourceOrigin ?? 'unknown'}`,
         `sourceMode=${candidate.sourceMode ?? 'unknown'}`,
+        `fieldCandidateClass=${candidate.fieldCandidateClass}`,
+        `proofEligible=${yesNo(candidate.proofEligible)}`,
+        `diagnosticOnly=${yesNo(candidate.diagnosticOnly)}`,
         `candidatePocket=${candidate.candidatePocket ?? 'unknown'}`,
         `selectedEnvelope=${candidate.selectedPocketEnvelope ?? 'none'}`,
         `distanceM=${typeof candidate.candidateDistanceFromPocketCenterM === 'number' ? candidate.candidateDistanceFromPocketCenterM.toFixed(1) : 'unknown'}`,
@@ -930,6 +1096,7 @@ function formatFieldQualityGateCandidateDiagnostics(result: GeneratePlanResult):
     .map((diagnostic) =>
       [
         `candidate=${diagnostic.venueName}`,
+        `fieldCandidateClass=${diagnostic.fieldCandidateClass}`,
         `qualityVerdict=${diagnostic.qualityVerdict}`,
         `proofEligible=${yesNo(diagnostic.proofEligible)}`,
         `diagnosticOnly=${yesNo(diagnostic.diagnosticOnly)}`,
@@ -956,6 +1123,10 @@ function formatFieldPocketQualityDiagnosticRollups(result: GeneratePlanResult): 
   return [
     `pocketFilterKept=${rollups.pocketFilterKeptCount}`,
     `pocketFilterRejected=${rollups.pocketFilterRejectedCount}`,
+    `canonicalLiveCandidate=${rollups.canonicalLiveCandidateCount}`,
+    `provisionalLiveCandidate=${rollups.provisionalLiveCandidateCount}`,
+    `blockedLiveCandidate=${rollups.blockedLiveCandidateCount}`,
+    `curatedStaticCandidate=${rollups.curatedStaticCandidateCount}`,
     `rejectedOutsideSelectedEnvelope=${rollups.rejectedOutsideSelectedEnvelopeCount}`,
     `rejectedMissingLocation=${rollups.rejectedMissingLocationCount}`,
     `rejectedUnknownDistance=${rollups.rejectedUnknownDistanceCount}`,

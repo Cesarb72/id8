@@ -22,6 +22,7 @@ import type { SourceMode } from '../types/sourceMode'
 import type { StarterPack } from '../types/starterPack'
 import type { Venue } from '../types/venue'
 import type { LiveRetrievalPocketHint } from '../retrieval/liveEnvelope'
+import type { FieldCandidateClass } from '../types/diagnostics'
 
 type LivePlaceMapperInput = Parameters<typeof mapLivePlaceToRawPlaceWithDiagnostics>[0]
 
@@ -48,6 +49,9 @@ interface LiveCandidatesByQueryDiagnostics {
     name: string
     venueId?: string
     providerPlaceId?: string
+    fieldCandidateClass: FieldCandidateClass
+    proofEligible: boolean
+    diagnosticOnly: boolean
     sourceStage?: 'provider_mapped' | 'normalized' | 'pocket_filter'
     sourceOrigin?: Venue['source']['sourceOrigin']
     sourceMode?: SourceMode
@@ -601,6 +605,52 @@ function resolvePocketFilterVerdict(params: {
   return 'other_sanitized_reason'
 }
 
+function hasCandidateSourceEvidence(params: {
+  normalizedVenue: Venue | undefined
+  rawPlace: RawPlace
+  hasLocationEvidence: boolean
+  hasFormattedAddressEvidence: boolean
+  hasProviderIdEvidence: boolean
+}): boolean {
+  return (
+    params.hasLocationEvidence &&
+    params.hasFormattedAddressEvidence &&
+    params.hasProviderIdEvidence &&
+    ((params.normalizedVenue?.source.sourceTypes.length ?? 0) > 0 ||
+      (params.rawPlace.sourceTypes?.length ?? 0) > 0)
+  )
+}
+
+function classifyFieldCandidate(params: {
+  normalizedVenue: Venue | undefined
+  rawPlace: RawPlace
+  candidateBoardAdmission: boolean
+  filterVerdict: NonNullable<LiveCandidateDisposition['filterVerdict']>
+  hasLocationEvidence: boolean
+  hasFormattedAddressEvidence: boolean
+  hasProviderIdEvidence: boolean
+}): FieldCandidateClass {
+  const evidenceBearing = hasCandidateSourceEvidence(params)
+  const qualityApproved = params.normalizedVenue?.source.qualityGateStatus === 'approved'
+
+  if (!params.normalizedVenue) {
+    return 'blocked_live_candidate'
+  }
+  if (!evidenceBearing) {
+    return 'blocked_live_candidate'
+  }
+  if (params.normalizedVenue.source.qualityGateStatus === 'suppressed') {
+    return 'blocked_live_candidate'
+  }
+  if (!qualityApproved) {
+    return 'blocked_live_candidate'
+  }
+  if (params.candidateBoardAdmission && params.filterVerdict === 'kept') {
+    return 'canonical_live_candidate'
+  }
+  return 'provisional_live_candidate'
+}
+
 function countByGateStatus(venues: Venue[], status: QualityGateStatus): number {
   return venues.filter((venue) => venue.source.qualityGateStatus === status).length
 }
@@ -1067,6 +1117,16 @@ export async function fetchLivePlaces(
       const hasProviderIdEvidence = Boolean(
         normalizedVenue?.source.providerRecordId?.trim() ?? rawPlace.providerRecordId?.trim(),
       )
+      const fieldCandidateClass = classifyFieldCandidate({
+        normalizedVenue,
+        rawPlace,
+        candidateBoardAdmission,
+        filterVerdict,
+        hasLocationEvidence,
+        hasFormattedAddressEvidence,
+        hasProviderIdEvidence,
+      })
+      const proofEligible = fieldCandidateClass === 'canonical_live_candidate'
       return {
         name: rawPlace.name,
         venueId: normalizedVenue?.id ?? rawPlace.id,
@@ -1076,6 +1136,9 @@ export async function fetchLivePlaces(
         sourceStage: normalizedResult ? 'pocket_filter' : 'provider_mapped',
         sourceOrigin: normalizedVenue?.source.sourceOrigin ?? 'live',
         sourceMode: 'live',
+        fieldCandidateClass,
+        proofEligible,
+        diagnosticOnly: !proofEligible,
         candidatePocket: normalizedVenue?.neighborhood,
         selectedPocketEnvelope: buildSelectedPocketEnvelopeLabel(
           pocketHint,
