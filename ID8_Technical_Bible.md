@@ -161,6 +161,36 @@ Canonical and compatibility artifacts:
 | CurateRefinementEntryPayload | LEGACY-COMPAT | Compatibility only; not authority. |
 | routeAuthority | Current app gate, not end-state authority | Should be framed as derived validation/gating, not the future lock owner. |
 
+### Canonical Identity Rule
+
+Current authority from #107:
+
+```text
+candidateIdentity.baseVenueId = route-logic identity for Arc/Waypoint/Bearings/Great Stop;
+RuntimeRouteStop.venueId = authority/lock identity;
+provider IDs like live_google_adega = provenance only - NOT a new abstraction.
+```
+
+The three identity layers are:
+
+1. `candidateIdentity.baseVenueId` - route-logic identity; what Arc, Waypoint, Bearings, and Great Stop reason over.
+2. `RuntimeRouteStop.venueId` - authority / lock identity; what `RuntimeRouteArtifact` commits to.
+3. Provider ids such as `live_google_*` - provenance only; debug, lineage, and source evidence; never route-logic identity.
+
+Lineage notes:
+
+- #88 established artifact = engine-written proofs + canonical truth, projections = derived views, and Application never writes artifact truth. Provenance rigor across route identity lineage remained an open item.
+- #90 established provenance-distinctness after the live fan-out incident: non-provider stops must not be marked live, and hybrid/bootstrap fallback must remain provenance-distinct and non-authoritative.
+- #107 named the specific `baseVenueId` versus provider-id rule.
+- 3BI exposed the rule in the live/static Voyager identity overlap: a live provider row and a selected static route stop can refer to the same public place while carrying different provenance and route-truth evidence.
+
+Field/consolidation design implication:
+
+- `baseVenueId`-based live/static dedupe before provider spend is the intended Field consolidation mechanism.
+- Provider ids remain provenance-only.
+- Live provider results should merge onto existing `baseVenueId` identity when they refer to the same place, rather than create duplicate route-logic identities.
+- This is a design implication for the consolidation lane, not an implementation in this Bible update.
+
 ## 6. Mode Execution Truth
 
 Shared canonical spine exists, but each mode still has mode-specific branches.
