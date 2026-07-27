@@ -753,6 +753,18 @@ async function run(): Promise<void> {
       liveRunnerSource.includes('provisionalInRolePools') &&
       liveRunnerSource.includes('provisionalArtifactEligible') &&
       liveRunnerSource.includes('provisionalLockEligible') &&
+      liveRunnerSource.includes('provisionalLeakageGuardStatus') &&
+      liveRunnerSource.includes('overlapClassification') &&
+      liveRunnerSource.includes('routeTruthRisk') &&
+      liveRunnerSource.includes('identityOverlapEvidence') &&
+      liveRunnerSource.includes('buildProvisionalLeakageGuardBlockReason') &&
+      liveRunnerSource.includes('provisionalLeakageGuard blocked') &&
+      liveRunnerSource.includes('staticLiveIdentityOverlapInScoredVenues') &&
+      liveRunnerSource.includes('staticLiveIdentityOverlapInSelectedRoute') &&
+      liveRunnerSource.includes('real_provisional_route_truth_leak') &&
+      liveRunnerSource.includes('real_provisional_eligibility_leak') &&
+      liveRunnerSource.includes('static_live_identity_overlap') &&
+      liveRunnerSource.includes('identity_overlap_ambiguous') &&
       liveRunnerSource.includes('provisionalHandoffCandidate') &&
       liveRunnerSource.includes('provisionalHandoffRequiresBearingsAdmissibility') &&
       liveRunnerSource.includes('bearingsCandidateAdmissibilityDiagnostic') &&

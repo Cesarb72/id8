@@ -6,7 +6,13 @@ import type { RuntimeRouteArtifact } from '../src/domain/artifacts/runtimeRouteA
 import type { FieldTextSearchRequest } from '../src/domain/field/fieldProxyTypes.ts'
 import type { GeneratePlanResult } from '../src/domain/runGeneratePlan.ts'
 import type { ScoredVenue } from '../src/domain/types/arc.ts'
-import type { FieldCandidateClass } from '../src/domain/types/diagnostics.ts'
+import type {
+  FieldCandidateClass,
+  LiveQueryCandidateDispositionDiagnostics,
+  ProvisionalLeakageGuardStatus,
+  StaticLiveIdentityOverlapClassification,
+  StaticLiveIdentityOverlapDiagnostic,
+} from '../src/domain/types/diagnostics.ts'
 import type { ExperienceMode, IntentInput, PersonaMode, VibeAnchor } from '../src/domain/types/intent.ts'
 import type { Itinerary } from '../src/domain/types/itinerary.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
@@ -644,40 +650,396 @@ function formatFieldCandidateClassCounts(counts: Record<FieldCandidateClass, num
     .join('; ')
 }
 
-function queryCandidateKeysForClass(
+type IdentityKeyKind = 'venue_id' | 'provider_id' | 'name'
+type RouteEligibilitySurface = 'scored_venues' | 'selected_route'
+
+interface IdentityKey {
+  kind: IdentityKeyKind
+  value: string
+}
+
+interface ProvisionalCandidateOverlap {
+  provisional: LiveQueryCandidateDispositionDiagnostics
+  surface: RouteEligibilitySurface
+  matchKinds: IdentityKeyKind[]
+  staticCanonicalVenueId?: string
+  liveProviderDiagnosticId?: string
+  selectedStaticLacksLiveLockEvidence: boolean
+  liveObjectEnteredActualRouteEligibilityArrays: boolean
+  liveObjectEnteredRouteTruth: boolean
+}
+
+interface ProvisionalLeakageGuardDiagnostic {
+  status: ProvisionalLeakageGuardStatus
+  classification: StaticLiveIdentityOverlapClassification
+  routeTruthRisk: boolean
+  scoredLeakCount: number
+  routeLeakCount: number
+  artifactEligibleCount: number
+  scoredIdentityOverlapCount: number
+  routeIdentityOverlapCount: number
+  overlapDiagnostics: StaticLiveIdentityOverlapDiagnostic[]
+}
+
+function normalizeIdentityKey(key: string | undefined): string | null {
+  const normalized = key?.trim().toLowerCase()
+  return normalized ? normalized : null
+}
+
+function buildIdentityKeys(entries: Array<{ kind: IdentityKeyKind; value?: string }>): IdentityKey[] {
+  return entries
+    .map((entry) => {
+      const value = normalizeIdentityKey(entry.value)
+      return value ? { kind: entry.kind, value } : null
+    })
+    .filter((entry): entry is IdentityKey => Boolean(entry))
+}
+
+function queryCandidatesForClass(
   result: GeneratePlanResult,
   candidateClass: FieldCandidateClass,
-): Set<string> {
-  const keys = new Set<string>()
+): LiveQueryCandidateDispositionDiagnostics[] {
+  const candidates: LiveQueryCandidateDispositionDiagnostics[] = []
   for (const query of result.trace.retrievalDiagnostics.liveSource.liveCandidatesByQuery) {
     for (const candidate of query.candidates ?? []) {
       if (candidate.fieldCandidateClass !== candidateClass) {
         continue
       }
-      for (const key of [
-        candidate.venueId,
-        candidate.providerPlaceId,
-        candidate.name,
-      ]) {
-        if (key?.trim()) {
-          keys.add(key.trim().toLowerCase())
-        }
-      }
+      candidates.push(candidate)
+    }
+  }
+  return candidates
+}
+
+function identityKeysForQueryCandidate(
+  candidate: LiveQueryCandidateDispositionDiagnostics,
+): IdentityKey[] {
+  return buildIdentityKeys([
+    { kind: 'venue_id', value: candidate.venueId },
+    { kind: 'provider_id', value: candidate.providerPlaceId },
+    { kind: 'name', value: candidate.name },
+  ])
+}
+
+function queryCandidateKeysForClass(
+  result: GeneratePlanResult,
+  candidateClass: FieldCandidateClass,
+): Set<string> {
+  const keys = new Set<string>()
+  for (const candidate of queryCandidatesForClass(result, candidateClass)) {
+    for (const key of identityKeysForQueryCandidate(candidate)) {
+      keys.add(key.value)
     }
   }
   return keys
 }
 
-function scoredVenueKeys(candidate: ScoredVenue): string[] {
+function queryCandidatesForGuard(result: GeneratePlanResult): LiveQueryCandidateDispositionDiagnostics[] {
   return [
-    candidate.venue.id,
-    candidate.venue.name,
-    candidate.venue.source.providerRecordId,
-    candidate.candidateIdentity.baseVenueId,
-    candidate.candidateIdentity.candidateId,
+    ...queryCandidatesForClass(result, 'provisional_live_candidate'),
+    ...queryCandidatesForClass(result, 'blocked_live_candidate'),
   ]
-    .map((key) => key?.trim().toLowerCase())
-    .filter((key): key is string => Boolean(key))
+}
+
+function queryCandidateKeysForGuard(result: GeneratePlanResult): Set<string> {
+  const keys = new Set<string>()
+  for (const candidate of queryCandidatesForGuard(result)) {
+    for (const key of identityKeysForQueryCandidate(candidate)) {
+      keys.add(key.value)
+    }
+  }
+  return keys
+}
+
+function scoredVenueIdentityKeys(candidate: ScoredVenue): IdentityKey[] {
+  return buildIdentityKeys([
+    { kind: 'venue_id', value: candidate.venue.id },
+    { kind: 'name', value: candidate.venue.name },
+    { kind: 'provider_id', value: candidate.venue.source.providerRecordId },
+    { kind: 'venue_id', value: candidate.candidateIdentity.baseVenueId },
+    { kind: 'venue_id', value: candidate.candidateIdentity.candidateId },
+  ])
+}
+
+function scoredVenueKeys(candidate: ScoredVenue): string[] {
+  return scoredVenueIdentityKeys(candidate).map((key) => key.value)
+}
+
+function matchingIdentityKinds(left: IdentityKey[], right: IdentityKey[]): IdentityKeyKind[] {
+  const rightByValue = new Map<string, IdentityKeyKind[]>()
+  for (const key of right) {
+    rightByValue.set(key.value, [...(rightByValue.get(key.value) ?? []), key.kind])
+  }
+  const kinds = new Set<IdentityKeyKind>()
+  for (const key of left) {
+    if (!rightByValue.has(key.value)) {
+      continue
+    }
+    kinds.add(key.kind)
+    for (const rightKind of rightByValue.get(key.value) ?? []) {
+      kinds.add(rightKind)
+    }
+  }
+  return [...kinds]
+}
+
+function hasLiveLockEvidence(candidate: ScoredVenue | null): boolean {
+  const source = candidate?.venue.source
+  return Boolean(
+    source?.providerRecordId?.trim() &&
+      source.formattedAddress?.trim() &&
+      typeof source.latitude === 'number' &&
+      typeof source.longitude === 'number',
+  )
+}
+
+function liveCandidateDisposition(
+  candidate: LiveQueryCandidateDispositionDiagnostics,
+): StaticLiveIdentityOverlapDiagnostic['liveCandidateDisposition'] {
+  if (candidate.fieldCandidateClass === 'canonical_live_candidate') {
+    return 'canonical_live_candidate'
+  }
+  if (candidate.fieldCandidateClass === 'blocked_live_candidate') {
+    return 'blocked_live_candidate'
+  }
+  if (candidate.filterVerdict === 'rejected_outside_selected_envelope') {
+    return 'provisional_outside_envelope'
+  }
+  return candidate.fieldCandidateClass === 'provisional_live_candidate'
+    ? 'provisional_blocked_or_noncanonical'
+    : 'unknown'
+}
+
+function nameSimilarityBasisFor(matchKinds: readonly IdentityKeyKind[]): StaticLiveIdentityOverlapDiagnostic['nameSimilarityBasis'] {
+  if (matchKinds.includes('provider_id') || matchKinds.includes('venue_id')) {
+    return 'id_or_provider_id_match'
+  }
+  if (matchKinds.includes('name')) {
+    return 'exact_normalized_name_match'
+  }
+  return 'none'
+}
+
+function buildOverlapDiagnostic(
+  overlap: ProvisionalCandidateOverlap,
+  classification: StaticLiveIdentityOverlapClassification,
+): StaticLiveIdentityOverlapDiagnostic {
+  const routeTruthRisk =
+    classification === 'real_provisional_route_truth_leak' ||
+    (!overlap.liveObjectEnteredActualRouteEligibilityArrays &&
+      Boolean(overlap.staticCanonicalVenueId) &&
+      overlap.selectedStaticLacksLiveLockEvidence) ||
+    (overlap.surface === 'selected_route' && classification === 'insufficient_evidence')
+  return {
+    classification,
+    guardStatus:
+      classification === 'real_provisional_route_truth_leak' ||
+      classification === 'real_provisional_eligibility_leak'
+        ? 'fail'
+        : routeTruthRisk
+          ? 'warn'
+          : 'pass',
+    ...(overlap.staticCanonicalVenueId ? { staticCanonicalVenueId: overlap.staticCanonicalVenueId } : {}),
+    ...(overlap.liveProviderDiagnosticId ? { liveProviderDiagnosticId: overlap.liveProviderDiagnosticId } : {}),
+    nameSimilarityBasis: nameSimilarityBasisFor(overlap.matchKinds),
+    liveCandidateDisposition: liveCandidateDisposition(overlap.provisional),
+    staticSelectedRouteLacksLiveLockEvidence: overlap.selectedStaticLacksLiveLockEvidence,
+    liveObjectEnteredActualRouteEligibilityArrays: overlap.liveObjectEnteredActualRouteEligibilityArrays,
+    routeTruthRisk,
+    evidence: [
+      `surface=${overlap.surface}`,
+      `matchKinds=${overlap.matchKinds.join('+') || 'none'}`,
+      `provisionalClass=${overlap.provisional.fieldCandidateClass}`,
+      `provisionalProofEligible=${yesNo(overlap.provisional.proofEligible)}`,
+      `provisionalDiagnosticOnly=${yesNo(overlap.provisional.diagnosticOnly)}`,
+      `filterVerdict=${overlap.provisional.filterVerdict ?? 'unknown'}`,
+      `staticSelectedRouteLacksLiveLockEvidence=${yesNo(overlap.selectedStaticLacksLiveLockEvidence)}`,
+      `liveObjectEnteredActualRouteEligibilityArrays=${yesNo(overlap.liveObjectEnteredActualRouteEligibilityArrays)}`,
+      `liveObjectEnteredRouteTruth=${yesNo(overlap.liveObjectEnteredRouteTruth)}`,
+    ],
+  }
+}
+
+function classifyOverlap(overlap: ProvisionalCandidateOverlap): StaticLiveIdentityOverlapClassification {
+  const idOrProviderMatch =
+    overlap.matchKinds.includes('venue_id') || overlap.matchKinds.includes('provider_id')
+  if (overlap.surface === 'selected_route') {
+    if (overlap.liveObjectEnteredRouteTruth || idOrProviderMatch) {
+      return 'real_provisional_route_truth_leak'
+    }
+    if (!overlap.staticCanonicalVenueId) {
+      return 'insufficient_evidence'
+    }
+    if (overlap.selectedStaticLacksLiveLockEvidence) {
+      return 'identity_overlap_ambiguous'
+    }
+    return 'static_live_identity_overlap'
+  }
+  if (overlap.liveObjectEnteredActualRouteEligibilityArrays) {
+    return 'real_provisional_eligibility_leak'
+  }
+  if (idOrProviderMatch) {
+    return 'real_provisional_eligibility_leak'
+  }
+  if (overlap.staticCanonicalVenueId && overlap.selectedStaticLacksLiveLockEvidence) {
+    return 'identity_overlap_ambiguous'
+  }
+  if (overlap.staticCanonicalVenueId) {
+    return 'static_live_identity_overlap'
+  }
+  if (overlap.matchKinds.length === 0) {
+    return 'proof_runner_false_positive'
+  }
+  return 'insufficient_evidence'
+}
+
+function strongestClassification(
+  diagnostics: readonly StaticLiveIdentityOverlapDiagnostic[],
+  fallback: StaticLiveIdentityOverlapClassification,
+): StaticLiveIdentityOverlapClassification {
+  const priority: StaticLiveIdentityOverlapClassification[] = [
+    'real_provisional_route_truth_leak',
+    'real_provisional_eligibility_leak',
+    'identity_overlap_ambiguous',
+    'static_live_identity_overlap',
+    'insufficient_evidence',
+    'proof_runner_false_positive',
+  ]
+  return priority.find((classification) =>
+    diagnostics.some((diagnostic) => diagnostic.classification === classification),
+  ) ?? fallback
+}
+
+function guardStatusFor(
+  diagnostics: readonly StaticLiveIdentityOverlapDiagnostic[],
+): ProvisionalLeakageGuardStatus {
+  if (
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.classification === 'real_provisional_route_truth_leak' ||
+        diagnostic.classification === 'real_provisional_eligibility_leak',
+    )
+  ) {
+    return 'fail'
+  }
+  if (diagnostics.some((diagnostic) => diagnostic.routeTruthRisk)) {
+    return 'warn'
+  }
+  return 'pass'
+}
+
+function buildProvisionalLeakageGuardDiagnostic(result: GeneratePlanResult): ProvisionalLeakageGuardDiagnostic {
+  const provisionalCandidates = queryCandidatesForGuard(result)
+  if (provisionalCandidates.length === 0) {
+    return {
+      status: 'pass',
+      classification: 'proof_runner_false_positive',
+      routeTruthRisk: false,
+      scoredLeakCount: 0,
+      routeLeakCount: 0,
+      artifactEligibleCount: 0,
+      scoredIdentityOverlapCount: 0,
+      routeIdentityOverlapCount: 0,
+      overlapDiagnostics: [],
+    }
+  }
+
+  const overlaps: ProvisionalCandidateOverlap[] = []
+  for (const provisional of provisionalCandidates) {
+    const provisionalKeys = identityKeysForQueryCandidate(provisional)
+    for (const scored of result.scoredVenues) {
+      const matchKinds = matchingIdentityKinds(provisionalKeys, scoredVenueIdentityKeys(scored))
+      if (matchKinds.length === 0) {
+        continue
+      }
+      overlaps.push({
+        provisional,
+        surface: 'scored_venues',
+        matchKinds,
+        staticCanonicalVenueId: scored.venue.source.sourceOrigin === 'live' ? undefined : scored.venue.id,
+        liveProviderDiagnosticId: provisional.providerPlaceId ?? provisional.venueId,
+        selectedStaticLacksLiveLockEvidence: scored.venue.source.sourceOrigin !== 'live' && !hasLiveLockEvidence(scored),
+        liveObjectEnteredActualRouteEligibilityArrays: scored.venue.source.sourceOrigin === 'live',
+        liveObjectEnteredRouteTruth: false,
+      })
+    }
+    for (const stop of result.itinerary.stops) {
+      const routeKeys = buildIdentityKeys([
+        { kind: 'venue_id', value: stop.venueId },
+        { kind: 'name', value: stop.venueName },
+      ])
+      const matchKinds = matchingIdentityKinds(provisionalKeys, routeKeys)
+      if (matchKinds.length === 0) {
+        continue
+      }
+      const selectedScoredVenue = findScoredVenueForVenueId(result.scoredVenues, stop.venueId)
+      const selectedIsLive = Boolean(selectedScoredVenue && isLiveScoredVenue(selectedScoredVenue))
+      const idOrProviderMatch = matchKinds.includes('venue_id') || matchKinds.includes('provider_id')
+      overlaps.push({
+        provisional,
+        surface: 'selected_route',
+        matchKinds,
+        staticCanonicalVenueId: selectedIsLive ? undefined : stop.venueId,
+        liveProviderDiagnosticId: provisional.providerPlaceId ?? provisional.venueId,
+        selectedStaticLacksLiveLockEvidence: !selectedIsLive && !hasLiveLockEvidence(selectedScoredVenue),
+        liveObjectEnteredActualRouteEligibilityArrays: selectedIsLive,
+        liveObjectEnteredRouteTruth: selectedIsLive || idOrProviderMatch,
+      })
+    }
+  }
+
+  const overlapDiagnostics = overlaps.map((overlap) =>
+    buildOverlapDiagnostic(overlap, classifyOverlap(overlap)),
+  )
+  const scoredLeakCount = overlapDiagnostics.filter(
+    (diagnostic) =>
+      diagnostic.classification === 'real_provisional_eligibility_leak' &&
+      diagnostic.evidence.includes('surface=scored_venues'),
+  ).length
+  const routeLeakCount = overlapDiagnostics.filter(
+    (diagnostic) =>
+      diagnostic.classification === 'real_provisional_route_truth_leak' &&
+      diagnostic.evidence.includes('surface=selected_route'),
+  ).length
+  const routeTruthRisk = overlapDiagnostics.some((diagnostic) => diagnostic.routeTruthRisk)
+  return {
+    status: guardStatusFor(overlapDiagnostics),
+    classification: strongestClassification(overlapDiagnostics, 'proof_runner_false_positive'),
+    routeTruthRisk,
+    scoredLeakCount,
+    routeLeakCount,
+    artifactEligibleCount: routeLeakCount > 0 && Boolean(result.contractEntryArtifact) ? routeLeakCount : 0,
+    scoredIdentityOverlapCount: overlapDiagnostics.filter((diagnostic) =>
+      diagnostic.evidence.includes('surface=scored_venues'),
+    ).length,
+    routeIdentityOverlapCount: overlapDiagnostics.filter((diagnostic) =>
+      diagnostic.evidence.includes('surface=selected_route'),
+    ).length,
+    overlapDiagnostics,
+  }
+}
+
+function formatOverlapEvidence(
+  diagnostics: readonly StaticLiveIdentityOverlapDiagnostic[],
+): string {
+  if (diagnostics.length === 0) {
+    return 'none'
+  }
+  return diagnostics
+    .slice(0, 5)
+    .map((diagnostic) =>
+      [
+        `classification=${diagnostic.classification}`,
+        `staticCanonicalVenueId=${diagnostic.staticCanonicalVenueId ?? 'unavailable'}`,
+        `liveProviderDiagnosticId=${diagnostic.liveProviderDiagnosticId ?? 'unavailable'}`,
+        `nameSimilarityBasis=${diagnostic.nameSimilarityBasis}`,
+        `liveCandidateDisposition=${diagnostic.liveCandidateDisposition}`,
+        `staticSelectedRouteLacksLiveLockEvidence=${yesNo(diagnostic.staticSelectedRouteLacksLiveLockEvidence)}`,
+        `liveObjectEnteredActualRouteEligibilityArrays=${yesNo(diagnostic.liveObjectEnteredActualRouteEligibilityArrays)}`,
+        `routeTruthRisk=${yesNo(diagnostic.routeTruthRisk)}`,
+      ].join(','),
+    )
+    .join('|')
 }
 
 function resolveScoredVenueCandidateClass(
@@ -721,39 +1083,437 @@ function formatSelectedStopCandidateClasses(result: GeneratePlanResult): string 
 }
 
 function formatProvisionalRouteLeakage(result: GeneratePlanResult): string {
-  const provisionalKeys = queryCandidateKeysForClass(result, 'provisional_live_candidate')
-  if (provisionalKeys.size === 0) {
+  const guard = buildProvisionalLeakageGuardDiagnostic(result)
+  if (queryCandidateKeysForGuard(result).size === 0) {
     return [
-      'provisionalLeakageGuard=not_applicable:no_provisional_candidates',
-      'provisionalInRetrievalVenues=not_observable:no_provisional_candidates',
+      'provisionalLeakageGuard=pass',
+      'provisionalLeakageGuardStatus=pass',
+      'overlapClassification=proof_runner_false_positive',
+      'routeTruthRisk=no',
+      'identityOverlapEvidence=none',
+      'provisionalInRetrievalVenues=not_observable:no_provisional_or_blocked_candidates',
       'provisionalInScoredVenues=0',
-      'provisionalInRolePools=not_observable:no_provisional_candidates',
+      'staticLiveIdentityOverlapInScoredVenues=0',
+      'provisionalInRolePools=not_observable:no_provisional_or_blocked_candidates',
       'provisionalInSelectedRoute=0',
+      'staticLiveIdentityOverlapInSelectedRoute=0',
       'provisionalArtifactEligible=0',
-      'provisionalLockEligible=not_observable:no_provisional_candidates',
+      'provisionalLockEligible=not_observable:no_provisional_or_blocked_candidates',
     ].join('; ')
   }
-  const scoredLeaks = result.scoredVenues.filter((candidate) =>
-    scoredVenueKeys(candidate).some((key) => provisionalKeys.has(key)),
-  )
-  const routeStopKeys = new Set(
-    result.itinerary.stops
-      .flatMap((stop) => [stop.venueId, stop.venueName])
-      .map((key) => key?.trim().toLowerCase())
-      .filter((key): key is string => Boolean(key)),
-  )
-  const routeLeaks = [...provisionalKeys].filter((key) => routeStopKeys.has(key))
-  const provisionalArtifactEligible =
-    routeLeaks.length > 0 && Boolean(result.contractEntryArtifact) ? routeLeaks.length : 0
   return [
-    `provisionalLeakageGuard=${scoredLeaks.length === 0 && routeLeaks.length === 0 ? 'pass' : 'fail'}`,
+    `provisionalLeakageGuard=${guard.status}`,
+    `provisionalLeakageGuardStatus=${guard.status}`,
+    `overlapClassification=${guard.classification}`,
+    `routeTruthRisk=${yesNo(guard.routeTruthRisk)}`,
+    `identityOverlapEvidence=${formatOverlapEvidence(guard.overlapDiagnostics)}`,
     'provisionalInRetrievalVenues=not_observable:GeneratePlanResult_does_not_expose_retrieval_venues',
-    `provisionalInScoredVenues=${scoredLeaks.length}`,
+    `provisionalInScoredVenues=${guard.scoredLeakCount}`,
+    `staticLiveIdentityOverlapInScoredVenues=${guard.scoredIdentityOverlapCount}`,
     'provisionalInRolePools=not_observable:no_per_candidate_role_pool_class_in_current_trace',
-    `provisionalInSelectedRoute=${routeLeaks.length}`,
-    `provisionalArtifactEligible=${provisionalArtifactEligible}`,
+    `provisionalInSelectedRoute=${guard.routeLeakCount}`,
+    `staticLiveIdentityOverlapInSelectedRoute=${guard.routeIdentityOverlapCount}`,
+    `provisionalArtifactEligible=${guard.artifactEligibleCount}`,
     'provisionalLockEligible=not_observable:routeAuthority_lock_input_not_per_candidate_classed',
   ].join('; ')
+}
+
+function fakeProvisionalCandidate(
+  overrides: Partial<LiveQueryCandidateDispositionDiagnostics> = {},
+): LiveQueryCandidateDispositionDiagnostics {
+  return {
+    name: 'Live Provisional Candidate',
+    venueId: 'live-provisional-candidate',
+    providerPlaceId: 'places/live-provisional-candidate',
+    fieldCandidateClass: 'provisional_live_candidate',
+    proofEligible: false,
+    diagnosticOnly: true,
+    sourceOrigin: 'live',
+    sourceMode: 'live',
+    sourceTypes: ['cafe'],
+    providerResultSummary: true,
+    normalizedResult: true,
+    candidateBoardAdmission: false,
+    pocketFilter: 'outside_pocket_envelope',
+    filterVerdict: 'rejected_outside_selected_envelope',
+    hasLocationEvidence: true,
+    hasFormattedAddressEvidence: true,
+    hasProviderIdEvidence: true,
+    ...overrides,
+  }
+}
+
+function fakeScoredVenue(params: {
+  id: string
+  name: string
+  sourceOrigin: 'live' | 'curated'
+  providerRecordId?: string
+  hasLiveLockEvidence?: boolean
+}): ScoredVenue {
+  return {
+    venue: {
+      id: params.id,
+      name: params.name,
+      source: {
+        sourceOrigin: params.sourceOrigin,
+        ...(params.providerRecordId ? { providerRecordId: params.providerRecordId } : {}),
+        ...(params.hasLiveLockEvidence
+          ? {
+              formattedAddress: '1 Proof St, San Jose, CA',
+              latitude: 37.33,
+              longitude: -121.89,
+            }
+          : {}),
+      },
+    },
+    candidateIdentity: {
+      baseVenueId: params.id,
+      candidateId: params.id,
+    },
+  } as ScoredVenue
+}
+
+function fakeResultForGuard(params: {
+  provisionalCandidates?: LiveQueryCandidateDispositionDiagnostics[]
+  scoredVenues?: ScoredVenue[]
+  stops?: Array<{ venueId?: string; venueName?: string; role?: string }>
+  contractEntryArtifact?: unknown
+}): GeneratePlanResult {
+  return {
+    trace: {
+      retrievalDiagnostics: {
+        liveSource: {
+          liveCandidatesByQuery: [
+            {
+              label: 'identity-overlap-proof',
+              template: 'identity-overlap-proof',
+              roleHint: 'proof',
+              fetchedCount: params.provisionalCandidates?.length ?? 0,
+              mappedCount: params.provisionalCandidates?.length ?? 0,
+              normalizedCount: params.provisionalCandidates?.length ?? 0,
+              approvedCount: 0,
+              demotedCount: 0,
+              suppressedCount: 0,
+              candidates: params.provisionalCandidates ?? [],
+            },
+          ],
+        },
+      },
+    },
+    scoredVenues: params.scoredVenues ?? [],
+    itinerary: {
+      stops: (params.stops ?? []).map((stop) => ({
+        role: stop.role ?? 'windDown',
+        venueId: stop.venueId,
+        venueName: stop.venueName,
+      })),
+    },
+    ...(params.contractEntryArtifact === undefined
+      ? { contractEntryArtifact: { id: 'contract-entry-proof' } }
+      : { contractEntryArtifact: params.contractEntryArtifact }),
+  } as GeneratePlanResult
+}
+
+function fakePotentiallyPassingObservation(
+  providerCandidateSelectionCounts: string,
+): LifecycleObservation {
+  return {
+    mode: 'curate',
+    starterFamily: 'proof / guard',
+    routeLabel: 'guard-pass-proof',
+    contractEntryProduced: true,
+    runtimeRouteProduced: true,
+    greatStopPassFail: 'pass',
+    greatStopFailureReasons: 'none',
+    reviewLockEligible: true,
+    staticCorpusUsed: false,
+    dryPathUsed: false,
+    fallbackUsed: false,
+    providerShadowUsed: false,
+    demoSpecialUsed: false,
+    appAuthorityShadowUsed: false,
+    legacyWrapperUsed: false,
+    diagnosticOnly: false,
+    honestFail: false,
+    routeAuthoritySourceLabel: 'contract_entry_artifact.runtime_route_artifact',
+    runtimeLockTruthStatus: 'produced',
+    compatibilityRouteTruth: false,
+    canonicalRouteTruth: true,
+    whyNotMvpGreen: 'none',
+    providerCandidateSelectionCounts,
+  } as LifecycleObservation
+}
+
+function assertRowBlockedByGuard(
+  providerCandidateSelectionCounts: string,
+  expectedReason: string,
+): void {
+  const row = buildRow({
+    observation: fakePotentiallyPassingObservation(providerCandidateSelectionCounts),
+    providerCalls: 3,
+    hostedCalls: 0,
+  })
+  assert(row['valid live proof pass? yes/no'] === 'no', `${expectedReason} must block valid live proof pass.`)
+  assert(row['valid MVP pass? yes/no'] === 'no', `${expectedReason} must block valid MVP pass.`)
+  assert(
+    row['why not MVP green'].includes(expectedReason),
+    `${expectedReason} must appear in why-not-MVP-green.`,
+  )
+}
+
+function assertProvisionalLeakageGuardDiagnostics(): void {
+  const realScoredLeakResult = fakeResultForGuard({
+      provisionalCandidates: [
+        fakeProvisionalCandidate({
+          venueId: 'live-actual-leak',
+          providerPlaceId: 'places/live-actual-leak',
+          name: 'Actual Leak',
+        }),
+      ],
+      scoredVenues: [
+        fakeScoredVenue({
+          id: 'live-actual-leak',
+          name: 'Actual Leak',
+          sourceOrigin: 'live',
+          providerRecordId: 'places/live-actual-leak',
+          hasLiveLockEvidence: true,
+        }),
+      ],
+    })
+  const realScoredLeak = buildProvisionalLeakageGuardDiagnostic(realScoredLeakResult)
+  assert(realScoredLeak.status === 'fail', 'real provisional scored eligibility leak must fail guard.')
+  assert(
+    realScoredLeak.classification === 'real_provisional_eligibility_leak',
+    'real scored eligibility leak must be classified as real_provisional_eligibility_leak.',
+  )
+  assert(realScoredLeak.scoredLeakCount === 1, 'real scored leak count must be reported.')
+  assert(
+    buildProvisionalLeakageGuardBlockReason({
+      providerCandidateSelectionCounts: formatProvisionalRouteLeakage(realScoredLeakResult),
+      providerCalls: 3,
+    }) === 'provisionalLeakageGuard blocked:fail',
+    'real scored leak must block valid live/MVP aggregation.',
+  )
+  assertRowBlockedByGuard(
+    formatProvisionalRouteLeakage(realScoredLeakResult),
+    'provisionalLeakageGuard blocked:fail',
+  )
+
+  const staticLiveOverlapResult = fakeResultForGuard({
+      provisionalCandidates: [
+        fakeProvisionalCandidate({
+          venueId: 'live-voyager',
+          providerPlaceId: 'places/live-voyager',
+          name: 'Voyager Craft Coffee',
+        }),
+      ],
+      scoredVenues: [
+        fakeScoredVenue({
+          id: 'sj-voyager-coffee',
+          name: 'Voyager Craft Coffee',
+          sourceOrigin: 'curated',
+        }),
+      ],
+      stops: [{ venueId: 'sj-voyager-coffee', venueName: 'Voyager Craft Coffee' }],
+    })
+  const staticLiveOverlap = buildProvisionalLeakageGuardDiagnostic(staticLiveOverlapResult)
+  assert(staticLiveOverlap.status === 'warn', 'static/live identity overlap must warn, not fail.')
+  assert(
+    staticLiveOverlap.classification === 'identity_overlap_ambiguous',
+    'static selected route lacking live lock evidence must be identity_overlap_ambiguous.',
+  )
+  assert(staticLiveOverlap.scoredLeakCount === 0, 'static/live overlap must not count as scored leak.')
+  assert(staticLiveOverlap.routeLeakCount === 0, 'static/live overlap must not count as route leak.')
+  assert(staticLiveOverlap.routeTruthRisk, 'static/live overlap without lock evidence must report route truth risk.')
+  assert(
+    buildProvisionalLeakageGuardBlockReason({
+      providerCandidateSelectionCounts: formatProvisionalRouteLeakage(staticLiveOverlapResult),
+      providerCalls: 3,
+    }) === 'provisionalLeakageGuard blocked:warn',
+    'static/live warning must block valid live/MVP aggregation.',
+  )
+  assertRowBlockedByGuard(
+    formatProvisionalRouteLeakage(staticLiveOverlapResult),
+    'provisionalLeakageGuard blocked:warn',
+  )
+
+  const nameOnlyAmbiguousResult = fakeResultForGuard({
+      provisionalCandidates: [
+        fakeProvisionalCandidate({
+          venueId: 'live-name-only',
+          providerPlaceId: 'places/live-name-only',
+          name: 'Name Only Coffee',
+        }),
+      ],
+      stops: [{ venueName: 'Name Only Coffee' }],
+    })
+  const nameOnlyAmbiguous = buildProvisionalLeakageGuardDiagnostic(nameOnlyAmbiguousResult)
+  assert(nameOnlyAmbiguous.status === 'warn', 'name-only route-truth uncertainty must warn, not pass.')
+  assert(
+    nameOnlyAmbiguous.classification === 'insufficient_evidence',
+    'name-only overlap without static identity must be insufficient_evidence.',
+  )
+  assert(nameOnlyAmbiguous.routeTruthRisk, 'name-only route-truth uncertainty must report route truth risk.')
+  assert(
+    buildProvisionalLeakageGuardBlockReason({
+      providerCandidateSelectionCounts: formatProvisionalRouteLeakage(nameOnlyAmbiguousResult),
+      providerCalls: 3,
+    }) === 'provisionalLeakageGuard blocked:warn',
+    'insufficient evidence warning must block valid live/MVP aggregation.',
+  )
+  assertRowBlockedByGuard(
+    formatProvisionalRouteLeakage(nameOnlyAmbiguousResult),
+    'provisionalLeakageGuard blocked:warn',
+  )
+
+  const selectedStaticNoLockEvidence = buildProvisionalLeakageGuardDiagnostic(
+    fakeResultForGuard({
+      provisionalCandidates: [
+        fakeProvisionalCandidate({
+          venueId: 'live-static-no-lock',
+          providerPlaceId: 'places/live-static-no-lock',
+          name: 'Static No Lock Coffee',
+        }),
+      ],
+      stops: [{ venueId: 'static-no-lock', venueName: 'Static No Lock Coffee' }],
+    }),
+  )
+  assert(
+    selectedStaticNoLockEvidence.classification === 'identity_overlap_ambiguous' ||
+      selectedStaticNoLockEvidence.classification === 'static_live_identity_overlap',
+    'selected static without lock evidence must classify as overlap ambiguity, not route eligibility leak.',
+  )
+  assert(
+    selectedStaticNoLockEvidence.routeLeakCount === 0,
+    'selected static without lock evidence must not count as provisional route leak.',
+  )
+
+  const noProvisionalPresenceResult = fakeResultForGuard({
+      scoredVenues: [
+        fakeScoredVenue({
+          id: 'static-only',
+          name: 'Static Only',
+          sourceOrigin: 'curated',
+        }),
+      ],
+      stops: [{ venueId: 'static-only', venueName: 'Static Only' }],
+    })
+  const noProvisionalPresence = buildProvisionalLeakageGuardDiagnostic(noProvisionalPresenceResult)
+  assert(noProvisionalPresence.status === 'pass', 'no provisional or blocked presence must pass guard.')
+  assert(
+    noProvisionalPresence.classification === 'proof_runner_false_positive',
+    'no provisional or blocked presence must not report leakage.',
+  )
+  assert(
+    buildProvisionalLeakageGuardBlockReason({
+      providerCandidateSelectionCounts: formatProvisionalRouteLeakage(noProvisionalPresenceResult),
+      providerCalls: 3,
+    }) === null,
+    'clean guard pass must not block otherwise valid live/MVP aggregation.',
+  )
+  const cleanGuardRow = buildRow({
+    observation: fakePotentiallyPassingObservation(formatProvisionalRouteLeakage(noProvisionalPresenceResult)),
+    providerCalls: 3,
+    hostedCalls: 0,
+  })
+  assert(cleanGuardRow['valid live proof pass? yes/no'] === 'yes', 'clean guard pass must allow other pass criteria.')
+  assert(cleanGuardRow['valid MVP pass? yes/no'] === 'yes', 'clean guard pass must allow MVP pass when all other criteria pass.')
+
+  const noOverlap = buildProvisionalLeakageGuardDiagnostic(
+    fakeResultForGuard({
+      provisionalCandidates: [
+        fakeProvisionalCandidate({
+          venueId: 'live-no-overlap',
+          providerPlaceId: 'places/live-no-overlap',
+          name: 'No Overlap Coffee',
+        }),
+      ],
+      scoredVenues: [
+        fakeScoredVenue({
+          id: 'static-other',
+          name: 'Static Other',
+          sourceOrigin: 'curated',
+        }),
+      ],
+      stops: [{ venueId: 'static-other', venueName: 'Static Other' }],
+    }),
+  )
+  assert(noOverlap.status === 'pass', 'no overlap must pass guard.')
+  assert(noOverlap.classification === 'proof_runner_false_positive', 'no overlap must not report leakage.')
+
+  const routeOnlyLeakResult = fakeResultForGuard({
+      provisionalCandidates: [
+        fakeProvisionalCandidate({
+          venueId: 'live-route-only-leak',
+          providerPlaceId: 'places/live-route-only-leak',
+          name: 'Route Only Leak',
+        }),
+      ],
+      stops: [{ venueId: 'live-route-only-leak', venueName: 'Route Only Leak' }],
+    })
+  const routeOnlyLeak = buildProvisionalLeakageGuardDiagnostic(routeOnlyLeakResult)
+  assert(routeOnlyLeak.status === 'fail', 'selected-route-only provisional leak must fail guard.')
+  assert(
+    routeOnlyLeak.classification === 'real_provisional_route_truth_leak',
+    'selected-route-only provisional leak must be classified as real_provisional_route_truth_leak.',
+  )
+  assert(routeOnlyLeak.scoredLeakCount === 0, 'selected-route-only provisional leak must not require scored leak.')
+  assert(routeOnlyLeak.routeLeakCount === 1, 'selected-route-only provisional leak count must be reported.')
+  assert(
+    buildProvisionalLeakageGuardBlockReason({
+      providerCandidateSelectionCounts: formatProvisionalRouteLeakage(routeOnlyLeakResult),
+      providerCalls: 3,
+    }) === 'provisionalLeakageGuard blocked:fail',
+    'selected-route-only leak must block valid live/MVP aggregation.',
+  )
+  assertRowBlockedByGuard(
+    formatProvisionalRouteLeakage(routeOnlyLeakResult),
+    'provisionalLeakageGuard blocked:fail',
+  )
+
+  const blockedRouteLeak = buildProvisionalLeakageGuardDiagnostic(
+    fakeResultForGuard({
+      provisionalCandidates: [
+        fakeProvisionalCandidate({
+          fieldCandidateClass: 'blocked_live_candidate',
+          venueId: 'blocked-route-leak',
+          providerPlaceId: 'places/blocked-route-leak',
+          name: 'Blocked Route Leak',
+        }),
+      ],
+      stops: [{ venueId: 'blocked-route-leak', venueName: 'Blocked Route Leak' }],
+    }),
+  )
+  assert(blockedRouteLeak.status === 'fail', 'selected-route-only blocked live leak must fail guard.')
+  assert(
+    blockedRouteLeak.classification === 'real_provisional_route_truth_leak',
+    'selected-route-only blocked live leak must be classified as real_provisional_route_truth_leak.',
+  )
+
+  const realRouteLeak = buildProvisionalLeakageGuardDiagnostic(
+    fakeResultForGuard({
+      provisionalCandidates: [
+        fakeProvisionalCandidate({
+          venueId: 'live-route-leak',
+          providerPlaceId: 'places/live-route-leak',
+          name: 'Route Leak',
+        }),
+      ],
+      scoredVenues: [
+        fakeScoredVenue({
+          id: 'live-route-leak',
+          name: 'Route Leak',
+          sourceOrigin: 'live',
+          providerRecordId: 'places/live-route-leak',
+          hasLiveLockEvidence: true,
+        }),
+      ],
+      stops: [{ venueId: 'live-route-leak', venueName: 'Route Leak' }],
+    }),
+  )
+  assert(realRouteLeak.status === 'fail', 'real selected-route provisional leak must fail guard.')
+  assert(realRouteLeak.routeLeakCount === 1, 'real selected-route leak count must be reported.')
+  assert(realRouteLeak.artifactEligibleCount === 1, 'real selected-route leak must report artifact eligibility risk.')
 }
 
 function hasHoursOpenStatus(source: ScoredVenue['venue']['source'] | undefined): boolean {
@@ -1371,11 +2131,57 @@ function detectFallbackUsed(result: GeneratePlanResult): boolean {
   return values.some((value) => value.toLowerCase().includes('fallback'))
 }
 
+function extractSemicolonField(serialized: string, key: string): string | null {
+  const fields = serialized.split(';').map((field) => field.trim())
+  const prefix = `${key}=`
+  const field = fields.find((entry) => entry.startsWith(prefix))
+  return field ? field.slice(prefix.length).trim() : null
+}
+
+function buildProvisionalLeakageGuardBlockReason(params: {
+  providerCandidateSelectionCounts: string
+  providerCalls: number
+}): string | null {
+  const guardStatus =
+    extractSemicolonField(params.providerCandidateSelectionCounts, 'provisionalLeakageGuardStatus') ??
+    extractSemicolonField(params.providerCandidateSelectionCounts, 'provisionalLeakageGuard')
+  const overlapClassification = extractSemicolonField(
+    params.providerCandidateSelectionCounts,
+    'overlapClassification',
+  )
+  const routeTruthRisk = extractSemicolonField(params.providerCandidateSelectionCounts, 'routeTruthRisk')
+  const guardRequired =
+    params.providerCalls > 0 ||
+    params.providerCandidateSelectionCounts.includes('candidateClassRollups=') ||
+    params.providerCandidateSelectionCounts.includes('provisionalLeakageGuard')
+
+  if (!guardRequired) {
+    return null
+  }
+  if (!guardStatus) {
+    return 'provisionalLeakageGuard blocked:not_evaluated'
+  }
+  if (guardStatus !== 'pass') {
+    return `provisionalLeakageGuard blocked:${guardStatus}`
+  }
+  if (overlapClassification === 'identity_overlap_ambiguous' || overlapClassification === 'insufficient_evidence') {
+    return `provisionalLeakageGuard blocked:${overlapClassification}`
+  }
+  if (routeTruthRisk === 'yes') {
+    return 'provisionalLeakageGuard blocked:routeTruthRisk'
+  }
+  return null
+}
+
 function buildRow(params: {
   observation: LifecycleObservation
   providerCalls: number
   hostedCalls: number
 }): ProofRow {
+  const provisionalLeakageGuardBlockReason = buildProvisionalLeakageGuardBlockReason({
+    providerCandidateSelectionCounts: params.observation.providerCandidateSelectionCounts,
+    providerCalls: params.providerCalls,
+  })
   const disqualifyingMasking =
     params.observation.staticCorpusUsed ||
     params.observation.dryPathUsed ||
@@ -1387,7 +2193,10 @@ function buildRow(params: {
   const lineagePopulated =
     params.observation.routeAuthoritySourceLabel.trim().length > 0 &&
     params.observation.runtimeLockTruthStatus.trim().length > 0
-  const falseGreenRisk = disqualifyingMasking || params.observation.compatibilityRouteTruth
+  const falseGreenRisk =
+    disqualifyingMasking ||
+    params.observation.compatibilityRouteTruth ||
+    Boolean(provisionalLeakageGuardBlockReason)
   const validLiveProofPass =
     params.providerCalls > 0 &&
     params.providerCalls <= 3 &&
@@ -1400,7 +2209,8 @@ function buildRow(params: {
     lineagePopulated &&
     !params.observation.compatibilityRouteTruth &&
     !params.observation.diagnosticOnly &&
-    !disqualifyingMasking
+    !disqualifyingMasking &&
+    !provisionalLeakageGuardBlockReason
   const apparentPass =
     params.observation.contractEntryProduced &&
     (params.observation.runtimeRouteProduced ||
@@ -1476,7 +2286,12 @@ function buildRow(params: {
     'CurateRefinementEntryPayload used? yes/no': yesNo(params.observation.curateRefinementEntryPayloadUsed),
     'RuntimeRouteArtifact canonical? yes/no': yesNo(params.observation.runtimeRouteArtifactCanonical),
     'false-green risk? yes/no': yesNo(falseGreenRisk),
-    'why not MVP green': validLiveProofPass ? 'valid live proof pass' : params.observation.whyNotMvpGreen,
+    'why not MVP green': validLiveProofPass
+      ? 'valid live proof pass'
+      : joinReasonList([
+          params.observation.whyNotMvpGreen,
+          ...(provisionalLeakageGuardBlockReason ? [provisionalLeakageGuardBlockReason] : []),
+        ]),
     'invalid false-green? yes/no': yesNo(invalidFalseGreen),
     'proof validity label': validLiveProofPass
       ? 'valid_live_proof_pass'
@@ -2088,6 +2903,8 @@ async function runLiveProof(): Promise<{
     valveDisarmed = true
   }
 }
+
+assertProvisionalLeakageGuardDiagnostics()
 
 const result = await runLiveProof()
 const rows = result.rows

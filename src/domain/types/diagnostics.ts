@@ -135,6 +135,39 @@ export type FieldCandidateClass =
   | 'blocked_live_candidate'
   | 'curated_static_candidate'
 
+export type StaticLiveIdentityOverlapClassification =
+  | 'real_provisional_route_truth_leak'
+  | 'real_provisional_eligibility_leak'
+  | 'static_live_identity_overlap'
+  | 'proof_runner_false_positive'
+  | 'identity_overlap_ambiguous'
+  | 'insufficient_evidence'
+
+export type ProvisionalLeakageGuardStatus = 'pass' | 'fail' | 'warn'
+
+export interface StaticLiveIdentityOverlapDiagnostic {
+  classification: StaticLiveIdentityOverlapClassification
+  guardStatus: ProvisionalLeakageGuardStatus
+  staticCanonicalVenueId?: string
+  liveProviderDiagnosticId?: string
+  nameSimilarityBasis:
+    | 'exact_normalized_name_match'
+    | 'id_or_provider_id_match'
+    | 'name_only_without_static_identity'
+    | 'none'
+    | 'insufficient_evidence'
+  liveCandidateDisposition:
+    | 'provisional_outside_envelope'
+    | 'provisional_blocked_or_noncanonical'
+    | 'blocked_live_candidate'
+    | 'canonical_live_candidate'
+    | 'unknown'
+  staticSelectedRouteLacksLiveLockEvidence: boolean
+  liveObjectEnteredActualRouteEligibilityArrays: boolean
+  routeTruthRisk: boolean
+  evidence: string[]
+}
+
 export interface FieldToBearingsProvisionalHandoffDiagnostic {
   candidateClass: 'provisional_live_candidate'
   proofEligible: false
