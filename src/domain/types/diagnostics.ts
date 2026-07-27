@@ -522,6 +522,57 @@ export interface RoleCompetitionDiagnostics {
   selectedArcScore?: number
 }
 
+export type SupportRoleRejectionOwnerClassification =
+  | 'Field'
+  | 'Taste'
+  | 'Bearings'
+  | 'Waypoint'
+  | 'role-pool assembly'
+  | 'proof-runner'
+  | 'insufficient evidence'
+
+export type SupportRoleRejectionFactor =
+  | 'lens_compatibility'
+  | 'role_pool_score'
+  | 'highlight_validity'
+  | 'signature_score'
+  | 'admissibility'
+  | 'identity_overlap'
+  | 'insufficient_evidence'
+
+export interface SupportRoleRejectionRoleDiagnostic {
+  role: UserStopRole
+  rolePoolEntered: boolean
+  lostAtStage?: LiveCompetitionStage
+  lossReason: string
+  rolePoolScore: number | 'not_observed' | 'not_retained'
+  rolePoolThreshold: number | 'not_observed' | 'not_retained' | 'insufficient_evidence'
+  lensCompatibilityScore: number | 'not_observed' | 'not_retained'
+  lensCompatibilityVerdict: 'pass' | 'fail' | 'not_observed' | 'insufficient_evidence'
+  highlightValidityVerdict: HighlightValidityLevel | 'not_observed' | 'not_applicable'
+  signatureScore: number | 'not_observed' | 'not_retained'
+  signatureThreshold: number | 'not_observed' | 'not_retained' | 'insufficient_evidence'
+  rejectionFactors: SupportRoleRejectionFactor[]
+}
+
+export interface SupportRoleRejectionDiagnostic {
+  diagnosticOnly: true
+  behaviorImpact: false
+  candidateName: string
+  candidateId: string | 'not_observed' | 'not_retained'
+  diagnosticId: string | 'not_observed' | 'not_retained'
+  candidateClass: FieldCandidateClass | 'not_observed' | 'not_retained' | 'insufficient_evidence'
+  sourceStage: LiveQueryCandidateDispositionDiagnostics['sourceStage'] | 'not_observed' | 'not_retained'
+  intendedRoles: UserStopRole[] | 'not_observed' | 'not_retained'
+  candidateRoleAffinities: Partial<Record<UserStopRole, number | 'not_observed' | 'not_retained'>>
+  tasteEvidenceStatus: 'present' | 'missing' | 'thin' | 'not_observed' | 'insufficient_evidence'
+  bearingsAdmissibilityStatus: BearingsCandidateAdmissibilityStatus | 'not_observed' | 'not_retained' | 'not_applicable'
+  identityOverlapStatus: StaticLiveIdentityOverlapClassification | 'not_relevant' | 'not_observed'
+  finalRejectionReason: string
+  ownerClassification: SupportRoleRejectionOwnerClassification
+  roleDiagnostics: SupportRoleRejectionRoleDiagnostic[]
+}
+
 export interface LiveAttritionStageEntry {
   stage: LiveCompetitionStage
   liveCount: number

@@ -765,6 +765,15 @@ async function run(): Promise<void> {
       liveRunnerSource.includes('real_provisional_eligibility_leak') &&
       liveRunnerSource.includes('static_live_identity_overlap') &&
       liveRunnerSource.includes('identity_overlap_ambiguous') &&
+      liveRunnerSource.includes('supportRoleRejectionDiagnostics') &&
+      liveRunnerSource.includes('scoredLiveButNoRolePoolCount') &&
+      liveRunnerSource.includes('rolePoolRejectionLensCompatibilityCount') &&
+      liveRunnerSource.includes('rolePoolRejectionRolePoolScoreCount') &&
+      liveRunnerSource.includes('rolePoolRejectionHighlightValidityCount') &&
+      liveRunnerSource.includes('rolePoolRejectionSignatureScoreCount') &&
+      liveRunnerSource.includes('rolePoolRejectionInsufficientEvidenceCount') &&
+      liveRunnerSource.includes('rolePoolRejectionOwnerTasteCount') &&
+      liveRunnerSource.includes('rolePoolRejectionOwnerRolePoolAssemblyCount') &&
       liveRunnerSource.includes('provisionalHandoffCandidate') &&
       liveRunnerSource.includes('provisionalHandoffRequiresBearingsAdmissibility') &&
       liveRunnerSource.includes('bearingsCandidateAdmissibilityDiagnostic') &&

@@ -10,11 +10,15 @@ import type {
   FieldCandidateClass,
   LiveQueryCandidateDispositionDiagnostics,
   ProvisionalLeakageGuardStatus,
+  RoleCompetitionDiagnostics,
   StaticLiveIdentityOverlapClassification,
   StaticLiveIdentityOverlapDiagnostic,
+  SupportRoleRejectionDiagnostic,
+  SupportRoleRejectionFactor,
+  SupportRoleRejectionOwnerClassification,
 } from '../src/domain/types/diagnostics.ts'
 import type { ExperienceMode, IntentInput, PersonaMode, VibeAnchor } from '../src/domain/types/intent.ts'
-import type { Itinerary } from '../src/domain/types/itinerary.ts'
+import type { Itinerary, UserStopRole } from '../src/domain/types/itinerary.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
 
 type YesNo = 'yes' | 'no'
@@ -1118,6 +1122,296 @@ function formatProvisionalRouteLeakage(result: GeneratePlanResult): string {
   ].join('; ')
 }
 
+const supportRoles: UserStopRole[] = ['start', 'highlight', 'surprise', 'windDown']
+
+function roleScoreKey(role: UserStopRole): 'warmup' | 'peak' | 'wildcard' | 'cooldown' {
+  if (role === 'start') return 'warmup'
+  if (role === 'highlight') return 'peak'
+  if (role === 'surprise') return 'wildcard'
+  return 'cooldown'
+}
+
+function findLiveQueryCandidateForScoredVenue(
+  result: GeneratePlanResult,
+  candidate: ScoredVenue,
+): LiveQueryCandidateDispositionDiagnostics | null {
+  const scoredKeys = scoredVenueKeys(candidate)
+  for (const query of result.trace.retrievalDiagnostics.liveSource.liveCandidatesByQuery) {
+    for (const queryCandidate of query.candidates ?? []) {
+      const queryKeys = [
+        queryCandidate.venueId,
+        queryCandidate.providerPlaceId,
+        queryCandidate.name,
+      ]
+        .map((value) => value?.trim().toLowerCase())
+        .filter((value): value is string => Boolean(value))
+      if (scoredKeys.some((key) => queryKeys.includes(key))) {
+        return queryCandidate
+      }
+    }
+  }
+  return null
+}
+
+function roleCompetitionEntries(
+  result: GeneratePlanResult,
+): Array<[UserStopRole, RoleCompetitionDiagnostics]> {
+  return Object.entries(
+    result.trace.retrievalDiagnostics.liveSource.roleCompetitionByRole ?? {},
+  ).filter((entry): entry is [UserStopRole, RoleCompetitionDiagnostics] =>
+    Boolean(entry[1]),
+  )
+}
+
+function sameVenueId(left: string | undefined, right: string | undefined): boolean {
+  return Boolean(left && right && left === right)
+}
+
+function liveCandidateEnteredAnyRolePool(
+  result: GeneratePlanResult,
+  candidate: ScoredVenue,
+): boolean {
+  return roleCompetitionEntries(result).some(([, comparison]) =>
+    sameVenueId(comparison.strongestLive?.venueId, candidate.venue.id) &&
+    comparison.liveEnteredRolePool,
+  )
+}
+
+function liveRolePoolMembershipObservable(result: GeneratePlanResult): boolean {
+  return sumRecordNumbers(result.trace.retrievalDiagnostics.liveSource.liveRolePoolCounts) === 0
+}
+
+function factorFromDeltaLabel(label: string): SupportRoleRejectionFactor | null {
+  const normalized = label.toLowerCase()
+  if (normalized.includes('lens compatibility')) return 'lens_compatibility'
+  if (normalized.includes('role-pool score')) return 'role_pool_score'
+  if (normalized.includes('highlight validity') || normalized.includes('highlight capability')) {
+    return 'highlight_validity'
+  }
+  if (normalized.includes('signature score')) return 'signature_score'
+  return null
+}
+
+function factorsForRoleRejection(comparison: RoleCompetitionDiagnostics): SupportRoleRejectionFactor[] {
+  const factors = new Set<SupportRoleRejectionFactor>()
+  for (const delta of comparison.strongestLiveVsCuratedDelta) {
+    if (delta.favored !== 'curated') {
+      continue
+    }
+    const factor = factorFromDeltaLabel(delta.label)
+    if (factor) {
+      factors.add(factor)
+    }
+  }
+  if (comparison.strongestLiveLostAtStage === 'highlight-validity') {
+    factors.add('highlight_validity')
+  }
+  if (comparison.strongestLiveLostAtStage === 'role-pool' && factors.size === 0) {
+    factors.add('role_pool_score')
+  }
+  return factors.size > 0 ? [...factors] : ['insufficient_evidence']
+}
+
+function ownerForSupportRoleRejection(
+  factors: readonly SupportRoleRejectionFactor[],
+): SupportRoleRejectionOwnerClassification {
+  if (factors.includes('admissibility')) return 'Bearings'
+  if (factors.includes('identity_overlap')) return 'proof-runner'
+  if (
+    factors.includes('lens_compatibility') ||
+    factors.includes('highlight_validity') ||
+    factors.includes('signature_score')
+  ) {
+    return 'Taste'
+  }
+  if (factors.includes('role_pool_score')) return 'role-pool assembly'
+  return 'insufficient evidence'
+}
+
+function supportRoleCandidateClass(
+  queryCandidate: LiveQueryCandidateDispositionDiagnostics | null,
+): SupportRoleRejectionDiagnostic['candidateClass'] {
+  return queryCandidate?.fieldCandidateClass ?? 'not_retained'
+}
+
+function supportRoleSourceStage(
+  queryCandidate: LiveQueryCandidateDispositionDiagnostics | null,
+): SupportRoleRejectionDiagnostic['sourceStage'] {
+  return queryCandidate?.sourceStage ?? 'not_retained'
+}
+
+function roleAffinityScores(candidate: ScoredVenue): SupportRoleRejectionDiagnostic['candidateRoleAffinities'] {
+  return {
+    start: candidate.roleScores?.warmup ?? 'not_observed',
+    highlight: candidate.roleScores?.peak ?? 'not_observed',
+    surprise: candidate.roleScores?.wildcard ?? 'not_observed',
+    windDown: candidate.roleScores?.cooldown ?? 'not_observed',
+  }
+}
+
+function hasTasteSupportEvidence(candidate: ScoredVenue): boolean {
+  return (
+    typeof candidate.lensCompatibility === 'number' &&
+    Boolean(candidate.roleScores) &&
+    Boolean(candidate.stopShapeFit) &&
+    Boolean(candidate.contextSpecificity)
+  )
+}
+
+function lensCompatibilityVerdict(score: number | undefined): 'pass' | 'fail' | 'not_observed' {
+  if (typeof score !== 'number') return 'not_observed'
+  return score >= 0.38 ? 'pass' : 'fail'
+}
+
+function supportRoleIdentityOverlapStatus(
+  result: GeneratePlanResult,
+): SupportRoleRejectionDiagnostic['identityOverlapStatus'] {
+  const guard = buildProvisionalLeakageGuardDiagnostic(result)
+  return guard.classification === 'proof_runner_false_positive'
+    ? 'not_relevant'
+    : guard.classification
+}
+
+function buildSupportRoleRejectionDiagnostics(result: GeneratePlanResult): SupportRoleRejectionDiagnostic[] {
+  const liveScoredVenues = result.scoredVenues.filter(isLiveScoredVenue)
+  const allLiveRolePoolMembershipObservable = liveRolePoolMembershipObservable(result)
+  return liveScoredVenues
+    .filter((candidate) =>
+      allLiveRolePoolMembershipObservable
+        ? true
+        : !liveCandidateEnteredAnyRolePool(result, candidate),
+    )
+    .map((candidate) => {
+      const queryCandidate = findLiveQueryCandidateForScoredVenue(result, candidate)
+      const comparisons = roleCompetitionEntries(result).filter(([, comparison]) =>
+        sameVenueId(comparison.strongestLive?.venueId, candidate.venue.id),
+      )
+      const roleDiagnostics = comparisons.map(([role, comparison]) => {
+        const score = comparison.strongestLive?.score
+        const roleFactors = factorsForRoleRejection(comparison)
+        return {
+          role,
+          rolePoolEntered: comparison.liveEnteredRolePool,
+          ...(comparison.strongestLiveLostAtStage ? { lostAtStage: comparison.strongestLiveLostAtStage } : {}),
+          lossReason: comparison.strongestLiveLossReason ?? 'insufficient_evidence',
+          rolePoolScore: score?.poolRankingScore ?? 'not_retained',
+          rolePoolThreshold: 'not_retained',
+          lensCompatibilityScore: score?.lensCompatibility ?? candidate.lensCompatibility ?? 'not_retained',
+          lensCompatibilityVerdict: lensCompatibilityVerdict(candidate.lensCompatibility),
+          highlightValidityVerdict:
+            role === 'highlight'
+              ? score?.highlightValidityLevel ?? candidate.highlightValidity?.validityLevel ?? 'not_observed'
+              : 'not_applicable',
+          signatureScore: score?.signatureScore ?? candidate.venue.signature?.signatureScore ?? 'not_retained',
+          signatureThreshold: 'not_retained',
+          rejectionFactors: roleFactors,
+        }
+      })
+      const allFactors = new Set<SupportRoleRejectionFactor>(
+        roleDiagnostics.flatMap((diagnostic) => diagnostic.rejectionFactors),
+      )
+      if (roleDiagnostics.length === 0) {
+        allFactors.add('insufficient_evidence')
+      }
+      return {
+        diagnosticOnly: true,
+        behaviorImpact: false,
+        candidateName: candidate.venue.name,
+        candidateId: candidate.candidateIdentity?.baseVenueId ?? candidate.venue.id ?? 'not_retained',
+        diagnosticId: candidate.venue.source.providerRecordId ?? queryCandidate?.providerPlaceId ?? 'not_retained',
+        candidateClass: supportRoleCandidateClass(queryCandidate),
+        sourceStage: supportRoleSourceStage(queryCandidate),
+        intendedRoles: roleDiagnostics.length > 0 ? roleDiagnostics.map((diagnostic) => diagnostic.role) : 'not_retained',
+        candidateRoleAffinities: roleAffinityScores(candidate),
+        tasteEvidenceStatus: hasTasteSupportEvidence(candidate) ? 'present' : 'insufficient_evidence',
+        bearingsAdmissibilityStatus: queryCandidate?.bearingsCandidateAdmissibility?.overallStatus ?? 'not_observed',
+        identityOverlapStatus: supportRoleIdentityOverlapStatus(result),
+        finalRejectionReason: [...allFactors].join('+') || 'insufficient_evidence',
+        ownerClassification: ownerForSupportRoleRejection([...allFactors]),
+        roleDiagnostics,
+      } satisfies SupportRoleRejectionDiagnostic
+    })
+}
+
+function supportRoleRollupCount(
+  diagnostics: readonly SupportRoleRejectionDiagnostic[],
+  predicate: (diagnostic: SupportRoleRejectionDiagnostic) => boolean,
+): number {
+  return diagnostics.filter(predicate).length
+}
+
+function diagnosticHasFactor(
+  diagnostic: SupportRoleRejectionDiagnostic,
+  factor: SupportRoleRejectionFactor,
+): boolean {
+  return diagnostic.roleDiagnostics.some((roleDiagnostic) =>
+    roleDiagnostic.rejectionFactors.includes(factor),
+  ) || diagnostic.finalRejectionReason.split('+').includes(factor)
+}
+
+function formatSupportRoleRejectionRollups(result: GeneratePlanResult): string {
+  const diagnostics = buildSupportRoleRejectionDiagnostics(result)
+  return [
+    `scoredLiveButNoRolePoolCount=${diagnostics.length}`,
+    `rolePoolRejectionLensCompatibilityCount=${supportRoleRollupCount(diagnostics, (diagnostic) => diagnosticHasFactor(diagnostic, 'lens_compatibility'))}`,
+    `rolePoolRejectionRolePoolScoreCount=${supportRoleRollupCount(diagnostics, (diagnostic) => diagnosticHasFactor(diagnostic, 'role_pool_score'))}`,
+    `rolePoolRejectionHighlightValidityCount=${supportRoleRollupCount(diagnostics, (diagnostic) => diagnosticHasFactor(diagnostic, 'highlight_validity'))}`,
+    `rolePoolRejectionSignatureScoreCount=${supportRoleRollupCount(diagnostics, (diagnostic) => diagnosticHasFactor(diagnostic, 'signature_score'))}`,
+    `rolePoolRejectionAdmissibilityCount=${supportRoleRollupCount(diagnostics, (diagnostic) => diagnosticHasFactor(diagnostic, 'admissibility'))}`,
+    `rolePoolRejectionIdentityOverlapCount=${supportRoleRollupCount(diagnostics, (diagnostic) => diagnosticHasFactor(diagnostic, 'identity_overlap') || diagnostic.identityOverlapStatus !== 'not_relevant')}`,
+    `rolePoolRejectionInsufficientEvidenceCount=${supportRoleRollupCount(diagnostics, (diagnostic) => diagnosticHasFactor(diagnostic, 'insufficient_evidence'))}`,
+    `rolePoolRejectionOwnerTasteCount=${supportRoleRollupCount(diagnostics, (diagnostic) => diagnostic.ownerClassification === 'Taste')}`,
+    `rolePoolRejectionOwnerRolePoolAssemblyCount=${supportRoleRollupCount(diagnostics, (diagnostic) => diagnostic.ownerClassification === 'role-pool assembly' || diagnosticHasFactor(diagnostic, 'role_pool_score'))}`,
+    `rolePoolRejectionOwnerProofRunnerCount=${supportRoleRollupCount(diagnostics, (diagnostic) => diagnostic.ownerClassification === 'proof-runner')}`,
+  ].join('; ')
+}
+
+function compactRoleAffinity(
+  affinities: SupportRoleRejectionDiagnostic['candidateRoleAffinities'],
+): string {
+  return supportRoles
+    .map((role) => `${role}:${formatNumber(affinities[role] as number | undefined)}`)
+    .join(',')
+}
+
+function formatSupportRoleRejectionDiagnostics(result: GeneratePlanResult): string {
+  const diagnostics = buildSupportRoleRejectionDiagnostics(result)
+  if (diagnostics.length === 0) {
+    return 'supportRoleRejectionDiagnostics=none'
+  }
+  return diagnostics
+    .map((diagnostic) =>
+      [
+        `supportRoleRejectionCandidate=${diagnostic.candidateName}`,
+        `candidateId=${diagnostic.candidateId}`,
+        `diagnosticId=${diagnostic.diagnosticId}`,
+        `candidateClass=${diagnostic.candidateClass}`,
+        `sourceStage=${diagnostic.sourceStage}`,
+        `intendedRoles=${Array.isArray(diagnostic.intendedRoles) ? diagnostic.intendedRoles.join('+') : diagnostic.intendedRoles}`,
+        `candidateRoleAffinities=${compactRoleAffinity(diagnostic.candidateRoleAffinities)}`,
+        `tasteEvidence=${diagnostic.tasteEvidenceStatus}`,
+        `bearingsAdmissibility=${diagnostic.bearingsAdmissibilityStatus}`,
+        `identityOverlap=${diagnostic.identityOverlapStatus}`,
+        `finalRejectionReason=${diagnostic.finalRejectionReason}`,
+        `owner=${diagnostic.ownerClassification}`,
+        `roleDetails=${diagnostic.roleDiagnostics.map((roleDiagnostic) =>
+          [
+            roleDiagnostic.role,
+            `stage:${roleDiagnostic.lostAtStage ?? 'not_observed'}`,
+            `reason:${roleDiagnostic.lossReason}`,
+            `rolePoolScore:${roleDiagnostic.rolePoolScore}`,
+            `rolePoolThreshold:${roleDiagnostic.rolePoolThreshold}`,
+            `lens:${roleDiagnostic.lensCompatibilityScore}/${roleDiagnostic.lensCompatibilityVerdict}`,
+            `highlight:${roleDiagnostic.highlightValidityVerdict}`,
+            `signature:${roleDiagnostic.signatureScore}/threshold:${roleDiagnostic.signatureThreshold}`,
+            `factors:${roleDiagnostic.rejectionFactors.join('+')}`,
+          ].join(','),
+        ).join('~')}`,
+      ].join(';'),
+    )
+    .join(' | ')
+}
+
 function fakeProvisionalCandidate(
   overrides: Partial<LiveQueryCandidateDispositionDiagnostics> = {},
 ): LiveQueryCandidateDispositionDiagnostics {
@@ -1242,6 +1536,319 @@ function fakePotentiallyPassingObservation(
     whyNotMvpGreen: 'none',
     providerCandidateSelectionCounts,
   } as LifecycleObservation
+}
+
+function fakeSupportScoredVenue(overrides: Partial<ScoredVenue> = {}): ScoredVenue {
+  return {
+    venue: {
+      id: 'live-support-candidate',
+      name: 'Live Support Candidate',
+      category: 'library',
+      energyLevel: 2,
+      source: {
+        sourceOrigin: 'live',
+        providerRecordId: 'places/live-support-candidate',
+        qualityGateStatus: 'approved',
+        likelyOpenForCurrentWindow: true,
+        timeConfidence: 0.82,
+        sourceConfidence: 0.78,
+        completenessScore: 0.71,
+        qualityScore: 0.76,
+        hoursKnown: true,
+      },
+      signature: {
+        signatureScore: 0.42,
+        genericScore: 0.48,
+      },
+    },
+    candidateIdentity: {
+      baseVenueId: 'live-support-candidate',
+      candidateId: 'live-support-candidate',
+    },
+    roleScores: {
+      warmup: 0.51,
+      peak: 0.49,
+      wildcard: 0.5,
+      cooldown: 0.52,
+    },
+    stopShapeFit: {
+      start: 0.44,
+      highlight: 0.31,
+      surprise: 0.4,
+      windDown: 0.43,
+    },
+    lensCompatibility: 0.32,
+    contextSpecificity: {
+      overall: 0.34,
+      byRole: {
+        warmup: 0.34,
+        peak: 0.3,
+        wildcard: 0.33,
+        cooldown: 0.34,
+      },
+    },
+    highlightValidity: {
+      validityLevel: 'invalid',
+      candidateTier: 'connective-only',
+    },
+    ...overrides,
+  } as ScoredVenue
+}
+
+function fakeSupportQueryCandidate(
+  candidate: ScoredVenue,
+): LiveQueryCandidateDispositionDiagnostics {
+  return {
+    name: candidate.venue.name,
+    venueId: candidate.venue.id,
+    providerPlaceId: candidate.venue.source.providerRecordId,
+    fieldCandidateClass: 'canonical_live_candidate',
+    proofEligible: true,
+    diagnosticOnly: false,
+    sourceStage: 'pocket_filter',
+    sourceOrigin: 'live',
+    sourceMode: 'live',
+    sourceTypes: ['library'],
+    providerResultSummary: true,
+    normalizedResult: true,
+    candidateBoardAdmission: true,
+    pocketFilter: 'admitted',
+    filterVerdict: 'kept',
+    hasLocationEvidence: true,
+    hasFormattedAddressEvidence: true,
+    hasProviderIdEvidence: true,
+  }
+}
+
+function fakeSupportDelta(
+  factor: SupportRoleRejectionFactor,
+): RoleCompetitionDiagnostics['strongestLiveVsCuratedDelta'][number] {
+  const labelByFactor: Partial<Record<SupportRoleRejectionFactor, string>> = {
+    lens_compatibility: 'Lens compatibility',
+    role_pool_score: 'Role-pool score',
+    highlight_validity: 'Highlight validity',
+    signature_score: 'Signature score',
+  }
+  return {
+    key: factor,
+    label: labelByFactor[factor] ?? 'Insufficient evidence',
+    liveValue: 30,
+    curatedValue: 70,
+    delta: -40,
+    favored: 'curated',
+    explanation: `${labelByFactor[factor] ?? 'Evidence'} favored curated.`,
+  }
+}
+
+function fakeSupportComparison(params: {
+  candidate: ScoredVenue
+  role: UserStopRole
+  factors: SupportRoleRejectionFactor[]
+  enteredRolePool?: boolean
+  lostAtStage?: RoleCompetitionDiagnostics['strongestLiveLostAtStage']
+}): RoleCompetitionDiagnostics {
+  return {
+    role: params.role,
+    strongestLive: {
+      venueId: params.candidate.venue.id,
+      venueName: params.candidate.venue.name,
+      sourceOrigin: 'live',
+      qualityGateStatus: 'approved',
+      score: {
+        poolRankingScore: 41,
+        roleFit: 51,
+        tasteBonus: 0,
+        tasteRoleSuitabilityContribution: 0,
+        highlightPlausibilityBonus: params.role === 'highlight' ? -50 : undefined,
+        overallFit: 58,
+        lensCompatibility: 32,
+        stopShapeFit: 44,
+        vibeAuthority: 40,
+        contextSpecificity: 34,
+        dominancePenalty: 0,
+        contractScore: 0,
+        highlightValidityLevel: params.role === 'highlight' ? 'invalid' : undefined,
+        highlightCandidateTier: params.role === 'highlight' ? 'connective-only' : undefined,
+        highlightValidityBoost: params.role === 'highlight' ? -50 : undefined,
+        rolePoolLift: 0,
+        liveRoleLift: 0,
+        liveRolePromotion: 0,
+        hoursPenalty: 0,
+        hoursAdjusted: false,
+        sourceConfidence: 78,
+        completenessScore: 71,
+        qualityScore: 76,
+        timeConfidence: 82,
+        likelyOpenForCurrentWindow: true,
+        hoursKnown: true,
+        signatureScore: 42,
+        genericScore: 48,
+        qualityGateStatus: 'approved',
+      },
+    },
+    strongestLiveScore: 41,
+    strongestLiveLossReason: params.factors.join('+'),
+    strongestLiveLostAtStage:
+      params.lostAtStage ?? (params.factors.includes('highlight_validity') ? 'highlight-validity' : 'role-pool'),
+    strongestLiveVsCuratedDelta: params.factors
+      .filter((factor) => factor !== 'insufficient_evidence')
+      .map(fakeSupportDelta),
+    arcScoreDelta: [],
+    outcome: 'curated-won',
+    liveEnteredRolePool: params.enteredRolePool ?? false,
+    curatedEnteredRolePool: true,
+    liveReachedArcAssembly: false,
+    curatedReachedArcAssembly: true,
+    liveWonFinalRoute: false,
+    winningVenueId: 'curated-winner',
+    selectedArcScore: 72,
+  }
+}
+
+function fakeSupportResult(params: {
+  candidate?: ScoredVenue
+  comparisons?: Partial<Record<UserStopRole, RoleCompetitionDiagnostics>>
+  liveRolePoolCounts?: Partial<Record<UserStopRole, number>>
+}): GeneratePlanResult {
+  const candidate = params.candidate ?? fakeSupportScoredVenue()
+  return {
+    scoredVenues: [candidate],
+    itinerary: { stops: [] },
+    trace: {
+      retrievalDiagnostics: {
+        liveSource: {
+          liveCandidatesByQuery: [
+            {
+              label: 'support-role-rejection-proof',
+              template: 'support-role-rejection-proof',
+              roleHint: 'support',
+              fetchedCount: 1,
+              mappedCount: 1,
+              normalizedCount: 1,
+              approvedCount: 1,
+              demotedCount: 0,
+              suppressedCount: 0,
+              candidates: [fakeSupportQueryCandidate(candidate)],
+            },
+          ],
+          liveRolePoolCounts: {
+            start: params.liveRolePoolCounts?.start ?? 0,
+            highlight: params.liveRolePoolCounts?.highlight ?? 0,
+            surprise: params.liveRolePoolCounts?.surprise ?? 0,
+            windDown: params.liveRolePoolCounts?.windDown ?? 0,
+          },
+          roleCompetitionByRole: params.comparisons ?? {},
+        },
+      },
+    },
+  } as GeneratePlanResult
+}
+
+function assertSupportRoleRejectionDiagnostics(): void {
+  const lensCandidate = fakeSupportScoredVenue()
+  const lensResult = fakeSupportResult({
+    candidate: lensCandidate,
+    comparisons: {
+      start: fakeSupportComparison({
+        candidate: lensCandidate,
+        role: 'start',
+        factors: ['lens_compatibility'],
+      }),
+    },
+  })
+  const lensDiagnostic = buildSupportRoleRejectionDiagnostics(lensResult)[0]
+  assert(lensDiagnostic.candidateName === 'Live Support Candidate', 'support rejection must report candidate name.')
+  assert(lensDiagnostic.candidateClass === 'canonical_live_candidate', 'support rejection must report candidate class.')
+  assert(lensDiagnostic.sourceStage === 'pocket_filter', 'support rejection must report source stage.')
+  assert(
+    diagnosticHasFactor(lensDiagnostic, 'lens_compatibility'),
+    'support rejection must classify lens compatibility loss.',
+  )
+  assert(
+    formatSupportRoleRejectionRollups(lensResult).includes('rolePoolRejectionLensCompatibilityCount=1'),
+    'support rejection rollups must count lens compatibility losses.',
+  )
+
+  const rolePoolCandidate = fakeSupportScoredVenue()
+  const rolePoolResult = fakeSupportResult({
+    candidate: rolePoolCandidate,
+    comparisons: {
+      windDown: fakeSupportComparison({
+        candidate: rolePoolCandidate,
+        role: 'windDown',
+        factors: ['role_pool_score'],
+      }),
+    },
+  })
+  assert(
+    formatSupportRoleRejectionRollups(rolePoolResult).includes('rolePoolRejectionRolePoolScoreCount=1'),
+    'support rejection rollups must count role-pool score losses.',
+  )
+
+  const highlightCandidate = fakeSupportScoredVenue()
+  const highlightResult = fakeSupportResult({
+    candidate: highlightCandidate,
+    comparisons: {
+      highlight: fakeSupportComparison({
+        candidate: highlightCandidate,
+        role: 'highlight',
+        factors: ['highlight_validity'],
+        lostAtStage: 'highlight-validity',
+      }),
+    },
+  })
+  assert(
+    formatSupportRoleRejectionRollups(highlightResult).includes('rolePoolRejectionHighlightValidityCount=1'),
+    'support rejection rollups must count highlight validity losses.',
+  )
+
+  const signatureCandidate = fakeSupportScoredVenue()
+  const signatureResult = fakeSupportResult({
+    candidate: signatureCandidate,
+    comparisons: {
+      surprise: fakeSupportComparison({
+        candidate: signatureCandidate,
+        role: 'surprise',
+        factors: ['signature_score'],
+      }),
+    },
+  })
+  assert(
+    formatSupportRoleRejectionRollups(signatureResult).includes('rolePoolRejectionSignatureScoreCount=1'),
+    'support rejection rollups must count signature score losses.',
+  )
+
+  const insufficientResult = fakeSupportResult({})
+  assert(
+    formatSupportRoleRejectionRollups(insufficientResult).includes('rolePoolRejectionInsufficientEvidenceCount=1'),
+    'support rejection rollups must count insufficient retained evidence.',
+  )
+
+  const cleanCandidate = fakeSupportScoredVenue()
+  const cleanResult = fakeSupportResult({
+    candidate: cleanCandidate,
+    liveRolePoolCounts: { start: 1 },
+    comparisons: {
+      start: fakeSupportComparison({
+        candidate: cleanCandidate,
+        role: 'start',
+        factors: [],
+        enteredRolePool: true,
+      }),
+    },
+  })
+  assert(
+    buildSupportRoleRejectionDiagnostics(cleanResult).length === 0,
+    'clean live candidate that reaches a role pool must not produce rejection diagnostics.',
+  )
+  assert(
+    formatSupportRoleRejectionRollups(cleanResult).includes('scoredLiveButNoRolePoolCount=0'),
+    'support rejection diagnostics must preserve clean role-pool eligibility counts.',
+  )
+  assert(
+    formatSupportRoleRejectionDiagnostics(lensResult).includes('behaviorImpact') === false,
+    'support rejection formatting must not claim behavior changes.',
+  )
 }
 
 function assertRowBlockedByGuard(
@@ -1653,6 +2260,7 @@ function formatProviderCandidateSelectionCounts(result: GeneratePlanResult): str
     `curatedCandidates=${curatedCandidates}`,
     `candidateClassRollups=${formatFieldCandidateClassCounts(classCounts)}`,
     formatProvisionalRouteLeakage(result),
+    formatSupportRoleRejectionRollups(result),
     `liveRolePoolCandidates=${sumRecordNumbers(liveSource.liveRolePoolCounts)}`,
     `liveRoleWins=${sumRecordNumbers(liveSource.liveRoleWinCounts)}`,
   ].join('; ')
@@ -1669,6 +2277,7 @@ function formatProviderCandidateRejectionReasons(result: GeneratePlanResult): st
     ...liveSource.liveLostToCuratedReason,
     ...liveSource.sourceBalanceNotes,
     ...liveSource.curatedVsLiveWinnerNotes,
+    formatSupportRoleRejectionDiagnostics(result),
     ...stageNotes,
   ])
 }
@@ -2905,6 +3514,7 @@ async function runLiveProof(): Promise<{
 }
 
 assertProvisionalLeakageGuardDiagnostics()
+assertSupportRoleRejectionDiagnostics()
 
 const result = await runLiveProof()
 const rows = result.rows
