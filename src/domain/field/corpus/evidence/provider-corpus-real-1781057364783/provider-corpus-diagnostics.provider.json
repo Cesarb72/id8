@@ -1,0 +1,9 @@
+{
+  "attemptedHttpRequestCount": 12,
+  "billableCallCount": 12,
+  "mode": "live",
+  "outputRoot": "tmp/provider-corpus/real/san-jose",
+  "runId": "provider-corpus-real-1781057364783",
+  "runtimeImportHits": [],
+  "tmpIgnored": true
+}
