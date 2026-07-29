@@ -434,6 +434,29 @@ async function summarizeCase(
   assert(countMatch, `${scenario} role bucket counts drifted after Taste consumer migration.`)
   assert(idOrderMatch, `${scenario} role bucket IDs/order drifted after Taste consumer migration.`)
   assert(fallbackHonestyMatch, `${scenario} fallback/honesty state drifted.`)
+  if (result.opportunity) {
+    for (const venue of result.opportunity.nearbyCandidates) {
+      const identityAdmission = result.opportunity.diagnostics.venueIdentityAdmissions.find(
+        (observation) => observation.materializedVenueId === venue.id,
+      )
+      assert(
+        identityAdmission?.resolvedBaseVenueId === venue.id,
+        `${scenario} emitted Venue.id must equal its admitted resolvedBaseVenueId: ${venue.id}`,
+      )
+      assert(
+        !venue.id.startsWith('live_google_'),
+        `${scenario} emitted Venue.id must not use live_google_*: ${venue.id}`,
+      )
+      assert(
+        venue.id !== venue.source.providerRecordId,
+        `${scenario} emitted Venue.id must not equal providerRecordId: ${venue.id}`,
+      )
+      assert(
+        Boolean(venue.source.providerRecordId),
+        `${scenario} emitted Venue must retain providerRecordId provenance: ${venue.id}`,
+      )
+    }
+  }
   assert(directProviderFetchAttemptCount === 0, `${scenario} direct provider calls occurred.`)
   assert(unexpectedFetchAttemptCount === 0, `${scenario} unexpected fetch calls occurred.`)
 
@@ -515,6 +538,7 @@ function buildMockProviderVenues(queryLabel: string, scenario: Scenario): Provid
     return [
       buildMockProviderVenue({
         displayName: 'Role Diversity Pass Start',
+        formattedAddress: '125 S 2nd St, San Jose, CA 95113',
         latitude: 37.3307,
         longitude: -121.8871,
         neighborhood: 'SoFA District',
@@ -527,6 +551,7 @@ function buildMockProviderVenues(queryLabel: string, scenario: Scenario): Provid
     return [
       buildMockProviderVenue({
         displayName: 'Role Diversity Pass Highlight',
+        formattedAddress: '565 N 6th St, San Jose, CA 95112',
         latitude: 37.3481,
         longitude: -121.8944,
         neighborhood: 'Japantown',
@@ -539,6 +564,7 @@ function buildMockProviderVenues(queryLabel: string, scenario: Scenario): Provid
     return [
       buildMockProviderVenue({
         displayName: 'Role Diversity Pass Wind Down',
+        formattedAddress: '170 W Santa Clara St, San Jose, CA 95113',
         latitude: 37.3359,
         longitude: -121.8894,
         neighborhood: 'Downtown',
@@ -552,17 +578,19 @@ function buildMockProviderVenues(queryLabel: string, scenario: Scenario): Provid
 
 function buildMockProviderVenue(input: {
   displayName: string
+  formattedAddress?: string
   latitude: number
   longitude: number
   neighborhood: string
   primaryType: string
   providerRecordId: string
 }): ProviderVenue {
+  const formattedAddress = input.formattedAddress ?? buildQualifiedMockAddress(input.providerRecordId)
   return {
     provider: 'google_places',
     providerRecordId: input.providerRecordId,
     displayName: input.displayName,
-    formattedAddress: `${input.displayName}, ${input.neighborhood}, San Jose, CA`,
+    formattedAddress,
     shortFormattedAddress: `${input.neighborhood}, San Jose`,
     primaryType: input.primaryType,
     types: [input.primaryType, 'point_of_interest', 'establishment'],
@@ -601,6 +629,14 @@ function buildMockProviderVenue(input: {
       hasRating: true,
     },
   }
+}
+
+function buildQualifiedMockAddress(providerRecordId: string): string {
+  const suffix = providerRecordId
+    .split('')
+    .reduce((sum, character) => sum + character.charCodeAt(0), 0)
+  const streetNumber = 700 + (suffix % 200)
+  return `${streetNumber} S 2nd St, San Jose, CA 95113`
 }
 
 async function main(): Promise<void> {

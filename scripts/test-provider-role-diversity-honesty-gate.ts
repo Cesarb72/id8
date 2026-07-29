@@ -107,12 +107,43 @@ async function runScenario(
   })
 }
 
+function assertProviderSupplyUsesAdmittedCanonicalIdentity(
+  scenario: Scenario,
+  result: BuildProviderSourceOpportunityResult,
+): void {
+  if (!result.opportunity) {
+    return
+  }
+  for (const venue of result.opportunity.nearbyCandidates) {
+    const identityAdmission = result.opportunity.diagnostics.venueIdentityAdmissions.find(
+      (observation) => observation.materializedVenueId === venue.id,
+    )
+    assert(
+      identityAdmission?.resolvedBaseVenueId === venue.id,
+      `${scenario} emitted Venue.id must equal admitted resolvedBaseVenueId: ${venue.id}`,
+    )
+    assert(
+      !venue.id.startsWith('live_google_'),
+      `${scenario} emitted Venue.id must not use live_google_*: ${venue.id}`,
+    )
+    assert(
+      venue.id !== venue.source.providerRecordId,
+      `${scenario} emitted Venue.id must not equal providerRecordId: ${venue.id}`,
+    )
+    assert(
+      Boolean(venue.source.providerRecordId),
+      `${scenario} emitted Venue must retain providerRecordId provenance: ${venue.id}`,
+    )
+  }
+}
+
 function buildMockProviderVenues(queryLabel: string, scenario: Scenario): ProviderVenue[] {
   if (scenario === 'previously-masked-role-diversity-collapse') {
     if (queryLabel === 'build-provider-start') {
       return [
         buildMockProviderVenue({
           displayName: 'Role Diversity Honest Opener',
+          formattedAddress: '725 S 2nd St, San Jose, CA 95113',
           latitude: 37.3307,
           longitude: -121.8871,
           neighborhood: 'SoFA District',
@@ -125,6 +156,7 @@ function buildMockProviderVenues(queryLabel: string, scenario: Scenario): Provid
       return [
         buildMockProviderVenue({
           displayName: 'Role Diversity Honest Support',
+          formattedAddress: '735 S 2nd St, San Jose, CA 95113',
           latitude: 37.331,
           longitude: -121.887,
           neighborhood: 'SoFA District',
@@ -137,6 +169,7 @@ function buildMockProviderVenues(queryLabel: string, scenario: Scenario): Provid
       return [
         buildMockProviderVenue({
           displayName: 'Role Diversity Honest Wind Down',
+          formattedAddress: '745 W Santa Clara St, San Jose, CA 95113',
           latitude: 37.3359,
           longitude: -121.8894,
           neighborhood: 'Downtown',
@@ -152,6 +185,7 @@ function buildMockProviderVenues(queryLabel: string, scenario: Scenario): Provid
     return [
       buildMockProviderVenue({
         displayName: 'Role Diversity Pass Start',
+        formattedAddress: '825 S 2nd St, San Jose, CA 95113',
         latitude: 37.3307,
         longitude: -121.8871,
         neighborhood: 'SoFA District',
@@ -164,6 +198,7 @@ function buildMockProviderVenues(queryLabel: string, scenario: Scenario): Provid
     return [
       buildMockProviderVenue({
         displayName: 'Role Diversity Pass Highlight',
+        formattedAddress: '835 N 6th St, San Jose, CA 95112',
         latitude: 37.3481,
         longitude: -121.8944,
         neighborhood: 'Japantown',
@@ -176,6 +211,7 @@ function buildMockProviderVenues(queryLabel: string, scenario: Scenario): Provid
     return [
       buildMockProviderVenue({
         displayName: 'Role Diversity Pass Wind Down',
+        formattedAddress: '845 W Santa Clara St, San Jose, CA 95113',
         latitude: 37.3359,
         longitude: -121.8894,
         neighborhood: 'Downtown',
@@ -189,6 +225,7 @@ function buildMockProviderVenues(queryLabel: string, scenario: Scenario): Provid
 
 function buildMockProviderVenue(input: {
   displayName: string
+  formattedAddress?: string
   latitude: number
   longitude: number
   neighborhood: string
@@ -199,7 +236,8 @@ function buildMockProviderVenue(input: {
     provider: 'google_places',
     providerRecordId: input.providerRecordId,
     displayName: input.displayName,
-    formattedAddress: `${input.displayName}, ${input.neighborhood}, San Jose, CA`,
+    formattedAddress:
+      input.formattedAddress ?? `${input.displayName}, ${input.neighborhood}, San Jose, CA`,
     shortFormattedAddress: `${input.neighborhood}, San Jose`,
     primaryType: input.primaryType,
     types: [input.primaryType, 'point_of_interest', 'establishment'],
@@ -253,6 +291,7 @@ async function main(): Promise<void> {
     )
 
     const roleDiverse = await runScenario('role-diverse', anchorVenue)
+    assertProviderSupplyUsesAdmittedCanonicalIdentity('role-diverse', roleDiverse)
     assert(
       roleDiverse.opportunity !== null,
       'Normal role-diverse provider-backed supply must still emit an opportunity.',

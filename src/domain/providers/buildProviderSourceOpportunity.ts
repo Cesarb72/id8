@@ -7,8 +7,16 @@ import { normalizeRawPlace } from '../normalize/normalizeRawPlace'
 import { computeTasteRolePoolMeaningForVenue } from '../interpretation/taste/computeTasteRolePoolMeaningView'
 import { executeFieldProviderTextSearch } from '../field/executeFieldProviderTextSearch'
 import { projectFieldSourceFacts } from '../field/projectFieldSourceFacts'
+import { resolveFieldInterpretationVenueIdentityHandoffs } from '../field/resolveFieldInterpretationVenueIdentityHandoffs'
+import { buildVenueIdentityAdmissionDiagnostics } from '../bearings/buildVenueIdentityAdmission'
+import { buildBearingsAdmittedRouteSupplyRawPlaces } from '../sources/fetchLivePlaces'
 import { coordinateBuildProviderSourceOpportunityOutcome } from '../waypoint/coordinateBuildProviderSourceOpportunityOutcome'
 import type { RolePoolMeaningEvidence } from '../interpretation/taste/computeRolePoolMeaningEvidence'
+import type {
+  BearingsVenueIdentityAdmissionGroupDiagnostic,
+  BearingsVenueIdentityAdmissionObservationDiagnostic,
+  FieldInterpretationVenueIdentityHandoff,
+} from '../types/diagnostics'
 import type { RawPlace } from '../types/rawPlace'
 import type { Venue } from '../types/venue'
 import {
@@ -20,10 +28,6 @@ import {
   evaluateProviderVenueCompleteness,
   type ProviderCompletenessGateResult,
 } from './providerCompletenessGate'
-import {
-  admitLiveVenueIdentity,
-  type LiveVenueIdentityAdmissionResult,
-} from './admitLiveVenueIdentity'
 import type { ProviderAdapterDiagnostics, ProviderTextSearchQuery } from './ProviderAdapter'
 import {
   evaluateSupplyEquivalence,
@@ -145,6 +149,19 @@ export interface BuildProviderNearbyCandidateReviewSummary {
   completenessFailureReason?: string
   equivalenceStatus: SupplyEquivalenceResult['status']
   equivalenceBlockingReasons: SupplyEquivalenceResult['blockingReasons']
+  identityResolutionStatus?: FieldInterpretationVenueIdentityHandoff['identityResolutionStatus']
+  resolvedBaseVenueId?: string
+  pendingReason?: string
+  ambiguityReason?: string
+  routeAdmissionStatus?: BearingsVenueIdentityAdmissionObservationDiagnostic['routeAdmissionStatus']
+  routeIdentityEligible?: boolean
+  diagnosticOnly?: boolean
+  admissionRejectionReasons?: BearingsVenueIdentityAdmissionObservationDiagnostic['admissionRejectionReasons']
+  duplicateGroupMemberSourceIdentities?: string[]
+  duplicateGroupSize?: number
+  materializedRouteRepresentation?: boolean
+  materializedVenueId?: string
+  emittedVenueId?: string
   suppressionReasons: string[]
 }
 
@@ -171,6 +188,9 @@ export interface BuildProviderSourceOpportunityDiagnostics {
   canonicalMappings: ProviderCanonicalVenueMapping[]
   completeness: ProviderCompletenessGateResult[]
   equivalence: SupplyEquivalenceResult[]
+  venueIdentityHandoffs: FieldInterpretationVenueIdentityHandoff[]
+  venueIdentityAdmissions: BearingsVenueIdentityAdmissionObservationDiagnostic[]
+  venueIdentityAdmissionGroups: BearingsVenueIdentityAdmissionGroupDiagnostic[]
   trace: ProviderCallTrace | null
   ledger: ProviderCallLedger | null
 }
@@ -193,6 +213,9 @@ export interface BuildProviderSourceOpportunity {
     canonicalMappings: ProviderCanonicalVenueMapping[]
     completeness: ProviderCompletenessGateResult[]
     equivalence: SupplyEquivalenceResult[]
+    venueIdentityHandoffs: FieldInterpretationVenueIdentityHandoff[]
+    venueIdentityAdmissions: BearingsVenueIdentityAdmissionObservationDiagnostic[]
+    venueIdentityAdmissionGroups: BearingsVenueIdentityAdmissionGroupDiagnostic[]
     trace: ProviderCallTrace
     ledger: ProviderCallLedger
     suppressionReasons: string[]
@@ -505,20 +528,6 @@ function mapProviderVenueToRawPlace(params: {
   }
 }
 
-function normalizeAdmittedProviderVenue(params: {
-  rawPlace: RawPlace
-  identity: LiveVenueIdentityAdmissionResult
-}): Venue {
-  const { rawPlace, identity } = params
-  if (!identity.venueId) {
-    throw new Error('Expected admitted live venue identity to include venueId.')
-  }
-  return normalizeRawPlace({
-    ...rawPlace,
-    id: identity.venueId,
-  })
-}
-
 function getRequiredTrace(diagnostics: ProviderAdapterDiagnostics): ProviderCallTrace {
   if (!diagnostics.trace) {
     throw new Error('Build provider source opportunity expected adapter trace diagnostics.')
@@ -575,6 +584,9 @@ function buildBaseDiagnostics(params: {
     canonicalMappings: [],
     completeness: [],
     equivalence: [],
+    venueIdentityHandoffs: [],
+    venueIdentityAdmissions: [],
+    venueIdentityAdmissionGroups: [],
     trace: params.trace ?? null,
     ledger: params.ledger ?? null,
   }
@@ -925,6 +937,8 @@ export async function buildProviderSourceOpportunity(
   const canonicalMappings: ProviderCanonicalVenueMapping[] = []
   const completeness: ProviderCompletenessGateResult[] = []
   const equivalence: SupplyEquivalenceResult[] = []
+  const canonicalMappingByRawId = new Map<string, ProviderCanonicalVenueMapping>()
+  const completenessByRawId = new Map<string, ProviderCompletenessGateResult>()
 
   for (const candidate of mergedProviderResults) {
     const canonicalMapping = resolveCanonicalVenueIdForProviderVenue({
@@ -933,6 +947,7 @@ export async function buildProviderSourceOpportunity(
       staticVenues: curatedVenues,
     })
     canonicalMappings.push(canonicalMapping)
+    canonicalMappingByRawId.set(candidate.rawPlace.id, canonicalMapping)
 
     const completenessResult = evaluateProviderVenueCompleteness({
       providerVenue: candidate.providerVenue,
@@ -942,21 +957,48 @@ export async function buildProviderSourceOpportunity(
       },
     })
     completeness.push(completenessResult)
+    completenessByRawId.set(candidate.rawPlace.id, completenessResult)
+  }
 
-    const identityAdmission = admitLiveVenueIdentity({
-      providerVenue: candidate.providerVenue,
-      canonicalMapping,
-      completeness: completenessResult,
-      equivalence: null,
-      mode: 'product',
-      requestedAt,
-    })
+  const venueIdentityHandoffByRawId = resolveFieldInterpretationVenueIdentityHandoffs(
+    mergedProviderResults.map((candidate) => ({
+      rawPlace: candidate.rawPlace,
+      canonicalMapping: canonicalMappingByRawId.get(candidate.rawPlace.id),
+    })),
+  )
+  const venueIdentityAdmissionResult = buildVenueIdentityAdmissionDiagnostics(
+    venueIdentityHandoffByRawId.values(),
+  )
+  const admittedRouteSupply = buildBearingsAdmittedRouteSupplyRawPlaces({
+    rawPlaces: mergedProviderResults.map((candidate) => candidate.rawPlace),
+    admissionResult: venueIdentityAdmissionResult,
+  })
+  const materializedRawPlaceByResolvedId = new Map(
+    admittedRouteSupply.rawPlaces.map((rawPlace) => [rawPlace.id, rawPlace]),
+  )
+  const materializedVenueByRawId = new Map<string, Venue>()
+  for (const [rawId, resolvedBaseVenueId] of admittedRouteSupply.routeNormalizationIdByRawId) {
+    const rawPlace = materializedRawPlaceByResolvedId.get(resolvedBaseVenueId)
+    if (rawPlace) {
+      materializedVenueByRawId.set(rawId, normalizeRawPlace(rawPlace))
+    }
+  }
+
+  for (const candidate of mergedProviderResults) {
+    const canonicalMapping = canonicalMappingByRawId.get(candidate.rawPlace.id)
+    const completenessResult = completenessByRawId.get(candidate.rawPlace.id)
+    if (!canonicalMapping || !completenessResult) {
+      throw new Error(`Missing Build provider diagnostic gates for ${candidate.rawPlace.id}.`)
+    }
+    const identityHandoff = venueIdentityHandoffByRawId.get(candidate.rawPlace.id)
+    const identityAdmission =
+      venueIdentityAdmissionResult.observationsByFieldSourceIdentity.get(candidate.rawPlace.id)
     const equivalenceResult = evaluateSupplyEquivalence(
       {
         kind: 'live',
         gateResult: completenessResult,
         canonicalMapping,
-        canonicalIdentityStatus: identityAdmission.canonicalIdentityStatus,
+        canonicalIdentityStatus: identityAdmission?.routeIdentityEligible ? 'resolved' : 'unresolved',
       },
       {
         allowLiveWarningsForEquivalence: false,
@@ -968,8 +1010,20 @@ export async function buildProviderSourceOpportunity(
     if (!canonicalMapping.canonicalVenueId) {
       candidateSuppressionReasons.push('unresolved_canonical_identity_pre_admission')
     }
-    if (identityAdmission.admitted) {
-      candidateSuppressionReasons.push('live_identity_admitted')
+    if (!identityHandoff) {
+      candidateSuppressionReasons.push('missing_field_interpretation_identity_handoff')
+    }
+    if (!identityAdmission) {
+      candidateSuppressionReasons.push('missing_bearings_identity_admission')
+    } else if (identityAdmission.routeIdentityEligible) {
+      candidateSuppressionReasons.push('bearings_identity_admitted')
+      if (identityAdmission.materializedRouteRepresentation) {
+        candidateSuppressionReasons.push('bearings_identity_materialized')
+      } else {
+        candidateSuppressionReasons.push('duplicate_group_retained_diagnostic_only')
+      }
+    } else {
+      candidateSuppressionReasons.push(...identityAdmission.admissionRejectionReasons)
     }
     if (equivalenceResult.status === 'equivalent') {
       candidateSuppressionReasons.push('final_equivalence_passed')
@@ -977,46 +1031,52 @@ export async function buildProviderSourceOpportunity(
       candidateSuppressionReasons.push('final_equivalence_failed')
     }
 
+    const materializedVenue = materializedVenueByRawId.get(candidate.rawPlace.id) ?? null
+    const suppressedAsAnchorSelfMatch =
+      candidate.providerVenue.providerRecordId === anchorProviderRecordId ||
+      identityAdmission?.resolvedBaseVenueId === anchorCanonicalVenueId
     const finalAdmissionPassed =
-      identityAdmission.admitted && equivalenceResult.status === 'equivalent'
-    const admittedVenue = finalAdmissionPassed
-      ? normalizeAdmittedProviderVenue({
-          rawPlace: candidate.rawPlace,
-          identity: identityAdmission,
-        })
-      : null
-    const normalizedCategory = admittedVenue
-      ? admittedVenue.category
-      : normalizeRawPlace(candidate.rawPlace).category
-    const normalizedNeighborhood = admittedVenue?.neighborhood ?? candidate.rawPlace.neighborhood
+      Boolean(identityAdmission?.routeIdentityEligible) &&
+      Boolean(identityAdmission?.materializedRouteRepresentation) &&
+      Boolean(materializedVenue) &&
+      completenessResult.status === 'passed' &&
+      equivalenceResult.status === 'equivalent' &&
+      !suppressedAsAnchorSelfMatch
+    const normalizedCategory = materializedVenue?.category ?? null
+    const normalizedNeighborhood = materializedVenue?.neighborhood ?? candidate.rawPlace.neighborhood
 
-    if (candidate.providerVenue.providerRecordId === anchorProviderRecordId) {
+    if (suppressedAsAnchorSelfMatch) {
       candidateSuppressionReasons.push('anchor_self_match')
       suppressionReasons.push(
         `${candidate.providerVenue.providerRecordId}:anchor_self_match`,
       )
-    } else if (!finalAdmissionPassed || !admittedVenue) {
+    } else if (!finalAdmissionPassed || !materializedVenue) {
       const identityReason =
         equivalenceResult.blockingReasons[0] ??
-        identityAdmission.blockingReasons[0] ??
-        identityAdmission.warnings[0] ??
+        identityAdmission?.admissionRejectionReasons[0] ??
+        (identityAdmission?.routeIdentityEligible && !identityAdmission.materializedRouteRepresentation
+          ? 'duplicate_group_retained_diagnostic_only'
+          : undefined) ??
+        identityHandoff?.pendingReason ??
+        identityHandoff?.ambiguityReason ??
         equivalenceResult.status ??
-        identityAdmission.canonicalIdentityStatus
+        identityHandoff?.identityResolutionStatus ??
+        'identity_not_admitted'
       candidateSuppressionReasons.push(
         ...(
           equivalenceResult.blockingReasons.length > 0
             ? equivalenceResult.blockingReasons
-            : identityAdmission.blockingReasons.length > 0
-              ? identityAdmission.blockingReasons
+            : identityAdmission && identityAdmission.admissionRejectionReasons.length > 0
+              ? identityAdmission.admissionRejectionReasons
             : [identityReason]
         ),
       )
       suppressionReasons.push(`${candidate.providerVenue.providerRecordId}:${identityReason}`)
     } else {
-      admittedNearbyCandidates.push(admittedVenue)
+      admittedNearbyCandidates.push(materializedVenue)
       admittedNearbyCandidateReviews.push({
         primaryType: candidate.providerVenue.primaryType?.trim() || undefined,
-        venue: admittedVenue,
+        venue: materializedVenue,
       })
     }
 
@@ -1027,7 +1087,7 @@ export async function buildProviderSourceOpportunity(
       normalizedCategory: normalizedCategory ?? null,
       formattedAddress:
         candidate.providerVenue.formattedAddress?.trim() ||
-        admittedVenue?.source.formattedAddress?.trim() ||
+        materializedVenue?.source.formattedAddress?.trim() ||
         null,
       neighborhood: normalizedNeighborhood?.trim() || null,
       canonicalVenueId: canonicalMapping.canonicalVenueId,
@@ -1037,6 +1097,20 @@ export async function buildProviderSourceOpportunity(
       completenessFailureReason: completenessResult.failureReason,
       equivalenceStatus: equivalenceResult.status,
       equivalenceBlockingReasons: equivalenceResult.blockingReasons,
+      identityResolutionStatus: identityHandoff?.identityResolutionStatus,
+      resolvedBaseVenueId: identityHandoff?.resolvedBaseVenueId,
+      pendingReason: identityHandoff?.pendingReason,
+      ambiguityReason: identityHandoff?.ambiguityReason,
+      routeAdmissionStatus: identityAdmission?.routeAdmissionStatus,
+      routeIdentityEligible: identityAdmission?.routeIdentityEligible,
+      diagnosticOnly: identityAdmission?.diagnosticOnly,
+      admissionRejectionReasons: identityAdmission?.admissionRejectionReasons,
+      duplicateGroupMemberSourceIdentities:
+        identityAdmission?.duplicateGroupMemberSourceIdentities,
+      duplicateGroupSize: identityAdmission?.duplicateGroupSize,
+      materializedRouteRepresentation: identityAdmission?.materializedRouteRepresentation,
+      materializedVenueId: identityAdmission?.materializedVenueId,
+      emittedVenueId: finalAdmissionPassed ? materializedVenue?.id : undefined,
       suppressionReasons: candidateSuppressionReasons,
     })
   }
@@ -1065,6 +1139,11 @@ export async function buildProviderSourceOpportunity(
     canonicalMappings,
     completeness,
     equivalence,
+    venueIdentityHandoffs: [...venueIdentityHandoffByRawId.values()].sort((left, right) =>
+      left.fieldSourceIdentity.localeCompare(right.fieldSourceIdentity),
+    ),
+    venueIdentityAdmissions: venueIdentityAdmissionResult.observations,
+    venueIdentityAdmissionGroups: venueIdentityAdmissionResult.groups,
   }
 
   const coordinatedOutcome = coordinateBuildProviderSourceOpportunityOutcome({
@@ -1104,6 +1183,11 @@ export async function buildProviderSourceOpportunity(
         canonicalMappings,
         completeness,
         equivalence,
+        venueIdentityHandoffs: [...venueIdentityHandoffByRawId.values()].sort((left, right) =>
+          left.fieldSourceIdentity.localeCompare(right.fieldSourceIdentity),
+        ),
+        venueIdentityAdmissions: venueIdentityAdmissionResult.observations,
+        venueIdentityAdmissionGroups: venueIdentityAdmissionResult.groups,
         trace,
         ledger,
         suppressionReasons,

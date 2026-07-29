@@ -486,6 +486,7 @@ function summarizeFieldBuildProviderScaffold(
 
 function buildMockProviderVenue(input: {
   displayName: string
+  formattedAddress?: string
   latitude: number
   longitude: number
   primaryType: string
@@ -496,7 +497,7 @@ function buildMockProviderVenue(input: {
     provider: 'google_places',
     providerRecordId: input.providerRecordId,
     displayName: input.displayName,
-    formattedAddress: `${input.displayName}, San Jose, CA`,
+    formattedAddress: input.formattedAddress ?? `${input.displayName}, San Jose, CA`,
     shortFormattedAddress: 'San Jose, CA',
     primaryType: input.primaryType,
     types: [input.primaryType, 'point_of_interest', 'establishment'],
@@ -545,6 +546,7 @@ function buildMockResultsForRequest(request: FieldTextSearchRequest): ProviderVe
       return [
         buildMockProviderVenue({
           displayName: 'Query Planner Parity Start',
+          formattedAddress: '225 S 3rd St, San Jose, CA 95112',
           latitude: 37.3307,
           longitude: -121.8871,
           primaryType: 'cafe',
@@ -557,6 +559,7 @@ function buildMockResultsForRequest(request: FieldTextSearchRequest): ProviderVe
       return [
         buildMockProviderVenue({
           displayName: 'Query Planner Parity Highlight',
+          formattedAddress: '675 N 7th St, San Jose, CA 95112',
           latitude: 37.3481,
           longitude: -121.8944,
           primaryType: 'restaurant',
@@ -569,6 +572,7 @@ function buildMockResultsForRequest(request: FieldTextSearchRequest): ProviderVe
       return [
         buildMockProviderVenue({
           displayName: 'Query Planner Parity Wind Down',
+          formattedAddress: '260 W Santa Clara St, San Jose, CA 95113',
           latitude: 37.3359,
           longitude: -121.8894,
           primaryType: 'dessert',
@@ -739,6 +743,27 @@ async function runBuildProviderMocked(): Promise<{
   })
   assert(result.opportunity, `${caseName} did not emit a provider opportunity.`)
   assert(fieldProxyAttemptCount === 3, `${caseName} proxy attempt drift.`)
+  for (const venue of result.opportunity.nearbyCandidates) {
+    const identityAdmission = result.opportunity.diagnostics.venueIdentityAdmissions.find(
+      (observation) => observation.materializedVenueId === venue.id,
+    )
+    assert(
+      identityAdmission?.resolvedBaseVenueId === venue.id,
+      `${caseName} emitted Venue.id must equal admitted resolvedBaseVenueId: ${venue.id}`,
+    )
+    assert(
+      !venue.id.startsWith('live_google_'),
+      `${caseName} emitted Venue.id must not use live_google_*: ${venue.id}`,
+    )
+    assert(
+      venue.id !== venue.source.providerRecordId,
+      `${caseName} emitted Venue.id must not equal providerRecordId: ${venue.id}`,
+    )
+    assert(
+      Boolean(venue.source.providerRecordId),
+      `${caseName} emitted Venue must retain providerRecordId provenance: ${venue.id}`,
+    )
+  }
   return {
     queryRow: summarizeRequests(caseName, 'buildProviderSourceOpportunity -> executeFieldProviderTextSearch', {
       envelopeCaps: envelope,
