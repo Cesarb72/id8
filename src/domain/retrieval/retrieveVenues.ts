@@ -9,6 +9,10 @@ import {
   sanitizeCityKey,
 } from './fieldPolicy'
 import { fetchHybridPortableVenues } from './hybridPortableAdapter'
+import {
+  getAdmittedRouteVenueIdentity,
+  isSelectableAdmittedRouteVenue,
+} from './dedupeVenues'
 import { mergeVenueSources } from './mergeVenueSources'
 import { buildLiveTrustBreakdown } from '../debug/buildLiveTrustBreakdown'
 import {
@@ -342,16 +346,21 @@ export function mergeEvidenceBearingLiveCandidatesForRetrieval(
   }
 
   const merged = [...primaryVenues]
-  const seenIds = new Set(primaryVenues.map((venue) => venue.id))
+  const seenIds = new Set(
+    primaryVenues
+      .map((venue) => getAdmittedRouteVenueIdentity(venue))
+      .filter((venueId): venueId is string => Boolean(venueId)),
+  )
   for (const venue of liveVenues) {
-    if (seenIds.has(venue.id)) {
+    const routeIdentity = getAdmittedRouteVenueIdentity(venue)
+    if (!routeIdentity || seenIds.has(routeIdentity)) {
       continue
     }
     if (classifyFieldLiveCandidateSurvival(venue).status !== 'eligible') {
       continue
     }
     merged.push(venue)
-    seenIds.add(venue.id)
+    seenIds.add(routeIdentity)
   }
   return merged
 }
@@ -567,7 +576,7 @@ function countBySource(venues: Venue[]): { curated: number; live: number } {
   )
 }
 
-function resolveRequiredInventoryVenues(
+export function resolveRequiredInventoryVenues(
   availableVenues: Venue[],
   seedVenues: Venue[] | undefined,
   dedupeLosses: LiveDedupeLossDiagnostics[],
@@ -576,17 +585,29 @@ function resolveRequiredInventoryVenues(
     return []
   }
 
-  const venueById = new Map(availableVenues.map((venue) => [venue.id, venue] as const))
+  const venueById = new Map(
+    availableVenues
+      .map((venue) => {
+        const routeIdentity = getAdmittedRouteVenueIdentity(venue)
+        return routeIdentity ? ([routeIdentity, venue] as const) : undefined
+      })
+      .filter((entry): entry is readonly [string, Venue] => Boolean(entry)),
+  )
 
   return seedVenues
     .map((seedVenue) => {
-      const exactMatch = venueById.get(seedVenue.id)
+      const seedRouteIdentity = getAdmittedRouteVenueIdentity(seedVenue)
+      if (!seedRouteIdentity) {
+        return undefined
+      }
+
+      const exactMatch = venueById.get(seedRouteIdentity)
       if (exactMatch) {
         return exactMatch
       }
 
       const dedupeResolvedVenueId = dedupeLosses.find(
-        (loss) => loss.removedVenueId === seedVenue.id,
+        (loss) => loss.removedVenueId === seedRouteIdentity,
       )?.keptVenueId
       if (dedupeResolvedVenueId) {
         const dedupeResolvedVenue = venueById.get(dedupeResolvedVenueId)
@@ -595,21 +616,7 @@ function resolveRequiredInventoryVenues(
         }
       }
 
-      return availableVenues.find((venue) => {
-        if (
-          seedVenue.source.providerRecordId &&
-          venue.source.providerRecordId === seedVenue.source.providerRecordId
-        ) {
-          return true
-        }
-
-        return (
-          venue.category === seedVenue.category &&
-          sanitize(venue.name) === sanitize(seedVenue.name) &&
-          sanitize(venue.city) === sanitize(seedVenue.city) &&
-          sanitize(venue.neighborhood) === sanitize(seedVenue.neighborhood)
-        )
-      })
+      return undefined
     })
     .filter((venue): venue is Venue => Boolean(venue))
     .filter(
@@ -623,15 +630,20 @@ function mergeRequiredVenues(primaryVenues: Venue[], requiredVenues: Venue[]): V
     return primaryVenues
   }
 
-  const merged: Venue[] = [...requiredVenues]
-  const seenIds = new Set(requiredVenues.map((venue) => venue.id))
+  const merged: Venue[] = requiredVenues.filter(isSelectableAdmittedRouteVenue)
+  const seenIds = new Set(
+    merged
+      .map((venue) => getAdmittedRouteVenueIdentity(venue))
+      .filter((venueId): venueId is string => Boolean(venueId)),
+  )
 
   for (const venue of primaryVenues) {
-    if (seenIds.has(venue.id)) {
+    const routeIdentity = getAdmittedRouteVenueIdentity(venue)
+    if (!routeIdentity || seenIds.has(routeIdentity)) {
       continue
     }
     merged.push(venue)
-    seenIds.add(venue.id)
+    seenIds.add(routeIdentity)
   }
 
   return merged
@@ -1537,4 +1549,3 @@ function shouldTraceGovernedBuild(): boolean {
   }
   return window.location.search.includes('debug=1')
 }
-
