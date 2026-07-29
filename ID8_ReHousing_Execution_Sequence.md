@@ -83,6 +83,31 @@ Order by dependency:
 
 ---
 
+## CURRENT IDENTITY PROGRAM STATUS - 2026-07-28
+*This section reconciles the original broad re-housing sequence with the accepted A1/A2/A4 identity program. It does not mark the historical re-housing program complete.*
+
+### Completed Identity Work
+- **Stage 0 - evidence preservation:** complete. The governed 96-row provider corpus source is durably preserved; corpus SHA-256 remains `9fa6fafbc1fdaf11859bcce709722417760c25f290ed1e84897993f14525f65f`.
+- **Stage 1 - Interpretation venue identity resolution:** complete and accepted. Interpretation owns deterministic venue-identity resolution; venue identity remains separate from direction identity.
+- **Stage 2A - Field to Interpretation handoff:** complete and accepted. Field constructs source/provenance evidence and hands it to Interpretation without authoring canonical identity.
+- **Stage 2B - Bearings admission seam:** complete and accepted. Bearings owns route admission and identity preservation through admission.
+- **Stage 2C - Build provider supply through admitted identity:** complete, accepted, committed at `09ca966` (`Wire Build provider supply through admitted venue identity`), and accounting-closed. The accepted accounting is `243 + 533 + 179 = 955` Git-counted insertions; the earlier physical-line estimate omitted 44 blank lines. Provider calls: 0. Hosted/Vercel calls: 0.
+
+### Remaining Stage 2 Packets
+1. **Stage 2D - Build anchor/provider ingress identity rewire** *(immediate next implementation packet after this document reconciliation).* Scope: `ProviderAdapter.searchAnchorPlaces`, Build anchor orchestration, and provider fixture identity handling. Purpose: prevent direct Build anchor search/orchestration from materializing `live_google_` or `providerRecordId` as route-bearing anchor identity.
+2. **Stage 2E - retrieval merge/dedupe/scoring identity guard** *(depends on Stage 2D).* Scope: `scoreVenueFit`, `retrieveVenues`, `dedupeVenues`, and `mergeVenueSources`. Purpose: require resolved, admitted, non-provider-derived identity before route scoring and align merge/dedupe with canonical identity where available.
+3. **Stage 2F - Application and product-mode materialization** *(depends on stable ingress and candidate identity).* Scope: Curate, Surprise, Build, public-card, seed, sandbox-preview, and App materialization bridges. Purpose: ensure Application consumes resolved/admitted identity and does not repair, synthesize, substitute, or promote provider identity.
+4. **Stage 2G - LCE/live nearby identity quarantine decision** *(distinct live/runtime seam).* Scope: nearby replacement, swap, live-session, and LCE consumers. Purpose: decide whether live/provider observations can become lock-bearing during runtime change, then rewire through the accepted seam or quarantine as diagnostic-only.
+
+### Held / Protected Work
+- **Stage 3 - corpus regeneration/promotion:** held. The corpus must be regenerated from the preserved 96-row source with Interpretation-resolved identity and pending states; no shrink, deletion, or silent rebaseline is accepted.
+- **A3 - routeAuthority / Review / Lock identity authority:** fenced from Stage 2D-2G. `routeAuthority`, `RuntimeRouteArtifact`, `ContractEntryArtifact`, and Review/Lock consumers require a separate protected packet.
+- **Great Stop purity:** remains a current MVP-green condition. Do not claim MVP green until the Great Stop standing condition is satisfied and proven.
+- **Malformed Phase 2 fake ArcCandidate proof:** remains explicit baseline proof debt and is not green.
+- **MVP status:** A1/A2/A4 are not globally passed yet; MVP green remains unclaimed.
+
+---
+
 ## RULES THAT APPLY TO EVERY PHASE
 - **Regression-gate every move** — green before and after. Nothing lands red.
 - **Log every discovery** to `ID8_ReHousing_Discovery_Log.md` as you go.

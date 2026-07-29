@@ -74,6 +74,28 @@ raw user input (captured ONCE at Step 1)
 
 ---
 
+## VENUE IDENTITY LIFECYCLE
+
+Route-bearing venue identity follows this lifecycle:
+
+`raw observation -> Field source/provenance handoff -> Interpretation venue-identity resolution -> Bearings route admission -> Waypoint consumption/coordination -> Application presentation/lifecycle -> protected route authority and lock -> LCE preservation during runtime change`
+
+Ownership:
+- **Field** owns raw observations, raw provider records, provider/source identity, and provenance. A raw Field record may carry `live_google_` and `providerRecordId` as source evidence.
+- **Interpretation** owns canonical venue-identity resolution. It resolves static-canonical convergence, deterministic provider-only canonical identity, pending identity, and ambiguity. Provider-only venue does not mean provider-derived canonical identity; valid provider-only observations may receive deterministic Interpretation-authored identity.
+- **Bearings** owns route admission and identity preservation through admission. Unresolved or ambiguous observations remain diagnostic-only and are not route-bearing.
+- **Waypoint** coordinates admitted candidates only. It may consume venue identity but does not author or repair it.
+- **Application** may select among or present resolved/admitted venue identities, but it may not repair provider identity, use `providerRecordId` as canonical identity, synthesize `baseVenueId` from display fields, or substitute `live_google_` as route-bearing identity.
+- **routeAuthority / Review / Lock / RuntimeRouteArtifact** are protected lock-authority seams. They consume route identity under a separately governed A3 packet and are not ordinary Stage 2 cleanup.
+- **LCE** consumes preserved identity during runtime change. It must not silently turn provider provenance into lock-bearing identity or create competing identity authority.
+
+Clarifications:
+- Venue identity and direction identity are separate Interpretation contracts. Direction identity may remain a legitimate Direction System contract; it is not the venue-identity resolver.
+- Corpus promotion consumes identity and does not author it. Provider corpus regeneration must use Interpretation-resolved identity and preserve pending evidence instead of promoting `live_google_` or `providerRecordId` as canonical identity.
+- Identity resolution is separate from route eligibility, pocket fit, ranking, movement feasibility, travel preference, route quality, and Great Stop worthiness.
+
+---
+
 ## PER-ENGINE OWNERSHIP (the re-housing target)
 
 ### FIELD — detects current reality
