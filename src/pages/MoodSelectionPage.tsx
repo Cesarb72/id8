@@ -11,9 +11,10 @@ import {
   toSelectedDirectionContext,
 } from '../domain/discovery/selectedDirectionContext'
 import {
+  isSelectableAnchorSearchResult,
   searchAnchorVenueOptions,
   type AnchorSearchChip,
-  type AnchorSearchResult,
+  type SelectableAnchorSearchResult,
 } from '../app/services/arcApplicationService'
 import {
   vibeOptions,
@@ -206,7 +207,7 @@ export function MoodSelectionPage({
   const isDirectionChooseStage = isChooseStage
   const [anchorQuery, setAnchorQuery] = useState('')
   const [anchorChip, setAnchorChip] = useState<AnchorSearchChip | undefined>()
-  const [anchorResults, setAnchorResults] = useState<AnchorSearchResult[]>([])
+  const [anchorResults, setAnchorResults] = useState<SelectableAnchorSearchResult[]>([])
   const [anchorLoading, setAnchorLoading] = useState(false)
   const [anchorError, setAnchorError] = useState<string>()
   const [exploreMode, setExploreMode] = useState<ExploreMode>(() =>
@@ -289,12 +290,12 @@ export function MoodSelectionPage({
     const timeoutHandle = window.setTimeout(() => {
       void (async () => {
         try {
-          const results = await searchAnchorVenueOptions({
+          const results = (await searchAnchorVenueOptions({
             query: trimmedQuery,
             city,
             neighborhood,
             chip: anchorChip,
-          })
+          })).filter(isSelectableAnchorSearchResult)
           if (cancelled) {
             return
           }

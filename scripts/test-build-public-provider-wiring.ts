@@ -161,7 +161,7 @@ try {
   )
   const anchorSelectBlock = sourceSlice(
     sandboxSource,
-    'const handleBuildAnchorSelect = useCallback((result: AnchorSearchResult) => {',
+    'const handleBuildAnchorSelect = useCallback((result: SelectableAnchorSearchResult) => {',
     'const handleBuildContinue = useCallback(() => {',
   )
   assert(

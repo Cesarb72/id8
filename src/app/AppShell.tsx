@@ -63,6 +63,7 @@ import {
   type ArcFlowPhase,
 } from './wrapper/arcFlowPhase'
 import {
+  isSelectableAnchorSearchResult,
   runPlanBuildWithLegacyPlaceRightFallback,
   searchAnchorVenueOptions,
   type GenerationTrace,
@@ -2132,8 +2133,9 @@ function AppShellContent({
       city: state.lastIntentProfile.city,
       neighborhood: state.lastIntentProfile.neighborhood ?? currentStop?.scoredVenue.venue.neighborhood,
     }).catch(() => [])
+    const selectableRemoteMatches = remoteMatches.filter(isSelectableAnchorSearchResult)
 
-    const scoredRemoteMatches = remoteMatches.map((result) => ({
+    const scoredRemoteMatches = selectableRemoteMatches.map((result) => ({
       scoredVenue: scoreVenueFit(
         result.venue,
         state.lastIntentProfile!,

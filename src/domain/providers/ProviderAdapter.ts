@@ -1,4 +1,3 @@
-import { normalizeRawPlace } from '../normalize/normalizeRawPlace'
 import type {
   FieldProxyMode,
   FieldProxyPurpose,
@@ -19,10 +18,13 @@ import {
   getGooglePlacesConfig,
   isDevOrSandboxCloseoutFlow,
 } from '../sources/getSourceMode'
-import { mapLivePlaceToRawPlace } from '../sources/mapLivePlaceToRawPlace'
+import {
+  mapLivePlaceToRawPlaceWithDiagnostics,
+  type MapLivePlaceDropReason,
+} from '../sources/mapLivePlaceToRawPlace'
 import type { LivePlaceKind } from '../sources/buildLiveQueryPlan'
+import type { RawPlace } from '../types/rawPlace'
 import type { SourceMode } from '../types/sourceMode'
-import type { Venue } from '../types/venue'
 
 export interface ProviderAdapterDiagnostics {
   attempted: boolean
@@ -71,10 +73,36 @@ export interface ProviderTextSearchResult<T> {
 
 type FieldProxyRequestContext = FieldTextSearchRequest['context']
 
-export interface ProviderAnchorSearchResult {
-  subtitle: string
-  venue: Venue
+export interface ProviderAnchorSearchSourceEvidence {
+  displayName?: string
+  formattedAddress?: string
+  primaryType?: string
+  providerRecordId?: string
+  shortFormattedAddress?: string
+  stableEvidenceKey: string
+  types: string[]
 }
+
+export interface ProviderAnchorSearchObservationResult {
+  kind: 'raw_observation'
+  fieldSourceIdentity: string
+  providerRecordId: string
+  rawPlace: RawPlace
+  sourceEvidence: ProviderAnchorSearchSourceEvidence
+  subtitle: string
+}
+
+export interface ProviderAnchorSearchDiagnosticResult {
+  kind: 'field_diagnostic'
+  dropReason: MapLivePlaceDropReason
+  providerRecordId?: string
+  sourceEvidence: ProviderAnchorSearchSourceEvidence
+  subtitle: string
+}
+
+export type ProviderAnchorSearchResult =
+  | ProviderAnchorSearchObservationResult
+  | ProviderAnchorSearchDiagnosticResult
 
 export interface ProviderNearbyPlaceSummary {
   coordinates: [number, number]
@@ -247,6 +275,32 @@ function mapProviderVenueToGooglePlaceRecord(place: ProviderVenue): GooglePlaceR
     userRatingCount: place.userRatingCount,
     utcOffsetMinutes: place.utcOffsetMinutes,
     websiteUri: place.websiteUri,
+  }
+}
+
+function buildProviderAnchorSourceEvidence(
+  place: ProviderVenue,
+  index: number,
+): ProviderAnchorSearchSourceEvidence {
+  const providerRecordId = place.providerRecordId?.trim()
+  const displayName = place.displayName?.trim()
+  const formattedAddress = place.formattedAddress?.trim()
+  const shortFormattedAddress = place.shortFormattedAddress?.trim()
+  return {
+    ...(displayName ? { displayName } : {}),
+    ...(formattedAddress ? { formattedAddress } : {}),
+    ...(place.primaryType ? { primaryType: place.primaryType } : {}),
+    ...(providerRecordId ? { providerRecordId } : {}),
+    ...(shortFormattedAddress ? { shortFormattedAddress } : {}),
+    stableEvidenceKey: [
+      providerRecordId ?? '',
+      displayName ?? '',
+      formattedAddress ?? shortFormattedAddress ?? '',
+      place.location?.latitude?.toFixed(6) ?? '',
+      place.location?.longitude?.toFixed(6) ?? '',
+      index.toString(),
+    ].join('\u001f'),
+    types: place.types ?? [],
   }
 }
 
@@ -473,32 +527,56 @@ export async function searchAnchorPlaces(input: {
     callPurpose: 'anchor_search',
     city: input.city,
     mapPlace: (place, { index }) => {
-      const rawPlace = mapLivePlaceToRawPlace(mapProviderVenueToGooglePlaceRecord(place), {
-        city: input.city,
-        neighborhood: input.neighborhood,
-        requestedKind: input.requestedKind,
-        queryLabel: 'anchor-search',
-        queryTerms: input.queryTerms,
-        rank: index,
-      })
-      if (!rawPlace) {
-        return undefined
+      const sourceEvidence = buildProviderAnchorSourceEvidence(place, index)
+      const mapped = mapLivePlaceToRawPlaceWithDiagnostics(
+        mapProviderVenueToGooglePlaceRecord(place),
+        {
+          city: input.city,
+          neighborhood: input.neighborhood,
+          requestedKind: input.requestedKind,
+          queryLabel: 'anchor-search',
+          queryTerms: input.queryTerms,
+          rank: index,
+        },
+      )
+      const subtitle =
+        place.shortFormattedAddress ??
+        place.formattedAddress ??
+        input.neighborhood ??
+        input.city
+
+      if (!mapped.rawPlace) {
+        return mapped.dropReason
+          ? {
+              kind: 'field_diagnostic',
+              dropReason: mapped.dropReason,
+              ...(sourceEvidence.providerRecordId
+                ? { providerRecordId: sourceEvidence.providerRecordId }
+                : {}),
+              sourceEvidence,
+              subtitle,
+            }
+          : undefined
       }
 
-      const anchorName = rawPlace.name.trim()
+      const anchorName = mapped.rawPlace.name.trim()
       return {
-        venue: normalizeRawPlace({
-          ...rawPlace,
+        kind: 'raw_observation',
+        fieldSourceIdentity: mapped.rawPlace.id,
+        providerRecordId: mapped.rawPlace.providerRecordId!,
+        rawPlace: {
+          ...mapped.rawPlace,
           driveMinutes: input.neighborhood ? 10 : 12,
           shortDescription:
             place.editorialSummary ??
             `${anchorName} was selected as a user-led plan anchor.`,
           narrativeFlavor: `${anchorName} is the chosen anchor for a user-led outing.`,
-        }),
+        },
+        sourceEvidence,
         subtitle:
           place.shortFormattedAddress ??
           place.formattedAddress ??
-          rawPlace.neighborhood ??
+          mapped.rawPlace.neighborhood ??
           input.city,
       }
     },

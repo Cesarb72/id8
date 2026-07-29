@@ -18,9 +18,12 @@ import {
 } from '../../domain/interpretation/discovery/stopTypeCandidateBoard'
 import type { LiveProviderEnvelope, LiveRetrievalPocketHint } from '../../domain/retrieval/liveEnvelope'
 import {
+  assertSelectableAnchorSearchResult,
+  isSelectableAnchorSearchResult,
   searchAnchorVenues,
   type AnchorSearchChip,
   type AnchorSearchResult,
+  type SelectableAnchorSearchResult,
 } from '../../domain/search/searchAnchorVenues'
 import type { IntentInput, RouteShapeContract } from '../../domain/types/intent'
 import type { ContractEntryArtifactLineage } from '../../domain/artifacts/contractEntryArtifact'
@@ -61,7 +64,17 @@ const GOVERNED_ROUTE_FIELD_PROXY_ENVELOPE: LiveProviderEnvelope = {
  * as the canonical lower-layer implementations.
  */
 
-export type { AnchorSearchChip, AnchorSearchResult, DistrictPreviewResult, GenerationTrace }
+export {
+  assertSelectableAnchorSearchResult,
+  isSelectableAnchorSearchResult,
+}
+export type {
+  AnchorSearchChip,
+  AnchorSearchResult,
+  DistrictPreviewResult,
+  GenerationTrace,
+  SelectableAnchorSearchResult,
+}
 export type { ContractEntryArtifactLineage }
 
 export type PlaceRightCarriedPlanBuildOptions = RunGeneratePlanOptions & {

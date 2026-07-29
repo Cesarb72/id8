@@ -5,11 +5,17 @@ import type {
   BearingsVenueIdentityRouteAdmissionStatus,
   FieldInterpretationVenueIdentityHandoff,
 } from '../types/diagnostics'
+import type { RawPlace } from '../types/rawPlace'
 
 export interface BearingsVenueIdentityAdmissionResult {
   observations: BearingsVenueIdentityAdmissionObservationDiagnostic[]
   groups: BearingsVenueIdentityAdmissionGroupDiagnostic[]
   observationsByFieldSourceIdentity: Map<string, BearingsVenueIdentityAdmissionObservationDiagnostic>
+}
+
+export interface BearingsAdmittedVenueIdentityRouteSupply {
+  rawPlaces: RawPlace[]
+  routeNormalizationIdByRawId: Map<string, string>
 }
 
 function isLiveGoogleIdentity(value: string): boolean {
@@ -277,5 +283,33 @@ export function buildVenueIdentityAdmissionDiagnostics(
     observationsByFieldSourceIdentity: new Map(
       observations.map((observation) => [observation.fieldSourceIdentity, observation]),
     ),
+  }
+}
+
+export function buildAdmittedVenueIdentityRouteSupplyRawPlaces(params: {
+  admissionResult: BearingsVenueIdentityAdmissionResult
+  rawPlaces: RawPlace[]
+}): BearingsAdmittedVenueIdentityRouteSupply {
+  const rawPlaceByFieldSourceIdentity = new Map(
+    params.rawPlaces.map((rawPlace) => [rawPlace.id, rawPlace]),
+  )
+  const admittedRawPlaces: RawPlace[] = []
+  const routeNormalizationIdByRawId = new Map<string, string>()
+
+  for (const group of params.admissionResult.groups) {
+    const representative = rawPlaceByFieldSourceIdentity.get(group.representativeFieldSourceIdentity)
+    if (!representative) {
+      continue
+    }
+    admittedRawPlaces.push({
+      ...representative,
+      id: group.resolvedBaseVenueId,
+    })
+    routeNormalizationIdByRawId.set(representative.id, group.resolvedBaseVenueId)
+  }
+
+  return {
+    rawPlaces: admittedRawPlaces.sort((left, right) => left.id.localeCompare(right.id)),
+    routeNormalizationIdByRawId,
   }
 }

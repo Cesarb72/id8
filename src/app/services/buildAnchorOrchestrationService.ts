@@ -1,10 +1,9 @@
-import type { AnchorSearchResult } from './arcApplicationService'
-import { curatedVenues } from '../../data/venues'
-import { getProviderRecordIdFromLiveGoogleVenueId } from '../../domain/providers/admitLiveVenueIdentity'
 import {
-  isCanonicalVenueResolved,
-  resolveCanonicalVenueIdForProviderRecord,
-} from '../../domain/providers/providerCanonicalVenueMapping'
+  assertSelectableAnchorSearchResult,
+  isSelectableAnchorSearchResult,
+  type AnchorSearchResult,
+  type SelectableAnchorSearchResult,
+} from './arcApplicationService'
 import type { UserStopRole } from '../../domain/types/itinerary'
 import type { Venue } from '../../domain/types/venue'
 
@@ -13,7 +12,7 @@ export type BuildAnchorRole = Extract<UserStopRole, 'start' | 'highlight' | 'win
 export type BuildAnchorSelection = {
   venueId: string
   name: string
-  category: AnchorSearchResult['venue']['category']
+  category: Venue['category']
   city: string
   neighborhood: string
   sourceVenueId?: string
@@ -38,7 +37,7 @@ export type PersistedBuildAnchorSelectionRestore = {
 }
 
 export type PersistedBuildAnchorResultRestore = {
-  result: AnchorSearchResult | null
+  result: SelectableAnchorSearchResult | null
 }
 
 function normalizeOptionalString(value: string | undefined): string | undefined {
@@ -51,21 +50,20 @@ function isBuildAnchorCoreRole(role: UserStopRole | string | undefined): role is
 }
 
 function getBuildAnchorProviderRecordIdFromVenue(venue: Venue): string | undefined {
-  return (
-    normalizeOptionalString(venue.source.providerRecordId) ??
-    getProviderRecordIdFromLiveGoogleVenueId(venue.id)
-  )
+  return normalizeOptionalString(venue.source.providerRecordId)
 }
 
 function getBuildAnchorProviderRecordIdFromSelection(
   selection: Partial<BuildAnchorSelection>,
 ): string | undefined {
+  return normalizeOptionalString(selection.providerRecordId)
+}
+
+function isProviderLookingRouteIdentity(value: string, providerRecordId?: string): boolean {
+  const normalized = value.trim().toLowerCase()
   return (
-    normalizeOptionalString(selection.providerRecordId) ??
-    (selection.sourceVenueId
-      ? getProviderRecordIdFromLiveGoogleVenueId(selection.sourceVenueId)
-      : undefined) ??
-    (selection.venueId ? getProviderRecordIdFromLiveGoogleVenueId(selection.venueId) : undefined)
+    normalized.startsWith('live_google_') ||
+    Boolean(providerRecordId && normalized === providerRecordId.trim().toLowerCase())
   )
 }
 
@@ -84,25 +82,13 @@ export function canonicalizeBuildAnchorSelection(
   }
 
   const providerRecordId = getBuildAnchorProviderRecordIdFromSelection(selection)
-  const canonicalMapping = providerRecordId
-    ? resolveCanonicalVenueIdForProviderRecord({
-        provider: 'google-places',
-        providerRecordId,
-        staticVenues: curatedVenues,
-      })
-    : null
-  const canonicalVenueId =
-    canonicalMapping && isCanonicalVenueResolved(canonicalMapping)
-      ? canonicalMapping.canonicalVenueId
-      : undefined
-  const canonicalizedVenueId = canonicalVenueId ?? venueId
-  const sourceVenueId =
-    canonicalVenueId && canonicalVenueId !== venueId
-      ? normalizeOptionalString(selection.sourceVenueId) ?? venueId
-      : normalizeOptionalString(selection.sourceVenueId)
+  if (isProviderLookingRouteIdentity(venueId, providerRecordId)) {
+    return null
+  }
+  const sourceVenueId = normalizeOptionalString(selection.sourceVenueId)
 
   return {
-    venueId: canonicalizedVenueId,
+    venueId,
     name,
     category: selection.category,
     city,
@@ -115,20 +101,19 @@ export function canonicalizeBuildAnchorSelection(
 export function buildAnchorSelectionFromSearchResult(
   result: AnchorSearchResult,
 ): BuildAnchorSelection {
-  return canonicalizeBuildAnchorSelection({
-    venueId: result.venue.id,
-    name: result.venue.name,
-    category: result.venue.category,
-    city: result.venue.city,
-    neighborhood: result.venue.neighborhood,
-    providerRecordId: getBuildAnchorProviderRecordIdFromVenue(result.venue),
-  }) ?? {
-    venueId: result.venue.id,
-    name: result.venue.name,
-    category: result.venue.category,
-    city: result.venue.city,
-    neighborhood: result.venue.neighborhood,
+  const selectable = assertSelectableAnchorSearchResult(result)
+  const selection = canonicalizeBuildAnchorSelection({
+    venueId: selectable.venue.id,
+    name: selectable.venue.name,
+    category: selectable.venue.category,
+    city: selectable.venue.city,
+    neighborhood: selectable.venue.neighborhood,
+    providerRecordId: getBuildAnchorProviderRecordIdFromVenue(selectable.venue),
+  })
+  if (!selection) {
+    throw new Error('Selectable Build anchor result does not carry an admitted route identity.')
   }
+  return selection
 }
 
 export function doesBuildAnchorResultMatchSelection(
@@ -136,6 +121,9 @@ export function doesBuildAnchorResultMatchSelection(
   selection: BuildAnchorSelection | null,
 ): boolean {
   if (!selection) {
+    return false
+  }
+  if (!isSelectableAnchorSearchResult(result)) {
     return false
   }
   const resultVenueId = result.venue.id.trim()
@@ -206,7 +194,8 @@ export function restorePersistedBuildAnchorResult(
     return { result: null }
   }
   try {
-    return { result: JSON.parse(rawResult) as AnchorSearchResult }
+    const result = JSON.parse(rawResult) as AnchorSearchResult
+    return { result: isSelectableAnchorSearchResult(result) ? result : null }
   } catch {
     return { result: null }
   }
@@ -221,18 +210,22 @@ export function selectBuildAnchorVenue(params: {
   if (!params.isBuildWrapperActive || !params.selectedBuildAnchor) {
     return null
   }
-  return (
-    params.buildAnchorResults.find((result) =>
+  const matchedResult = params.buildAnchorResults.find(
+    (result): result is SelectableAnchorSearchResult =>
+      isSelectableAnchorSearchResult(result) &&
       doesBuildAnchorResultMatchSelection(result, params.selectedBuildAnchor),
-    )?.venue ??
-    (params.selectedBuildAnchorResult &&
+  )
+  if (matchedResult) {
+    return matchedResult.venue
+  }
+  return params.selectedBuildAnchorResult &&
+    isSelectableAnchorSearchResult(params.selectedBuildAnchorResult) &&
     doesBuildAnchorResultMatchSelection(
       params.selectedBuildAnchorResult,
       params.selectedBuildAnchor,
     )
-      ? params.selectedBuildAnchorResult.venue
-      : null)
-  )
+    ? params.selectedBuildAnchorResult.venue
+    : null
 }
 
 export function deriveBuildPlannerAnchor(params: {

@@ -282,9 +282,11 @@ import {
   previewDistrictRecommendationsForPlanBuild,
   runPlanBuildWithLegacyPlaceRightFallback,
   runStepBCurateLiveSmokeCandidateSupply,
+  isSelectableAnchorSearchResult,
   searchAnchorVenueOptions,
   type AnchorSearchChip,
   type AnchorSearchResult,
+  type SelectableAnchorSearchResult,
   type GenerationTrace,
 } from '../app/services/arcApplicationService'
 import {
@@ -2768,7 +2770,7 @@ function getConciergeCardVibeUxProfile(vibe: VibeAnchor): ConciergeCardVibeDraft
   return 'lively'
 }
 
-function getBuildDefaultVibe(category: AnchorSearchResult['venue']['category']): VibeAnchor {
+function getBuildDefaultVibe(category: SelectableAnchorSearchResult['venue']['category']): VibeAnchor {
   if (category === 'park') {
     return 'chill'
   }
@@ -5822,6 +5824,7 @@ async function resolveCanonicalPlanningStopIdentity(
       chip,
     })
     const ranked = candidates
+      .filter(isSelectableAnchorSearchResult)
       .map((candidate) => {
         const providerRecordId = candidate.venue.source.providerRecordId?.trim()
         const latitude = candidate.venue.source.latitude
@@ -5839,7 +5842,7 @@ async function resolveCanonicalPlanningStopIdentity(
           overlapScore,
         }
       })
-      .filter((value): value is { candidate: AnchorSearchResult; overlapScore: number } =>
+      .filter((value): value is { candidate: SelectableAnchorSearchResult; overlapScore: number } =>
         Boolean(value),
       )
       .sort((left, right) => right.overlapScore - left.overlapScore)
@@ -10529,7 +10532,7 @@ export function SandboxConciergePage({
     }
     return restoredSelection.selection
   })
-  const [selectedBuildAnchorResult, setSelectedBuildAnchorResult] = useState<AnchorSearchResult | null>(() => {
+  const [selectedBuildAnchorResult, setSelectedBuildAnchorResult] = useState<SelectableAnchorSearchResult | null>(() => {
     if (isPublicSurface) {
       return null
     }
@@ -10543,7 +10546,7 @@ export function SandboxConciergePage({
     readBuildLocationClassDiagnosticInput(),
   )
   const [buildProviderContinueIntent, setBuildProviderContinueIntent] = useState(false)
-  const [buildAnchorResults, setBuildAnchorResults] = useState<AnchorSearchResult[]>([])
+  const [buildAnchorResults, setBuildAnchorResults] = useState<SelectableAnchorSearchResult[]>([])
   const [buildAnchorLoading, setBuildAnchorLoading] = useState(false)
   const [buildAnchorError, setBuildAnchorError] = useState<string>()
   const [buildRefinementVibe, setBuildRefinementVibe] = useState<VibeAnchor | 'auto'>('auto')
@@ -16583,10 +16586,10 @@ export function SandboxConciergePage({
       const searchAttempt = buildAnchorSearchAttemptRef.current + 1
       buildAnchorSearchAttemptRef.current = searchAttempt
       try {
-        const results = await searchAnchorVenueOptions({
+        const results = (await searchAnchorVenueOptions({
           query,
           city: districtLocationQuery,
-        })
+        })).filter(isSelectableAnchorSearchResult)
         if (buildAnchorSearchAttemptRef.current !== searchAttempt) {
           return
         }
@@ -16607,7 +16610,7 @@ export function SandboxConciergePage({
       }
   }, [buildAnchorQuery, districtLocationQuery, resetBuildAttemptState])
 
-  const handleBuildAnchorSelect = useCallback((result: AnchorSearchResult) => {
+  const handleBuildAnchorSelect = useCallback((result: SelectableAnchorSearchResult) => {
     const selection = buildAnchorSelectionFromSearchResult(result)
     setBuildProviderContinueIntent(false)
     setSelectedBuildAnchor(selection)
@@ -29031,4 +29034,3 @@ export function SandboxConciergePage({
     </PageShell>
   )
 }
-
