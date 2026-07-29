@@ -145,6 +145,38 @@ export type StaticLiveIdentityOverlapClassification =
 
 export type ProvisionalLeakageGuardStatus = 'pass' | 'fail' | 'warn'
 
+export type FieldInterpretationVenueIdentityResolutionStatus =
+  | 'resolved_static'
+  | 'resolved_provider_only'
+  | 'pending'
+  | 'ambiguous'
+
+export interface FieldInterpretationVenueIdentityHandoff {
+  fieldSourceIdentity: string
+  providerProvenance: {
+    provider?: string
+    providerRecordId?: string
+    sourceQueryLabel?: string
+  }
+  sourceFacts: {
+    name: string
+    city?: string
+    neighborhood?: string
+    formattedAddress?: string
+    latitude?: number
+    longitude?: number
+    sourceTypes: string[]
+  }
+  identityResolutionStatus: FieldInterpretationVenueIdentityResolutionStatus
+  resolvedBaseVenueId?: string
+  pendingReason?: string
+  ambiguityReason?: string
+  algorithmVersion: string
+  physicalPlaceKeyVersion?: string
+  physicalPlaceKeySerialization?: string
+  issuedProviderOnlyCanonicalsSource: 'empty_stage_2a_no_durable_registry'
+}
+
 export interface StaticLiveIdentityOverlapDiagnostic {
   classification: StaticLiveIdentityOverlapClassification
   guardStatus: ProvisionalLeakageGuardStatus
@@ -294,6 +326,7 @@ export interface LiveQueryCandidateDispositionDiagnostics {
   candidateBoardAdmission: boolean
   pocketFilter: 'admitted' | 'outside_pocket_envelope' | 'not_applicable' | 'unknown_drop_stage'
   dropReason?: string
+  venueIdentityHandoff?: FieldInterpretationVenueIdentityHandoff
   fieldToBearingsProvisionalHandoff?: FieldToBearingsProvisionalHandoffDiagnostic
   bearingsCandidateAdmissibility?: BearingsCandidateAdmissibilityDiagnostic
   sourceCategoryEvidence?: {

@@ -1,8 +1,20 @@
+import { curatedVenues } from '../../data/venues'
 import { normalizeVenue } from '../normalize/normalizeVenue'
 import { searchPlaces } from '../providers/ProviderAdapter'
 import type { ProviderVenue } from '../providers/providerTypes'
+import {
+  isCanonicalVenueResolved,
+  resolveCanonicalVenueIdForProviderVenue,
+  type ProviderCanonicalVenueMapping,
+} from '../providers/providerCanonicalVenueMapping'
 import { projectFieldMechanicalProviderTextSearchScaffold } from '../field/projectFieldMechanicalQueryScaffold'
 import { buildApplicationConciergeIntent } from '../interpretation/conciergeIntent/buildConciergeIntent'
+import {
+  resolveVenueIdentity,
+  type StaticCanonicalVenueIdentity,
+  type VenueIdentityResolution,
+  type VenueIdentityResolutionEvidence,
+} from '../interpretation/venueIdentity'
 import {
   projectInterpretationSemanticLiveQueryProjection,
   type InterpretationSemanticQueryProjectionInput,
@@ -25,6 +37,7 @@ import type { LiveRetrievalPocketHint } from '../retrieval/liveEnvelope'
 import type {
   BearingsCandidateAdmissibilityDiagnostic,
   FieldCandidateClass,
+  FieldInterpretationVenueIdentityHandoff,
   FieldToBearingsProvisionalHandoffDiagnostic,
 } from '../types/diagnostics'
 import { buildCandidateAdmissibilityDiagnostic } from '../bearings/buildCandidateAdmissibilityDiagnostics'
@@ -83,6 +96,7 @@ interface LiveCandidatesByQueryDiagnostics {
     candidateBoardAdmission: boolean
     pocketFilter: 'admitted' | 'outside_pocket_envelope' | 'not_applicable' | 'unknown_drop_stage'
     dropReason?: string
+    venueIdentityHandoff?: FieldInterpretationVenueIdentityHandoff
     fieldToBearingsProvisionalHandoff?: FieldToBearingsProvisionalHandoffDiagnostic
     bearingsCandidateAdmissibility?: BearingsCandidateAdmissibilityDiagnostic
     sourceCategoryEvidence?: {
@@ -131,6 +145,25 @@ interface LiveCandidatesByQueryDiagnostics {
 }
 
 type LiveCandidateDisposition = NonNullable<LiveCandidatesByQueryDiagnostics['candidates']>[number]
+
+interface MappedLiveRawPlaceResult {
+  dropReason?: MapLivePlaceDropReason
+  queryLabel: string
+  rawPlace?: RawPlace
+  canonicalMapping?: ProviderCanonicalVenueMapping
+}
+
+interface FieldStaticRouteSupplyResolution {
+  canonicalBaseVenueId?: string
+  staticRouteSupplyEligible: boolean
+  reasonCode: string
+}
+
+export interface Stage2AFieldIdentityResolutionInput {
+  rawPlace: RawPlace
+  canonicalMapping?: ProviderCanonicalVenueMapping
+  staticCanonicalsForResolution?: StaticCanonicalVenueIdentity[]
+}
 
 export interface LiveSourceDiagnostics {
   attempted: boolean
@@ -465,6 +498,185 @@ function applyPocketFilter(venues: Venue[], hint: LiveRetrievalPocketHint | unde
 
 function roundMeter(value: number): number {
   return Number(value.toFixed(1))
+}
+
+function buildVenueIdentityResolutionEvidenceFromRawPlace(
+  rawPlace: RawPlace,
+): VenueIdentityResolutionEvidence {
+  return {
+    displayName: rawPlace.name,
+    ...(rawPlace.city ? { city: rawPlace.city } : {}),
+    ...(rawPlace.neighborhood ? { locality: rawPlace.neighborhood } : {}),
+    ...(rawPlace.formattedAddress ? { formattedAddress: rawPlace.formattedAddress } : {}),
+    ...(typeof rawPlace.latitude === 'number' && typeof rawPlace.longitude === 'number'
+      ? { coordinates: { lat: rawPlace.latitude, lng: rawPlace.longitude } }
+      : {}),
+    ...(rawPlace.subcategoryHint ?? rawPlace.categoryHint
+      ? { categoryFamily: rawPlace.subcategoryHint ?? rawPlace.categoryHint }
+      : {}),
+    sourceTypes: rawPlace.sourceTypes ?? rawPlace.placeTypes ?? [],
+    providerProvenance: {
+      provider: rawPlace.provider ?? 'google-places',
+      ...(rawPlace.providerRecordId ? { providerRecordId: rawPlace.providerRecordId } : {}),
+      sourceStopId: rawPlace.id,
+      ...(rawPlace.sourceQueryLabel ? { queryLabel: rawPlace.sourceQueryLabel } : {}),
+    },
+  }
+}
+
+function buildStaticCanonicalForResolution(
+  mapping: ProviderCanonicalVenueMapping | undefined,
+): StaticCanonicalVenueIdentity | undefined {
+  if (!mapping || !isCanonicalVenueResolved(mapping)) {
+    return undefined
+  }
+  return {
+    baseVenueId: mapping.canonicalVenueId,
+    providerRecordIds: [mapping.providerRecordId],
+  }
+}
+
+function handoffStatusForResolution(
+  resolution: VenueIdentityResolution,
+): FieldInterpretationVenueIdentityHandoff['identityResolutionStatus'] {
+  if (resolution.status === 'static_canonical') {
+    return 'resolved_static'
+  }
+  if (resolution.status === 'provider_only_canonical') {
+    return 'resolved_provider_only'
+  }
+  return resolution.status
+}
+
+function buildVenueIdentityHandoff(params: {
+  rawPlace: RawPlace
+  resolution: VenueIdentityResolution
+}): FieldInterpretationVenueIdentityHandoff {
+  const { rawPlace, resolution } = params
+  const resolvedBaseVenueId =
+    resolution.status === 'static_canonical' || resolution.status === 'provider_only_canonical'
+      ? resolution.baseVenueId
+      : undefined
+  const physicalPlaceKey =
+    'physicalPlaceKey' in resolution ? resolution.physicalPlaceKey : undefined
+  const physicalPlaceKeySerialization =
+    'physicalPlaceKeySerialization' in resolution
+      ? resolution.physicalPlaceKeySerialization
+      : undefined
+  return {
+    fieldSourceIdentity: rawPlace.id,
+    providerProvenance: {
+      ...(rawPlace.provider ? { provider: rawPlace.provider } : {}),
+      ...(rawPlace.providerRecordId ? { providerRecordId: rawPlace.providerRecordId } : {}),
+      ...(rawPlace.sourceQueryLabel ? { sourceQueryLabel: rawPlace.sourceQueryLabel } : {}),
+    },
+    sourceFacts: {
+      name: rawPlace.name,
+      ...(rawPlace.city ? { city: rawPlace.city } : {}),
+      ...(rawPlace.neighborhood ? { neighborhood: rawPlace.neighborhood } : {}),
+      ...(rawPlace.formattedAddress ? { formattedAddress: rawPlace.formattedAddress } : {}),
+      ...(typeof rawPlace.latitude === 'number' && typeof rawPlace.longitude === 'number'
+        ? { latitude: rawPlace.latitude, longitude: rawPlace.longitude }
+        : {}),
+      sourceTypes: rawPlace.sourceTypes ?? rawPlace.placeTypes ?? [],
+    },
+    identityResolutionStatus: handoffStatusForResolution(resolution),
+    ...(resolvedBaseVenueId ? { resolvedBaseVenueId } : {}),
+    ...(resolution.status === 'pending' ? { pendingReason: resolution.pendingReason } : {}),
+    ...(resolution.status === 'ambiguous' ? { ambiguityReason: resolution.pendingReason } : {}),
+    algorithmVersion: resolution.algorithmVersion,
+    ...(physicalPlaceKey?.identityKeyVersion
+      ? { physicalPlaceKeyVersion: physicalPlaceKey.identityKeyVersion }
+      : {}),
+    ...(physicalPlaceKeySerialization ? { physicalPlaceKeySerialization } : {}),
+    issuedProviderOnlyCanonicalsSource: 'empty_stage_2a_no_durable_registry',
+  }
+}
+
+function resolveStage2AHandoffForInput(
+  input: Stage2AFieldIdentityResolutionInput,
+): FieldInterpretationVenueIdentityHandoff {
+  const staticCanonical = buildStaticCanonicalForResolution(input.canonicalMapping)
+  const staticCanonicals = [
+    ...(staticCanonical ? [staticCanonical] : []),
+    ...(input.staticCanonicalsForResolution ?? []),
+  ]
+  const resolution = resolveVenueIdentity({
+    evidence: buildVenueIdentityResolutionEvidenceFromRawPlace(input.rawPlace),
+    context: {
+      staticCanonicals,
+      issuedProviderOnlyCanonicals: [],
+    },
+  })
+  return buildVenueIdentityHandoff({
+    rawPlace: input.rawPlace,
+    resolution,
+  })
+}
+
+export function resolveStage2AFieldInterpretationVenueIdentityHandoffs(
+  inputs: Stage2AFieldIdentityResolutionInput[],
+): Map<string, FieldInterpretationVenueIdentityHandoff> {
+  const preliminary = inputs.map((input) => ({
+    input,
+    handoff: resolveStage2AHandoffForInput(input),
+  }))
+  const grouped = new Map<string, typeof preliminary>()
+  const ungrouped: typeof preliminary = []
+
+  for (const entry of preliminary) {
+    const serialization = entry.handoff.physicalPlaceKeySerialization
+    if (!serialization || entry.handoff.identityResolutionStatus !== 'resolved_provider_only') {
+      ungrouped.push(entry)
+      continue
+    }
+    grouped.set(serialization, [...(grouped.get(serialization) ?? []), entry])
+  }
+
+  const handoffsByFieldSourceIdentity = new Map<string, FieldInterpretationVenueIdentityHandoff>()
+  for (const entry of ungrouped.sort((left, right) =>
+    left.handoff.fieldSourceIdentity.localeCompare(right.handoff.fieldSourceIdentity),
+  )) {
+    handoffsByFieldSourceIdentity.set(entry.handoff.fieldSourceIdentity, entry.handoff)
+  }
+
+  for (const [serialization, entries] of [...grouped.entries()].sort((left, right) =>
+    left[0].localeCompare(right[0]),
+  )) {
+    const canonical = entries
+      .slice()
+      .sort((left, right) =>
+        left.handoff.fieldSourceIdentity.localeCompare(right.handoff.fieldSourceIdentity),
+      )[0]!.handoff
+    for (const entry of entries) {
+      const resolvedBaseVenueId = canonical.resolvedBaseVenueId
+      handoffsByFieldSourceIdentity.set(entry.handoff.fieldSourceIdentity, {
+        ...entry.handoff,
+        ...(resolvedBaseVenueId ? { resolvedBaseVenueId } : {}),
+        physicalPlaceKeySerialization: serialization,
+      })
+    }
+  }
+
+  return handoffsByFieldSourceIdentity
+}
+
+function resolveFieldStaticRouteSupply(params: {
+  rawPlace: RawPlace
+  canonicalMapping?: ProviderCanonicalVenueMapping
+}): FieldStaticRouteSupplyResolution {
+  const resolvedCanonicalVenueId =
+    params.canonicalMapping && isCanonicalVenueResolved(params.canonicalMapping)
+      ? params.canonicalMapping.canonicalVenueId
+      : undefined
+  const staticRouteSupplyEligible = Boolean(resolvedCanonicalVenueId)
+  return {
+    ...(resolvedCanonicalVenueId ? { canonicalBaseVenueId: resolvedCanonicalVenueId } : {}),
+    staticRouteSupplyEligible,
+    reasonCode: staticRouteSupplyEligible
+      ? 'canonical_baseVenueId_resolved'
+      : 'unresolved_canonical_identity',
+  }
 }
 
 function buildFieldPocketProofDiagnostic(params: {
@@ -1029,7 +1241,7 @@ export async function fetchLivePlaces(
   const roleIntentQueryNotes = [...new Set(baseQueryPlan.flatMap((entry) => entry.notes))]
   const requestedKindsForPlan = [...new Set(baseQueryPlan.map((entry) => entry.kind))]
 
-  const providerResults = await searchPlaces({
+  const providerResults = await searchPlaces<MappedLiveRawPlaceResult, (typeof queryPlan)[number]>({
     callPurpose: 'retrieval_supply',
     city: intent.city,
     context: {
@@ -1051,10 +1263,17 @@ export async function fetchLivePlaces(
           rank: index,
         },
       )
+      const canonicalMapping = mapped.rawPlace
+        ? resolveCanonicalVenueIdForProviderVenue({
+            providerVenue: place,
+            staticVenues: curatedVenues,
+          })
+        : undefined
       return {
         dropReason: mapped.dropReason,
         queryLabel: query.queryLabel,
         rawPlace: mapped.rawPlace,
+        ...(canonicalMapping ? { canonicalMapping } : {}),
       }
     },
     queries: queryPlan.map((query) => {
@@ -1154,6 +1373,11 @@ export async function fetchLivePlaces(
   const errors = providerResults.errors
   let fetchedCount = 0
   const rawPlaces: RawPlace[] = []
+  const routeIdentityEligibleRawPlaces: RawPlace[] = []
+  const staticRouteSupplyByRawId = new Map<string, FieldStaticRouteSupplyResolution>()
+  const venueIdentityHandoffByRawId = new Map<string, FieldInterpretationVenueIdentityHandoff>()
+  const routeNormalizationIdByRawId = new Map<string, string>()
+  const mappedRawPlaceResults: Stage2AFieldIdentityResolutionInput[] = []
   const mappedCountByQuery = new Map<string, number>()
   const fetchedCountByQuery = new Map<string, number>()
   const mappedDropReasons = emptyMapDropReasons()
@@ -1167,6 +1391,22 @@ export async function fetchLivePlaces(
   for (const result of providerResults.results) {
     if (result.rawPlace) {
       rawPlaces.push(result.rawPlace)
+      mappedRawPlaceResults.push({
+        rawPlace: result.rawPlace,
+        ...(result.canonicalMapping ? { canonicalMapping: result.canonicalMapping } : {}),
+      })
+      const staticRouteSupply = resolveFieldStaticRouteSupply({
+        rawPlace: result.rawPlace,
+        canonicalMapping: result.canonicalMapping,
+      })
+      staticRouteSupplyByRawId.set(result.rawPlace.id, staticRouteSupply)
+      if (staticRouteSupply.staticRouteSupplyEligible && staticRouteSupply.canonicalBaseVenueId) {
+        routeNormalizationIdByRawId.set(result.rawPlace.id, staticRouteSupply.canonicalBaseVenueId)
+        routeIdentityEligibleRawPlaces.push({
+          ...result.rawPlace,
+          id: staticRouteSupply.canonicalBaseVenueId,
+        })
+      }
       mappedCountByQuery.set(
         result.queryLabel,
         (mappedCountByQuery.get(result.queryLabel) ?? 0) + 1,
@@ -1176,8 +1416,13 @@ export async function fetchLivePlaces(
       mappedDropReasons[result.dropReason] = (mappedDropReasons[result.dropReason] ?? 0) + 1
     }
   }
+  const resolvedVenueIdentityHandoffs =
+    resolveStage2AFieldInterpretationVenueIdentityHandoffs(mappedRawPlaceResults)
+  for (const [rawId, handoff] of resolvedVenueIdentityHandoffs) {
+    venueIdentityHandoffByRawId.set(rawId, handoff)
+  }
 
-  const normalized = normalizeRawPlaces(rawPlaces, intent)
+  const normalized = normalizeRawPlaces(routeIdentityEligibleRawPlaces, intent)
   const deduped = dedupeByPlaceId(normalized.venues)
   const pocketFiltered = applyPocketFilter(deduped.venues, pocketHint)
   const venues = pocketFiltered.venues
@@ -1191,7 +1436,11 @@ export async function fetchLivePlaces(
     )
     const normalizedByRawId = new Map(normalizedForQuery.map((venue) => [venue.id, venue]))
     const candidates: LiveCandidateDisposition[] = mapped.map((rawPlace) => {
-      const normalizedVenue = normalizedByRawId.get(rawPlace.id)
+      const staticRouteSupply = staticRouteSupplyByRawId.get(rawPlace.id)
+      const venueIdentityHandoff = venueIdentityHandoffByRawId.get(rawPlace.id)
+      const normalizedVenue = staticRouteSupply?.staticRouteSupplyEligible
+        ? normalizedByRawId.get(routeNormalizationIdByRawId.get(rawPlace.id) ?? rawPlace.id)
+        : undefined
       const normalizedResult = Boolean(normalizedVenue)
       const candidateBoardAdmission = Boolean(normalizedVenue && selectedVenueIds.has(normalizedVenue.id))
       const pocketFilter: NonNullable<
@@ -1262,6 +1511,8 @@ export async function fetchLivePlaces(
       const bearingsCandidateAdmissibility = buildCandidateAdmissibilityDiagnostic(
         fieldToBearingsProvisionalHandoff,
       )
+      const staticRouteSupplyEligible = staticRouteSupply?.staticRouteSupplyEligible === true
+      const effectiveProofEligible = proofEligible && staticRouteSupplyEligible
       return {
         name: rawPlace.name,
         venueId: normalizedVenue?.id ?? rawPlace.id,
@@ -1272,8 +1523,8 @@ export async function fetchLivePlaces(
         sourceOrigin: normalizedVenue?.source.sourceOrigin ?? 'live',
         sourceMode: 'live',
         fieldCandidateClass,
-        proofEligible,
-        diagnosticOnly: !proofEligible,
+        proofEligible: effectiveProofEligible,
+        diagnosticOnly: !effectiveProofEligible,
         candidatePocket: normalizedVenue?.neighborhood,
         selectedPocketEnvelope,
         ...(typeof pocketProofDiagnostic?.candidateDistanceToPocketCenterM === 'number'
@@ -1292,6 +1543,7 @@ export async function fetchLivePlaces(
         normalizedResult,
         candidateBoardAdmission,
         pocketFilter,
+        ...(venueIdentityHandoff ? { venueIdentityHandoff } : {}),
         ...(fieldToBearingsProvisionalHandoff ? { fieldToBearingsProvisionalHandoff } : {}),
         ...(bearingsCandidateAdmissibility ? { bearingsCandidateAdmissibility } : {}),
         sourceCategoryEvidence: {
@@ -1299,7 +1551,9 @@ export async function fetchLivePlaces(
           normalizedSourceTypes: normalizedVenue?.source.sourceTypes ?? [],
         },
         pocketProofDiagnostic,
-        ...(!normalizedResult && !normalizedVenueIds.has(rawPlace.id)
+        ...(!staticRouteSupplyEligible
+          ? { dropReason: staticRouteSupply?.reasonCode ?? 'unresolved_canonical_identity' }
+          : !normalizedResult && !normalizedVenueIds.has(routeNormalizationIdByRawId.get(rawPlace.id) ?? rawPlace.id)
           ? { dropReason: 'normalization_or_dedupe_drop' }
           : filterVerdict === 'rejected_missing_location'
             ? { dropReason: 'field_source_pocket_filter_missing_location' }
