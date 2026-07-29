@@ -2302,24 +2302,25 @@ export function scoreVenueCollection(
   const momentCandidates = deriveMomentVenueRecords({
     intent,
     venuePool: venues,
-  }).map<ScoredVenue>(({ moment, venue }) => {
-    const candidate = scoreVenueFit(venue, intent, crewPolicy, lens, roleContracts, starterPack, options)
-    const parentVenueName = moment.parentPlaceId
-      ? venues.find((item) => item.id === moment.parentPlaceId)?.name
+  }).flatMap<ScoredVenue>(({ moment, venue }) => {
+    const parentVenue = moment.parentPlaceId
+      ? venues.find((item) => item.id === moment.parentPlaceId)
       : undefined
+    if (!parentVenue) {
+      return []
+    }
+    const candidate = scoreVenueFit(venue, intent, crewPolicy, lens, roleContracts, starterPack, options)
     return {
       ...candidate,
       candidateIdentity: {
         candidateId: `moment::${moment.id}`,
-        baseVenueId: `moment::${moment.id}`,
+        baseVenueId: parentVenue.id,
         kind: 'moment',
         momentId: moment.id,
         momentType: moment.momentType,
         momentSourceType: moment.sourceType,
         parentPlaceId: moment.parentPlaceId,
-        traceLabel: parentVenueName
-          ? `${moment.title} | ${parentVenueName}`
-          : moment.title,
+        traceLabel: `${moment.title} | ${parentVenue.name}`,
       },
     }
   })
