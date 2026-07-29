@@ -177,6 +177,74 @@ export interface FieldInterpretationVenueIdentityHandoff {
   issuedProviderOnlyCanonicalsSource: 'empty_stage_2a_no_durable_registry'
 }
 
+export type BearingsVenueIdentityRouteAdmissionStatus =
+  | 'admitted_resolved_static'
+  | 'admitted_resolved_provider_only'
+  | 'rejected_pending_identity'
+  | 'rejected_ambiguous_identity'
+  | 'rejected_missing_resolved_baseVenueId'
+  | 'rejected_provider_derived_identity'
+  | 'rejected_inconsistent_identity_evidence'
+
+export type BearingsVenueIdentityAdmissionRejectionReason =
+  | 'identity_resolution_pending'
+  | 'identity_resolution_ambiguous'
+  | 'missing_resolved_baseVenueId'
+  | 'provider_derived_resolved_baseVenueId'
+  | 'live_google_identity_form_not_route_bearing'
+  | 'resolved_baseVenueId_conflicts_with_field_source_identity'
+  | 'resolved_baseVenueId_conflicts_with_providerRecordId'
+  | 'identity_resolution_status_not_admissible'
+  | 'canonical_group_missing_representative'
+
+export interface BearingsVenueIdentityAdmissionObservationDiagnostic {
+  owner: 'Bearings'
+  inputSource: 'fieldInterpretationVenueIdentityHandoff'
+  fieldSourceIdentity: string
+  providerProvenance: FieldInterpretationVenueIdentityHandoff['providerProvenance']
+  interpretationIdentityResolutionStatus: FieldInterpretationVenueIdentityResolutionStatus
+  resolvedBaseVenueId?: string
+  routeAdmissionStatus: BearingsVenueIdentityRouteAdmissionStatus
+  routeIdentityEligible: boolean
+  diagnosticOnly: boolean
+  admissionRejectionReasons: BearingsVenueIdentityAdmissionRejectionReason[]
+  canonicalDuplicateGroupKey?: string
+  duplicateGroupMemberSourceIdentities: string[]
+  duplicateGroupSize: number
+  materializedRouteRepresentation: boolean
+  materializedVenueId?: string
+  retainedFieldEvidence: FieldInterpretationVenueIdentityHandoff['sourceFacts']
+  retainedInterpretationEvidence: {
+    algorithmVersion: string
+    physicalPlaceKeyVersion?: string
+    physicalPlaceKeySerialization?: string
+    pendingReason?: string
+    ambiguityReason?: string
+  }
+}
+
+export interface BearingsVenueIdentityAdmissionGroupDiagnostic {
+  owner: 'Bearings'
+  inputSource: 'fieldInterpretationVenueIdentityHandoff'
+  resolvedBaseVenueId: string
+  routeIdentityEligible: true
+  materializationStatus: 'materialized'
+  representativeFieldSourceIdentity: string
+  memberFieldSourceIdentities: string[]
+  memberCount: number
+  retainedEvidence: Array<{
+    fieldSourceIdentity: string
+    providerProvenance: FieldInterpretationVenueIdentityHandoff['providerProvenance']
+    sourceFacts: FieldInterpretationVenueIdentityHandoff['sourceFacts']
+    interpretation: {
+      identityResolutionStatus: FieldInterpretationVenueIdentityResolutionStatus
+      algorithmVersion: string
+      physicalPlaceKeyVersion?: string
+      physicalPlaceKeySerialization?: string
+    }
+  }>
+}
+
 export interface StaticLiveIdentityOverlapDiagnostic {
   classification: StaticLiveIdentityOverlapClassification
   guardStatus: ProvisionalLeakageGuardStatus
@@ -327,6 +395,7 @@ export interface LiveQueryCandidateDispositionDiagnostics {
   pocketFilter: 'admitted' | 'outside_pocket_envelope' | 'not_applicable' | 'unknown_drop_stage'
   dropReason?: string
   venueIdentityHandoff?: FieldInterpretationVenueIdentityHandoff
+  bearingsVenueIdentityAdmission?: BearingsVenueIdentityAdmissionObservationDiagnostic
   fieldToBearingsProvisionalHandoff?: FieldToBearingsProvisionalHandoffDiagnostic
   bearingsCandidateAdmissibility?: BearingsCandidateAdmissibilityDiagnostic
   sourceCategoryEvidence?: {

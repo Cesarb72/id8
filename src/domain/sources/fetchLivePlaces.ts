@@ -36,11 +36,17 @@ import type { Venue } from '../types/venue'
 import type { LiveRetrievalPocketHint } from '../retrieval/liveEnvelope'
 import type {
   BearingsCandidateAdmissibilityDiagnostic,
+  BearingsVenueIdentityAdmissionGroupDiagnostic,
+  BearingsVenueIdentityAdmissionObservationDiagnostic,
   FieldCandidateClass,
   FieldInterpretationVenueIdentityHandoff,
   FieldToBearingsProvisionalHandoffDiagnostic,
 } from '../types/diagnostics'
 import { buildCandidateAdmissibilityDiagnostic } from '../bearings/buildCandidateAdmissibilityDiagnostics'
+import {
+  buildVenueIdentityAdmissionDiagnostics,
+  type BearingsVenueIdentityAdmissionResult,
+} from '../bearings/buildVenueIdentityAdmission'
 
 type LivePlaceMapperInput = Parameters<typeof mapLivePlaceToRawPlaceWithDiagnostics>[0]
 
@@ -97,6 +103,7 @@ interface LiveCandidatesByQueryDiagnostics {
     pocketFilter: 'admitted' | 'outside_pocket_envelope' | 'not_applicable' | 'unknown_drop_stage'
     dropReason?: string
     venueIdentityHandoff?: FieldInterpretationVenueIdentityHandoff
+    bearingsVenueIdentityAdmission?: BearingsVenueIdentityAdmissionObservationDiagnostic
     fieldToBearingsProvisionalHandoff?: FieldToBearingsProvisionalHandoffDiagnostic
     bearingsCandidateAdmissibility?: BearingsCandidateAdmissibilityDiagnostic
     sourceCategoryEvidence?: {
@@ -153,12 +160,6 @@ interface MappedLiveRawPlaceResult {
   canonicalMapping?: ProviderCanonicalVenueMapping
 }
 
-interface FieldStaticRouteSupplyResolution {
-  canonicalBaseVenueId?: string
-  staticRouteSupplyEligible: boolean
-  reasonCode: string
-}
-
 export interface Stage2AFieldIdentityResolutionInput {
   rawPlace: RawPlace
   canonicalMapping?: ProviderCanonicalVenueMapping
@@ -191,6 +192,7 @@ export interface LiveSourceDiagnostics {
   liveQueryTemplatesUsed: string[]
   liveQueryLabelsUsed: string[]
   liveCandidatesByQuery: LiveCandidatesByQueryDiagnostics[]
+  venueIdentityAdmissionGroups?: BearingsVenueIdentityAdmissionGroupDiagnostic[]
   liveRoleIntentQueryNotes: string[]
   fetchedCount: number
   rawFetchedCount: number
@@ -661,21 +663,34 @@ export function resolveStage2AFieldInterpretationVenueIdentityHandoffs(
   return handoffsByFieldSourceIdentity
 }
 
-function resolveFieldStaticRouteSupply(params: {
-  rawPlace: RawPlace
-  canonicalMapping?: ProviderCanonicalVenueMapping
-}): FieldStaticRouteSupplyResolution {
-  const resolvedCanonicalVenueId =
-    params.canonicalMapping && isCanonicalVenueResolved(params.canonicalMapping)
-      ? params.canonicalMapping.canonicalVenueId
-      : undefined
-  const staticRouteSupplyEligible = Boolean(resolvedCanonicalVenueId)
+export function buildBearingsAdmittedRouteSupplyRawPlaces(params: {
+  rawPlaces: RawPlace[]
+  admissionResult: BearingsVenueIdentityAdmissionResult
+}): {
+  rawPlaces: RawPlace[]
+  routeNormalizationIdByRawId: Map<string, string>
+} {
+  const rawPlaceByFieldSourceIdentity = new Map(
+    params.rawPlaces.map((rawPlace) => [rawPlace.id, rawPlace]),
+  )
+  const admittedRawPlaces: RawPlace[] = []
+  const routeNormalizationIdByRawId = new Map<string, string>()
+
+  for (const group of params.admissionResult.groups) {
+    const representative = rawPlaceByFieldSourceIdentity.get(group.representativeFieldSourceIdentity)
+    if (!representative) {
+      continue
+    }
+    admittedRawPlaces.push({
+      ...representative,
+      id: group.resolvedBaseVenueId,
+    })
+    routeNormalizationIdByRawId.set(representative.id, group.resolvedBaseVenueId)
+  }
+
   return {
-    ...(resolvedCanonicalVenueId ? { canonicalBaseVenueId: resolvedCanonicalVenueId } : {}),
-    staticRouteSupplyEligible,
-    reasonCode: staticRouteSupplyEligible
-      ? 'canonical_baseVenueId_resolved'
-      : 'unresolved_canonical_identity',
+    rawPlaces: admittedRawPlaces.sort((left, right) => left.id.localeCompare(right.id)),
+    routeNormalizationIdByRawId,
   }
 }
 
@@ -1373,10 +1388,7 @@ export async function fetchLivePlaces(
   const errors = providerResults.errors
   let fetchedCount = 0
   const rawPlaces: RawPlace[] = []
-  const routeIdentityEligibleRawPlaces: RawPlace[] = []
-  const staticRouteSupplyByRawId = new Map<string, FieldStaticRouteSupplyResolution>()
   const venueIdentityHandoffByRawId = new Map<string, FieldInterpretationVenueIdentityHandoff>()
-  const routeNormalizationIdByRawId = new Map<string, string>()
   const mappedRawPlaceResults: Stage2AFieldIdentityResolutionInput[] = []
   const mappedCountByQuery = new Map<string, number>()
   const fetchedCountByQuery = new Map<string, number>()
@@ -1395,18 +1407,6 @@ export async function fetchLivePlaces(
         rawPlace: result.rawPlace,
         ...(result.canonicalMapping ? { canonicalMapping: result.canonicalMapping } : {}),
       })
-      const staticRouteSupply = resolveFieldStaticRouteSupply({
-        rawPlace: result.rawPlace,
-        canonicalMapping: result.canonicalMapping,
-      })
-      staticRouteSupplyByRawId.set(result.rawPlace.id, staticRouteSupply)
-      if (staticRouteSupply.staticRouteSupplyEligible && staticRouteSupply.canonicalBaseVenueId) {
-        routeNormalizationIdByRawId.set(result.rawPlace.id, staticRouteSupply.canonicalBaseVenueId)
-        routeIdentityEligibleRawPlaces.push({
-          ...result.rawPlace,
-          id: staticRouteSupply.canonicalBaseVenueId,
-        })
-      }
       mappedCountByQuery.set(
         result.queryLabel,
         (mappedCountByQuery.get(result.queryLabel) ?? 0) + 1,
@@ -1421,8 +1421,18 @@ export async function fetchLivePlaces(
   for (const [rawId, handoff] of resolvedVenueIdentityHandoffs) {
     venueIdentityHandoffByRawId.set(rawId, handoff)
   }
+  const venueIdentityAdmissionResult = buildVenueIdentityAdmissionDiagnostics(
+    resolvedVenueIdentityHandoffs.values(),
+  )
+  const bearingsVenueIdentityAdmissionByRawId =
+    venueIdentityAdmissionResult.observationsByFieldSourceIdentity
+  const admittedRouteSupply = buildBearingsAdmittedRouteSupplyRawPlaces({
+    rawPlaces,
+    admissionResult: venueIdentityAdmissionResult,
+  })
+  const routeNormalizationIdByRawId = admittedRouteSupply.routeNormalizationIdByRawId
 
-  const normalized = normalizeRawPlaces(routeIdentityEligibleRawPlaces, intent)
+  const normalized = normalizeRawPlaces(admittedRouteSupply.rawPlaces, intent)
   const deduped = dedupeByPlaceId(normalized.venues)
   const pocketFiltered = applyPocketFilter(deduped.venues, pocketHint)
   const venues = pocketFiltered.venues
@@ -1436,9 +1446,9 @@ export async function fetchLivePlaces(
     )
     const normalizedByRawId = new Map(normalizedForQuery.map((venue) => [venue.id, venue]))
     const candidates: LiveCandidateDisposition[] = mapped.map((rawPlace) => {
-      const staticRouteSupply = staticRouteSupplyByRawId.get(rawPlace.id)
       const venueIdentityHandoff = venueIdentityHandoffByRawId.get(rawPlace.id)
-      const normalizedVenue = staticRouteSupply?.staticRouteSupplyEligible
+      const bearingsVenueIdentityAdmission = bearingsVenueIdentityAdmissionByRawId.get(rawPlace.id)
+      const normalizedVenue = bearingsVenueIdentityAdmission?.materializedRouteRepresentation
         ? normalizedByRawId.get(routeNormalizationIdByRawId.get(rawPlace.id) ?? rawPlace.id)
         : undefined
       const normalizedResult = Boolean(normalizedVenue)
@@ -1511,8 +1521,10 @@ export async function fetchLivePlaces(
       const bearingsCandidateAdmissibility = buildCandidateAdmissibilityDiagnostic(
         fieldToBearingsProvisionalHandoff,
       )
-      const staticRouteSupplyEligible = staticRouteSupply?.staticRouteSupplyEligible === true
-      const effectiveProofEligible = proofEligible && staticRouteSupplyEligible
+      const routeIdentityAdmitted =
+        bearingsVenueIdentityAdmission?.routeIdentityEligible === true &&
+        bearingsVenueIdentityAdmission.materializedRouteRepresentation
+      const effectiveProofEligible = proofEligible && routeIdentityAdmitted
       return {
         name: rawPlace.name,
         venueId: normalizedVenue?.id ?? rawPlace.id,
@@ -1544,6 +1556,7 @@ export async function fetchLivePlaces(
         candidateBoardAdmission,
         pocketFilter,
         ...(venueIdentityHandoff ? { venueIdentityHandoff } : {}),
+        ...(bearingsVenueIdentityAdmission ? { bearingsVenueIdentityAdmission } : {}),
         ...(fieldToBearingsProvisionalHandoff ? { fieldToBearingsProvisionalHandoff } : {}),
         ...(bearingsCandidateAdmissibility ? { bearingsCandidateAdmissibility } : {}),
         sourceCategoryEvidence: {
@@ -1551,8 +1564,14 @@ export async function fetchLivePlaces(
           normalizedSourceTypes: normalizedVenue?.source.sourceTypes ?? [],
         },
         pocketProofDiagnostic,
-        ...(!staticRouteSupplyEligible
-          ? { dropReason: staticRouteSupply?.reasonCode ?? 'unresolved_canonical_identity' }
+        ...(!bearingsVenueIdentityAdmission?.routeIdentityEligible
+          ? {
+              dropReason:
+                bearingsVenueIdentityAdmission?.admissionRejectionReasons[0] ??
+                'bearings_identity_admission_rejected',
+            }
+          : !bearingsVenueIdentityAdmission.materializedRouteRepresentation
+            ? { dropReason: 'bearings_duplicate_identity_converged_to_representative' }
           : !normalizedResult && !normalizedVenueIds.has(routeNormalizationIdByRawId.get(rawPlace.id) ?? rawPlace.id)
           ? { dropReason: 'normalization_or_dedupe_drop' }
           : filterVerdict === 'rejected_missing_location'
@@ -1604,6 +1623,7 @@ export async function fetchLivePlaces(
       liveQueryTemplatesUsed: queryTemplatesUsed,
       liveQueryLabelsUsed: queryLabelsUsed,
       liveCandidatesByQuery,
+      venueIdentityAdmissionGroups: venueIdentityAdmissionResult.groups,
       liveRoleIntentQueryNotes: roleIntentQueryNotes,
       fetchedCount,
       rawFetchedCount: fetchedCount,
