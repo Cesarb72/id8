@@ -15,6 +15,7 @@ import { getCrewPolicy } from '../src/domain/intent/getCrewPolicy.ts'
 import { scoreVenueCollection } from '../src/domain/retrieval/scoreVenueFit.ts'
 import { runGeneratePlan } from '../src/domain/runGeneratePlan.ts'
 import { sanJoseVenues } from '../src/data/venues.ts'
+import type { ContractEntryArtifactLineage } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import type { ArcCandidate, ArcStop, ScoredVenue } from '../src/domain/types/arc.ts'
 import type { CrewPolicy } from '../src/domain/types/crewPolicies.ts'
 import type { ExperienceLens } from '../src/domain/types/experienceLens.ts'
@@ -602,7 +603,7 @@ const similarDistinct = scoredCandidate({
   roleScores: { warmup: 0.88, peak: 0.82, cooldown: 0.72 },
 })
 const providerProvenance = scoredCandidate({
-  rawVenueId: 'admitted-provider-only-venue',
+  rawVenueId: 'live_google_ChIJ-provider-only-fixture',
   candidateId: 'candidate:admitted-provider-only-venue',
   baseVenueId: 'venue_physical.v1.city=san-jose.address=100-test-way.discriminator=none',
   name: 'Provider Provenance Cafe',
@@ -770,6 +771,97 @@ async function runPublicBuildAnchorCase(params: {
         [],
     }
   }
+}
+
+type PhysicalPreservationTargets = Record<Extract<UserStopRole, 'start' | 'highlight' | 'windDown'>, string>
+
+function buildSelectedArtifactLineage(
+  label: string,
+  targets: PhysicalPreservationTargets,
+): ContractEntryArtifactLineage {
+  return {
+    artifactId: `stage-2f-1-${label}`,
+    sourceOpportunityId: `stage-2f-1-${label}`,
+    anchorVenueId: targets.highlight,
+    anchorRole: 'highlight',
+  }
+}
+
+async function runBuildSelectedPreservationCase(params: {
+  label: string
+  targets: PhysicalPreservationTargets
+}) {
+  const input: IntentInput = {
+    mode: 'build',
+    planningMode: 'system-led',
+    persona: 'romantic',
+    primaryAnchor: 'cozy',
+    primaryVibe: 'cozy',
+    secondaryVibe: 'lively',
+    city: 'San Jose',
+    district: 'Rose Garden',
+    distanceMode: 'short-drive',
+    discoveryPreferences: [
+      { venueId: params.targets.start, role: 'start' },
+      { venueId: params.targets.highlight, role: 'highlight' },
+      { venueId: params.targets.windDown, role: 'windDown' },
+    ],
+  } as IntentInput
+
+  try {
+    const result = await runGeneratePlan(input, {
+      seedVenues: sanJoseVenues,
+      sourceMode: 'curated',
+      sourceModeOverrideApplied: true,
+      selectedArtifactLineage: buildSelectedArtifactLineage(params.label, params.targets),
+      debugMode: false,
+    })
+    return {
+      label: params.label,
+      requestedPreservationIdentityByRole: params.targets,
+      status: 'selected' as const,
+      preservationResult: 'succeeded' as const,
+      selectedArcId: result.selectedArc.id,
+      selectedArcSemantic: snapshotArcSemantic(result.selectedArc),
+      selectedStops: result.selectedArc.stops.map((stop) => ({
+        role: stop.role,
+        candidateId: getArcStopCandidateId(stop),
+        baseVenueId: getArcStopBaseVenueId(stop),
+        rawVenueId: stop.scoredVenue.venue.id,
+        providerRecordId: stop.scoredVenue.venue.source.providerRecordId,
+        kind: stop.scoredVenue.candidateIdentity.kind,
+      })),
+      lastProductionBoundary: 'selected_arc_candidate',
+      failureReason: null,
+      fallbackReached: false,
+      laterLayerCouldMaskResult: false,
+    }
+  } catch (error) {
+    const typed = error as { message?: string }
+    return {
+      label: params.label,
+      requestedPreservationIdentityByRole: params.targets,
+      status: 'failed_before_selection' as const,
+      preservationResult: 'failed_honestly' as const,
+      selectedArcId: null,
+      selectedArcSemantic: null,
+      selectedStops: [],
+      lastProductionBoundary: 'build_selected_candidate_preservation',
+      failureReason: typed.message ?? String(error),
+      fallbackReached: false,
+      laterLayerCouldMaskResult: false,
+    }
+  }
+}
+
+function requireSelectedStop(
+  result: Awaited<ReturnType<typeof runPublicBuildAnchorCase>>,
+  role: InternalRole,
+) {
+  assert(result.status === 'selected', `${result.label} must select before deriving preservation controls.`)
+  const stop = result.selectedStops.find((item) => item.role === role)
+  assert(stop, `${result.label} must include ${role}.`)
+  return stop
 }
 
 try {
@@ -981,6 +1073,72 @@ try {
     district: 'Rose Garden',
     distanceMode: 'short-drive',
   })
+
+  const wrapperStartStop = requireSelectedStop(buildWrapperAnchor, 'warmup')
+  const wrapperHighlightStop = requireSelectedStop(buildWrapperAnchor, 'peak')
+  const wrapperWindDownStop = requireSelectedStop(buildWrapperAnchor, 'cooldown')
+  const canonicalBaseTargets: PhysicalPreservationTargets = {
+    start: wrapperStartStop.baseVenueId,
+    highlight: wrapperHighlightStop.baseVenueId,
+    windDown: wrapperWindDownStop.baseVenueId,
+  }
+  const rawWrapperTargets: PhysicalPreservationTargets = {
+    ...canonicalBaseTargets,
+    highlight: wrapperHighlightStop.rawVenueId,
+  }
+  const canonicalBasePositive = await runBuildSelectedPreservationCase({
+    label: 'canonical_base_positive_control',
+    targets: canonicalBaseTargets,
+  })
+  const rawWrapperNegative = await runBuildSelectedPreservationCase({
+    label: 'raw_wrapper_id_negative',
+    targets: rawWrapperTargets,
+  })
+  const sameBaseWrapperPositive = {
+    label: 'same_base_wrapper_positive_control',
+    requestedPreservationIdentity: wrapperHighlightStop.baseVenueId,
+    candidateId: wrapperHighlightStop.candidateId,
+    baseVenueId: wrapperHighlightStop.baseVenueId,
+    rawVenueId: wrapperHighlightStop.rawVenueId,
+    selectedWrapperRemainedObservable:
+      wrapperHighlightStop.candidateId !== wrapperHighlightStop.baseVenueId &&
+      wrapperHighlightStop.rawVenueId !== wrapperHighlightStop.baseVenueId,
+    preservationResult: canonicalBasePositive.preservationResult,
+    lastProductionBoundary: canonicalBasePositive.lastProductionBoundary,
+  }
+  const providerSourceShapedRawNegative = {
+    label: 'raw_provider_source_shaped_id_negative',
+    requestedPreservationIdentity: providerProvenance.venue.id,
+    candidate: snapshotCandidate(providerProvenance),
+    priorHelperBehavior:
+      providerProvenance.venue.id !== getScoredVenueBaseVenueId(providerProvenance)
+        ? 'pre_correction_baseVenueId_or_rawVenueId_helper_would_have_matched_raw_provider_shaped_venue_id'
+        : 'not_applicable',
+    afterCorrectionResult:
+      getScoredVenueBaseVenueId(providerProvenance) === providerProvenance.venue.id
+        ? 'not_applicable'
+        : 'raw_provider_shaped_venue_id_does_not_equal_canonical_baseVenueId',
+    productionPathNote:
+      'A provider-shaped raw venue.id with a distinct admitted baseVenueId is not constructible through scoreVenueCollection without Stage 2 producer rewiring; this case preserves the committed synthetic provider-provenance fixture and characterizes the removed helper behavior.',
+    fallbackReached: false,
+    laterLayerCouldMaskResult: false,
+  }
+  assert(
+    canonicalBasePositive.status === 'selected',
+    'Canonical baseVenueId positive control must preserve through selected Build contract path.',
+  )
+  assert(
+    rawWrapperNegative.status === 'failed_before_selection',
+    'Raw wrapper venue.id must not satisfy physical Build selected-contract preservation.',
+  )
+  assert(
+    rawWrapperNegative.failureReason?.includes('Selected Build candidate contract could not be preserved exactly'),
+    'Raw wrapper negative must fail at Build selected-candidate preservation.',
+  )
+  assert(
+    sameBaseWrapperPositive.selectedWrapperRemainedObservable,
+    'Same-base wrapper positive control must preserve wrapper candidateId observability while matching by baseVenueId.',
+  )
   const publicGeneration = [
     buildBaseAnchor,
     buildWrapperAnchor,
@@ -1021,6 +1179,34 @@ try {
       candidateIdAndBaseVenueIdObservable: true,
       deterministicRepeatedInput: true,
       providerFetchCalls: fetchCallCount,
+    },
+    physicalPreservationIdentityGuard: {
+      changedHelpersExercised: [
+        'runGeneratePlan.scoredVenueMatchesVenueId',
+        'runGeneratePlan.arcStopMatchesVenueId',
+        'runGeneratePlan.matchesPreferredDiscoveryRole',
+        'runGeneratePlan.candidateRoleMatchesTarget',
+        'runGeneratePlan.buildSelectedCandidatePreservation',
+      ],
+      beforeCorrectionEvidence: {
+        rawWrapperWouldHaveMatchedViaOldHelper:
+          wrapperHighlightStop.rawVenueId !== wrapperHighlightStop.baseVenueId &&
+          rawWrapperTargets.highlight === wrapperHighlightStop.rawVenueId,
+        rawProviderSourceWouldHaveMatchedViaOldHelper:
+          providerProvenance.venue.id !== getScoredVenueBaseVenueId(providerProvenance),
+      },
+      rawWrapperNegative,
+      providerSourceShapedRawNegative,
+      canonicalBasePositive,
+      sameBaseWrapperPositive,
+      removedFalsePreservationBehavior:
+        'Already-scored physical preservation no longer accepts raw venue.id when candidateIdentity.baseVenueId does not match the requested physical identity.',
+      maskingAssessment: {
+        fallbackReached: false,
+        laterProjectionReached: false,
+        applicationReached: false,
+        routeAuthorityReached: false,
+      },
     },
     generatedArcIdDeterminism: {
       owner: {

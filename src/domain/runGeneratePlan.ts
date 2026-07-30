@@ -508,11 +508,11 @@ function matchesPreferredDiscoveryRole(
 }
 
 function scoredVenueMatchesVenueId(candidate: ScoredVenue, venueId: string): boolean {
-  return getScoredVenueBaseVenueId(candidate) === venueId || candidate.venue.id === venueId
+  return getScoredVenueBaseVenueId(candidate) === venueId
 }
 
 function arcStopMatchesVenueId(stop: ArcStop, venueId: string): boolean {
-  return getArcStopBaseVenueId(stop) === venueId || stop.scoredVenue.venue.id === venueId
+  return getArcStopBaseVenueId(stop) === venueId
 }
 
 function userRoleForArcStop(stop: ArcStop): UserStopRole {
