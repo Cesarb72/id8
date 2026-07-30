@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { buildRolePools, type RolePools } from '../src/domain/arc/buildRolePools.ts'
 import { assembleArcCandidates } from '../src/domain/arc/assembleArcCandidates.ts'
 import { getInvalidArcCombinationReasons, isValidArcCombination } from '../src/domain/arc/isValidArcCombination.ts'
@@ -568,6 +570,58 @@ function sameIgnoringOrder(left: unknown[], right: unknown[]): boolean {
   return sameStable(left.map(stable).sort(), right.map(stable).sort())
 }
 
+type Packet2BFallbackTieProofOption = {
+  label: string
+  stops: ArcStop[]
+  score: number
+  supportReadability: number
+}
+
+function packet2BFallbackPhysicalTieKey(stops: ArcStop[]): string {
+  return stops
+    .map((stop) => `${stop.role}:${getArcStopBaseVenueId(stop)}`)
+    .join('|')
+}
+
+function packet2BFormerRawTieKey(stops: ArcStop[]): string {
+  return stops
+    .map((stop) => `${stop.role}:${stop.scoredVenue.venue.id}`)
+    .join('|')
+}
+
+function comparePacket2BFallbackOptions(
+  left: Packet2BFallbackTieProofOption,
+  right: Packet2BFallbackTieProofOption,
+): number {
+  const scoreDelta = right.score - left.score
+  if (scoreDelta !== 0) {
+    return scoreDelta
+  }
+  const readabilityDelta = right.supportReadability - left.supportReadability
+  if (readabilityDelta !== 0) {
+    return readabilityDelta
+  }
+  return packet2BFallbackPhysicalTieKey(left.stops).localeCompare(
+    packet2BFallbackPhysicalTieKey(right.stops),
+  )
+}
+
+function dedupePacket2BFallbackOptions(
+  options: Packet2BFallbackTieProofOption[],
+): Packet2BFallbackTieProofOption[] {
+  const seen = new Set<string>()
+  const deduped: Packet2BFallbackTieProofOption[] = []
+  for (const option of options) {
+    const key = packet2BFallbackPhysicalTieKey(option.stops)
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    deduped.push(option)
+  }
+  return deduped
+}
+
 function compareRolePools(
   left: ReturnType<typeof snapshotPools>,
   right: ReturnType<typeof snapshotPools>,
@@ -1136,6 +1190,219 @@ function runPacket2AFallbackPhysicalExclusionProof() {
   }
 }
 
+function runPacket2BFallbackTieIdentityProof() {
+  const source = readFileSync(new URL('../src/domain/runGeneratePlan.ts', import.meta.url), 'utf8')
+  const tieKeyBlock = source.match(/function buildFallbackArcTieKey\(stops: ArcStop\[\]\): string \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const supportSortBlock = source.match(/function chooseFallbackSupports\([\s\S]*?\n\}/)?.[0] ?? ''
+  assert(
+    tieKeyBlock.includes('stop.scoredVenue.candidateIdentity.baseVenueId') ||
+      tieKeyBlock.includes('getArcStopBaseVenueId(stop)'),
+    `Production fallback tie key must use canonical baseVenueId. block=${tieKeyBlock}`,
+  )
+  assert(
+    !tieKeyBlock.includes('stop.scoredVenue.venue.id'),
+    `Production fallback tie key must not use raw venue.id. block=${tieKeyBlock}`,
+  )
+  assert(
+    supportSortBlock.includes('return left.venue.id.localeCompare(right.venue.id)'),
+    'Packet 2B must not change raw fallback support sorting.',
+  )
+
+  const warmupFirstRaw = scoredCandidate({
+    rawVenueId: 'packet2b-raw-warmup-a',
+    candidateId: 'packet2b:candidate:warmup:a',
+    baseVenueId: 'packet2b-base-warmup',
+    name: 'Packet 2B Warmup A',
+    roleScores: { warmup: 0.96, peak: 0.2, cooldown: 0.2 },
+  })
+  const warmupSecondRaw = scoredCandidate({
+    rawVenueId: 'packet2b-raw-warmup-z',
+    candidateId: 'packet2b:candidate:warmup:z',
+    baseVenueId: 'packet2b-base-warmup',
+    name: 'Packet 2B Warmup Z',
+    roleScores: { warmup: 0.96, peak: 0.2, cooldown: 0.2 },
+  })
+  const peakFirstRaw = scoredCandidate({
+    rawVenueId: 'packet2b-raw-peak-a',
+    candidateId: 'packet2b:candidate:peak:a',
+    baseVenueId: 'packet2b-base-peak',
+    name: 'Packet 2B Peak A',
+    roleScores: { warmup: 0.2, peak: 0.97, cooldown: 0.2 },
+  })
+  const peakSecondRaw = scoredCandidate({
+    rawVenueId: 'packet2b-raw-peak-z',
+    candidateId: 'packet2b:candidate:peak:z',
+    baseVenueId: 'packet2b-base-peak',
+    name: 'Packet 2B Peak Z',
+    roleScores: { warmup: 0.2, peak: 0.97, cooldown: 0.2 },
+  })
+  const cooldownFirstRaw = scoredCandidate({
+    rawVenueId: 'packet2b-raw-cooldown-a',
+    candidateId: 'packet2b:candidate:cooldown:a',
+    baseVenueId: 'packet2b-base-cooldown',
+    name: 'Packet 2B Cooldown A',
+    roleScores: { warmup: 0.2, peak: 0.2, cooldown: 0.95 },
+  })
+  const cooldownSecondRaw = scoredCandidate({
+    rawVenueId: 'packet2b-raw-cooldown-z',
+    candidateId: 'packet2b:candidate:cooldown:z',
+    baseVenueId: 'packet2b-base-cooldown',
+    name: 'Packet 2B Cooldown Z',
+    roleScores: { warmup: 0.2, peak: 0.2, cooldown: 0.95 },
+  })
+  const distinctCooldown = scoredCandidate({
+    rawVenueId: 'packet2b-raw-cooldown-distinct',
+    candidateId: 'packet2b:candidate:cooldown:distinct',
+    baseVenueId: 'packet2b-base-cooldown-distinct',
+    name: 'Packet 2B Distinct Cooldown',
+    roleScores: { warmup: 0.2, peak: 0.2, cooldown: 0.95 },
+  })
+
+  const samePhysicalRouteA: Packet2BFallbackTieProofOption = {
+    label: 'same_physical_route_raw_a',
+    stops: [
+      arcStop('warmup', warmupFirstRaw),
+      arcStop('peak', peakFirstRaw),
+      arcStop('cooldown', cooldownFirstRaw),
+    ],
+    score: 1,
+    supportReadability: 1,
+  }
+  const samePhysicalRouteZ: Packet2BFallbackTieProofOption = {
+    label: 'same_physical_route_raw_z',
+    stops: [
+      arcStop('warmup', warmupSecondRaw),
+      arcStop('peak', peakSecondRaw),
+      arcStop('cooldown', cooldownSecondRaw),
+    ],
+    score: 1,
+    supportReadability: 1,
+  }
+  const differentPhysicalRoute: Packet2BFallbackTieProofOption = {
+    label: 'different_physical_route',
+    stops: [
+      arcStop('warmup', warmupFirstRaw),
+      arcStop('peak', peakFirstRaw),
+      arcStop('cooldown', distinctCooldown),
+    ],
+    score: 1,
+    supportReadability: 1,
+  }
+  const differentRoleParticipation: Packet2BFallbackTieProofOption = {
+    label: 'different_ordered_role_participation',
+    stops: [
+      arcStop('peak', warmupFirstRaw),
+      arcStop('warmup', peakFirstRaw),
+      arcStop('cooldown', cooldownFirstRaw),
+    ],
+    score: 1,
+    supportReadability: 1,
+  }
+  const higherScoreLexicallyLater: Packet2BFallbackTieProofOption = {
+    ...differentPhysicalRoute,
+    label: 'higher_score_lexically_later',
+    score: 2,
+    supportReadability: 0,
+  }
+  const lowerScoreLexicallyEarlier: Packet2BFallbackTieProofOption = {
+    ...samePhysicalRouteA,
+    label: 'lower_score_lexically_earlier',
+    score: 1,
+    supportReadability: 99,
+  }
+  const higherReadabilityLexicallyLater: Packet2BFallbackTieProofOption = {
+    ...differentPhysicalRoute,
+    label: 'higher_readability_lexically_later',
+    score: 1,
+    supportReadability: 2,
+  }
+  const lowerReadabilityLexicallyEarlier: Packet2BFallbackTieProofOption = {
+    ...samePhysicalRouteA,
+    label: 'lower_readability_lexically_earlier',
+    score: 1,
+    supportReadability: 1,
+  }
+
+  assert(
+    packet2BFallbackPhysicalTieKey(samePhysicalRouteA.stops) ===
+      packet2BFallbackPhysicalTieKey(samePhysicalRouteZ.stops),
+    'Same ordered physical route must collapse under baseVenueId fallback tie key.',
+  )
+  assert(
+    packet2BFormerRawTieKey(samePhysicalRouteA.stops) !==
+      packet2BFormerRawTieKey(samePhysicalRouteZ.stops),
+    'Proof must exercise raw venue.id differences that the former key would not collapse.',
+  )
+  assert(
+    packet2BFallbackPhysicalTieKey(samePhysicalRouteA.stops) !==
+      packet2BFallbackPhysicalTieKey(differentPhysicalRoute.stops),
+    'Different physical baseVenueId sequence must remain a distinct fallback route.',
+  )
+  assert(
+    packet2BFallbackPhysicalTieKey(samePhysicalRouteA.stops) !==
+      packet2BFallbackPhysicalTieKey(differentRoleParticipation.stops),
+    'Different ordered role participation must remain distinguishable.',
+  )
+
+  const dedupedForward = dedupePacket2BFallbackOptions([
+    samePhysicalRouteA,
+    samePhysicalRouteZ,
+    differentPhysicalRoute,
+  ])
+  const dedupedReverse = dedupePacket2BFallbackOptions([
+    samePhysicalRouteZ,
+    samePhysicalRouteA,
+    differentPhysicalRoute,
+  ])
+  assert(dedupedForward.length === 2, 'Same physical raw-ID variants must dedupe to one route.')
+  assert(dedupedReverse.length === 2, 'Reversed same-physical raw-ID variants must still dedupe to one route.')
+  assert(
+    sameStable(
+      dedupedForward.map((option) => packet2BFallbackPhysicalTieKey(option.stops)).sort(),
+      dedupedReverse.map((option) => packet2BFallbackPhysicalTieKey(option.stops)).sort(),
+    ),
+    'Reversed candidate supply must preserve the same physical fallback route set.',
+  )
+  assert(
+    [higherScoreLexicallyLater, lowerScoreLexicallyEarlier]
+      .sort(comparePacket2BFallbackOptions)[0]?.label === 'higher_score_lexically_later',
+    'Score comparison must still precede the fallback tie key.',
+  )
+  assert(
+    [higherReadabilityLexicallyLater, lowerReadabilityLexicallyEarlier]
+      .sort(comparePacket2BFallbackOptions)[0]?.label === 'higher_readability_lexically_later',
+    'Readability comparison must still precede the fallback tie key when scores are equal.',
+  )
+
+  return {
+    productionSite: 'runGeneratePlan.buildFallbackArcTieKey',
+    productionTieKeyUsesBaseVenueId: true,
+    productionTieKeyUsesRawVenueId: false,
+    samePhysicalRouteCollapse: {
+      rawKeysDistinct: packet2BFormerRawTieKey(samePhysicalRouteA.stops) !== packet2BFormerRawTieKey(samePhysicalRouteZ.stops),
+      physicalKeysEqual:
+        packet2BFallbackPhysicalTieKey(samePhysicalRouteA.stops) ===
+        packet2BFallbackPhysicalTieKey(samePhysicalRouteZ.stops),
+      dedupedForwardCount: dedupedForward.length,
+      dedupedReverseCount: dedupedReverse.length,
+    },
+    differentPhysicalRouteDistinct:
+      packet2BFallbackPhysicalTieKey(samePhysicalRouteA.stops) !==
+      packet2BFallbackPhysicalTieKey(differentPhysicalRoute.stops),
+    orderedRoleParticipationPreserved:
+      packet2BFallbackPhysicalTieKey(samePhysicalRouteA.stops) !==
+      packet2BFallbackPhysicalTieKey(differentRoleParticipation.stops),
+    scorePrecedesTieKey: true,
+    readabilityPrecedesTieKey: true,
+    reversedInputRawIdIndependence: {
+      forwardPhysicalKeys: dedupedForward.map((option) => packet2BFallbackPhysicalTieKey(option.stops)),
+      reversePhysicalKeys: dedupedReverse.map((option) => packet2BFallbackPhysicalTieKey(option.stops)),
+    },
+    rawFallbackSupportSortingUnchanged: true,
+    noRawIdFallback: true,
+  }
+}
+
 try {
   const scoredReachability = scoreVenueCollection(
     [baseAlpha.venue, baseBeta.venue, baseGamma.venue],
@@ -1412,6 +1679,7 @@ try {
     'Same-base wrapper positive control must preserve wrapper candidateId observability while matching by baseVenueId.',
   )
   const packet2AFallbackPhysicalExclusion = runPacket2AFallbackPhysicalExclusionProof()
+  const packet2BFallbackTieIdentity = runPacket2BFallbackTieIdentityProof()
   const publicGeneration = [
     buildBaseAnchor,
     buildWrapperAnchor,
@@ -1482,6 +1750,7 @@ try {
       },
     },
     packet2AFallbackPhysicalExclusion,
+    packet2BFallbackTieIdentity,
     generatedArcIdDeterminism: {
       owner: {
         idFactory: 'src/lib/ids.ts#createId',

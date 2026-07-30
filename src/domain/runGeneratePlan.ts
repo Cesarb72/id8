@@ -1933,7 +1933,7 @@ interface FallbackArcOption {
 
 function buildFallbackArcTieKey(stops: ArcStop[]): string {
   return stops
-    .map((stop) => `${stop.role}:${stop.scoredVenue.venue.id}`)
+    .map((stop) => `${stop.role}:${stop.scoredVenue.candidateIdentity.baseVenueId}`)
     .join('|')
 }
 
