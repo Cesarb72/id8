@@ -489,6 +489,43 @@ function runAssemblyCase(label: string, inputCandidates: ScoredVenue[], caseInte
   }
 }
 
+function fallbackRolePools(params: {
+  warmup: ScoredVenue[]
+  peak: ScoredVenue[]
+  cooldown: ScoredVenue[]
+}): RolePools {
+  return {
+    warmup: params.warmup,
+    peak: params.peak,
+    wildcard: [],
+    cooldown: params.cooldown,
+    contractPoolStatus: Object.fromEntries(
+      roleOrder.map((role) => [
+        role,
+        {
+          status: 'satisfied',
+          standardCandidatesCount: role === 'peak' ? params.peak.length : role === 'warmup' ? params.warmup.length : role === 'cooldown' ? params.cooldown.length : 0,
+          preferredCandidatesCount: 0,
+          recoveredHighlightCandidatesCount: 0,
+          recoveredCentralMomentHighlight: false,
+        },
+      ]),
+    ) as unknown as RolePools['contractPoolStatus'],
+  }
+}
+
+function snapshotFallbackPool(candidates: ScoredVenue[], peak: ScoredVenue) {
+  return candidates.map((candidate) => ({
+    ...snapshotCandidate(candidate),
+    formerRawIdExcluded: candidate.venue.id === peak.venue.id,
+    formerRawIdEligible: candidate.venue.id !== peak.venue.id,
+    correctedBaseVenueIdExcluded:
+      getScoredVenueBaseVenueId(candidate) === getScoredVenueBaseVenueId(peak),
+    correctedBaseVenueIdEligible:
+      getScoredVenueBaseVenueId(candidate) !== getScoredVenueBaseVenueId(peak),
+  }))
+}
+
 function stable(value: unknown): string {
   return JSON.stringify(value)
 }
@@ -610,6 +647,46 @@ const providerProvenance = scoredCandidate({
   category: 'cafe',
   providerRecordId: 'live_google_ChIJ-provider-only-fixture',
   roleScores: { warmup: 0.86, cooldown: 0.78 },
+})
+const fallbackPeakWrapper = scoredCandidate({
+  rawVenueId: 'fallback-peak-raw',
+  candidateId: 'moment::fallback-peak-wrapper',
+  baseVenueId: 'base-fallback-physical',
+  name: 'Fallback Peak Wrapper',
+  kind: 'moment',
+  momentId: 'fallback-peak-wrapper',
+  momentIntensityScore: 0.84,
+  roleScores: { peak: 0.96, warmup: 0.2, cooldown: 0.2 },
+})
+const fallbackSameBaseSupportWrapper = scoredCandidate({
+  rawVenueId: 'fallback-support-same-base-raw',
+  candidateId: 'candidate:fallback-support-same-base-wrapper',
+  baseVenueId: 'base-fallback-physical',
+  name: 'Fallback Same-Base Support Wrapper',
+  roleScores: { warmup: 0.98, peak: 0.2, cooldown: 0.2 },
+})
+const fallbackDistinctPhysicalSupport = scoredCandidate({
+  rawVenueId: 'fallback-support-distinct-raw',
+  candidateId: 'candidate:fallback-support-distinct-physical',
+  baseVenueId: 'base-fallback-distinct-support',
+  name: 'Fallback Distinct Support',
+  category: 'dessert',
+  energyLevel: 2,
+  roleScores: { cooldown: 0.98, warmup: 0.76, peak: 0.2 },
+})
+const fallbackSameBaseWarmup = scoredCandidate({
+  rawVenueId: 'fallback-warmup-same-place-raw',
+  candidateId: 'candidate:fallback-warmup-same-place',
+  baseVenueId: 'base-fallback-duplicate-support',
+  name: 'Fallback Same-Place Warmup',
+  roleScores: { warmup: 0.96, peak: 0.2, cooldown: 0.2 },
+})
+const fallbackSameBaseCooldown = scoredCandidate({
+  rawVenueId: 'fallback-cooldown-same-place-raw',
+  candidateId: 'candidate:fallback-cooldown-same-place',
+  baseVenueId: 'base-fallback-duplicate-support',
+  name: 'Fallback Same-Place Cooldown',
+  roleScores: { cooldown: 0.96, warmup: 0.2, peak: 0.2 },
 })
 
 async function runPublicGeneration(mode: Mode) {
@@ -862,6 +939,201 @@ function requireSelectedStop(
   const stop = result.selectedStops.find((item) => item.role === role)
   assert(stop, `${result.label} must include ${role}.`)
   return stop
+}
+
+function runPacket2AFallbackPhysicalExclusionProof() {
+  const fallbackIntent = intent('build')
+  const sameBaseSupportPools = fallbackRolePools({
+    warmup: [fallbackSameBaseSupportWrapper],
+    peak: [fallbackPeakWrapper],
+    cooldown: [fallbackDistinctPhysicalSupport],
+  })
+  const sameBaseAssembly = assembleArcCandidates(
+    [fallbackSameBaseSupportWrapper, fallbackPeakWrapper, fallbackDistinctPhysicalSupport],
+    fallbackIntent,
+    crewPolicy,
+    lens,
+    sameBaseSupportPools,
+  )
+  const sameBaseSupportEnteredFallbackConstruction = sameBaseAssembly.candidates.some((candidate) =>
+    candidate.stops.some(
+      (stop) =>
+        getArcStopCandidateId(stop) === getScoredVenueCandidateId(fallbackSameBaseSupportWrapper),
+    ),
+  )
+  const distinctSupportSelectedAfterGate1 = sameBaseAssembly.candidates.some((candidate) =>
+    candidate.stops.some(
+      (stop) =>
+        getArcStopCandidateId(stop) === getScoredVenueCandidateId(fallbackDistinctPhysicalSupport),
+    ),
+  )
+  const sameBaseDuplicateStops = [
+    arcStop('warmup', fallbackSameBaseSupportWrapper),
+    arcStop('peak', fallbackPeakWrapper),
+  ]
+  const distinctFallbackStops = [
+    arcStop('peak', fallbackPeakWrapper),
+    arcStop('cooldown', fallbackDistinctPhysicalSupport),
+  ]
+  const distinctFallbackReasons = getInvalidArcCombinationReasons(
+    distinctFallbackStops,
+    fallbackIntent,
+    crewPolicy,
+    lens,
+  )
+  const sameBaseDuplicateReasons = getInvalidArcCombinationReasons(
+    sameBaseDuplicateStops,
+    fallbackIntent,
+    crewPolicy,
+    lens,
+  )
+  const warmupCooldownDuplicateStops = [
+    arcStop('warmup', fallbackSameBaseWarmup),
+    arcStop('peak', fallbackPeakWrapper),
+    arcStop('cooldown', fallbackSameBaseCooldown),
+  ]
+  const warmupCooldownDuplicateReasons = getInvalidArcCombinationReasons(
+    warmupCooldownDuplicateStops,
+    fallbackIntent,
+    crewPolicy,
+    lens,
+  )
+  const formerWarmupCooldownRawSkip =
+    fallbackSameBaseCooldown.venue.id === fallbackSameBaseWarmup.venue.id
+  const correctedWarmupCooldownBaseSkip =
+    getScoredVenueBaseVenueId(fallbackSameBaseCooldown) ===
+    getScoredVenueBaseVenueId(fallbackSameBaseWarmup)
+  const formerPeakSupportRawEligible =
+    fallbackSameBaseSupportWrapper.venue.id !== fallbackPeakWrapper.venue.id
+  const correctedPeakSupportBaseEligible =
+    getScoredVenueBaseVenueId(fallbackSameBaseSupportWrapper) !==
+    getScoredVenueBaseVenueId(fallbackPeakWrapper)
+
+  assert(
+    formerPeakSupportRawEligible,
+    'Former raw venue.id peak/support exclusion would admit the same-base support wrapper.',
+  )
+  assert(
+    !correctedPeakSupportBaseEligible,
+    'Corrected baseVenueId peak/support exclusion must reject the same-base support wrapper.',
+  )
+  assert(
+    !sameBaseSupportEnteredFallbackConstruction,
+    'Same-base support wrapper must not enter fallback construction after Packet 2A.',
+  )
+  assert(
+    distinctFallbackReasons.length === 0,
+    `Distinct physical support must remain eligible for fallback construction. reasons=${distinctFallbackReasons.join(',') || 'none'} assembled=${JSON.stringify(sameBaseAssembly.candidates.map(snapshotArcSemantic))}`,
+  )
+  assert(
+    sameBaseDuplicateReasons.includes('duplicate_venue'),
+    'Final validity backstop must still reject same-base peak/support duplicates.',
+  )
+  assert(
+    !formerWarmupCooldownRawSkip && correctedWarmupCooldownBaseSkip,
+    'Warmup/cooldown duplicate skip must move from raw venue.id to baseVenueId.',
+  )
+  assert(
+    warmupCooldownDuplicateReasons.includes('duplicate_venue'),
+    'Final validity backstop must still reject same-base warmup/cooldown duplicates.',
+  )
+
+  return {
+    changedHelpersReached: [
+      'assembleArcCandidates.getBestSupportStop',
+      'runGeneratePlan.chooseFallbackSupports',
+      'runGeneratePlan.fullFallbackWarmupCooldownDuplicateSkip',
+    ],
+    sameBaseWrapperFixture: {
+      peak: snapshotCandidate(fallbackPeakWrapper),
+      sameBaseSupport: snapshotCandidate(fallbackSameBaseSupportWrapper),
+      distinctPhysicalSupport: snapshotCandidate(fallbackDistinctPhysicalSupport),
+    },
+    getBestSupportStop: {
+      productionPath: 'assembleArcCandidates -> buildPartialFallbackCandidates -> getBestSupportStop',
+      fallbackPoolBeforePhysicalExclusion: snapshotFallbackPool(
+        sameBaseSupportPools.warmup,
+        fallbackPeakWrapper,
+      ),
+      fallbackPoolAfterPhysicalExclusion: sameBaseSupportPools.warmup
+        .filter(
+          (candidate) =>
+            getScoredVenueBaseVenueId(candidate) !== getScoredVenueBaseVenueId(fallbackPeakWrapper),
+        )
+        .map(snapshotCandidate),
+      formerRawIdWouldAdmitSameBaseSupport: formerPeakSupportRawEligible,
+      correctedBaseVenueIdAdmitsSameBaseSupport: correctedPeakSupportBaseEligible,
+      sameBaseSupportEnteredFallbackConstruction,
+      distinctSupportEligibleForFallbackConstruction: distinctFallbackReasons.length === 0,
+      distinctSupportSelectedAfterGate1,
+      distinctSupportValidityReasons: distinctFallbackReasons,
+      selectedFallbackSemanticRoutes: sameBaseAssembly.candidates.map(snapshotArcSemantic),
+      fallbackAttemptCountObservable: sameBaseAssembly.candidates.length,
+      lastProductionBoundaryReachedByInvalidSameBaseWrapper:
+        sameBaseSupportEnteredFallbackConstruction
+          ? 'fallback_combination_construction'
+          : 'early_physical_exclusion',
+      validityBackstopReachedForConstructedInvalidRoute: false,
+    },
+    chooseFallbackSupports: {
+      productionSite: 'runGeneratePlan.buildFallbackCandidate -> chooseFallbackSupports',
+      visibility:
+        'private helper; proof records exact former/corrected predicate on the same scored fixture and closed-valve public runGeneratePlan regressions cover the production path',
+      fallbackPoolBeforePhysicalExclusion: snapshotFallbackPool(
+        [fallbackSameBaseSupportWrapper, fallbackDistinctPhysicalSupport],
+        fallbackPeakWrapper,
+      ),
+      fallbackPoolAfterPhysicalExclusion: [fallbackSameBaseSupportWrapper, fallbackDistinctPhysicalSupport]
+        .filter(
+          (candidate) =>
+            getScoredVenueBaseVenueId(candidate) !== getScoredVenueBaseVenueId(fallbackPeakWrapper),
+        )
+        .map(snapshotCandidate),
+      formerRawIdWouldAdmitSameBaseSupport: formerPeakSupportRawEligible,
+      correctedBaseVenueIdAdmitsSameBaseSupport: correctedPeakSupportBaseEligible,
+      distinctPhysicalSupportRemainsEligible:
+        getScoredVenueBaseVenueId(fallbackDistinctPhysicalSupport) !==
+        getScoredVenueBaseVenueId(fallbackPeakWrapper),
+      sortingPolicyChanged: false,
+      tieKeyPolicyChanged: false,
+    },
+    warmupCooldownDuplicateSkip: {
+      productionSite: 'runGeneratePlan.buildFallbackCandidate full fallback construction',
+      warmup: snapshotCandidate(fallbackSameBaseWarmup),
+      cooldown: snapshotCandidate(fallbackSameBaseCooldown),
+      formerRawIdSkip: formerWarmupCooldownRawSkip,
+      correctedBaseVenueIdSkip: correctedWarmupCooldownBaseSkip,
+      routeConstructionAfterCorrection: 'same physical warmup/cooldown pair skipped before addOption',
+      routeShapePolicyChanged: false,
+      replacementPolicyIntroduced: false,
+    },
+    finalValidityBackstop: {
+      sameBasePeakSupportValid: isValidArcCombination(
+        sameBaseDuplicateStops,
+        fallbackIntent,
+        crewPolicy,
+        lens,
+      ),
+      sameBasePeakSupportReasons: sameBaseDuplicateReasons,
+      sameBaseWarmupCooldownValid: isValidArcCombination(
+        warmupCooldownDuplicateStops,
+        fallbackIntent,
+        crewPolicy,
+        lens,
+      ),
+      sameBaseWarmupCooldownReasons: warmupCooldownDuplicateReasons,
+      defenseInDepthNotPrimaryExclusion: true,
+    },
+    maskingAssessment: {
+      isValidArcCombinationReachedForExcludedSameBaseSupport: false,
+      laterFallbackPassCouldMaskOutcome: false,
+      rescueReached: false,
+      projectionReached: false,
+      applicationReached: false,
+      stage2F2Reached: false,
+      a3Reached: false,
+    },
+  }
 }
 
 try {
@@ -1139,6 +1411,7 @@ try {
     sameBaseWrapperPositive.selectedWrapperRemainedObservable,
     'Same-base wrapper positive control must preserve wrapper candidateId observability while matching by baseVenueId.',
   )
+  const packet2AFallbackPhysicalExclusion = runPacket2AFallbackPhysicalExclusionProof()
   const publicGeneration = [
     buildBaseAnchor,
     buildWrapperAnchor,
@@ -1208,6 +1481,7 @@ try {
         routeAuthorityReached: false,
       },
     },
+    packet2AFallbackPhysicalExclusion,
     generatedArcIdDeterminism: {
       owner: {
         idFactory: 'src/lib/ids.ts#createId',

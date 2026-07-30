@@ -2,6 +2,7 @@ import { createId } from '../../lib/ids'
 import {
   getArcStopBaseVenueId,
   getArcStopCandidateId,
+  getScoredVenueBaseVenueId,
   getScoredVenueCandidateId,
 } from '../candidates/candidateIdentity'
 import { buildRolePools, type RolePools } from './buildRolePools'
@@ -99,7 +100,7 @@ function getBestSupportStop(
   role: 'warmup' | 'cooldown',
 ): ScoredVenue | undefined {
   const candidates = supports
-    .filter((support) => support.venue.id !== peak.venue.id)
+    .filter((support) => getScoredVenueBaseVenueId(support) !== getScoredVenueBaseVenueId(peak))
     .sort((left, right) => {
       const scoreDelta =
         scoreSupportReadability(right, peak, role) -

@@ -1956,7 +1956,7 @@ function chooseFallbackSupports(
   limit = FALLBACK_SUPPORT_CANDIDATE_LIMIT,
 ): ScoredVenue[] {
   return scoredVenues
-    .filter((candidate) => candidate.venue.id !== peak.venue.id)
+    .filter((candidate) => getScoredVenueBaseVenueId(candidate) !== getScoredVenueBaseVenueId(peak))
     .sort((left, right) => {
       const scoreDelta =
         scoreFallbackSupportReadability(right, peak, role) -
@@ -2094,7 +2094,7 @@ function buildFallbackCandidate(
         'start_plus_highlight',
       )
       for (const cooldown of cooldowns) {
-        if (cooldown.venue.id === warmup.venue.id) {
+        if (getScoredVenueBaseVenueId(cooldown) === getScoredVenueBaseVenueId(warmup)) {
           continue
         }
         addOption(
