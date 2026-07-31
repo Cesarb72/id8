@@ -1789,7 +1789,7 @@ try {
         reachedViaAssemblyAndValidation: true,
         duplicateReasons,
         note:
-          'Private getBestSupportStop and fallback support filters compare raw venue.id in code; direct helper output is not exported, so this proof records public assembly/validation effects and code-inspection reachability.',
+          'Private getBestSupportStop and fallback support filters compare canonical baseVenueId in code; direct helper output is not exported, so this proof records public assembly/validation effects and code-inspection reachability.',
       },
       runGeneratePlanPrivateRawIdSites: {
         publicModes: publicGeneration,
