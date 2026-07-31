@@ -1,5 +1,8 @@
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import {
+  AUTHORITATIVE_STAGE0_EVIDENCE_ROW_COUNT,
+  AUTHORITATIVE_STAGE0_EVIDENCE_SHA256,
+  validateIdentityEvidenceCorpusFile,
+} from "./identityEvidenceCorpusGuard";
 import {
   normalizeQualifiedStreetAddress,
   normalizeVenueIdentityEvidence,
@@ -13,8 +16,8 @@ import {
 
 const CORPUS_PATH =
   "src/domain/field/corpus/evidence/provider-corpus-real-1781057364783/provider-corpus-snapshot.provider.json";
-const EXPECTED_CORPUS_SHA256 = "9fa6fafbc1fdaf11859bcce709722417760c25f290ed1e84897993f14525f65f";
-const EXPECTED_CORPUS_COUNT = 96;
+const EXPECTED_CORPUS_SHA256 = AUTHORITATIVE_STAGE0_EVIDENCE_SHA256;
+const EXPECTED_CORPUS_COUNT = AUTHORITATIVE_STAGE0_EVIDENCE_ROW_COUNT;
 
 const STATIC_CANONICALS: StaticCanonicalVenueIdentity[] = [
   {
@@ -90,12 +93,12 @@ interface ProviderCorpusVenue {
 }
 
 function main(): void {
-  const corpusBytes = readFileSync(CORPUS_PATH);
-  const corpusHash = createHash("sha256").update(corpusBytes).digest("hex");
-  assert(corpusHash === EXPECTED_CORPUS_SHA256, `corpus hash changed: ${corpusHash}`);
-
-  const corpus = JSON.parse(corpusBytes.toString("utf8")) as ProviderCorpusSnapshot;
-  assert(corpus.venues.length === EXPECTED_CORPUS_COUNT, `expected 96 corpus observations, got ${corpus.venues.length}`);
+  const { canonicalSha256: corpusHash, corpus } =
+    validateIdentityEvidenceCorpusFile<ProviderCorpusSnapshot>(CORPUS_PATH, {
+      expectedRowCount: EXPECTED_CORPUS_COUNT,
+      expectedSha256: EXPECTED_CORPUS_SHA256,
+      label: "Stage 0 identity evidence",
+    });
 
   const evidenceRows = corpus.venues.map((venue, index) => ({
     row: index + 1,

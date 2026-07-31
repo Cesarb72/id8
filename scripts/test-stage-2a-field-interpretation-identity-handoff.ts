@@ -1,5 +1,8 @@
-import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import {
+  AUTHORITATIVE_STAGE0_EVIDENCE_ROW_COUNT,
+  AUTHORITATIVE_STAGE0_EVIDENCE_SHA256,
+  validateIdentityEvidenceCorpusFile,
+} from './identityEvidenceCorpusGuard'
 import {
   resolveStage2AFieldInterpretationVenueIdentityHandoffs,
   type Stage2AFieldIdentityResolutionInput,
@@ -11,7 +14,8 @@ import type { RawPlace } from '../src/domain/types/rawPlace'
 
 const CORPUS_PATH =
   'src/domain/field/corpus/evidence/provider-corpus-real-1781057364783/provider-corpus-snapshot.provider.json'
-const EXPECTED_CORPUS_SHA256 = '9fa6fafbc1fdaf11859bcce709722417760c25f290ed1e84897993f14525f65f'
+const EXPECTED_CORPUS_SHA256 = AUTHORITATIVE_STAGE0_EVIDENCE_SHA256
+const EXPECTED_CORPUS_COUNT = AUTHORITATIVE_STAGE0_EVIDENCE_ROW_COUNT
 
 interface HandoffPermutationSnapshot {
   totalObservationCount: number
@@ -27,8 +31,11 @@ interface HandoffPermutationSnapshot {
 }
 
 function main(): void {
-  const corpusHashBefore = sha256File(CORPUS_PATH)
-  assert(corpusHashBefore === EXPECTED_CORPUS_SHA256, `generated corpus hash changed before proof: ${corpusHashBefore}`)
+  const corpusHashBefore = validateIdentityEvidenceCorpusFile(CORPUS_PATH, {
+    expectedRowCount: EXPECTED_CORPUS_COUNT,
+    expectedSha256: EXPECTED_CORPUS_SHA256,
+    label: 'Stage 0 identity evidence before Stage 2A proof',
+  }).canonicalSha256
 
   const staticInput: Stage2AFieldIdentityResolutionInput = {
     rawPlace: rawPlace({
@@ -180,8 +187,11 @@ function main(): void {
   assert(!routeSupplyVenueIds.includes(ambiguous.resolvedBaseVenueId ?? ''), 'ambiguous identity must not enter route supply')
   assert(routeSupplyVenueIds.every((id) => !id.startsWith('live_google_')), 'admitted Venue.id must not be provider-derived')
 
-  const corpusHashAfter = sha256File(CORPUS_PATH)
-  assert(corpusHashAfter === corpusHashBefore, `generated corpus hash changed after proof: ${corpusHashAfter}`)
+  const corpusHashAfter = validateIdentityEvidenceCorpusFile(CORPUS_PATH, {
+    expectedRowCount: EXPECTED_CORPUS_COUNT,
+    expectedSha256: corpusHashBefore,
+    label: 'Stage 0 identity evidence after Stage 2A proof',
+  }).canonicalSha256
 
   console.log('stage 2a field interpretation identity handoff proof PASS')
   console.log(`static resolved identity=${staticHandoff.resolvedBaseVenueId}`)
@@ -320,10 +330,6 @@ function staticOnlyRouteSupplyIds(inputs: Stage2AFieldIdentityResolutionInput[])
 
 function hasOwn(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key)
-}
-
-function sha256File(path: string): string {
-  return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
 
 function assert(condition: unknown, message: string): asserts condition {

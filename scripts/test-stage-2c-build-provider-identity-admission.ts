@@ -1,5 +1,8 @@
-import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import {
+  AUTHORITATIVE_STAGE0_EVIDENCE_ROW_COUNT,
+  AUTHORITATIVE_STAGE0_EVIDENCE_SHA256,
+  validateIdentityEvidenceCorpusFile,
+} from './identityEvidenceCorpusGuard'
 import { buildVenueIdentityAdmissionDiagnostics } from '../src/domain/bearings/buildVenueIdentityAdmission'
 import { curatedVenues } from '../src/data/venues'
 import { resolveFieldInterpretationVenueIdentityHandoffs } from '../src/domain/field/resolveFieldInterpretationVenueIdentityHandoffs'
@@ -15,7 +18,8 @@ import type { RawPlace } from '../src/domain/types/rawPlace'
 const FIELD_PROXY_PATH = '/api/field/text-search'
 const CORPUS_PATH =
   'src/domain/field/corpus/evidence/provider-corpus-real-1781057364783/provider-corpus-snapshot.provider.json'
-const EXPECTED_CORPUS_SHA256 = '9fa6fafbc1fdaf11859bcce709722417760c25f290ed1e84897993f14525f65f'
+const EXPECTED_CORPUS_SHA256 = AUTHORITATIVE_STAGE0_EVIDENCE_SHA256
+const EXPECTED_CORPUS_COUNT = AUTHORITATIVE_STAGE0_EVIDENCE_ROW_COUNT
 
 const originalFetch = globalThis.fetch
 const originalSupplyFlag = process.env.VITE_ID8_BUILD_PROVIDER_SUPPLY
@@ -469,8 +473,11 @@ async function main(): Promise<void> {
     process.env.VITE_ID8_BUILD_PROVIDER_SUPPLY = 'true'
     installMockFetch()
 
-    const corpusHash = createHash('sha256').update(readFileSync(CORPUS_PATH)).digest('hex')
-    assert(corpusHash === EXPECTED_CORPUS_SHA256, `preserved corpus hash changed: ${corpusHash}`)
+    const corpusHash = validateIdentityEvidenceCorpusFile(CORPUS_PATH, {
+      expectedRowCount: EXPECTED_CORPUS_COUNT,
+      expectedSha256: EXPECTED_CORPUS_SHA256,
+      label: 'Stage 0 identity evidence before Stage 2C proof',
+    }).canonicalSha256
 
     const original = await runBuildScenario('original')
     const reversed = await runBuildScenario('reversed')
