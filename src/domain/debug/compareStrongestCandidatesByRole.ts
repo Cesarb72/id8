@@ -8,12 +8,14 @@ import { computeRoleAwareHoursPressure } from '../retrieval/computeRoleAwareHour
 import { computeRoleAwareLiveLift } from '../retrieval/computeRoleAwareLiveLift'
 import { explainLiveRoleLoss } from '../retrieval/explainLiveRoleLoss'
 import { computeHybridLiveLift } from '../retrieval/computeHybridLiveLift'
+import { projectWaypointSupportRoleCandidateEvidenceRows } from './projectWaypointSupportRoleCandidateEvidence'
 import type { RolePools } from '../arc/buildRolePools'
 import type {
   LiveRoleLeaderDiagnostics,
   RoleCompetitionCandidateDiagnostics,
   RoleCompetitionDiagnostics,
   ScoreDimensionDeltaDiagnostics,
+  WaypointSupportRoleCandidateEvidenceRow,
 } from '../types/diagnostics'
 import type { ArcCandidate, ArcScoreBreakdown, ScoredVenue } from '../types/arc'
 import type { ExperienceLens } from '../types/experienceLens'
@@ -37,6 +39,7 @@ interface CompareStrongestCandidatesByRoleResult {
   strongestLiveLostAtStageByRole: Partial<Record<UserStopRole, RoleCompetitionDiagnostics['strongestLiveLostAtStage']>>
   strongestLiveVsCuratedDeltaByRole: Partial<Record<UserStopRole, ScoreDimensionDeltaDiagnostics[]>>
   roleCompetitionByRole: Partial<Record<UserStopRole, RoleCompetitionDiagnostics>>
+  supportRoleCandidateEvidenceRows: WaypointSupportRoleCandidateEvidenceRow[]
   liveLostInFinalWinnerCount: number
 }
 
@@ -678,6 +681,13 @@ export function compareStrongestCandidatesByRole({
     strongestLiveLostAtStageByRole,
     strongestLiveVsCuratedDeltaByRole,
     roleCompetitionByRole,
+    supportRoleCandidateEvidenceRows: projectWaypointSupportRoleCandidateEvidenceRows({
+      scoredVenues,
+      rolePools,
+      arcCandidates,
+      selectedArc,
+      roleCompetitionByRole,
+    }),
     liveLostInFinalWinnerCount,
   }
 }

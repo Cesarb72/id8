@@ -19,6 +19,7 @@ import type {
   RoleCompetitionDiagnostics,
   RolePoolCounts,
   ScoreDimensionDeltaDiagnostics,
+  WaypointSupportRoleCandidateEvidenceRow,
 } from '../types/diagnostics'
 import type { ExperienceLens } from '../types/experienceLens'
 import type { SourceMode } from '../types/sourceMode'
@@ -56,6 +57,7 @@ export interface LiveCompetitivenessDiagnostics {
   strongestLiveLostAtStageByRole: Partial<Record<UserStopRole, RoleCompetitionDiagnostics['strongestLiveLostAtStage']>>
   strongestLiveVsCuratedDeltaByRole: Partial<Record<UserStopRole, ScoreDimensionDeltaDiagnostics[]>>
   roleCompetitionByRole: Partial<Record<UserStopRole, RoleCompetitionDiagnostics>>
+  supportRoleCandidateEvidenceRows: WaypointSupportRoleCandidateEvidenceRow[]
   liveAttritionTrace: LiveAttritionTraceDiagnostics
   curatedDominance: CuratedDominanceDiagnostics
   dedupeNoveltyLoss: LiveNoveltyLossDiagnostics
@@ -249,6 +251,7 @@ export function computeLiveCompetitiveness({
     strongestLiveLostAtStageByRole: roleComparison.strongestLiveLostAtStageByRole,
     strongestLiveVsCuratedDeltaByRole: roleComparison.strongestLiveVsCuratedDeltaByRole,
     roleCompetitionByRole: roleComparison.roleCompetitionByRole,
+    supportRoleCandidateEvidenceRows: roleComparison.supportRoleCandidateEvidenceRows,
     liveAttritionTrace,
     curatedDominance,
     dedupeNoveltyLoss,

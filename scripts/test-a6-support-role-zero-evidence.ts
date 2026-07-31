@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-import { buildRolePools, type RolePools } from '../src/domain/arc/buildRolePools.ts'
+import { buildRolePools } from '../src/domain/arc/buildRolePools.ts'
 import { buildLiveAttritionTrace } from '../src/domain/debug/buildLiveAttritionTrace.ts'
 import { compareStrongestCandidatesByRole } from '../src/domain/debug/compareStrongestCandidatesByRole.ts'
 import { buildExperienceLens } from '../src/domain/intent/buildExperienceLens.ts'
@@ -17,10 +17,11 @@ import type {
   LiveAttritionTraceDiagnostics,
   LiveQueryCandidateDispositionDiagnostics,
   RoleCompetitionDiagnostics,
+  WaypointSupportRoleCandidateEvidenceRow,
 } from '../src/domain/types/diagnostics.ts'
 import type { InternalRole, Venue, VenueCategory } from '../src/domain/types/venue.ts'
 
-type A6Judgment = 'A6 PRODUCTION EVIDENCE GAP PROVEN - BOUNDED CARRIER ENRICHMENT REQUIRED'
+type A6Judgment = 'A6 OPTION C CANDIDATE EVIDENCE RETENTION PROVEN'
 
 interface CandidateContinuityRow {
   scenario: string
@@ -56,7 +57,8 @@ interface A6ProofResult {
   judgment: A6Judgment
   providerCallsAttempted: number
   fieldProxyCalls: number
-  candidateRows: CandidateContinuityRow[]
+  productionCandidateRows: WaypointSupportRoleCandidateEvidenceRow[]
+  upstreamRejectedRows: CandidateContinuityRow[]
   aggregateChecks: AggregateCheck[]
   carrierFindings: string[]
   residueFindings: string[]
@@ -64,15 +66,7 @@ interface A6ProofResult {
 }
 
 const judgment: A6Judgment =
-  'A6 PRODUCTION EVIDENCE GAP PROVEN - BOUNDED CARRIER ENRICHMENT REQUIRED'
-
-const supportRoles: UserStopRole[] = ['start', 'windDown']
-const roleByUserRole: Record<UserStopRole, InternalRole> = {
-  start: 'warmup',
-  highlight: 'peak',
-  surprise: 'wildcard',
-  windDown: 'cooldown',
-}
+  'A6 OPTION C CANDIDATE EVIDENCE RETENTION PROVEN'
 
 const intent = normalizeIntent({
   city: 'San Jose',
@@ -675,55 +669,6 @@ function rowForUpstreamCandidate(
   }
 }
 
-function rowForScoredCandidate(params: {
-  scenario: string
-  candidate: ScoredVenue
-  role: UserStopRole
-  rolePools: RolePools
-  selectedArc: ArcCandidate
-  roleCompetition?: RoleCompetitionDiagnostics
-}): CandidateContinuityRow {
-  const internalRole = roleByUserRole[params.role]
-  const rolePool = params.rolePools[internalRole === 'warmup' ? 'warmup' : internalRole === 'cooldown' ? 'cooldown' : internalRole]
-  const enteredPool = rolePool.some((candidate) => candidate.venue.id === params.candidate.venue.id)
-  const selected = params.selectedArc.stops.some(
-    (stop) => stop.role === internalRole && stop.scoredVenue.venue.id === params.candidate.venue.id,
-  )
-  const strongestLiveId = params.roleCompetition?.strongestLive?.venueId
-  const competitionState =
-    selected
-      ? 'selected_winner'
-      : strongestLiveId === params.candidate.venue.id
-        ? params.roleCompetition?.strongestLiveLostAtStage ?? 'strongest_live_state_retained'
-        : enteredPool
-          ? 'entered_pool_but_non_strongest_state_not_retained_in_role_competition'
-          : 'scored_but_not_role_pool_state_not_retained_as_candidate_row'
-  return {
-    scenario: params.scenario,
-    candidateId: params.candidate.candidateIdentity.candidateId,
-    canonicalBaseVenueId: params.candidate.candidateIdentity.baseVenueId,
-    providerProvenance: params.candidate.venue.source.providerRecordId ?? 'curated',
-    requestedRole: params.role,
-    fieldSourceStatus: params.candidate.venue.source.sourceOrigin,
-    interpretationIdentityStatus: 'candidateIdentity.baseVenueId present',
-    districtStructureStatus: 'not_retained_on_role_competition_candidate',
-    bearingsDecision: 'not_retained_on_role_competition_candidate',
-    bearingsReason: 'not_retained_on_role_competition_candidate',
-    scoredPresence: 'present',
-    rolePoolMembership: enteredPool ? 'entered' : 'not_entered',
-    competitionState,
-    selectedState: selected ? 'selected' : 'not_selected',
-    firstZeroOrRemovalStage: selected
-      ? 'selected-winner'
-      : enteredPool
-        ? 'role-pool competition or final-route-winner'
-        : 'role-pool',
-    owningLayer: 'Waypoint',
-    routeConsequence: selected ? 'selected_route_stop' : 'not_selected_route_stop',
-    maskingCheck: 'production diagnostics do not reclassify as Field/Bearings zero',
-  }
-}
-
 async function runUpstreamRejectedCase(): Promise<{
   fieldProxyCalls: number
   providerCallsConsumed: number
@@ -797,7 +742,7 @@ async function runUpstreamRejectedCase(): Promise<{
 }
 
 function runRoleCompetitionCase(): {
-  rows: CandidateContinuityRow[]
+  rows: WaypointSupportRoleCandidateEvidenceRow[]
   aggregateChecks: AggregateCheck[]
   attrition: LiveAttritionTraceDiagnostics
   roleCompetition: Partial<Record<UserStopRole, RoleCompetitionDiagnostics>>
@@ -893,13 +838,15 @@ function runRoleCompetitionCase(): {
     0.84,
   )
   const arcCandidates = [selectedArc, liveStartArc, liveWindDownArc]
-  const roleCompetition = compareStrongestCandidatesByRole({
+  const roleComparison = compareStrongestCandidatesByRole({
     scoredVenues,
     rolePools,
     arcCandidates,
     selectedArc,
     lens: lens as ExperienceLens,
-  }).roleCompetitionByRole
+  })
+  const roleCompetition = roleComparison.roleCompetitionByRole
+  const rows = roleComparison.supportRoleCandidateEvidenceRows
   const attrition = buildLiveAttritionTrace({
     retrieval: retrievalStub({
       fetched: 7,
@@ -926,23 +873,45 @@ function runRoleCompetitionCase(): {
   assert.equal(attrition.liveEnteredRolePoolStart >= 3, true)
   assert.equal(attrition.liveRejectedByRolePoolCount >= 1, true)
 
-  const rows = scoredVenues
-    .filter((candidate) => candidate.venue.source.sourceOrigin === 'live')
-    .flatMap((candidate) =>
-      supportRoles.map((role) =>
-        rowForScoredCandidate({
-          scenario: 'role-competition',
-          candidate,
-          role,
-          rolePools,
-          selectedArc,
-          roleCompetition: roleCompetition[role],
-        }),
-      ),
-    )
-  const startRows = rows.filter((row) => row.requestedRole === 'start')
-  const startPoolRows = startRows.filter((row) => row.rolePoolMembership === 'entered')
-  const productionRoleCompetitionLedger = startCompetition.strongestLive ? 1 : 0
+  const startLiveRows = rows.filter(
+    (row) => row.requestedRole === 'start' && row.provenance.sourceOrigin === 'live',
+  )
+  const startPoolRows = startLiveRows.filter(
+    (row) =>
+      row.observations.rolePoolMembership.available &&
+      row.observations.rolePoolMembership.value,
+  )
+  const startSelectedLiveRows = startLiveRows.filter(
+    (row) =>
+      row.observations.selectedRoutePresence.available &&
+      row.observations.selectedRoutePresence.value,
+  )
+  const nonStrongestStartRows = startLiveRows.filter(
+    (row) =>
+      row.observations.strongestCandidateForRole.available &&
+      !row.observations.strongestCandidateForRole.value,
+  )
+  const startScoredNotPoolRows = startLiveRows.filter(
+    (row) =>
+      row.observations.rolePoolMembership.available &&
+      !row.observations.rolePoolMembership.value,
+  )
+  assert.equal(startLiveRows.length, 5)
+  assert(
+    startLiveRows.some((row) => row.identity.candidateId === liveStartMiddle.candidateIdentity.candidateId),
+    'non-strongest live support-role candidate must survive as a production row',
+  )
+  assert(
+    startScoredNotPoolRows.some((row) => row.identity.candidateId === liveStartTooWeak.candidateIdentity.candidateId),
+    'scored-but-not-role-pool candidate must survive as a production row',
+  )
+  assert(
+    nonStrongestStartRows.some(
+      (row) => row.observations.lostAtStage.available === false &&
+        row.observations.lostAtStage.unavailableReason === 'not_retained',
+    ),
+    'non-strongest loss-stage evidence must remain explicitly unavailable, not inferred',
+  )
 
   return {
     rows,
@@ -953,25 +922,25 @@ function runRoleCompetitionCase(): {
         productionAggregate: attrition.liveEnteredRolePoolStart,
         recomputedFromRows: startPoolRows.length,
         match: attrition.liveEnteredRolePoolStart === startPoolRows.length,
-        missingEvidence: 'none inside RolePools while proof has direct RolePools access',
+        missingEvidence: 'none; recomputed from production-retained candidate evidence rows',
       },
       {
         scenario: 'role-competition',
-        aggregate: 'RoleCompetitionDiagnostics live candidate ledger rows',
-        productionAggregate: productionRoleCompetitionLedger,
-        recomputedFromRows: startRows.filter((row) => row.fieldSourceStatus === 'live').length,
-        match: false,
+        aggregate: 'support-role selected live zero',
+        productionAggregate: 0,
+        recomputedFromRows: startSelectedLiveRows.length,
+        match: startSelectedLiveRows.length === 0,
         missingEvidence:
-          'RoleCompetitionDiagnostics retains strongestLive/strongestCurated only, not all support-role candidate rows.',
+          'none; selected-route presence is retained per candidate by the Waypoint projection',
       },
       {
         scenario: 'role-competition',
-        aggregate: 'LiveAttritionTrace candidate-level first-zero rows',
-        productionAggregate: attrition.liveRejectedByRolePoolCount,
-        recomputedFromRows: 'unrecomputable from LiveAttritionTrace alone',
-        match: 'unrecomputable',
+        aggregate: 'scored live start candidates not in role pool',
+        productionAggregate: startScoredNotPoolRows.length,
+        recomputedFromRows: startScoredNotPoolRows.length,
+        match: true,
         missingEvidence:
-          'LiveAttritionTrace stores stage counts and notes, not candidate IDs, provenance, or per-candidate loss owners.',
+          'loss-stage reason remains unavailable for non-strongest candidates; membership zero is retained structurally',
       },
     ],
     attrition,
@@ -980,6 +949,7 @@ function runRoleCompetitionCase(): {
 }
 
 function runNoSourcedCase(): {
+  rows: WaypointSupportRoleCandidateEvidenceRow[]
   aggregateChecks: AggregateCheck[]
   attrition: LiveAttritionTraceDiagnostics
   roleCompetition: Partial<Record<UserStopRole, RoleCompetitionDiagnostics>>
@@ -996,13 +966,15 @@ function runNoSourcedCase(): {
     [{ role: 'warmup', scoredVenue: curatedStart }],
     0.86,
   )
-  const roleCompetition = compareStrongestCandidatesByRole({
+  const roleComparison = compareStrongestCandidatesByRole({
     scoredVenues: [curatedStart],
     rolePools,
     arcCandidates: [selectedArc],
     selectedArc,
     lens,
-  }).roleCompetitionByRole
+  })
+  const roleCompetition = roleComparison.roleCompetitionByRole
+  const rows = roleComparison.supportRoleCandidateEvidenceRows
   const attrition = buildLiveAttritionTrace({
     retrieval: retrievalStub({
       fetched: 0,
@@ -1020,22 +992,24 @@ function runNoSourcedCase(): {
   assert.equal(attrition.liveFetchedCount, 0)
   assert.equal(attrition.liveEnteredRolePoolStart, 0)
   assert.equal(roleCompetition.start?.outcome, 'no-live-candidate')
+  const liveRows = rows.filter((row) => row.provenance.sourceOrigin === 'live')
   return {
+    rows,
     aggregateChecks: [
       {
         scenario: 'no-sourced-live',
         aggregate: 'live source population',
         productionAggregate: attrition.liveFetchedCount,
-        recomputedFromRows: 0,
-        match: true,
-        missingEvidence: 'no candidate rows expected for authentic source zero',
+        recomputedFromRows: liveRows.length,
+        match: liveRows.length === attrition.liveFetchedCount,
+        missingEvidence: 'none; no live production candidate rows expected for authentic source zero',
       },
       {
         scenario: 'no-sourced-live',
         aggregate: 'start live role-pool population',
         productionAggregate: attrition.liveEnteredRolePoolStart,
-        recomputedFromRows: 0,
-        match: true,
+        recomputedFromRows: liveRows.filter((row) => row.requestedRole === 'start').length,
+        match: liveRows.filter((row) => row.requestedRole === 'start').length === 0,
         missingEvidence: 'none for source-zero distinction; source zero is aggregate-only by definition',
       },
     ],
@@ -1052,6 +1026,8 @@ function assertCarrierSourceShapes(): string[] {
   assert(diagnosticsSource.includes('liveCount: number'))
   assert(diagnosticsSource.includes('export interface RolePoolDiagnostics'))
   assert(diagnosticsSource.includes('rolePoolCandidateIds?: string[]'))
+  assert(diagnosticsSource.includes('export interface WaypointSupportRoleCandidateEvidenceRow'))
+  assert(diagnosticsSource.includes('supportRoleCandidateEvidenceRows: WaypointSupportRoleCandidateEvidenceRow[]'))
 
   const rolePoolsSource = readFileSync('src/domain/arc/buildRolePools.ts', 'utf8')
   assert(rolePoolsSource.includes('limitArcRolePoolCandidates'))
@@ -1060,7 +1036,16 @@ function assertCarrierSourceShapes(): string[] {
   const competitionSource = readFileSync('src/domain/debug/compareStrongestCandidatesByRole.ts', 'utf8')
   assert(competitionSource.includes('const strongestLive = pickTopCandidate'))
   assert(competitionSource.includes('roleCompetitionByRole[userRole]'))
+  assert(competitionSource.includes('supportRoleCandidateEvidenceRows'))
   assert(!competitionSource.includes('allLiveCandidates'))
+
+  const protocolSource = readFileSync('src/domain/diagnostics/candidateEvidenceProtocol.ts', 'utf8')
+  assert(protocolSource.includes("protocolVersion: 'candidate-evidence.v1'"))
+  assert(protocolSource.includes('CandidateEvidenceObservation'))
+
+  const projectionSource = readFileSync('src/domain/debug/projectWaypointSupportRoleCandidateEvidence.ts', 'utf8')
+  assert(projectionSource.includes("producer: 'Waypoint'"))
+  assert(projectionSource.includes("unavailableReason: 'not_observed' | 'not_retained' | 'not_applicable'"))
 
   const attritionSource = readFileSync('src/domain/debug/buildLiveAttritionTrace.ts', 'utf8')
   assert(attritionSource.includes('liveRejectedByRolePoolCount'))
@@ -1068,7 +1053,8 @@ function assertCarrierSourceShapes(): string[] {
 
   return [
     'RolePools: production-authoritative Waypoint role-pool candidate arrays after filtering/order/cap; retains pool entrants only.',
-    'RoleCompetitionDiagnostics: diagnostic-only strongest-live/strongest-curated summary; does not retain complete support-role candidate rows.',
+    'WaypointSupportRoleCandidateEvidenceRow: production-retained structural candidate row for support-role competition.',
+    'RoleCompetitionDiagnostics: diagnostic-only strongest-live/strongest-curated summary; no longer stands in for complete support-role candidate rows.',
     'LiveAttritionTrace: diagnostic-only aggregate stage counts and notes; no candidate IDs/provenance/loss-owner rows.',
     'RolePoolDiagnostics: diagnostic/Application explainability summary; retains rolePoolCandidateIds but not full candidate evidence or per-candidate loss reasons.',
   ]
@@ -1102,7 +1088,8 @@ function assertResidueGuards(): string[] {
 
 function stable(result: A6ProofResult): string {
   return JSON.stringify({
-    candidateRows: result.candidateRows,
+    productionCandidateRows: result.productionCandidateRows,
+    upstreamRejectedRows: result.upstreamRejectedRows,
     aggregateChecks: result.aggregateChecks,
     carrierFindings: result.carrierFindings,
     limitations: result.limitations,
@@ -1113,7 +1100,8 @@ async function runOnce(): Promise<A6ProofResult> {
   const upstream = await runUpstreamRejectedCase()
   const roleCompetition = runRoleCompetitionCase()
   const noSourced = runNoSourcedCase()
-  const candidateRows = [...upstream.rows, ...roleCompetition.rows]
+  const productionCandidateRows = [...roleCompetition.rows, ...noSourced.rows]
+  const upstreamRejectedRows = upstream.rows
   const aggregateChecks = [
     ...roleCompetition.aggregateChecks,
     ...noSourced.aggregateChecks,
@@ -1128,32 +1116,44 @@ async function runOnce(): Promise<A6ProofResult> {
     },
   ]
   assert(
-    aggregateChecks.some((check) => check.match === 'unrecomputable'),
-    'A6 proof must preserve the honest aggregate/row reconstruction limitation',
+    !aggregateChecks.some((check) => check.match === false || check.match === 'unrecomputable'),
+    'A6 Option C proof must reconstruct bounded support-role aggregates from production-retained rows',
   )
   assert(
-    candidateRows.some((row) => row.competitionState.includes('non_strongest')),
-    'non-strongest candidate continuity limitation must be observable',
+    productionCandidateRows.some(
+      (row) =>
+        row.observations.strongestCandidateForRole.available &&
+        !row.observations.strongestCandidateForRole.value,
+    ),
+    'non-strongest support-role candidate evidence must be observable from production rows',
   )
   assert(
-    candidateRows.some((row) => row.firstZeroOrRemovalStage === 'role-pool'),
-    'scored-but-not-role-pool limitation must be observable',
+    productionCandidateRows.some(
+      (row) =>
+        row.observations.rolePoolMembership.available &&
+        !row.observations.rolePoolMembership.value,
+    ),
+    'scored-but-not-role-pool evidence must be observable from production rows',
+  )
+  assert(
+    productionCandidateRows.every((row) => row.protocolVersion === 'candidate-evidence.v1'),
+    'all retained production rows must use the neutral candidate-evidence protocol',
   )
 
   return {
     judgment,
     providerCallsAttempted: upstream.providerCallsConsumed,
     fieldProxyCalls: upstream.fieldProxyCalls,
-    candidateRows,
+    productionCandidateRows,
+    upstreamRejectedRows,
     aggregateChecks,
     carrierFindings: assertCarrierSourceShapes(),
     residueFindings: assertResidueGuards(),
     limitations: [
-      'Complete support-role candidate rows do not survive in RoleCompetitionDiagnostics.',
-      'LiveAttritionTrace cannot identify candidate-level first-zero/removal stage from its own retained evidence.',
-      'RolePoolDiagnostics exposes rolePoolCandidateIds and summary counts but not full identity/provenance/Bearings/loss-owner rows.',
-      'Scored-but-not-role-pool candidates can be characterized only by comparing scoredVenues to RolePools, not by reading a retained production exclusion row.',
-      'Strongest-candidate evidence is useful but cannot stand in for non-winning/non-strongest support-role candidates.',
+      'Non-strongest lostAtStage remains explicitly unavailable; the proof does not infer a loss stage.',
+      'Upstream rejected Field/District/Bearings candidates remain separate because they never reach Waypoint support-role competition.',
+      'RoleCompetitionDiagnostics remains a strongest-candidate summary and is not route authority.',
+      'Support-role evidence rows are diagnostic only and do not claim MVP green.',
     ],
   }
 }
@@ -1165,7 +1165,7 @@ async function run(): Promise<void> {
   assert.equal(second.providerCallsAttempted, 0)
   assert.equal(stable(first), stable(second))
   console.log(JSON.stringify(first, null, 2))
-  console.log('A6 support-role zero evidence characterization: PASS')
+  console.log('A6 support-role zero evidence Option C proof: PASS')
   console.log(`judgment=${first.judgment}`)
   console.log(`providerCallsAttempted=${first.providerCallsAttempted}`)
 }

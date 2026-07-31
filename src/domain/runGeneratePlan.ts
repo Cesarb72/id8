@@ -4527,6 +4527,7 @@ async function runGeneratePlanInternal(
       strongestLiveLostAtStageByRole: {},
       strongestLiveVsCuratedDeltaByRole: {},
       roleCompetitionByRole: {},
+      supportRoleCandidateEvidenceRows: [],
       liveAttritionTrace: {
         liveFetchedCount: 0,
         liveMappedCount: 0,
@@ -4671,6 +4672,8 @@ async function runGeneratePlanInternal(
     liveCompetitiveness.strongestLiveVsCuratedDeltaByRole
   retrievalDiagnostics.liveSource.roleCompetitionByRole =
     liveCompetitiveness.roleCompetitionByRole
+  retrievalDiagnostics.liveSource.supportRoleCandidateEvidenceRows =
+    liveCompetitiveness.supportRoleCandidateEvidenceRows
   retrievalDiagnostics.liveSource.liveAttritionTrace =
     liveCompetitiveness.liveAttritionTrace
   retrievalDiagnostics.liveSource.curatedDominance =

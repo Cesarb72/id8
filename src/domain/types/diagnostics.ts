@@ -34,8 +34,13 @@ import type {
   TasteHighlightTier,
   TasteRoleSuitability,
 } from '../interpretation/taste/types'
+import type {
+  CandidateEvidenceObservation,
+  CandidateEvidenceRowBase,
+} from '../diagnostics/candidateEvidenceProtocol'
 import type { BearingsRuntimeHoursDiagnostics } from '../bearings/runtimeHoursValidationDiagnostics'
 import type { GreatStopGateResult, GreatStopGateSelectionDiagnostics } from './greatStopGate'
+import type { InternalRole } from './venue'
 
 export type FallbackRelaxationLevel = 'none' | 'lens-soft' | 'lens-off'
 export type SelectionStrengthLabel =
@@ -624,6 +629,54 @@ export interface RoleCompetitionDiagnostics {
   selectedArcScore?: number
 }
 
+export interface WaypointSupportRoleCandidateEvidenceRow
+  extends CandidateEvidenceRowBase<'Waypoint', 'support_role_competition'> {
+  requestedRole: UserStopRole
+  internalRole: InternalRole
+  observations: {
+    scoredCandidatePresence: CandidateEvidenceObservation<
+      'Waypoint',
+      'scored_candidate_presence',
+      true
+    >
+    rolePoolMembership: CandidateEvidenceObservation<
+      'Waypoint',
+      'role_pool_membership',
+      boolean
+    >
+    rolePoolPosition: CandidateEvidenceObservation<
+      'Waypoint',
+      'role_pool_position',
+      number
+    >
+    arcAssemblyPresence: CandidateEvidenceObservation<
+      'Waypoint',
+      'arc_assembly_presence',
+      boolean
+    >
+    selectedRoutePresence: CandidateEvidenceObservation<
+      'Waypoint',
+      'selected_route_presence',
+      boolean
+    >
+    strongestCandidateForRole: CandidateEvidenceObservation<
+      'Waypoint',
+      'strongest_candidate_for_role',
+      boolean
+    >
+    competitionOutcome: CandidateEvidenceObservation<
+      'Waypoint',
+      'competition_outcome',
+      RoleCompetitionDiagnostics['outcome']
+    >
+    lostAtStage: CandidateEvidenceObservation<
+      'Waypoint',
+      'lost_at_stage',
+      LiveCompetitionStage
+    >
+  }
+}
+
 export type SupportRoleRejectionOwnerClassification =
   | 'Field'
   | 'Taste'
@@ -945,6 +998,7 @@ export interface RetrievalDiagnostics {
     strongestLiveLostAtStageByRole: Partial<Record<UserStopRole, LiveCompetitionStage>>
     strongestLiveVsCuratedDeltaByRole: Partial<Record<UserStopRole, ScoreDimensionDeltaDiagnostics[]>>
     roleCompetitionByRole: Partial<Record<UserStopRole, RoleCompetitionDiagnostics>>
+    supportRoleCandidateEvidenceRows: WaypointSupportRoleCandidateEvidenceRow[]
     liveAttritionTrace: LiveAttritionTraceDiagnostics
     curatedDominance: CuratedDominanceDiagnostics
     dedupeNoveltyLoss: LiveNoveltyLossDiagnostics
