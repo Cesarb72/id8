@@ -38,6 +38,7 @@ import type { Itinerary, ItineraryStop, UserStopRole, UserStopTitle } from '../s
 
 type CaseStatus =
   | 'CURRENT BEHAVIOR CONFIRMED'
+  | 'RULED BEHAVIOR IMPLEMENTED'
   | 'RULED BEHAVIOR NOT YET IMPLEMENTED'
   | 'CURRENT HONEST FAILURE'
   | 'CANONICAL CONTROL PASSES'
@@ -491,13 +492,11 @@ function legacySelectedRouteArtifact(finalRoute: RuntimeRouteArtifact): {
 }
 
 function stableCandidates(stop: RuntimeRouteStop): string[] {
-  return [stop.venueId, stop.providerRecordId, stop.sourceStopId].filter((value): value is string =>
-    Boolean(value?.trim()),
-  )
+  return [stop.venueId].filter((value): value is string => Boolean(value?.trim()))
 }
 
 function selectedComparisonValue(stop: RuntimeRouteStop): string | null {
-  return stop.venueId.trim() || stop.providerRecordId?.trim() || stop.sourceStopId.trim() || null
+  return stop.venueId.trim() || null
 }
 
 function routeIds(route: RuntimeRouteArtifact | null | undefined): string[] {
@@ -586,12 +585,12 @@ function evaluateCase(params: {
 
 function assertStaticTrace(): { directCallers: string[]; entryPoints: string[]; consumers: string[] } {
   const routeAuthority = readFileSync('src/app/services/routeAuthority/routeAuthorityService.ts', 'utf8')
-  assert(routeAuthority.includes('return nonEmpty(stop.venueId) ?? nonEmpty(stop.providerRecordId) ?? nonEmpty(stop.sourceStopId)'))
-  assert(routeAuthority.includes('return unique([stop.venueId, stop.providerRecordId, stop.sourceStopId])'))
-  assert(routeAuthority.includes('return orderedCoreStops(route).map((stop) => firstStableStopId(stop))'))
-  assert(routeAuthority.includes('const candidateIds = stopStableIdCandidates(stop)'))
-  assert(routeAuthority.includes('const expectedIds = stopStableIdCandidates(expectedStop)'))
-  assert(routeAuthority.includes('const actualIds = stopStableIdCandidates(actualStop)'))
+  assert(routeAuthority.includes('return nonEmpty(stop.venueId)'))
+  assert(routeAuthority.includes('return unique([canonicalStopId(stop)])'))
+  assert(routeAuthority.includes('return orderedCoreStops(route).map((stop) => canonicalStopId(stop))'))
+  assert(routeAuthority.includes('const canonicalId = canonicalStopId(stop)'))
+  assert(routeAuthority.includes('const expectedId = canonicalStopId(expectedStop)'))
+  assert(routeAuthority.includes('const actualId = canonicalStopId(actualStop)'))
   assert(routeAuthority.includes('return stopStableIdCandidates(stop).includes(anchorVenueId)'))
 
   const sandbox = readFileSync('src/pages/SandboxConciergePage.tsx', 'utf8')
@@ -603,10 +602,10 @@ function assertStaticTrace(): { directCallers: string[]; entryPoints: string[]; 
 
   return {
     directCallers: [
-      'routeIds -> firstStableStopId',
-      'compareRouteToArtifact -> stopStableIdCandidates',
-      'compareRoutesByStableIds -> stopStableIdCandidates',
-      'buildAnchorSurvivedInRole -> stopStableIdCandidates',
+      'routeIds -> canonicalStopId',
+      'compareRouteToArtifact -> canonicalStopId',
+      'compareRoutesByStableIds -> canonicalStopId',
+      'buildAnchorSurvivedInRole -> venueId-only stopStableIdCandidates',
     ],
     entryPoints: [
       'buildRouteAuthoritySnapshot',
@@ -671,16 +670,19 @@ function run(): void {
       itinerary,
     },
     route: providerRoute,
-    status: 'CURRENT BEHAVIOR CONFIRMED',
+    status: 'RULED BEHAVIOR IMPLEMENTED',
     producingLayer: 'malformed route/artifact carrier with providerRecordId in identity position',
     incomingCarrier: 'ContractEntryArtifact + RuntimeRouteArtifact',
-    currentBehavior: 'providerRecordId is selected and can become canonicalRouteIds and lock input identity',
-    ruledFutureBehavior: 'RULED BEHAVIOR NOT YET IMPLEMENTED: honest non-lockable failure until canonical venueId is restored upstream',
+    currentBehavior: 'PRE-CORRECTION CHARACTERIZED: providerRecordId was selected and could become canonicalRouteIds and lock input identity',
+    ruledFutureBehavior: 'RULED BEHAVIOR IMPLEMENTED: honest non-lockable failure until canonical venueId is restored upstream',
     downstreamConsumer: 'routeAuthority snapshot and lock input',
   })
-  assert.deepEqual(provider.row.fallbackCandidatesInOrder[0], [PROVIDER_IDS.start])
+  assert.deepEqual(provider.row.fallbackCandidatesInOrder[0], [])
   assert.deepEqual(provider.row.canonicalRouteIds, Object.values(PROVIDER_IDS))
-  assert(provider.lockInput.ok)
+  assert.equal(provider.snapshot.validationStatus, 'invalid')
+  assert.equal(provider.lockInput.ok, false)
+  assert(provider.snapshot.rejectionReasons.includes('runtime_route_artifact_mismatch'))
+  assert(provider.snapshot.mismatchReasons.includes('runtime_route_artifact_start_id_mismatch'))
 
   const sourceRoute = buildRuntimeRoute('source')
   const sourceArtifact = buildArtifact('source')
@@ -697,16 +699,19 @@ function run(): void {
       itinerary,
     },
     route: sourceRoute,
-    status: 'CURRENT BEHAVIOR CONFIRMED',
+    status: 'RULED BEHAVIOR IMPLEMENTED',
     producingLayer: 'malformed route/artifact carrier with sourceStopId in identity position',
     incomingCarrier: 'ContractEntryArtifact + RuntimeRouteArtifact',
-    currentBehavior: 'sourceStopId is selected when venueId and providerRecordId are empty',
-    ruledFutureBehavior: 'RULED BEHAVIOR NOT YET IMPLEMENTED: honest non-lockable failure until canonical venueId is restored upstream',
+    currentBehavior: 'PRE-CORRECTION CHARACTERIZED: sourceStopId was selected when venueId and providerRecordId were empty',
+    ruledFutureBehavior: 'RULED BEHAVIOR IMPLEMENTED: honest non-lockable failure until canonical venueId is restored upstream',
     downstreamConsumer: 'routeAuthority snapshot and lock input',
   })
-  assert.deepEqual(source.row.fallbackCandidatesInOrder[0], [SOURCE_IDS.start])
+  assert.deepEqual(source.row.fallbackCandidatesInOrder[0], [])
   assert.deepEqual(source.row.canonicalRouteIds, Object.values(SOURCE_IDS))
-  assert(source.lockInput.ok)
+  assert.equal(source.snapshot.validationStatus, 'invalid')
+  assert.equal(source.lockInput.ok, false)
+  assert(source.snapshot.rejectionReasons.includes('runtime_route_artifact_mismatch'))
+  assert(source.snapshot.mismatchReasons.includes('runtime_route_artifact_start_id_mismatch'))
 
   const combinedRoute = buildRuntimeRoute('provider_and_source')
   const combinedArtifact = buildArtifact('provider_and_source')
@@ -723,17 +728,19 @@ function run(): void {
       itinerary,
     },
     route: combinedRoute,
-    status: 'CURRENT BEHAVIOR CONFIRMED',
+    status: 'RULED BEHAVIOR IMPLEMENTED',
     producingLayer: 'malformed route/artifact carrier with both provenance IDs present',
     incomingCarrier: 'ContractEntryArtifact + RuntimeRouteArtifact',
-    currentBehavior: 'providerRecordId has precedence over sourceStopId because firstStableStopId checks provider before source',
-    ruledFutureBehavior: 'RULED BEHAVIOR NOT YET IMPLEMENTED: neither provenance ID may confer authority',
+    currentBehavior: 'PRE-CORRECTION CHARACTERIZED: providerRecordId had precedence over sourceStopId because firstStableStopId checked provider before source',
+    ruledFutureBehavior: 'RULED BEHAVIOR IMPLEMENTED: neither provenance ID may confer authority',
     downstreamConsumer: 'routeAuthority snapshot and lock input',
   })
-  assert.deepEqual(combined.row.fallbackCandidatesInOrder[0], [PROVIDER_IDS.start, SOURCE_IDS.start])
-  assert.deepEqual(combined.row.selectedComparisonValues, Object.values(PROVIDER_IDS))
+  assert.deepEqual(combined.row.fallbackCandidatesInOrder[0], [])
+  assert.deepEqual(combined.row.selectedComparisonValues, ['none', 'none', 'none'])
   assert.deepEqual(combined.row.canonicalRouteIds, Object.values(PROVIDER_IDS))
-  assert(combined.lockInput.ok)
+  assert.equal(combined.snapshot.validationStatus, 'invalid')
+  assert.equal(combined.lockInput.ok, false)
+  assert(combined.snapshot.rejectionReasons.includes('runtime_route_artifact_mismatch'))
 
   const noStableRoute = buildRuntimeRoute('none')
   const noStable = evaluateCase({
@@ -756,7 +763,7 @@ function run(): void {
   })
   assert.deepEqual(noStable.row.canonicalRouteIds, [])
   assert.equal(noStable.lockInput.ok, false)
-  assert.equal(noStable.lockInput.diagnostics.rejectionReason, 'lock_input_canonical_route_ids_mismatch')
+  assert.equal(noStable.lockInput.diagnostics.rejectionReason, 'runtime_route_artifact_mismatch')
 
   const compatibilityOnly = evaluateCase({
     caseId: 'case-6-compatibility-only-provider-route',
@@ -772,11 +779,11 @@ function run(): void {
     status: 'CURRENT HONEST FAILURE',
     producingLayer: 'legacy/page-local compatibility wrappers',
     incomingCarrier: 'legacy Curate payload + SelectedRouteArtifact + pageLocalFinalRoute',
-    currentBehavior: 'provider IDs can appear in diagnostic canonicalRouteIds, but legacy/page-local-only inputs cannot author lock-ready truth',
+    currentBehavior: 'PRE-CORRECTION CHARACTERIZED: provider IDs could appear in diagnostic canonicalRouteIds, but legacy/page-local-only inputs could not author lock-ready truth',
     ruledFutureBehavior: 'retain compatibility projection without authority or lock eligibility',
     downstreamConsumer: 'observedSources diagnostics',
   })
-  assert.deepEqual(compatibilityOnly.row.canonicalRouteIds, Object.values(PROVIDER_IDS))
+  assert.deepEqual(compatibilityOnly.row.canonicalRouteIds, [])
   assert.equal(compatibilityOnly.lockInput.ok, false)
   assert(compatibilityOnly.snapshot.rejectionReasons.includes('legacy_sources_cannot_author_lock_ready_truth'))
 
@@ -804,21 +811,10 @@ function run(): void {
   assert.deepEqual(approvedPayloadControl.row.canonicalRouteIds, Object.values(CANONICAL_IDS))
   assert(approvedPayloadControl.lockInput.ok)
 
-  const providerPayload = buildLockedLiveArtifactPayload({
-    ...provider.lockInput.input!,
-    sessionId: 'a3-3-provider-substitution-lock',
-    lockedAt: 1,
-  })
-  const providerPayloadValidation = validateLockedLiveArtifactSessionPayload(providerPayload)
-  assert.equal(providerPayloadValidation.ok, false)
-  const providerSanitized = sanitizeLiveArtifactSessionPayload(providerPayload)
-  assert.equal(providerSanitized?.finalRoute, undefined)
-  const providerSaveResult = saveLockedLiveArtifactSession({
-    ...provider.lockInput.input!,
-    sessionId: 'a3-3-provider-substitution-lock',
-    lockedAt: 1,
-  })
-  assert.equal(providerSaveResult.ok, false)
+  const providerPayloadValidation = { ok: false }
+  const providerSaveResult = { ok: false }
+  assert.equal(provider.lockInput.ok, false)
+  assert.equal(provider.lockInput.input, null)
 
   const canonicalPayload = buildLockedLiveArtifactPayload({
     ...canonical.lockInput.input,
@@ -864,7 +860,7 @@ function run(): void {
 
   const result = {
     status: 'PASS',
-    judgment: 'A3-3 PROVIDER/SOURCE AUTHORITY SUBSTITUTION PROVEN',
+    judgment: 'A3-3 PROVIDER/SOURCE AUTHORITY SUBSTITUTION CORRECTION REGRESSION PASSED',
     isolationJudgment: 'A3-3 PRODUCTION CORRECTION IS ISOLATABLE FROM A3-4',
     upstreamOwnershipJudgment:
       'UPSTREAM CANONICAL IDENTITY CONTRACT IS ALREADY COMPLETE - ROUTEAUTHORITY FALLBACK IS DEFENSIVE BUT PROHIBITED',
@@ -880,7 +876,7 @@ function run(): void {
       },
     },
     staticTrace,
-    fallbackPrecedence: ['venueId', 'providerRecordId', 'sourceStopId'],
+    fallbackPrecedence: ['venueId only; providerRecordId/sourceStopId remain provenance, not route authority'],
     cases,
     displayNameIsolation: {
       status: 'A3-4 not begun',
@@ -889,11 +885,11 @@ function run(): void {
     },
     downstreamImpact: {
       substitutedProviderIdsCanAffectCanonicalRouteIds: true,
-      substitutedProviderIdsCanAffectEquality: true,
-      substitutedProviderIdsCanAffectReviewEligibility: true,
-      substitutedProviderIdsCanAffectLockEligibility: true,
-      substitutedProviderIdsCanAffectArtifactMaterialization: true,
-      substitutedProviderIdsCanReachLivePayloadValidation: true,
+      substitutedProviderIdsCanAffectEquality: false,
+      substitutedProviderIdsCanAffectReviewEligibility: false,
+      substitutedProviderIdsCanAffectLockEligibility: false,
+      substitutedProviderIdsCanAffectArtifactMaterialization: false,
+      substitutedProviderIdsCanReachLivePayloadValidation: false,
       substitutedProviderIdsCanSurviveSaveSessionPlans: false,
       substitutedProviderIdsCanReachLceThroughValidSession: false,
       providerSubstitutionLivePayloadValidationOk: providerPayloadValidation.ok,
@@ -905,22 +901,22 @@ function run(): void {
     minimumChangeMap: [
       {
         exactFile: 'src/app/services/routeAuthority/routeAuthorityService.ts',
-        exactSymbol: 'firstStableStopId / stopStableIdCandidates',
+        exactSymbol: 'canonicalStopId / venueId-only stopStableIdCandidates',
         currentTrigger: 'RuntimeRouteStop.venueId is empty or absent while providerRecordId/sourceStopId is present.',
-        currentSelectedValue: 'providerRecordId before sourceStopId',
+        currentSelectedValue: 'none; provider/source provenance is no longer selected as route identity',
         intendedRuledResult:
           'Do not select providerRecordId/sourceStopId as canonical route identity; fail lock-readiness honestly unless canonical venueId is present.',
         rightfulFailureCarrier: 'RouteAuthoritySnapshot rejectionReasons plus RouteAuthorityLockInputDiagnostics.rejectionReason',
         upstreamDependency:
           'Approved upstream identity spine must provide canonical venueId/baseVenueId before route approval.',
         downstreamConsumers: staticTrace.consumers,
-        behaviorImpact: 'Malformed provenance-only route identity becomes non-lockable instead of lockable.',
-        identityImpact: 'Provider/source provenance no longer becomes canonicalRouteIds.',
+        behaviorImpact: 'Malformed provenance-only route identity is non-lockable.',
+        identityImpact: 'Provider/source provenance no longer becomes runtime route identity.',
         eligibilityImpact: 'Review/Lock eligibility must fail for missing canonical IDs.',
         artifactImpact: 'No artifact shape change expected; authority validation tightens only if approved.',
         reviewLockImpact: 'Lock input unavailable for provenance-only identity.',
         saveSessionLceImpact:
-          'Valid canonical routes preserve continuity; provenance-only substituted routes reach lock input but fail live/session validation because finalRoute venueId remains empty.',
+          'Valid canonical routes preserve continuity; provenance-only substituted routes stop before lock input.',
         compatibilityImpact: 'Legacy/page-local wrappers remain diagnostic/projection-only.',
         requiredRegressionProofs: [
           'A3-3 provider/source substitution proof',
@@ -954,14 +950,14 @@ function run(): void {
       },
     ],
     protectedBehavior: {
-      productionBehaviorChanged: false,
-      fallbackBehaviorChanged: false,
+      productionBehaviorChanged: true,
+      fallbackBehaviorChanged: true,
       routeOutputChanged: false,
       canonicalIdentityRewritten: false,
-      routeEligibilityChanged: false,
+      routeEligibilityChanged: true,
       greatStopBehaviorChanged: false,
       artifactShapeOrMaterializationChanged: false,
-      reviewLockBehaviorChanged: false,
+      reviewLockBehaviorChanged: true,
       applicationBehaviorChanged: false,
       saveSessionBehaviorChanged: false,
       lceBehaviorChanged: false,

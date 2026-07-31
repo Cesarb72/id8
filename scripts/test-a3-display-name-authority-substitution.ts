@@ -38,6 +38,7 @@ import type { Itinerary, ItineraryStop, UserStopRole, UserStopTitle } from '../s
 
 type CaseStatus =
   | 'CURRENT BEHAVIOR CONFIRMED'
+  | 'RULED BEHAVIOR IMPLEMENTED'
   | 'RULED BEHAVIOR NOT YET IMPLEMENTED'
   | 'CURRENT HONEST FAILURE'
   | 'CANONICAL CONTROL PASSES'
@@ -619,10 +620,11 @@ function assertStaticTrace(): {
 } {
   const routeAuthority = readFileSync('src/app/services/routeAuthority/routeAuthorityService.ts', 'utf8')
   assert(routeAuthority.includes('if (expected.id)'))
-  assert(routeAuthority.includes('const candidateIds = stopStableIdCandidates(stop)'))
-  assert(routeAuthority.includes('const expectedName = normalizeText(expected.displayName)'))
-  assert(routeAuthority.includes('const actualName = normalizeText(stop.displayName)'))
-  assert(routeAuthority.includes('`${params.reasonPrefix}_${role}_display_name_mismatch`'))
+  assert(routeAuthority.includes('const canonicalId = canonicalStopId(stop)'))
+  assert(routeAuthority.includes('`${params.reasonPrefix}_${role}_missing_artifact_identity`'))
+  assert(!routeAuthority.includes('const expectedName = normalizeText(expected.displayName)'))
+  assert(!routeAuthority.includes('const actualName = normalizeText(stop.displayName)'))
+  assert(!routeAuthority.includes('`${params.reasonPrefix}_${role}_display_name_mismatch`'))
   assert(routeAuthority.includes('compareRouteToArtifact({'))
   assert(routeAuthority.includes('runtime_route_artifact_mismatch'))
   assert(routeAuthority.includes('approved_payload_route_mismatch'))
@@ -636,7 +638,7 @@ function assertStaticTrace(): {
 
   return {
     exactFile: 'src/app/services/routeAuthority/routeAuthorityService.ts',
-    exactSymbol: 'compareRouteToArtifact display-name branch',
+    exactSymbol: 'compareRouteToArtifact missing-artifact-identity branch',
     directCallers: [
       'buildRouteAuthorityBuildDiagnostics candidate contract comparison',
       'runtime_route_artifact comparison',
@@ -658,11 +660,11 @@ function assertStaticTrace(): {
       'save/session/Plans after lock',
       'Live/LCE only after successful lock',
     ],
-    comparisonPrecedence: ['artifact role id vs route stable ID candidates', 'normalized displayName fallback'],
+    comparisonPrecedence: ['artifact role id vs route canonical venueId', 'missing artifact role id honest failure'],
     displayFallbackTrigger:
-      'artifact role identity exists with displayName but without id after canonicalRouteRoleCoverage/support and anchorRole processing',
+      'PRE-CORRECTION CHARACTERIZED: artifact role identity existed with displayName but without id after canonicalRouteRoleCoverage/support and anchorRole processing',
     equalityOutputConsumers: DOWNSTREAM_CONSUMERS,
-    removalWouldCurrentlyBeBehaviorChanging: true,
+    removalWouldCurrentlyBeBehaviorChanging: false,
   }
 }
 
@@ -713,17 +715,18 @@ function run(): void {
     input: buildInput({ artifact: displayOnlyArtifact, route: canonicalRoute, itinerary }),
     route: canonicalRoute,
     artifact: displayOnlyArtifact,
-    status: 'CURRENT BEHAVIOR CONFIRMED',
+    status: 'RULED BEHAVIOR IMPLEMENTED',
     producingLayer: 'ContractEntryArtifact with role names but no role venue IDs',
     incomingCarrier: 'ContractEntryArtifact + RuntimeRouteArtifact',
-    currentBehavior: 'display-name fallback validates artifact/runtime equality and preserves lock readiness',
+    currentBehavior: 'PRE-CORRECTION CHARACTERIZED: display-name fallback validated artifact/runtime equality and preserved lock readiness',
     ruledFutureBehavior:
-      'RULED BEHAVIOR NOT YET IMPLEMENTED: honest non-lockable failure until exact canonical role IDs are present',
+      'RULED BEHAVIOR IMPLEMENTED: honest non-lockable failure until exact canonical role IDs are present',
   })
-  assert.equal(missingArtifactIdsMatchingNames.snapshot.validationStatus, 'valid')
-  assert(missingArtifactIdsMatchingNames.lockInput.ok)
+  assert.equal(missingArtifactIdsMatchingNames.snapshot.validationStatus, 'invalid')
+  assert.equal(missingArtifactIdsMatchingNames.lockInput.ok, false)
   assert.deepEqual(missingArtifactIdsMatchingNames.row.artifactRoleCanonicalIds, [null, null, null])
   assert.equal(missingArtifactIdsMatchingNames.row.displayNameFallbackTrigger, 'triggered_for_missing_artifact_role_ids:start,highlight,windDown')
+  assert(missingArtifactIdsMatchingNames.snapshot.mismatchReasons.includes('runtime_route_artifact_start_missing_artifact_identity'))
 
   const differentNameRoute = buildRuntimeRoute({ names: DISPLAY_VARIANTS })
   const missingArtifactIdsDifferentNames = evaluateCase({
@@ -734,12 +737,12 @@ function run(): void {
     status: 'CURRENT HONEST FAILURE',
     producingLayer: 'ContractEntryArtifact with role names but no role venue IDs',
     incomingCarrier: 'ContractEntryArtifact + RuntimeRouteArtifact',
-    currentBehavior: 'display-name fallback rejects when normalized names differ',
-    ruledFutureBehavior: 'honest non-lockable failure; this is the existing reference failure for missing canonical role IDs',
+    currentBehavior: 'PRE-CORRECTION CHARACTERIZED: display-name fallback rejected when normalized names differed',
+    ruledFutureBehavior: 'honest non-lockable failure; missing canonical role IDs are rejected before display comparison',
   })
   assert.equal(missingArtifactIdsDifferentNames.snapshot.validationStatus, 'invalid')
   assert.equal(missingArtifactIdsDifferentNames.lockInput.ok, false)
-  assert(missingArtifactIdsDifferentNames.snapshot.mismatchReasons.includes('runtime_route_artifact_start_display_name_mismatch'))
+  assert(missingArtifactIdsDifferentNames.snapshot.mismatchReasons.includes('runtime_route_artifact_start_missing_artifact_identity'))
 
   const completeIdsDifferentNames = evaluateCase({
     caseId: 'case-5-same-canonical-ids-different-presentation-names',
@@ -772,14 +775,14 @@ function run(): void {
     input: buildInput({ artifact: displayOnlyArtifact, route: whitespaceRoute, itinerary }),
     route: whitespaceRoute,
     artifact: displayOnlyArtifact,
-    status: 'CURRENT BEHAVIOR CONFIRMED',
+    status: 'RULED BEHAVIOR IMPLEMENTED',
     producingLayer: 'display-only artifact with presentation-normalized route names',
     incomingCarrier: 'ContractEntryArtifact + RuntimeRouteArtifact',
-    currentBehavior: 'case and repeated/edge whitespace normalize to equality',
-    ruledFutureBehavior: 'presentation normalization must not prove canonical equality',
+    currentBehavior: 'PRE-CORRECTION CHARACTERIZED: case and repeated/edge whitespace normalized to equality',
+    ruledFutureBehavior: 'RULED BEHAVIOR IMPLEMENTED: presentation normalization does not prove canonical equality',
   })
-  assert.equal(normalizationWhitespace.snapshot.validationStatus, 'valid')
-  assert(normalizationWhitespace.lockInput.ok)
+  assert.equal(normalizationWhitespace.snapshot.validationStatus, 'invalid')
+  assert.equal(normalizationWhitespace.lockInput.ok, false)
 
   const normalizationPunctuation = evaluateCase({
     caseId: 'case-6b-normalization-punctuation',
@@ -789,8 +792,8 @@ function run(): void {
     status: 'CURRENT HONEST FAILURE',
     producingLayer: 'display-only artifact with punctuation-altered route names',
     incomingCarrier: 'ContractEntryArtifact + RuntimeRouteArtifact',
-    currentBehavior: 'punctuation is preserved by normalization, so punctuation changes reject',
-    ruledFutureBehavior: 'presentation punctuation still must not be identity evidence',
+    currentBehavior: 'PRE-CORRECTION CHARACTERIZED: punctuation was preserved by normalization, so punctuation changes rejected',
+    ruledFutureBehavior: 'presentation punctuation is not identity evidence',
   })
   assert.equal(normalizationPunctuation.snapshot.validationStatus, 'invalid')
   assert.equal(normalizationPunctuation.lockInput.ok, false)
@@ -798,17 +801,18 @@ function run(): void {
   const routeOrderChanged = buildRuntimeRoute({ stopOrder: ['highlight', 'start', 'windDown'] })
   const routeOrder = evaluateCase({
     caseId: 'case-7-route-order-control',
-    input: buildInput({ artifact: canonicalArtifact, route: routeOrderChanged, itinerary }),
+    input: buildInput({ artifact: canonicalArtifact, route: routeOrderChanged, approvedRoute: canonicalRoute, itinerary }),
     route: routeOrderChanged,
     artifact: canonicalArtifact,
-    status: 'CURRENT BEHAVIOR CONFIRMED',
+    status: 'RULED BEHAVIOR IMPLEMENTED',
     producingLayer: 'canonical route with changed stopIndex order but preserved role IDs',
-    incomingCarrier: 'ContractEntryArtifact + RuntimeRouteArtifact',
-    currentBehavior: 'compareRouteToArtifact compares by role and lock input self-checks routeIds from the same route, so changed stopIndex order remains lockable',
-    ruledFutureBehavior: 'RULED BEHAVIOR NOT YET IMPLEMENTED: exact route order mismatch must fail before lock readiness',
+    incomingCarrier: 'ContractEntryArtifact + approvedPayload.finalRoute + RuntimeRouteArtifact',
+    currentBehavior: 'PRE-CORRECTION CHARACTERIZED: role comparison and lock-input self-check allowed changed stopIndex order',
+    ruledFutureBehavior: 'RULED BEHAVIOR IMPLEMENTED: exact route order mismatch fails before lock readiness',
   })
-  assert.equal(routeOrder.snapshot.validationStatus, 'valid')
-  assert(routeOrder.lockInput.ok)
+  assert.equal(routeOrder.snapshot.validationStatus, 'invalid')
+  assert.equal(routeOrder.lockInput.ok, false)
+  assert(routeOrder.snapshot.rejectionReasons.includes('runtime_route_artifact_order_mismatch'))
   assert.deepEqual(routeOrder.row.routeOrder, ['highlight', 'start', 'windDown'])
 
   const duplicateNames = {
@@ -823,14 +827,14 @@ function run(): void {
     input: buildInput({ artifact: duplicateArtifact, route: duplicateRoute, itinerary }),
     route: duplicateRoute,
     artifact: duplicateArtifact,
-    status: 'CURRENT BEHAVIOR CONFIRMED',
+    status: 'RULED BEHAVIOR IMPLEMENTED',
     producingLayer: 'display-only artifact and distinct canonical runtime venues sharing names',
     incomingCarrier: 'ContractEntryArtifact + RuntimeRouteArtifact',
-    currentBehavior: 'duplicate display names validate role equality even though artifact has no canonical venue IDs',
-    ruledFutureBehavior: 'RULED BEHAVIOR NOT YET IMPLEMENTED: distinct venues must remain distinct; duplicate names cannot prove equality',
+    currentBehavior: 'PRE-CORRECTION CHARACTERIZED: duplicate display names validated role equality even though artifact had no canonical venue IDs',
+    ruledFutureBehavior: 'RULED BEHAVIOR IMPLEMENTED: distinct venues remain distinct; duplicate names cannot prove equality',
   })
-  assert.equal(duplicateNameCollision.snapshot.validationStatus, 'valid')
-  assert(duplicateNameCollision.lockInput.ok)
+  assert.equal(duplicateNameCollision.snapshot.validationStatus, 'invalid')
+  assert.equal(duplicateNameCollision.lockInput.ok, false)
   assert.deepEqual(duplicateNameCollision.row.artifactRoleCanonicalIds, [null, null, null])
   assert.deepEqual(duplicateNameCollision.row.selectedRouteCanonicalIds, Object.values(DIFFERENT_IDS))
 
@@ -853,42 +857,43 @@ function run(): void {
     input: buildInput({ artifact: displayOnlyArtifact, route: canonicalRoute, itinerary }),
     route: canonicalRoute,
     artifact: displayOnlyArtifact,
-    status: 'CURRENT BEHAVIOR CONFIRMED',
+    status: 'RULED BEHAVIOR IMPLEMENTED',
     producingLayer: 'display-only artifact with complete canonical runtime venue IDs',
     incomingCarrier: 'ContractEntryArtifact + RuntimeRouteArtifact',
-    currentBehavior: 'display-name branch is reachable without providerRecordId/sourceStopId substitution because runtime venueIds are complete',
-    ruledFutureBehavior: 'A3-4 correction can reject missing artifact role IDs without changing A3-3 provider/source fallback',
+    currentBehavior: 'PRE-CORRECTION CHARACTERIZED: display-name branch was reachable without providerRecordId/sourceStopId substitution because runtime venueIds were complete',
+    ruledFutureBehavior: 'RULED BEHAVIOR IMPLEMENTED: missing artifact role IDs fail without changing A3-3 provider/source authority',
   })
-  assert(a3ThreeIsolation.lockInput.ok)
+  assert.equal(a3ThreeIsolation.lockInput.ok, false)
   assert.deepEqual(a3ThreeIsolation.row.selectedRouteCanonicalIds, Object.values(CANONICAL_IDS))
 
-  const displayLeakPayload = buildLockedLiveArtifactPayload({
-    ...missingArtifactIdsMatchingNames.lockInput.input,
-    sessionId: 'a3-4-display-name-substitution-lock',
+  assert.equal(missingArtifactIdsMatchingNames.lockInput.input, null)
+  const displayDriftPayload = buildLockedLiveArtifactPayload({
+    ...completeIdsDifferentNames.lockInput.input,
+    sessionId: 'a3-4-display-name-drift-control-lock',
     lockedAt: 1,
   })
-  assert.equal(validateLockedLiveArtifactSessionPayload(displayLeakPayload).ok, true)
-  const displayLeakSanitized = sanitizeLiveArtifactSessionPayload(displayLeakPayload)
-  assert(displayLeakSanitized?.finalRoute)
-  assert.deepEqual(routeIds(displayLeakSanitized.finalRoute), Object.values(CANONICAL_IDS))
-  const displayLeakSave = saveLockedLiveArtifactSession({
-    ...missingArtifactIdsMatchingNames.lockInput.input,
-    sessionId: 'a3-4-display-name-substitution-lock',
+  assert.equal(validateLockedLiveArtifactSessionPayload(displayDriftPayload).ok, true)
+  const displayDriftSanitized = sanitizeLiveArtifactSessionPayload(displayDriftPayload)
+  assert(displayDriftSanitized?.finalRoute)
+  assert.deepEqual(routeIds(displayDriftSanitized.finalRoute), Object.values(CANONICAL_IDS))
+  const displayDriftSave = saveLockedLiveArtifactSession({
+    ...completeIdsDifferentNames.lockInput.input,
+    sessionId: 'a3-4-display-name-drift-control-lock',
     lockedAt: 1,
   })
-  assert.equal(displayLeakSave.ok, true)
+  assert.equal(displayDriftSave.ok, true)
   const returnedSession = loadLiveArtifactSession()
   assert(returnedSession?.finalRoute)
   assert.deepEqual(routeIds(returnedSession.finalRoute), Object.values(CANONICAL_IDS))
-  saveSharedLiveArtifactPlan('a3-4-display-name-substitution-plan', displayLeakPayload)
-  const returnedPlan = loadSharedLiveArtifactPlan('a3-4-display-name-substitution-plan')
+  saveSharedLiveArtifactPlan('a3-4-display-name-drift-control-plan', displayDriftPayload)
+  const returnedPlan = loadSharedLiveArtifactPlan('a3-4-display-name-drift-control-plan')
   assert(returnedPlan?.finalRoute)
   assert.deepEqual(routeIds(returnedPlan.finalRoute), Object.values(CANONICAL_IDS))
   const lceContract = buildLceRuntimeContract({
     source: 'a3-4-display-name-authority-substitution',
     mutationKind: 'continuation',
     phase: 'confirm',
-    runtimeRouteArtifact: missingArtifactIdsMatchingNames.lockInput.input.canonicalRouteArtifact.finalRoute,
+    runtimeRouteArtifact: completeIdsDifferentNames.lockInput.input.canonicalRouteArtifact.finalRoute,
     userConfirmed: true,
   })
   assert.equal(assertLceRuntimeMutationMayCommit(lceContract).ok, true)
@@ -909,7 +914,7 @@ function run(): void {
 
   const result = {
     status: 'PASS',
-    judgment: 'A3-4 DISPLAY-NAME AUTHORITY SUBSTITUTION PROVEN',
+    judgment: 'A3-4 DISPLAY-NAME AUTHORITY SUBSTITUTION CORRECTION REGRESSION PASSED',
     isolationJudgment: 'A3-4 PRODUCTION CORRECTION IS ISOLATABLE FROM A3-3',
     upstreamOwnershipJudgment:
       'UPSTREAM ARTIFACT IDENTITY CONTRACT IS ALREADY COMPLETE - DISPLAY-NAME FALLBACK IS DEFENSIVE BUT PROHIBITED',
@@ -925,31 +930,31 @@ function run(): void {
       },
     },
     staticTrace,
-    comparisonPrecedence: ['artifact role id vs route stable ID candidates', 'normalized displayName fallback only when artifact role id is absent'],
+    comparisonPrecedence: ['artifact role id vs route canonical venueId', 'missing artifact role id honest failure'],
     exactFallbackTrigger:
-      'compareRouteToArtifact uses display names when artifactRoleIdentities returns a role identity with displayName but no id; this occurs when canonicalRouteRoleCoverage/storySpine names exist while support[].venueId and anchorRole-derived id are absent for that role.',
+      'PRE-CORRECTION CHARACTERIZED: compareRouteToArtifact used display names when artifactRoleIdentities returned a role identity with displayName but no id.',
     cases,
     downstreamImpact: {
-      matchingNamesWithMissingArtifactIdsCanAffectEquality: true,
-      matchingNamesWithMissingArtifactIdsCanAffectReviewEligibility: true,
-      matchingNamesWithMissingArtifactIdsCanAffectLockEligibility: true,
-      matchingNamesWithMissingArtifactIdsCanAffectArtifactMaterialization: true,
-      matchingNamesWithMissingArtifactIdsCanSurviveSaveSessionPlans: true,
-      matchingNamesWithMissingArtifactIdsCanReachLceThroughValidSession: true,
+      matchingNamesWithMissingArtifactIdsCanAffectEquality: false,
+      matchingNamesWithMissingArtifactIdsCanAffectReviewEligibility: false,
+      matchingNamesWithMissingArtifactIdsCanAffectLockEligibility: false,
+      matchingNamesWithMissingArtifactIdsCanAffectArtifactMaterialization: false,
+      matchingNamesWithMissingArtifactIdsCanSurviveSaveSessionPlans: false,
+      matchingNamesWithMissingArtifactIdsCanReachLceThroughValidSession: false,
       completeCanonicalIdsPreventDisplayNameSubstitution: true,
       completeCanonicalIdsAllowPresentationNameDrift: true,
-      duplicateNamesCanCollapseUnprovenArtifactIdentity: true,
-      routeOrderChangeWithPreservedRoleIdsCurrentlyLockable: true,
+      duplicateNamesCanCollapseUnprovenArtifactIdentity: false,
+      routeOrderChangeWithPreservedRoleIdsCurrentlyLockable: false,
       approvedPayloadRouteCanonicalIsLegitimateAuthority: true,
       a3ThreeProviderSourceFallbackRequiredForA3FourLeak: false,
     },
     minimumChangeMap: [
       {
         exactFile: 'src/app/services/routeAuthority/routeAuthorityService.ts',
-        exactSymbolOrBranch: 'compareRouteToArtifact display-name branch after `if (expected.id)`',
+        exactSymbolOrBranch: 'compareRouteToArtifact missing-artifact-identity branch after `if (expected.id)`',
         currentTrigger:
           'ContractEntryArtifact role identity has displayName but no canonical id after canonicalRouteRoleCoverage/support and anchorRole processing.',
-        currentSelectedComparison: 'normalizeText(expected.displayName) === normalizeText(stop.displayName)',
+        currentSelectedComparison: 'none; displayName equality is not consulted for route authority',
         intendedRuledResult:
           'Do not treat displayName equality as approved-route/runtime-artifact equality; fail lock-readiness honestly when canonical role ID comparison is unavailable.',
         rightfulFailureCarrier: 'RouteAuthoritySnapshot.rejectionReasons plus RouteAuthorityLockInputDiagnostics.rejectionReason',
@@ -998,14 +1003,14 @@ function run(): void {
       },
     ],
     protectedBehavior: {
-      productionBehaviorChanged: false,
-      equalityBehaviorChanged: false,
-      a3ThreeFallbackChanged: false,
+      productionBehaviorChanged: true,
+      equalityBehaviorChanged: true,
+      a3ThreeFallbackChanged: true,
       routeOutputOrCanonicalIdentityChanged: false,
-      eligibilityOrGreatStopBehaviorChanged: false,
+      eligibilityOrGreatStopBehaviorChanged: true,
       artifactShapeOrMaterializationChanged: false,
-      reviewLockBehaviorChanged: false,
-      applicationSaveSessionPlansLceBehaviorChanged: false,
+      reviewLockBehaviorChanged: true,
+      applicationSaveSessionPlansLceBehaviorChanged: true,
       fixtureOrCorpusChanged: false,
       providerOrHostedActivity: false,
     },

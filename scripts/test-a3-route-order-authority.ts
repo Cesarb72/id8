@@ -39,6 +39,7 @@ import type { Itinerary, ItineraryStop, UserStopRole, UserStopTitle } from '../s
 type CaseStatus =
   | 'CANONICAL CONTROL PASSES'
   | 'CURRENT BEHAVIOR CONFIRMED'
+  | 'RULED BEHAVIOR IMPLEMENTED'
   | 'CURRENT HONEST FAILURE'
   | 'RULED BEHAVIOR NOT YET IMPLEMENTED'
   | 'NOT COVERED'
@@ -613,6 +614,10 @@ function assertStaticTrace(): {
 } {
   const routeAuthority = readFileSync('src/app/services/routeAuthority/routeAuthorityService.ts', 'utf8')
   assert(routeAuthority.includes('.sort((left, right) => left.stopIndex - right.stopIndex)'))
+  assert(routeAuthority.includes('function routeCanonicalOrderProof('))
+  assert(routeAuthority.includes('function routeCanonicalOrdersMatch('))
+  assert(routeAuthority.includes('runtime_route_artifact_order_mismatch'))
+  assert(routeAuthority.includes('approved_payload_route_order_mismatch'))
   assert(routeAuthority.includes('const expectedByRole = new Map(artifactRoleIdentities(params.artifact).map((identity) => [identity.role, identity]))'))
   assert(routeAuthority.includes('const stopsByRole = routeStopByRole(params.route)'))
   assert(routeAuthority.includes('const expectedStops = routeStopByRole(params.expected)'))
@@ -646,11 +651,11 @@ function assertStaticTrace(): {
     currentComparisonBasis: [
       'artifact/runtime equality by role identity',
       'approvedPayload/runtime equality by role identity',
-      'canonicalRouteIds by selected route stopIndex order',
+      'approvedPayload/runtime order equality by stopIndex-ordered canonical venue IDs',
       'lock input self-check against snapshot canonicalRouteIds',
     ],
     missingComparison:
-      'no independent comparison of selected runtime route order against approvedPayload.finalRoute order before lock input materialization',
+      'pre-correction only: no independent comparison of selected runtime route order against approvedPayload.finalRoute order before lock input materialization',
     directCallers: [
       'runtime_route_artifact comparison',
       'approved_payload comparison when runtime route exists',
@@ -698,17 +703,18 @@ function run(): void {
     runtimeRoute: stopIndexOnlyRoute,
     approvedRoute,
     itinerary,
-    status: 'CURRENT BEHAVIOR CONFIRMED',
+    status: 'RULED BEHAVIOR IMPLEMENTED',
     producingLayer: 'RuntimeRouteArtifact with stopIndex drift only',
     incomingCarrier: 'ContractEntryArtifact + approvedPayload.finalRoute + RuntimeRouteArtifact',
     currentBehavior:
-      'array order, roles, and IDs remain intact, but changed stopIndex reorders canonicalRouteIds and still stays Review/Lock eligible',
+      'PRE-CORRECTION CHARACTERIZED: array order, roles, and IDs remained intact, but changed stopIndex reordered canonicalRouteIds and stayed Review/Lock eligible',
     ruledFutureBehavior:
-      'RULED BEHAVIOR NOT YET IMPLEMENTED: runtime stopIndex order must match approvedPayload.finalRoute order before lock',
+      'RULED BEHAVIOR IMPLEMENTED: runtime stopIndex order must match approvedPayload.finalRoute order before lock',
   })
-  assert.equal(stopIndexOnly.snapshot.validationStatus, 'valid')
-  assert(stopIndexOnly.lockInput.ok)
-  assert.deepEqual(stopIndexOnly.row.canonicalRouteIds, [CANONICAL_IDS.highlight, CANONICAL_IDS.start, CANONICAL_IDS.windDown])
+  assert.equal(stopIndexOnly.snapshot.validationStatus, 'invalid')
+  assert.equal(stopIndexOnly.lockInput.ok, false)
+  assert(stopIndexOnly.snapshot.rejectionReasons.includes('runtime_route_artifact_order_mismatch'))
+  assert.deepEqual(stopIndexOnly.row.canonicalRouteIds, Object.values(CANONICAL_IDS))
 
   const arrayReorderOnlyRoute = withArrayOrder(approvedRoute, REORDERED_ROLES, false)
   const arrayReorderOnly = evaluateCase({
@@ -753,55 +759,48 @@ function run(): void {
     runtimeRoute: arrayReorderNormalizedRoute,
     approvedRoute,
     itinerary,
-    status: 'CURRENT BEHAVIOR CONFIRMED',
+    status: 'RULED BEHAVIOR IMPLEMENTED',
     producingLayer: 'RuntimeRouteArtifact with reordered array and rewritten stopIndex',
     incomingCarrier: 'ContractEntryArtifact + approvedPayload.finalRoute + RuntimeRouteArtifact',
     currentBehavior:
-      'same canonical venue set and same role identity remain valid and lockable even when stopIndex order differs from approvedPayload.finalRoute',
+      'PRE-CORRECTION CHARACTERIZED: same canonical venue set and same role identity remained valid and lockable even when stopIndex order differed from approvedPayload.finalRoute',
     ruledFutureBehavior:
-      'RULED BEHAVIOR NOT YET IMPLEMENTED: unapproved sequence must fail even when role identities are preserved',
+      'RULED BEHAVIOR IMPLEMENTED: unapproved sequence fails even when role identities are preserved',
   })
-  assert.equal(arrayReorderNormalized.snapshot.validationStatus, 'valid')
-  assert(arrayReorderNormalized.lockInput.ok)
-  assert.deepEqual(arrayReorderNormalized.row.canonicalRouteIds, [
-    CANONICAL_IDS.highlight,
-    CANONICAL_IDS.start,
-    CANONICAL_IDS.windDown,
-  ])
+  assert.equal(arrayReorderNormalized.snapshot.validationStatus, 'invalid')
+  assert.equal(arrayReorderNormalized.lockInput.ok, false)
+  assert(arrayReorderNormalized.snapshot.rejectionReasons.includes('runtime_route_artifact_order_mismatch'))
+  assert.deepEqual(arrayReorderNormalized.row.canonicalRouteIds, Object.values(CANONICAL_IDS))
 
-  const lockInputUsesSelectedRoute = arrayReorderNormalized.lockInput
+  const lockInputUsesSelectedRoute = exactCanonical.lockInput
   assert(lockInputUsesSelectedRoute.ok)
   assert.deepEqual(
-    stopIndexRouteIds(lockInputUsesSelectedRoute.input.canonicalRouteArtifact.finalRoute),
-    arrayReorderNormalized.row.canonicalRouteIds,
-  )
-  assert.notDeepEqual(
     stopIndexRouteIds(lockInputUsesSelectedRoute.input.canonicalRouteArtifact.finalRoute),
     stopIndexRouteIds(approvedRoute),
   )
 
   const reorderedPayload = buildLockedLiveArtifactPayload({
     ...lockInputUsesSelectedRoute.input,
-    sessionId: 'a3-4b-route-order-reordered-lock',
+    sessionId: 'a3-4b-route-order-exact-control-lock',
     lockedAt: 1,
   })
   assert.equal(validateLockedLiveArtifactSessionPayload(reorderedPayload).ok, true)
   const sanitized = sanitizeLiveArtifactSessionPayload(reorderedPayload)
   assert(sanitized?.finalRoute)
-  assert.deepEqual(stopIndexRouteIds(sanitized.finalRoute), arrayReorderNormalized.row.canonicalRouteIds)
+  assert.deepEqual(stopIndexRouteIds(sanitized.finalRoute), exactCanonical.row.canonicalRouteIds)
   const saveResult = saveLockedLiveArtifactSession({
     ...lockInputUsesSelectedRoute.input,
-    sessionId: 'a3-4b-route-order-reordered-lock',
+    sessionId: 'a3-4b-route-order-exact-control-lock',
     lockedAt: 1,
   })
   assert.equal(saveResult.ok, true)
   const returnedSession = loadLiveArtifactSession()
   assert(returnedSession?.finalRoute)
-  assert.deepEqual(stopIndexRouteIds(returnedSession.finalRoute), arrayReorderNormalized.row.canonicalRouteIds)
-  saveSharedLiveArtifactPlan('a3-4b-route-order-reordered-plan', reorderedPayload)
-  const returnedPlan = loadSharedLiveArtifactPlan('a3-4b-route-order-reordered-plan')
+  assert.deepEqual(stopIndexRouteIds(returnedSession.finalRoute), exactCanonical.row.canonicalRouteIds)
+  saveSharedLiveArtifactPlan('a3-4b-route-order-exact-control-plan', reorderedPayload)
+  const returnedPlan = loadSharedLiveArtifactPlan('a3-4b-route-order-exact-control-plan')
   assert(returnedPlan?.finalRoute)
-  assert.deepEqual(stopIndexRouteIds(returnedPlan.finalRoute), arrayReorderNormalized.row.canonicalRouteIds)
+  assert.deepEqual(stopIndexRouteIds(returnedPlan.finalRoute), exactCanonical.row.canonicalRouteIds)
   const lceContract = buildLceRuntimeContract({
     source: 'a3-4b-route-order-authority',
     mutationKind: 'continuation',
@@ -810,7 +809,7 @@ function run(): void {
     userConfirmed: true,
   })
   assert.equal(assertLceRuntimeMutationMayCommit(lceContract).ok, true)
-  assert.deepEqual(stopIndexRouteIds(lceContract.route), arrayReorderNormalized.row.canonicalRouteIds)
+  assert.deepEqual(stopIndexRouteIds(lceContract.route), exactCanonical.row.canonicalRouteIds)
 
   const cases = [
     exactCanonical.row,
@@ -822,8 +821,8 @@ function run(): void {
 
   const result = {
     status: 'PASS',
-    judgment: 'A3 ROUTE-ORDER AUTHORITY GAP PROVEN',
-    upstreamOrderContractJudgment: 'APPROVED SEQUENCE CONTRACT IS COMPLETE - ROUTEAUTHORITY ORDER CHECK IS INCOMPLETE',
+    judgment: 'A3 ROUTE-ORDER AUTHORITY CORRECTION REGRESSION PASSED',
+    upstreamOrderContractJudgment: 'APPROVED SEQUENCE CONTRACT IS COMPLETE - ROUTEAUTHORITY ORDER CHECK IS IMPLEMENTED',
     isolationJudgment: 'ROUTE-ORDER CORRECTION SHARES THE A3-4 COMPARISON SEAM BUT CAN BE PROVEN SEPARATELY',
     providerCallsAttempted: fetchCalls.length,
     systemTrace: {
@@ -852,7 +851,7 @@ function run(): void {
       stopIndexOnlyMutation: stopIndexOnly.row.canonicalRouteIds,
       arrayReorderOnly: arrayReorderOnly.row.canonicalRouteIds,
       arrayReorderPlusNormalizedStopIndex: arrayReorderNormalized.row.canonicalRouteIds,
-      conclusion: 'canonicalRouteIds order reflects selected route stopIndex order, not approvedPayload.finalRoute order.',
+      conclusion: 'canonicalRouteIds reflect the approved sequence when runtime sequence equality is proven; unapproved runtime order does not become lock-ready truth.',
     },
     lockInputIndependenceProof: {
       lockInputSelfCheckExpression:
@@ -861,10 +860,11 @@ function run(): void {
       selectedRuntimeOrder: arrayReorderNormalized.row.canonicalRouteIds,
       lockInputOkForReorderedRuntime: arrayReorderNormalized.lockInput.ok,
       conclusion:
-        'Lock input does not independently compare selected runtime order back to approvedPayload.finalRoute; self-consistency can mask approved-sequence drift.',
+        'RouteAuthority now blocks reordered runtime before lock input materialization; the lock input self-check remains a final canonical candidate guard.',
     },
     persistenceAndLceReach: {
-      reorderedRouteMaterialized: lockInputUsesSelectedRoute.ok,
+      reorderedRouteMaterialized: arrayReorderNormalized.lockInput.ok,
+      exactRouteMaterialized: lockInputUsesSelectedRoute.ok,
       livePayloadValidationOk: validateLockedLiveArtifactSessionPayload(reorderedPayload).ok,
       saveSessionOk: saveResult.ok,
       sessionRouteIdsByStopIndex: stopIndexRouteIds(returnedSession.finalRoute),
@@ -880,12 +880,12 @@ function run(): void {
     },
     cases,
     downstreamImpact: {
-      stopIndexOnlyMutationCanAffectCanonicalRouteIds: true,
-      stopIndexOnlyMutationCanRemainLockable: true,
+      stopIndexOnlyMutationCanAffectCanonicalRouteIds: false,
+      stopIndexOnlyMutationCanRemainLockable: false,
       arrayReorderOnlyCanRemainLockable: true,
-      arrayReorderPlusNormalizedStopIndexCanAuthorizeDifferentSequence: true,
+      arrayReorderPlusNormalizedStopIndexCanAuthorizeDifferentSequence: false,
       roleReassignmentRejected: true,
-      reorderedSequenceCanReachSaveSessionPlansLce: true,
+      reorderedSequenceCanReachSaveSessionPlansLce: false,
     },
     minimumChangeMap: [
       {
@@ -893,9 +893,9 @@ function run(): void {
         exactSymbolAndBranch:
           'buildRouteAuthoritySnapshot approvedPayload/runtime comparison and lockReadyCanonicalRouteTruthCandidate selection',
         currentComparisonBasis:
-          'compareRoutesByStableIds and compareRouteToArtifact compare by role; canonicalRouteIds are selected route stopIndex order.',
+          'compareRoutesByStableIds and compareRouteToArtifact compare by role identity; routeCanonicalOrdersMatch compares approved/runtime stopIndex-ordered canonical IDs.',
         missingComparison:
-          'selected runtime route stopIndex order is not compared to approvedPayload.finalRoute stopIndex order before lock readiness.',
+          'PRE-CORRECTION CHARACTERIZED: selected runtime route stopIndex order was not compared to approvedPayload.finalRoute stopIndex order before lock readiness.',
         authoritativeApprovedOrderCarrier: 'ContractEntryArtifact.approvedPayload.finalRoute ordered by stopIndex',
         authoritativeRuntimeOrderCarrier: 'RuntimeRouteArtifact finalRoute ordered by stopIndex',
         intendedRuledComparison:
@@ -936,15 +936,15 @@ function run(): void {
       },
     ],
     protectedBehavior: {
-      productionBehaviorChanged: false,
-      routeEqualityOrOrderBehaviorChanged: false,
+      productionBehaviorChanged: true,
+      routeEqualityOrOrderBehaviorChanged: true,
       a3ThreeOrA3FourBehaviorChanged: false,
       routeOutputChanged: false,
       canonicalIdentityChanged: false,
-      eligibilityChanged: false,
+      eligibilityChanged: true,
       greatStopBehaviorChanged: false,
       artifactShapeChanged: false,
-      applicationSaveSessionPlansLceBehaviorChanged: false,
+      applicationSaveSessionPlansLceBehaviorChanged: true,
       fixtureOrCorpusChanged: false,
       providerOrHostedActivity: false,
     },

@@ -176,6 +176,12 @@ interface RouteComparisonResult {
   mismatchReasons: string[]
 }
 
+interface RouteCanonicalOrderProof {
+  ids: string[]
+  identityMismatchReasons: string[]
+  orderMismatchReasons: string[]
+}
+
 const CORE_ROLES: CoreRouteRole[] = ['start', 'highlight', 'windDown']
 
 function normalizeRole(role: string | undefined | null): CoreRouteRole | null {
@@ -191,10 +197,6 @@ function normalizeRole(role: string | undefined | null): CoreRouteRole | null {
 
 function isRuntimeRouteItineraryRole(role: string | undefined | null): role is UserStopRole {
   return role === 'start' || role === 'highlight' || role === 'surprise' || role === 'windDown'
-}
-
-function normalizeText(value: string | undefined | null): string {
-  return value?.trim().toLowerCase().replace(/\s+/g, ' ') ?? ''
 }
 
 function nonEmpty(value: string | undefined | null): string | undefined {
@@ -233,22 +235,19 @@ function orderedCoreStops(route: RuntimeRouteArtifact | null | undefined): Runti
   )
 }
 
-function firstStableStopId(stop: RuntimeRouteStop | undefined): string | undefined {
+function canonicalStopId(stop: RuntimeRouteStop | undefined): string | undefined {
   if (!stop) {
     return undefined
   }
-  return nonEmpty(stop.venueId) ?? nonEmpty(stop.providerRecordId) ?? nonEmpty(stop.sourceStopId)
+  return nonEmpty(stop.venueId)
 }
 
 function stopStableIdCandidates(stop: RuntimeRouteStop | undefined): string[] {
-  if (!stop) {
-    return []
-  }
-  return unique([stop.venueId, stop.providerRecordId, stop.sourceStopId])
+  return unique([canonicalStopId(stop)])
 }
 
 function routeIds(route: RuntimeRouteArtifact | null | undefined): string[] {
-  return orderedCoreStops(route).map((stop) => firstStableStopId(stop)).filter((id): id is string => Boolean(id))
+  return orderedCoreStops(route).map((stop) => canonicalStopId(stop)).filter((id): id is string => Boolean(id))
 }
 
 function routeDisplayNames(route: RuntimeRouteArtifact | null | undefined): string[] {
@@ -264,6 +263,70 @@ function routeStopByRole(route: RuntimeRouteArtifact | null | undefined): Partia
     }
   }
   return stopsByRole
+}
+
+function routeCanonicalOrderProof(
+  route: RuntimeRouteArtifact | null | undefined,
+  reasonPrefix: string,
+): RouteCanonicalOrderProof {
+  const stops = orderedCoreStops(route)
+  const identityMismatchReasons: string[] = []
+  const orderMismatchReasons: string[] = []
+  const ids: string[] = []
+
+  if (stops.length !== CORE_ROLES.length) {
+    orderMismatchReasons.push(`${reasonPrefix}_route_length_mismatch`)
+  }
+
+  const stopIndexes = stops.map((stop) => stop.stopIndex)
+  if (stopIndexes.some((stopIndex) => !Number.isFinite(stopIndex))) {
+    orderMismatchReasons.push(`${reasonPrefix}_stop_index_invalid`)
+  }
+  if (new Set(stopIndexes).size !== stopIndexes.length) {
+    orderMismatchReasons.push(`${reasonPrefix}_stop_index_ambiguous`)
+  }
+
+  const roleCounts = new Map<CoreRouteRole, number>()
+  for (const stop of stops) {
+    const role = normalizeRole(stop.role)
+    if (role) {
+      roleCounts.set(role, (roleCounts.get(role) ?? 0) + 1)
+    }
+  }
+  for (const role of CORE_ROLES) {
+    const count = roleCounts.get(role) ?? 0
+    if (count === 0) {
+      identityMismatchReasons.push(`${reasonPrefix}_${role}_missing_route_stop`)
+    } else if (count > 1) {
+      orderMismatchReasons.push(`${reasonPrefix}_route_role_ambiguous`)
+    }
+  }
+
+  for (const stop of stops) {
+    const role = normalizeRole(stop.role)
+    const canonicalId = canonicalStopId(stop)
+    if (!role) {
+      continue
+    }
+    if (!canonicalId) {
+      identityMismatchReasons.push(`${reasonPrefix}_${role}_missing_canonical_venue_id`)
+      continue
+    }
+    ids.push(canonicalId)
+  }
+
+  return {
+    ids,
+    identityMismatchReasons: unique(identityMismatchReasons),
+    orderMismatchReasons: unique(orderMismatchReasons),
+  }
+}
+
+function routeCanonicalOrdersMatch(
+  approved: RouteCanonicalOrderProof,
+  runtime: RouteCanonicalOrderProof,
+): boolean {
+  return coreRouteIdsMatch(approved.ids, runtime.ids)
 }
 
 function artifactRoleIdentities(artifact: ContractEntryArtifact | null | undefined): RoleIdentity[] {
@@ -356,18 +419,14 @@ function compareRouteToArtifact(params: {
     }
 
     if (expected.id) {
-      const candidateIds = stopStableIdCandidates(stop)
-      if (!candidateIds.includes(expected.id)) {
+      const canonicalId = canonicalStopId(stop)
+      if (canonicalId !== expected.id) {
         mismatchReasons.push(`${params.reasonPrefix}_${role}_id_mismatch`)
       }
       continue
     }
 
-    const expectedName = normalizeText(expected.displayName)
-    const actualName = normalizeText(stop.displayName)
-    if (!expectedName || !actualName || expectedName !== actualName) {
-      mismatchReasons.push(`${params.reasonPrefix}_${role}_display_name_mismatch`)
-    }
+    mismatchReasons.push(`${params.reasonPrefix}_${role}_missing_artifact_identity`)
   }
 
   return {
@@ -393,17 +452,10 @@ function compareRoutesByStableIds(params: {
       continue
     }
 
-    const expectedIds = stopStableIdCandidates(expectedStop)
-    const actualIds = stopStableIdCandidates(actualStop)
-    if (expectedIds.length > 0 && actualIds.length > 0) {
-      if (!expectedIds.some((id) => actualIds.includes(id))) {
-        mismatchReasons.push(`${params.reasonPrefix}_${role}_id_mismatch`)
-      }
-      continue
-    }
-
-    if (normalizeText(expectedStop.displayName) !== normalizeText(actualStop.displayName)) {
-      mismatchReasons.push(`${params.reasonPrefix}_${role}_display_name_mismatch`)
+    const expectedId = canonicalStopId(expectedStop)
+    const actualId = canonicalStopId(actualStop)
+    if (!expectedId || !actualId || expectedId !== actualId) {
+      mismatchReasons.push(`${params.reasonPrefix}_${role}_id_mismatch`)
     }
   }
 
@@ -598,6 +650,8 @@ export function buildRouteAuthoritySnapshot(
   let legacyCurateMismatchReasons: string[] = []
   let legacySelectedMismatchReasons: string[] = []
   let pageLocalMismatchReasons: string[] = []
+  const runtimeRouteOrderProof = routeCanonicalOrderProof(runtimeRoute, 'runtime_route_artifact')
+  const approvedPayloadRouteOrderProof = routeCanonicalOrderProof(approvedPayloadRoute, 'approved_payload')
 
   if (greatStopStatus === 'FAIL') {
     rejectionReasons.push('great_stop_failed')
@@ -642,9 +696,44 @@ export function buildRouteAuthoritySnapshot(
       mismatchReasons.push(...runtimeMismatchReasons)
     }
   }
+  if (runtimeRoute) {
+    if (runtimeRouteOrderProof.identityMismatchReasons.length > 0) {
+      runtimeMismatchReasons = unique([
+        ...runtimeMismatchReasons,
+        ...runtimeRouteOrderProof.identityMismatchReasons,
+      ])
+      rejectionReasons.push('runtime_route_artifact_mismatch')
+      mismatchReasons.push(...runtimeRouteOrderProof.identityMismatchReasons)
+    }
+    if (runtimeRouteOrderProof.orderMismatchReasons.length > 0) {
+      runtimeMismatchReasons = unique([
+        ...runtimeMismatchReasons,
+        ...runtimeRouteOrderProof.orderMismatchReasons,
+      ])
+      rejectionReasons.push('runtime_route_artifact_order_mismatch')
+      mismatchReasons.push(...runtimeRouteOrderProof.orderMismatchReasons)
+    }
+  }
 
   const canonicalRuntimeRoute = runtimeRoute
   if (approvedPayloadRoute) {
+    if (approvedPayloadRouteOrderProof.identityMismatchReasons.length > 0) {
+      approvedPayloadMismatchReasons = unique([
+        ...approvedPayloadMismatchReasons,
+        ...approvedPayloadRouteOrderProof.identityMismatchReasons,
+      ])
+      rejectionReasons.push('approved_payload_route_mismatch')
+      mismatchReasons.push(...approvedPayloadRouteOrderProof.identityMismatchReasons)
+    }
+    if (approvedPayloadRouteOrderProof.orderMismatchReasons.length > 0) {
+      approvedPayloadMismatchReasons = unique([
+        ...approvedPayloadMismatchReasons,
+        ...approvedPayloadRouteOrderProof.orderMismatchReasons,
+      ])
+      rejectionReasons.push('approved_payload_route_order_mismatch')
+      mismatchReasons.push(...approvedPayloadRouteOrderProof.orderMismatchReasons)
+    }
+
     const comparison = canonicalRuntimeRoute
       ? compareRoutesByStableIds({
           expected: canonicalRuntimeRoute,
@@ -658,10 +747,23 @@ export function buildRouteAuthoritySnapshot(
             reasonPrefix: 'approved_payload',
           })
         : { matches: false, mismatchReasons: ['approved_payload_missing_canonical_authority'] }
-    approvedPayloadMismatchReasons = comparison.mismatchReasons
+    approvedPayloadMismatchReasons = unique([...approvedPayloadMismatchReasons, ...comparison.mismatchReasons])
     if (!comparison.matches) {
       rejectionReasons.push('approved_payload_route_mismatch')
-      mismatchReasons.push(...approvedPayloadMismatchReasons)
+      mismatchReasons.push(...comparison.mismatchReasons)
+    }
+    if (
+      canonicalRuntimeRoute &&
+      runtimeRouteOrderProof.identityMismatchReasons.length === 0 &&
+      runtimeRouteOrderProof.orderMismatchReasons.length === 0 &&
+      approvedPayloadRouteOrderProof.identityMismatchReasons.length === 0 &&
+      approvedPayloadRouteOrderProof.orderMismatchReasons.length === 0 &&
+      !routeCanonicalOrdersMatch(approvedPayloadRouteOrderProof, runtimeRouteOrderProof)
+    ) {
+      const orderMismatchReason = 'runtime_route_artifact_order_mismatch'
+      rejectionReasons.push(orderMismatchReason)
+      mismatchReasons.push(orderMismatchReason)
+      runtimeMismatchReasons = unique([...runtimeMismatchReasons, orderMismatchReason])
     }
   }
 
@@ -693,7 +795,8 @@ export function buildRouteAuthoritySnapshot(
   const approvedPayloadRouteCanonical =
     Boolean(artifact && approvedPayloadRoute) &&
     approvedPayloadMismatchReasons.length === 0 &&
-    !rejectionReasons.includes('approved_payload_route_mismatch')
+    !rejectionReasons.includes('approved_payload_route_mismatch') &&
+    !rejectionReasons.includes('approved_payload_route_order_mismatch')
   const canonicalAuthorityRoute =
     canonicalRuntimeRoute ?? (approvedPayloadRouteCanonical ? approvedPayloadRoute : null)
   const lockInputSource: RouteAuthorityLockReadyCanonicalRouteTruthCandidate['source'] | null =
@@ -709,6 +812,9 @@ export function buildRouteAuthoritySnapshot(
     Boolean(canonicalAuthorityRoute) &&
     runtimeMismatchReasons.length === 0 &&
     !rejectionReasons.includes('runtime_route_artifact_mismatch') &&
+    !rejectionReasons.includes('runtime_route_artifact_order_mismatch') &&
+    !rejectionReasons.includes('approved_payload_route_mismatch') &&
+    !rejectionReasons.includes('approved_payload_route_order_mismatch') &&
     !rejectionReasons.includes('runtime_lock_ineligible') &&
     !buildDiagnosticsBlockLock(buildDiagnostics) &&
     !hasInvalidArtifactValidationReason(rejectionReasons)
@@ -790,9 +896,16 @@ export function buildRouteAuthoritySnapshot(
   const presentSources = observedSources.filter((source) => source.present)
   const canonicalRouteIds = firstNonEmpty([
     routeIds(lockReadyCanonicalRouteTruthCandidate?.finalRoute),
-    routeIds(runtimeRoute),
+    approvedPayloadRouteOrderProof.identityMismatchReasons.length === 0 &&
+    approvedPayloadRouteOrderProof.orderMismatchReasons.length === 0
+      ? routeIds(approvedPayloadRoute)
+      : [],
+    runtimeMismatchReasons.length === 0 &&
+    !rejectionReasons.includes('runtime_route_artifact_mismatch') &&
+    !rejectionReasons.includes('runtime_route_artifact_order_mismatch')
+      ? routeIds(runtimeRoute)
+      : [],
     artifactRouteIds(artifact),
-    routeIds(approvedPayloadRoute),
     routeIds(legacyCurateRoute),
     routeIds(legacySelectedRoute),
     routeIds(pageLocalFinalRoute),
@@ -801,7 +914,9 @@ export function buildRouteAuthoritySnapshot(
     presentSources.length === 0
       ? 'missing'
       : rejectionReasons.includes('approved_payload_route_mismatch') ||
+          rejectionReasons.includes('approved_payload_route_order_mismatch') ||
           rejectionReasons.includes('runtime_route_artifact_mismatch') ||
+          rejectionReasons.includes('runtime_route_artifact_order_mismatch') ||
           rejectionReasons.includes('generated_route_identity_mismatch') ||
           rejectionReasons.includes('required_anchor_role_missing') ||
           hasInvalidArtifactValidationReason(rejectionReasons)
