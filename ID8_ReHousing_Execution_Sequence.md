@@ -106,7 +106,7 @@ Order by dependency:
 
 ### Held / Protected Work
 - **Stage 3 - corpus regeneration/promotion:** held. The corpus must be regenerated from the preserved 96-row source with Interpretation-resolved identity and pending states; no shrink, deletion, or silent rebaseline is accepted.
-- **A3 - routeAuthority / Review / Lock identity authority:** fenced from Stage 2D-2G. `routeAuthority`, `RuntimeRouteArtifact`, `ContractEntryArtifact`, Review/Lock consumers, save/session/return continuity, Application consumers, compatibility consumers, and LCE require a separate protected packet. The system audit is complete, but implementation is not authorized; A3 must characterize authority paths before any fallback removal.
+- **A3 - routeAuthority / Review / Lock identity authority:** fenced from Stage 2D-2G. `routeAuthority`, `RuntimeRouteArtifact`, `ContractEntryArtifact`, Review/Lock consumers, save/session/return continuity, Application consumers, compatibility consumers, and LCE require a separate protected packet. The system audit and A3-1 characterization are complete; A3-2 records the authority contract. Implementation is not authorized. A3 must next prove provider/source substitution and display-name substitution reachability before any behavior change.
 - **Stage 2F-1 characterization/proof record:** base only; base + Moment same base; base + activation same base; base + Moment + activation same base; presentation-similar distinct bases; required Build anchor as wrapper; required Build anchor as base; same physical venue across multiple role pools; distinct wrappers competing for different roles; provider/source provenance present; reversed input order; Build/Curate/Surprise shared-path parity. Local Packet 1 identity closure does not extend this proof into Application projection, routeAuthority, artifacts, Review/Lock, Great Stop, LCE, provider/hosted behavior, or MVP green.
 - **Former Stage 2F-1 correction areas:** same-base wrapper support exclusion, required-anchor preservation by physical identity, fallback support selection, baseline rehydration, targeted refinement identity accounting, and diagnostics exposing both candidate and physical identity honestly are recorded as local identity-line work only where covered by the integrated closure. Any further behavior change is separately scoped.
 - **Governed-live validation:** retained separately from local A4 closure. It requires re-authorized provider ceiling, re-pinned execution HEAD, durable ledger readiness, ledger before/after reporting, valve control, stop conditions, candidate-level capture, producing-layer attribution, and no inference of candidate evidence from route success.
@@ -116,14 +116,19 @@ Order by dependency:
 - **Malformed Phase 2 fake ArcCandidate proof:** remains explicit baseline proof debt and is not green.
 - **MVP status:** Packet 1 A1/A2/A4 is locally closed; governed-live validation, Great Stop, masking, A3, LCE, and artifact/Review/Lock work remain open. MVP green remains unclaimed.
 
-### Current Next Sequence
-1. Packet 1 record closure.
-2. A3 proof-only authority characterization.
-3. C-suite ruling on any proven authority leak.
-4. Separately authorized A3 implementation only if required.
-5. Governed-live validation under re-authorized provider conditions.
+### Current A3 Sequence
+1. **Packet 1 record closure:** complete. A1 + A2 + A4 local closure recorded at `43fb8ce`.
+2. **A3-1 authority characterization:** complete at `91dbca0`. Provider calls attempted: 0.
+3. **A3-2 authority contract and exact change map:** documentation-only record. This records approved-payload pre-lock authority, RuntimeRouteArtifact post-lock authority, and the bounded open substitutions.
+4. **A3-3 provider/source stable-ID substitution proof:** provider-free reachability and consumer proof for `firstStableStopId / stopStableIdCandidates`. Do not combine automatically with A3-4.
+5. **A3-4 display-name equality substitution proof:** provider-free reachability and consumer proof for `compareRouteToArtifact` display-name equality. Do not combine automatically with A3-3.
+6. **A3-5 C-suite approval:** approval of the exact implementation packet, if correction is approved.
+7. **A3-6 production correction:** separately authorized implementation only if approved.
+8. **A3-7 local closure:** regression and exact route-truth equality closure after any approved correction.
 
-System-first A3 rule: A3 begins at canonical identity, artifacts, Great Stop, lifecycle, lock authority, save/session/return continuity, Application consumers, compatibility consumers, and LCE; it does not begin at local fallback deletion.
+Retained later: browser Review/Lock/Plans proof and governed-live validation under re-authorized provider conditions.
+
+System-first A3 rule: A3 begins at canonical identity, artifacts, Great Stop, lifecycle, lock authority, save/session/return continuity, Application consumers, compatibility consumers, and LCE; it does not begin at local fallback deletion. `approvedPayloadRouteCanonical` is lifecycle authority, not cleanup residue.
 
 ---
 
