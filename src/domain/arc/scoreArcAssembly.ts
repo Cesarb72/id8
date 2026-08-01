@@ -3316,6 +3316,7 @@ export function scoreArcAssembly(
       momentFlatPenalty: clamp01(
         momentPreservation.flatPenalty + momentPreservation.penalty,
       ),
+      routeMomentVerdict: momentPreservation.verdict,
       romanticMomentCandidatesAvailable: romanticMomentContract.availableCount,
       romanticMomentCandidatesFeasible: romanticMomentContract.feasibleCount,
       romanticMomentPresent: romanticMomentContract.present,

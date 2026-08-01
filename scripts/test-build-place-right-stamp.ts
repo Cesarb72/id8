@@ -9,6 +9,7 @@ import type {
   BearingsRouteFeasibilityVerdict,
   DistrictRoutePlaceFacts,
 } from '../src/domain/bearings/routePlaceRightContract'
+import type { TasteRouteMomentVerdict } from '../src/domain/interpretation/taste/routeMomentVerdict'
 import type { IntentProfile } from '../src/domain/types/intent'
 
 globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
@@ -285,6 +286,63 @@ function stop(baseVenueId: string, role: ArcStop['role'], name: string): ArcStop
 }
 
 function candidateFor(routeId: string, stopIds: string[]): ArcCandidate {
+  const peakVenueId = stopIds[1] ?? 'anchor'
+  const routeMomentVerdict: TasteRouteMomentVerdict = {
+    source: 'taste',
+    provenance: [
+      {
+        source: 'taste',
+        key: 'place_right_stamp_fixture_moment_verdict',
+        reason: 'Synthetic Taste-authored passing moment verdict.',
+      },
+    ],
+    peakCandidateVenueId: peakVenueId,
+    anchorAsPeakCandidacy: 'intended_peak',
+    peakSuitability: {
+      score: 0.8,
+      tier: 'strong',
+    },
+    momentStrengthVerdict: {
+      strength: 'strong',
+      score: 0.9,
+      reason: 'Synthetic strong moment.',
+    },
+    momentPreservationStatus: 'preserved',
+    strongMomentPresent: true,
+    flatArcRisk: {
+      level: 'none',
+      score: 0,
+      varianceScore: 0.8,
+      penalty: 0,
+      reasons: [],
+    },
+    missedPeakReason: {
+      applied: false,
+      code: 'none',
+    },
+    availableMomentEvidence: {
+      availableHighMomentCount: 1,
+      availableStrongMomentCount: 1,
+      highMomentVenueIds: [peakVenueId],
+      strongMomentVenueIds: [peakVenueId],
+    },
+    peakRoleEvidence: {
+      candidateVenueId: peakVenueId,
+      roleFitScore: 0.9,
+      stopShapeFitScore: 0.8,
+      highlightValidity: 'valid',
+    },
+    anchorStrengthEvidence: {
+      candidateVenueId: peakVenueId,
+      anchorStrength: 0.9,
+      momentIdentityType: 'anchor',
+      momentIdentityStrength: 'strong',
+      momentPotentialScore: 0.8,
+      momentIntensityScore: 0.8,
+    },
+    momentQualityNote: 'Synthetic strong moment.',
+  }
+
   return {
     id: routeId,
     stops: [
@@ -303,6 +361,7 @@ function candidateFor(routeId: string, stopIds: string[]): ArcCandidate {
       momentStrengthScore: 0.9,
       momentVarianceScore: 0.8,
       momentFlatPenalty: 0,
+      routeMomentVerdict,
       strongMomentPresent: true,
       momentQualityNote: 'Synthetic strong moment.',
     } as ArcCandidate['scoreBreakdown'],

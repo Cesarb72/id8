@@ -32,6 +32,7 @@ import {
   computeRouteMeaningRoleRightVerdict,
 } from '../interpretation/taste/computeRouteMeaningVerdict'
 import type { TasteRouteMeaningStopEvidenceInput } from '../interpretation/taste/computeRouteMeaningVerdict'
+import type { TasteRouteMomentVerdict } from '../interpretation/taste/routeMomentVerdict'
 
 const DIAGNOSTIC_CANDIDATE_SUMMARY_LIMIT = 25
 const GREAT_STOP_FAILURE_DETAIL_LIMIT = 5
@@ -385,21 +386,29 @@ function evaluateMomentRight(candidate: ArcCandidate): {
 } {
   const arcProgression = arcProgressionDiagnostics(candidate)
   const laneVariance = laneDiagnostics(candidate)
-  const momentFlatPenalty = candidate.scoreBreakdown.momentFlatPenalty ?? 0
+  const verdict = candidate.scoreBreakdown.routeMomentVerdict
+  if (!verdict) {
+    return {
+      result: criterion(false, ['moment_right:taste_verdict_missing']),
+      diagnostics: {
+        arcProgression,
+        laneVariance,
+        strongMoment: {
+          present: false,
+        },
+      },
+    }
+  }
+
+  const momentFlatPenalty = verdict.flatArcRisk.penalty ?? verdict.flatArcRisk.score ?? 0
   const strongMoment = {
-    present: candidate.scoreBreakdown.strongMomentPresent === true,
-    note: candidate.scoreBreakdown.momentQualityNote,
-    highlightMomentScore: candidate.scoreBreakdown.highlightMomentScore,
-    momentStrengthScore: candidate.scoreBreakdown.momentStrengthScore,
+    present: verdict.strongMomentPresent,
+    note: verdict.momentQualityNote ?? verdict.momentStrengthVerdict.reason,
+    highlightMomentScore: verdict.peakSuitability.score,
+    momentStrengthScore: verdict.momentStrengthVerdict.score,
     momentFlatPenalty,
   }
-  const reasons: string[] = []
-  if (candidate.scoreBreakdown.strongMomentPresent === false) {
-    reasons.push('moment_right:no_strong_main_moment')
-  }
-  if (momentFlatPenalty > 0) {
-    reasons.push('moment_right:taste_flat_arc_risk')
-  }
+  const reasons = reasonsFromTasteRouteMomentVerdict(verdict)
   return {
     result: criterion(reasons.length === 0, reasons),
     diagnostics: {
@@ -408,6 +417,20 @@ function evaluateMomentRight(candidate: ArcCandidate): {
       strongMoment,
     },
   }
+}
+
+function reasonsFromTasteRouteMomentVerdict(verdict: TasteRouteMomentVerdict): string[] {
+  const reasons: string[] = []
+  if (!verdict.strongMomentPresent) {
+    reasons.push('moment_right:no_strong_main_moment')
+  }
+  if (verdict.flatArcRisk.level !== 'none') {
+    reasons.push('moment_right:taste_flat_arc_risk')
+  }
+  if (verdict.momentPreservationStatus === 'unknown') {
+    reasons.push('moment_right:taste_verdict_unknown')
+  }
+  return reasons
 }
 
 function creditedAnchorRole(params: {

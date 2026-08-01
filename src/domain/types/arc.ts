@@ -11,6 +11,7 @@ import type {
   TasteMomentIdentity,
   TasteSignals,
 } from '../interpretation/taste/types'
+import type { TasteRouteMomentVerdict } from '../interpretation/taste/routeMomentVerdict'
 import type { TasteExperienceLane, TasteModeAlignmentTier } from '../taste/selectTasteMode'
 import type { HighlightValidityEvaluation } from './highlightValidity'
 import type { ConciergeObjectiveOccasion, IntentProfile } from './intent'
@@ -188,6 +189,7 @@ export interface ArcScoreBreakdown {
   momentStrengthScore?: number
   momentVarianceScore?: number
   momentFlatPenalty?: number
+  routeMomentVerdict?: TasteRouteMomentVerdict
   missedPeakPenalty?: number
   missedPeakApplied?: boolean
   roleEnergyScore?: number
