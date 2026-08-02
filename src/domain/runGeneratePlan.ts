@@ -1206,6 +1206,7 @@ function buildCanonicalCurateHardCommitCandidate(params: {
   crewPolicy: ReturnType<typeof getCrewPolicy>
   lens: ExperienceLens
   preferences: NonNullable<IntentProfile['discoveryPreferences']>
+  routeShapeContract?: RouteShapeContract
 }): ArcCandidate | null {
   const startPreference = params.preferences.find((entry) => entry.role === 'start')
   const highlightPreference = params.preferences.find((entry) => entry.role === 'highlight')
@@ -1240,6 +1241,7 @@ function buildCanonicalCurateHardCommitCandidate(params: {
     params.crewPolicy,
     params.lens,
     params.rolePools,
+    { routeShapeContract: params.routeShapeContract },
   )
   return {
     id: createId('arc_curate_hard_commit'),
@@ -1541,6 +1543,7 @@ function buildContractArtifactGreatStopCandidateProjection(params: {
   seedVenues?: Venue[]
   selectedArtifactLineage?: ContractEntryArtifactLineage
   existingCandidates: ArcCandidate[]
+  routeShapeContract?: RouteShapeContract
 }): {
   candidates: ArcCandidate[]
   diagnostics: ContractArtifactGreatStopProjectionDiagnostics
@@ -1674,6 +1677,7 @@ function buildContractArtifactGreatStopCandidateProjection(params: {
     params.crewPolicy,
     params.lens,
     params.rolePools,
+    { routeShapeContract: params.routeShapeContract },
   )
   const candidate: ArcCandidate = {
     id: createId('arc_contract_artifact_great_stop_candidate'),
@@ -1714,6 +1718,7 @@ function buildCanonicalBuildSelectedContractCandidate(params: {
   crewPolicy: ReturnType<typeof getCrewPolicy>
   lens: ExperienceLens
   preferences: NonNullable<IntentProfile['discoveryPreferences']>
+  routeShapeContract?: RouteShapeContract
 }): ArcCandidate | null {
   const startPreference = params.preferences.find((entry) => entry.role === 'start')
   const highlightPreference = params.preferences.find((entry) => entry.role === 'highlight')
@@ -1745,6 +1750,7 @@ function buildCanonicalBuildSelectedContractCandidate(params: {
     params.crewPolicy,
     params.lens,
     params.rolePools,
+    { routeShapeContract: params.routeShapeContract },
   )
   return {
     id: createId('arc_build_selected_contract'),
@@ -1975,6 +1981,7 @@ function buildFallbackCandidate(
   intent: IntentProfile,
   crewPolicy: ReturnType<typeof getCrewPolicy>,
   lens: ExperienceLens,
+  routeShapeContract?: RouteShapeContract,
 ): BuildFallbackCandidateResult {
   const poolPeakCandidates = rolePools.peak.slice(0, FALLBACK_PEAK_CANDIDATE_LIMIT)
   const poolRecoveryCount =
@@ -2051,7 +2058,9 @@ function buildFallbackCandidate(
       return
     }
     seen.add(tieKey)
-    const score = scoreArcAssembly(stops, intent, crewPolicy, lens)
+    const score = scoreArcAssembly(stops, intent, crewPolicy, lens, undefined, {
+      routeShapeContract,
+    })
     const supportReadability =
       fallbackType === 'single'
         ? 0
@@ -2379,6 +2388,7 @@ function rehydrateBaselineArc(
   intent: IntentProfile,
   crewPolicy: ReturnType<typeof getCrewPolicy>,
   lens: ExperienceLens,
+  routeShapeContract?: RouteShapeContract,
 ): ArcCandidate | undefined {
   const venueById = new Map(scoredVenues.map((item) => [item.venue.id, item] as const))
   const nextStops: ArcStop[] = []
@@ -2395,7 +2405,9 @@ function rehydrateBaselineArc(
   if (!isValidArcCombination(nextStops, intent, crewPolicy, lens)) {
     return undefined
   }
-  const score = scoreArcAssembly(nextStops, intent, crewPolicy, lens)
+  const score = scoreArcAssembly(nextStops, intent, crewPolicy, lens, undefined, {
+    routeShapeContract,
+  })
   return {
     id: baselineArc.id,
     stops: nextStops,
@@ -3544,6 +3556,7 @@ async function runGeneratePlanInternal(
       planningIntent,
       crewPolicy,
       lens,
+      options.routeShapeContract,
     )
     fallbackTrace = {
       ...fallback.trace,
@@ -3600,6 +3613,7 @@ async function runGeneratePlanInternal(
           crewPolicy,
           lens,
           preferences: curateCommitPreferences,
+          routeShapeContract: options.routeShapeContract,
         })
       : null
   const rankedCandidatesWithCanonicalHardCommit =
@@ -3630,6 +3644,7 @@ async function runGeneratePlanInternal(
           seedVenues: options.seedVenues,
           selectedArtifactLineage,
           existingCandidates: rankedCandidatesWithCanonicalHardCommit,
+          routeShapeContract: options.routeShapeContract,
         })
       : {
           candidates: [],
@@ -3692,6 +3707,7 @@ async function runGeneratePlanInternal(
           crewPolicy,
           lens,
           preferences: buildSelectedContractPreferences,
+          routeShapeContract: options.routeShapeContract,
         })
       : null
   const rankedCandidatesWithCanonicalBuildPreservation =
@@ -3868,12 +3884,13 @@ async function runGeneratePlanInternal(
   if (options.baselineArc && (intent.refinementModes?.length ?? 0) > 0) {
     const directive = getRefinementDirective(intent.refinementModes![0]!)
     const baselineRehydrated = rehydrateBaselineArc(
-        options.baselineArc,
-        scoredVenues,
-        planningIntent,
-        crewPolicy,
-        lens,
-      )
+      options.baselineArc,
+      scoredVenues,
+      planningIntent,
+      crewPolicy,
+      lens,
+      options.routeShapeContract,
+    )
     const targetSelection = selectRefinementTargetRoles({
       directive,
       baselineArc: options.baselineArc,

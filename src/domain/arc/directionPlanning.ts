@@ -45,6 +45,7 @@ import type {
   RouteShapeContract,
   RouteShapePlaceRightLocationClass,
   RouteShapeRole,
+  RoleCompositionRequirement,
   RoleProfile,
 } from '../types/intent'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../types/itinerary'
@@ -301,6 +302,12 @@ function getRouteShapeRoleProfile(
   const strictContinuity = contractConstraints.requireContinuity
   const strongCenter = contractConstraints.highlightPressure === 'strong'
   const distributedCenter = contractConstraints.highlightPressure === 'distributed'
+  const compositionRequirement = buildRoleCompositionRequirement(
+    role,
+    selectedDirection,
+    conciergeIntent,
+    contractConstraints,
+  )
   if (role === 'start') {
     return {
       intent: 'set-tone',
@@ -317,6 +324,7 @@ function getRouteShapeRoleProfile(
           : controlMode === 'assistant_led'
             ? 'fixed'
             : 'guided-flex',
+      compositionRequirement,
     }
   }
   if (role === 'highlight') {
@@ -337,6 +345,7 @@ function getRouteShapeRoleProfile(
           : swapTolerance === 'medium'
             ? 'guided-flex'
             : 'fixed',
+      compositionRequirement,
     }
   }
   return {
@@ -349,6 +358,131 @@ function getRouteShapeRoleProfile(
         ? 'linger'
         : 'balanced',
     variability: controlMode === 'assistant_led' ? 'fixed' : 'guided-flex',
+    compositionRequirement,
+  }
+}
+
+function dedupeCompositionDimensions(
+  dimensions: RoleCompositionRequirement['dimensions'],
+): RoleCompositionRequirement['dimensions'] {
+  return [...new Set(dimensions)]
+}
+
+function buildRoleCompositionRequirement(
+  role: RouteShapeRole,
+  selectedDirection: DirectionPlanningSelection,
+  conciergeIntent: ConciergeIntent,
+  contractConstraints: ContractConstraints,
+): RoleCompositionRequirement {
+  const { persona, vibe, explorationTolerance, socialEnergy } = conciergeIntent.experienceProfile
+  const normalizedVibe =
+    vibe === 'cozy' || vibe === 'chill'
+      ? 'cozy'
+      : vibe === 'lively' || vibe === 'playful'
+        ? 'lively'
+        : 'cultured'
+  const family = selectedDirection.cluster
+  const movementTight =
+    contractConstraints.movementTolerance === 'contained' ||
+    contractConstraints.movementTolerance === 'compressed'
+  const tolerance: RoleCompositionRequirement['tolerance'] =
+    contractConstraints.requireContinuity ||
+    contractConstraints.highlightPressure === 'strong' ||
+    movementTight
+      ? 'strict'
+      : contractConstraints.windDownStrictness === 'flexible' ||
+          explorationTolerance === 'high'
+        ? 'flexible'
+        : 'balanced'
+  const personaDimensions: RoleCompositionRequirement['dimensions'] = [
+    persona === 'family' ? 'spatial_condition' : 'social_condition',
+    persona === 'romantic' ? 'sensory_condition' : 'relationship_continuity',
+  ]
+  const vibeDimensions: RoleCompositionRequirement['dimensions'] =
+    normalizedVibe === 'cultured'
+      ? ['sensory_condition', 'relationship_continuity']
+      : normalizedVibe === 'lively'
+        ? ['social_condition', 'controlled_novelty']
+        : ['pacing_condition', 'resolution_landing']
+  const routeDimensions: RoleCompositionRequirement['dimensions'] = [
+    movementTight ? 'spatial_condition' : 'relationship_continuity',
+    family === 'explore' ? 'controlled_novelty' : 'vibe_fit',
+    socialEnergy === 'high' ? 'social_condition' : 'pacing_condition',
+  ]
+
+  if (role === 'start') {
+    return {
+      source: 'interpretation.route_shape_contract',
+      role,
+      relationship: 'prepares_selected_highlight',
+      dimensions: dedupeCompositionDimensions([
+        'role_fit',
+        'intent_fit',
+        'vibe_fit',
+        'pacing_condition',
+        'relationship_continuity',
+        ...personaDimensions,
+        ...vibeDimensions,
+        ...routeDimensions,
+      ]),
+      minimumStatus: tolerance === 'strict' ? 'pass' : 'soft',
+      tolerance,
+      reasonCodes: [
+        `persona:${persona}`,
+        `vibe:${normalizedVibe}`,
+        `highlightPressure:${contractConstraints.highlightPressure}`,
+      ],
+    }
+  }
+
+  if (role === 'highlight') {
+    return {
+      source: 'interpretation.route_shape_contract',
+      role,
+      relationship: 'performs_peak',
+      dimensions: dedupeCompositionDimensions([
+        'role_fit',
+        'intent_fit',
+        'vibe_fit',
+        'peak_strength',
+        'sensory_condition',
+        ...personaDimensions,
+        ...vibeDimensions,
+      ]),
+      minimumStatus: 'pass',
+      tolerance,
+      reasonCodes: [
+        `persona:${persona}`,
+        `vibe:${normalizedVibe}`,
+        `peakCount:${contractConstraints.peakCountModel}`,
+        `highlightPressure:${contractConstraints.highlightPressure}`,
+      ],
+    }
+  }
+
+  return {
+    source: 'interpretation.route_shape_contract',
+    role,
+    relationship: 'resolves_selected_highlight',
+    dimensions: dedupeCompositionDimensions([
+      'role_fit',
+      'intent_fit',
+      'vibe_fit',
+      'pacing_condition',
+      'resolution_landing',
+      'relationship_continuity',
+      ...personaDimensions,
+      ...vibeDimensions,
+      ...routeDimensions,
+    ]),
+    minimumStatus: tolerance === 'strict' ? 'pass' : 'soft',
+    tolerance,
+    reasonCodes: [
+      `persona:${persona}`,
+      `vibe:${normalizedVibe}`,
+      `windDown:${contractConstraints.windDownStrictness}`,
+      `recovery:${String(contractConstraints.requireRecoveryWindows)}`,
+    ],
   }
 }
 

@@ -13,6 +13,10 @@ import {
   computeRouteMeaningVerdict,
   type TasteRouteMeaningStopEvidenceInput,
 } from '../interpretation/taste/computeRouteMeaningVerdict'
+import {
+  computeTasteExperienceCompositionStamp,
+  type TasteExperienceCompositionCandidateEvidence,
+} from '../interpretation/taste/computeExperienceCompositionStamp'
 import { computeRouteQualityVerdict } from '../interpretation/taste/computeRouteQualityVerdict'
 import { computeTasteRolePoolCandidateMeaning } from '../interpretation/taste/computeTasteRolePoolMeaningView'
 import type {
@@ -195,6 +199,45 @@ function getRouteMeaningVibeFitScore(stop: ArcStop): number {
     return stop.scoredVenue.vibeAuthority.byRole.surprise
   }
   return stop.scoredVenue.vibeAuthority.byRole.windDown
+}
+
+function toExperienceCompositionRole(
+  role: ArcStop['role'],
+): TasteExperienceCompositionCandidateEvidence['role'] {
+  if (role === 'warmup') {
+    return 'start'
+  }
+  if (role === 'peak') {
+    return 'highlight'
+  }
+  if (role === 'wildcard') {
+    return 'surprise'
+  }
+  return 'windDown'
+}
+
+function toExperienceCompositionStopEvidence(
+  stop: ArcStop,
+): TasteExperienceCompositionCandidateEvidence {
+  return {
+    role: toExperienceCompositionRole(stop.role),
+    candidateId: getArcStopCandidateId(stop),
+    venueName: stop.scoredVenue.venue.name,
+    category: stop.scoredVenue.venue.category,
+    tags: stop.scoredVenue.venue.tags,
+    neighborhood: stop.scoredVenue.venue.neighborhood,
+    energyScore: clamp01(stop.scoredVenue.venue.energyLevel / 5),
+    roleFitScore: getRoleFitScore(stop),
+    stopShapeFitScore: getStopShapeFitScore(stop),
+    vibeFitScore: getRouteMeaningVibeFitScore(stop),
+    intentFitScore: stop.scoredVenue.contextSpecificity.byRole[stop.role],
+    momentScore: stop.scoredVenue.taste.signals.momentPotential.score,
+    momentIntensityScore: stop.scoredVenue.taste.signals.momentIntensity.score,
+    primaryExperienceArchetype: stop.scoredVenue.taste.signals.primaryExperienceArchetype,
+    momentIdentityType: stop.scoredVenue.momentIdentity.type,
+    isWildcard: stop.role === 'wildcard',
+    highlightValidity: stop.scoredVenue.highlightValidity.validityLevel,
+  }
 }
 
 function toRouteMeaningStopEvidence(stop: ArcStop): TasteRouteMeaningStopEvidenceInput {
@@ -3114,6 +3157,11 @@ export function scoreArcAssembly(
     rolePools,
   )
   const momentPreservation = routeMomentVerdict
+  const experienceCompositionStamp = computeTasteExperienceCompositionStamp({
+    routeShapeContract: options?.routeShapeContract,
+    stops: stops.map(toExperienceCompositionStopEvidence),
+    routeMomentVerdict: momentPreservation.verdict,
+  })
   const missedPeakPenalty = computeMissedPeakPenalty(stops, intent, rolePools)
   const romanticMomentContract = computeRomanticMomentContract(stops, intent, lens, rolePools)
   const romanticPersonaContract = computeRomanticPersonaContract(
@@ -3317,6 +3365,7 @@ export function scoreArcAssembly(
         momentPreservation.flatPenalty + momentPreservation.penalty,
       ),
       routeMomentVerdict: momentPreservation.verdict,
+      experienceCompositionStamp,
       romanticMomentCandidatesAvailable: romanticMomentContract.availableCount,
       romanticMomentCandidatesFeasible: romanticMomentContract.feasibleCount,
       romanticMomentPresent: romanticMomentContract.present,

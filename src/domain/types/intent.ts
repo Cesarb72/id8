@@ -55,11 +55,41 @@ export type RouteInvariantMaxRelativeIntensity =
   | 'below_highlight'
   | 'at_most_highlight'
 
+export type ExperienceCompositionDimension =
+  | 'role_fit'
+  | 'intent_fit'
+  | 'vibe_fit'
+  | 'social_condition'
+  | 'sensory_condition'
+  | 'spatial_condition'
+  | 'pacing_condition'
+  | 'peak_strength'
+  | 'resolution_landing'
+  | 'relationship_continuity'
+  | 'controlled_novelty'
+
+export type ExperienceCompositionRelationship =
+  | 'opens_experience'
+  | 'prepares_selected_highlight'
+  | 'performs_peak'
+  | 'resolves_selected_highlight'
+
+export interface RoleCompositionRequirement {
+  source: 'interpretation.route_shape_contract'
+  role: RouteShapeRole
+  relationship: ExperienceCompositionRelationship
+  dimensions: ExperienceCompositionDimension[]
+  minimumStatus: 'pass' | 'soft'
+  tolerance: 'strict' | 'balanced' | 'flexible'
+  reasonCodes: string[]
+}
+
 export interface RoleProfile {
   intent: 'set-tone' | 'centerpiece' | 'landing'
   energyLevel: RouteShapeEnergyLevel
   pacing: RouteShapePacing
   variability: RouteShapeVariability
+  compositionRequirement?: RoleCompositionRequirement
 }
 
 export interface RoleInvariantProfile {
