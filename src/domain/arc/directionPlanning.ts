@@ -20,6 +20,7 @@ import type {
 } from '../bearings/assessDirectionContractBuildability'
 import { inferObservedDirectionIdentity } from '../interpretation/direction/directionIdentity'
 import { buildPlaceRightMovementProfile } from '../interpretation/buildPlaceRightMovementProfile'
+import { buildInterpretationC1RouteShapeProjection } from '../interpretation/direction/c1RouteShapeProjection'
 import type {
   DirectionIdentityMode,
   DirectionPlanningSelection,
@@ -44,9 +45,6 @@ import type {
   RouteInvariantTrait,
   RouteShapeContract,
   RouteShapePlaceRightLocationClass,
-  RouteShapeRole,
-  RoleCompositionRequirement,
-  RoleProfile,
 } from '../types/intent'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../types/itinerary'
 
@@ -289,320 +287,6 @@ function computeDirectionContextAlignment(params: {
   return weightedPossible > 0 ? Math.max(0, Math.min(1, weightedMatches / weightedPossible)) : 0
 }
 
-function getRouteShapeRoleProfile(
-  role: RouteShapeRole,
-  selectedDirection: DirectionPlanningSelection,
-  conciergeIntent: ConciergeIntent,
-  contractConstraints: ContractConstraints,
-): RoleProfile {
-  const { persona, pacing, socialEnergy } = conciergeIntent.experienceProfile
-  const { swapTolerance } = conciergeIntent.constraintPosture
-  const controlMode = conciergeIntent.controlPosture.mode
-  const escalationMode = contractConstraints.requireEscalation
-  const strictContinuity = contractConstraints.requireContinuity
-  const strongCenter = contractConstraints.highlightPressure === 'strong'
-  const distributedCenter = contractConstraints.highlightPressure === 'distributed'
-  const compositionRequirement = buildRoleCompositionRequirement(
-    role,
-    selectedDirection,
-    conciergeIntent,
-    contractConstraints,
-  )
-  if (role === 'start') {
-    return {
-      intent: 'set-tone',
-      energyLevel:
-        contractConstraints.requireRecoveryWindows || strictContinuity
-          ? 'low'
-          : socialEnergy === 'high' || selectedDirection.cluster === 'lively'
-            ? 'medium'
-            : 'low',
-      pacing: escalationMode || pacing === 'quick' ? 'quick' : 'balanced',
-      variability:
-        controlMode === 'user_directed'
-          ? 'flexible'
-          : controlMode === 'assistant_led'
-            ? 'fixed'
-            : 'guided-flex',
-      compositionRequirement,
-    }
-  }
-  if (role === 'highlight') {
-    return {
-      intent: 'centerpiece',
-      energyLevel:
-        distributedCenter && !escalationMode
-          ? 'medium'
-          : strongCenter || escalationMode || socialEnergy === 'high'
-            ? 'high'
-            : selectedDirection.cluster === 'chill'
-              ? 'medium'
-              : 'high',
-      pacing: escalationMode ? 'quick' : 'balanced',
-      variability:
-        swapTolerance === 'high'
-          ? 'flexible'
-          : swapTolerance === 'medium'
-            ? 'guided-flex'
-            : 'fixed',
-      compositionRequirement,
-    }
-  }
-  return {
-    intent: 'landing',
-    energyLevel: 'low',
-    pacing:
-      contractConstraints.windDownStrictness === 'soft_required' ||
-      pacing === 'linger' ||
-      persona === 'romantic'
-        ? 'linger'
-        : 'balanced',
-    variability: controlMode === 'assistant_led' ? 'fixed' : 'guided-flex',
-    compositionRequirement,
-  }
-}
-
-function dedupeCompositionDimensions(
-  dimensions: RoleCompositionRequirement['dimensions'],
-): RoleCompositionRequirement['dimensions'] {
-  return [...new Set(dimensions)]
-}
-
-function buildRoleCompositionRequirement(
-  role: RouteShapeRole,
-  selectedDirection: DirectionPlanningSelection,
-  conciergeIntent: ConciergeIntent,
-  contractConstraints: ContractConstraints,
-): RoleCompositionRequirement {
-  const { persona, vibe, explorationTolerance, socialEnergy } = conciergeIntent.experienceProfile
-  const normalizedVibe =
-    vibe === 'cozy' || vibe === 'chill'
-      ? 'cozy'
-      : vibe === 'lively' || vibe === 'playful'
-        ? 'lively'
-        : 'cultured'
-  const family = selectedDirection.cluster
-  const movementTight =
-    contractConstraints.movementTolerance === 'contained' ||
-    contractConstraints.movementTolerance === 'compressed'
-  const tolerance: RoleCompositionRequirement['tolerance'] =
-    contractConstraints.requireContinuity ||
-    contractConstraints.highlightPressure === 'strong' ||
-    movementTight
-      ? 'strict'
-      : contractConstraints.windDownStrictness === 'flexible' ||
-          explorationTolerance === 'high'
-        ? 'flexible'
-        : 'balanced'
-  const personaDimensions: RoleCompositionRequirement['dimensions'] = [
-    persona === 'family' ? 'spatial_condition' : 'social_condition',
-    persona === 'romantic' ? 'sensory_condition' : 'relationship_continuity',
-  ]
-  const vibeDimensions: RoleCompositionRequirement['dimensions'] =
-    normalizedVibe === 'cultured'
-      ? ['sensory_condition', 'relationship_continuity']
-      : normalizedVibe === 'lively'
-        ? ['social_condition', 'controlled_novelty']
-        : ['pacing_condition', 'resolution_landing']
-  const routeDimensions: RoleCompositionRequirement['dimensions'] = [
-    movementTight ? 'spatial_condition' : 'relationship_continuity',
-    family === 'explore' ? 'controlled_novelty' : 'vibe_fit',
-    socialEnergy === 'high' ? 'social_condition' : 'pacing_condition',
-  ]
-
-  if (role === 'start') {
-    return {
-      source: 'interpretation.route_shape_contract',
-      role,
-      relationship: 'prepares_selected_highlight',
-      dimensions: dedupeCompositionDimensions([
-        'role_fit',
-        'intent_fit',
-        'vibe_fit',
-        'pacing_condition',
-        'relationship_continuity',
-        ...personaDimensions,
-        ...vibeDimensions,
-        ...routeDimensions,
-      ]),
-      minimumStatus: tolerance === 'strict' ? 'pass' : 'soft',
-      tolerance,
-      reasonCodes: [
-        `persona:${persona}`,
-        `vibe:${normalizedVibe}`,
-        `highlightPressure:${contractConstraints.highlightPressure}`,
-      ],
-    }
-  }
-
-  if (role === 'highlight') {
-    return {
-      source: 'interpretation.route_shape_contract',
-      role,
-      relationship: 'performs_peak',
-      dimensions: dedupeCompositionDimensions([
-        'role_fit',
-        'intent_fit',
-        'vibe_fit',
-        'peak_strength',
-        'sensory_condition',
-        ...personaDimensions,
-        ...vibeDimensions,
-      ]),
-      minimumStatus: 'pass',
-      tolerance,
-      reasonCodes: [
-        `persona:${persona}`,
-        `vibe:${normalizedVibe}`,
-        `peakCount:${contractConstraints.peakCountModel}`,
-        `highlightPressure:${contractConstraints.highlightPressure}`,
-      ],
-    }
-  }
-
-  return {
-    source: 'interpretation.route_shape_contract',
-    role,
-    relationship: 'resolves_selected_highlight',
-    dimensions: dedupeCompositionDimensions([
-      'role_fit',
-      'intent_fit',
-      'vibe_fit',
-      'pacing_condition',
-      'resolution_landing',
-      'relationship_continuity',
-      ...personaDimensions,
-      ...vibeDimensions,
-      ...routeDimensions,
-    ]),
-    minimumStatus: tolerance === 'strict' ? 'pass' : 'soft',
-    tolerance,
-    reasonCodes: [
-      `persona:${persona}`,
-      `vibe:${normalizedVibe}`,
-      `windDown:${contractConstraints.windDownStrictness}`,
-      `recovery:${String(contractConstraints.requireRecoveryWindows)}`,
-    ],
-  }
-}
-
-function dedupeInvariantTraits(traits: RouteInvariantTrait[]): RouteInvariantTrait[] {
-  return [...new Set(traits)]
-}
-
-export function buildRouteRoleInvariants(params: {
-  selectedDirection: DirectionPlanningSelection
-  selectedDirectionContext: ResolvedDirectionContext
-  conciergeIntent: ConciergeIntent
-  contractConstraints: ContractConstraints
-  arcShape: RouteShapeContract['arcShape']
-  movementProfile: RouteShapeContract['movementProfile']
-}): RouteShapeContract['roleInvariants'] {
-  const {
-    selectedDirection,
-    selectedDirectionContext,
-    conciergeIntent,
-    contractConstraints,
-    arcShape,
-    movementProfile,
-  } = params
-  const archetypeHint = `${selectedDirectionContext.archetype} ${selectedDirectionContext.label}`.toLowerCase()
-  const culturalLean =
-    /culture|museum|gallery|ritual|explore|curated/.test(archetypeHint) ||
-    selectedDirection.cluster === 'explore'
-  const livelyLean =
-    /lively|social|eventful|playful|night/.test(archetypeHint) ||
-    selectedDirection.cluster === 'lively'
-  const calmLean =
-    selectedDirection.cluster === 'chill' ||
-    conciergeIntent.experienceProfile.vibe === 'cozy' ||
-    conciergeIntent.experienceProfile.vibe === 'chill'
-  const tightMovement = movementProfile.radius === 'tight'
-  const fastArc = arcShape === 'fast_open_strong_center_clean_landing'
-
-  const startPreferred = dedupeInvariantTraits([
-    contractConstraints.requireContinuity ? 'continuity' : 'contrast',
-    calmLean ? 'calm' : 'social',
-    tightMovement ? 'low_friction' : 'continuity',
-    contractConstraints.requireRecoveryWindows ? 'buffer' : 'contrast',
-  ])
-  const highlightPreferred = dedupeInvariantTraits([
-    culturalLean ? 'cultural' : 'social',
-    livelyLean || fastArc || contractConstraints.requireEscalation ? 'lively' : 'continuity',
-    contractConstraints.highlightPressure === 'distributed' ? 'social' : 'continuity',
-  ])
-  const windDownPreferred = dedupeInvariantTraits([
-    'settling',
-    'continuity',
-    calmLean ? 'calm' : 'buffer',
-    contractConstraints.requireRecoveryWindows ? 'buffer' : 'continuity',
-  ])
-
-  return {
-    start: {
-      requiredTraits: dedupeInvariantTraits([
-        'low_friction',
-        ...(contractConstraints.requireContinuity ? (['continuity'] as RouteInvariantTrait[]) : []),
-      ]),
-      preferredTraits: startPreferred,
-      forbiddenTraits: contractConstraints.allowLateHighEnergy
-        ? ['centerpiece']
-        : ['centerpiece', 'late_night'],
-      minRelativeIntensity: 'low',
-      maxRelativeIntensity: 'medium',
-      allowSwapToWeaker: true,
-      allowEscalation: false,
-    },
-    highlight: {
-      requiredTraits:
-        contractConstraints.highlightPressure === 'distributed'
-          ? ['continuity']
-          : ['centerpiece'],
-      preferredTraits: highlightPreferred,
-      forbiddenTraits: contractConstraints.highlightPressure === 'distributed' ? [] : ['buffer'],
-      minRelativeIntensity: 'medium',
-      maxRelativeIntensity: 'at_most_highlight',
-      allowSwapToWeaker: false,
-      allowEscalation: contractConstraints.requireEscalation,
-    },
-    windDown: {
-      requiredTraits: dedupeInvariantTraits([
-        'continuity',
-        ...(contractConstraints.requireRecoveryWindows ? (['settling'] as RouteInvariantTrait[]) : []),
-      ]),
-      preferredTraits: windDownPreferred,
-      forbiddenTraits: contractConstraints.allowLateHighEnergy
-        ? ['centerpiece']
-        : ['centerpiece', 'late_night'],
-      minRelativeIntensity: 'low',
-      maxRelativeIntensity:
-        contractConstraints.windDownStrictness === 'flexible'
-          ? 'at_most_highlight'
-          : 'below_highlight',
-      allowSwapToWeaker: true,
-      allowEscalation: false,
-    },
-    surprise: {
-      requiredTraits: ['contrast'],
-      preferredTraits: ['continuity'],
-      forbiddenTraits: ['centerpiece'],
-      minRelativeIntensity: 'low',
-      maxRelativeIntensity: 'at_most_highlight',
-      allowSwapToWeaker: true,
-      allowEscalation: false,
-    },
-    support: {
-      requiredTraits: ['continuity'],
-      preferredTraits: ['buffer', 'low_friction'],
-      forbiddenTraits: ['centerpiece'],
-      minRelativeIntensity: 'low',
-      maxRelativeIntensity: 'medium',
-      allowSwapToWeaker: true,
-      allowEscalation: false,
-    },
-  }
-}
-
 export function buildRouteShapeContract(params: {
   selectedDirection: DirectionPlanningSelection
   selectedDirectionContext: ResolvedDirectionContext
@@ -661,12 +345,7 @@ export function buildRouteShapeContract(params: {
     : contractConstraints.requireContinuity && contractConstraints.highlightPressure === 'strong'
       ? 'low'
       : conciergeIntent.constraintPosture.swapTolerance
-  const roleProfile: Record<RouteShapeRole, RoleProfile> = {
-    start: getRouteShapeRoleProfile('start', selectedDirection, conciergeIntent, contractConstraints),
-    highlight: getRouteShapeRoleProfile('highlight', selectedDirection, conciergeIntent, contractConstraints),
-    windDown: getRouteShapeRoleProfile('windDown', selectedDirection, conciergeIntent, contractConstraints),
-  }
-  const roleInvariants = buildRouteRoleInvariants({
+  const interpretationC1Projection = buildInterpretationC1RouteShapeProjection({
     selectedDirection,
     selectedDirectionContext,
     conciergeIntent,
@@ -695,8 +374,9 @@ export function buildRouteShapeContract(params: {
   return {
     id: `rshape_v1_${selectedDirectionContext.selectedDirectionId}_${conciergeIntent.id}_${contractConstraints.id}`,
     arcShape,
-    roleProfile,
-    roleInvariants,
+    roleProfile: interpretationC1Projection.roleProfile,
+    roleInvariants: interpretationC1Projection.roleInvariants,
+    interpretationC1Projection: interpretationC1Projection.provenance,
     movementProfile,
     mutationProfile: {
       swapFlexibility,

@@ -115,6 +115,20 @@ export interface RouteShapeContract {
   arcShape: RouteShapeArcShape
   roleProfile: Record<RouteShapeRole, RoleProfile>
   roleInvariants: RouteRoleInvariants
+  interpretationC1Projection?: {
+    source: 'interpretation.c1_route_shape_projection.v0_1'
+    projectionId: string
+    authority: 'concierge_intent_experience_contract_constraints'
+    conciergeIntentId: string
+    experienceContractId: string
+    contractConstraintsId: string
+    selectedDirectionId: string
+    selectedPocketId: string
+    persona: PersonaMode
+    vibe: VibeAnchor
+    normalizedVibe: 'cozy' | 'lively' | 'cultured'
+    roleRequirementIds: Record<RouteShapeRole, string>
+  }
   movementProfile: {
     radius: 'tight' | 'balanced' | 'open'
     maxTransitionMinutes: number
