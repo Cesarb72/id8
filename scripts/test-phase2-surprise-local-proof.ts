@@ -14,6 +14,7 @@ import { assessDirectionContractBuildability } from '../src/domain/bearings/asse
 import { buildFinalRoute } from '../src/domain/artifacts/runtimeRouteProjection.ts'
 import type { RuntimeRouteArtifact } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
 import { validateLockedLiveArtifactSessionPayload } from '../src/domain/live/validateLiveArtifact.ts'
+import { buildCanonicalSurpriseC1RouteShapeContract } from '../src/domain/arc/buildCanonicalSurpriseC1RouteShapeContract.ts'
 import {
   buildStopTypeCandidateBoardFromContract,
   buildStopTypeCandidateBoardFromIntent,
@@ -29,6 +30,7 @@ import {
 import type {
   IntentInput,
   ResolvedDirectionContext,
+  RouteShapeContract,
   SelectedDirectionContext,
 } from '../src/domain/types/intent.ts'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
@@ -95,6 +97,10 @@ async function runSurpriseLocalProof(): Promise<{
   completeConciergeIntent: boolean
   canonicalInterpretationBundleSupplied: boolean
   contractConstraintsPresent: boolean
+  routeShapeContractId: string
+  routeShapeProjectionId: string
+  selectedCompositionRequirementSource: string | null
+  selectedCompositionUnavailableReasons: string[]
   contractGateWorldPresent: boolean
   strategyAdmissibleWorldCount: number
   fieldCandidateBoardInputSource: string | null
@@ -204,6 +210,12 @@ async function runSurpriseLocalProof(): Promise<{
   const selectedDirection = buildProofDirectionSelection()
   const selectedDirectionContextForValidation = buildResolvedDirectionContext(selectedDirection)
   assert(selectedDirectionContextForValidation, 'Selected direction context must resolve.')
+  const routeShapeContract = buildCanonicalSurpriseC1RouteShapeContract({
+    conciergeIntent,
+    canonicalInterpretationBundle,
+    selectedDirection,
+    selectedDirectionContext: selectedDirectionContextForValidation,
+  })
   const selectedDirectionContext = buildSelectedDirectionContext(selectedDirection)
   const projectedInput = projectConciergeIntentToIntentInput({
     conciergeIntent,
@@ -217,6 +229,7 @@ async function runSurpriseLocalProof(): Promise<{
     canonicalInterpretationBundle,
     contractGateWorld,
     strategyAdmissibleWorlds,
+    routeShapeContract,
   })
   assert(
     canonicalResult.trace.canonicalInterpretationIngress?.supplied === true,
@@ -236,6 +249,22 @@ async function runSurpriseLocalProof(): Promise<{
     canonicalResult.trace.boundaryDiagnostics.waypointContractTrace?.normalizedObjectivePrimary ===
       'discover_route_shape',
     'Waypoint trace must use discover_route_shape from the contract objective.',
+  )
+  const selectedCompositionStamp =
+    canonicalResult.selectedArc.scoreBreakdown.experienceCompositionStamp
+  assert(
+    selectedCompositionStamp?.requirementSource === 'route_shape_contract',
+    'Selected Surprise route must receive active C1 route-shape requirements.',
+  )
+  assert(
+    selectedCompositionStamp.routeShapeContractId === routeShapeContract.id,
+    'Selected C1 stamp must reference the transported RouteShapeContract.',
+  )
+  assert(
+    selectedCompositionStamp.unavailableEvidence.every(
+      (reason) => reason !== 'composition_requirements_missing',
+    ),
+    'Active C1 Surprise route must not report missing composition requirements.',
   )
 
   const directionValidation = validateSurpriseDirection({
@@ -259,6 +288,7 @@ async function runSurpriseLocalProof(): Promise<{
       canonicalInterpretationBundle,
       contractGateWorld,
       strategyAdmissibleWorlds,
+      routeShapeContract,
     })
     staleProjectionAcceptedByPlanner = true
     staleProjectionChangedPlannerDiagnostics =
@@ -287,6 +317,13 @@ async function runSurpriseLocalProof(): Promise<{
     completeConciergeIntent: true,
     canonicalInterpretationBundleSupplied: true,
     contractConstraintsPresent: true,
+    routeShapeContractId: routeShapeContract.id,
+    routeShapeProjectionId:
+      routeShapeContract.interpretationC1Projection?.projectionId ?? 'missing_projection',
+    selectedCompositionRequirementSource: selectedCompositionStamp.requirementSource,
+    selectedCompositionUnavailableReasons: [
+      ...selectedCompositionStamp.unavailableEvidence,
+    ],
     contractGateWorldPresent: true,
     strategyAdmissibleWorldCount: strategyAdmissibleWorlds.length,
     fieldCandidateBoardInputSource:
@@ -337,6 +374,7 @@ async function runPlan(
     canonicalInterpretationBundle: ReturnType<typeof buildCanonicalInterpretationBundle>
     contractGateWorld: ReturnType<typeof buildContractGateWorldFromCanonical>
     strategyAdmissibleWorlds: ReturnType<typeof buildStrategyAdmissibleWorlds>
+    routeShapeContract: RouteShapeContract
   },
 ): Promise<GeneratePlanResult> {
   return runGeneratePlan(input, {
@@ -351,6 +389,7 @@ async function runPlan(
     canonicalInterpretationBundle: params.canonicalInterpretationBundle,
     contractGateWorld: params.contractGateWorld,
     strategyAdmissibleWorlds: params.strategyAdmissibleWorlds,
+    routeShapeContract: params.routeShapeContract,
   })
 }
 

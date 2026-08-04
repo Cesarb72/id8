@@ -87,6 +87,7 @@ import {
   type HardStructuralSwapCompatibilityEvaluation,
   type HardStructuralSwapCompatibilityInput,
 } from '../domain/arc/directionPlanning'
+import { buildCanonicalSurpriseC1RouteShapeContract as buildCanonicalSurpriseC1RouteShapeContractEngine } from '../domain/arc/buildCanonicalSurpriseC1RouteShapeContract'
 import { resolveDirectionValidationIdentity } from '../domain/arc/resolveDirectionValidationIdentity'
 import {
   assessDirectionContractBuildability as assessDirectionContractBuildabilityEngine,
@@ -210,6 +211,7 @@ import {
 import {
   buildCanonicalInterpretationBundle,
   normalizeExperienceContractVibe,
+  type CanonicalInterpretationBundle,
 } from '../domain/interpretation/buildCanonicalInterpretationBundle'
 import { projectConciergeIntentToIntentInput } from '../domain/interpretation/projectConciergeIntentToIntentInput'
 import { buildContractEntryArtifactFromVerifiedOpportunity } from '../domain/interpretation/buildContractEntryArtifactFromVerifiedOpportunity'
@@ -9406,6 +9408,15 @@ function buildRouteShapeContract(params: {
   return buildRouteShapeContractEngine(params)
 }
 
+function buildCanonicalSurpriseC1RouteShapeContract(params: {
+  selectedDirection: DirectionPlanningSelection
+  selectedDirectionContext: ResolvedDirectionContext
+  conciergeIntent: ConciergeIntent
+  canonicalInterpretationBundle: CanonicalInterpretationBundle
+}): RouteShapeContract {
+  return buildCanonicalSurpriseC1RouteShapeContractEngine(params)
+}
+
 function buildSelectedArtifactDiscoveryPreferences(params: {
   artifact: ContractEntryArtifact | null
   opportunity?: VerifiedCityOpportunity
@@ -15190,16 +15201,25 @@ export function SandboxConciergePage({
   const selectedRouteShapeContract = useMemo(
     () =>
       selectedDirectionContract && selectedDirectionContext
-        ? buildRouteShapeContract({
-            selectedDirection: selectedDirectionContract,
-            selectedDirectionContext,
-            conciergeIntent: canonicalConciergeIntent,
-            contractConstraints: canonicalContractConstraints,
-          })
+        ? isSurpriseWrapperActive
+          ? buildCanonicalSurpriseC1RouteShapeContract({
+              selectedDirection: selectedDirectionContract,
+              selectedDirectionContext,
+              conciergeIntent: canonicalConciergeIntent,
+              canonicalInterpretationBundle,
+            })
+          : buildRouteShapeContract({
+              selectedDirection: selectedDirectionContract,
+              selectedDirectionContext,
+              conciergeIntent: canonicalConciergeIntent,
+              contractConstraints: canonicalContractConstraints,
+            })
         : undefined,
     [
       canonicalConciergeIntent,
+      canonicalInterpretationBundle,
       canonicalContractConstraints,
+      isSurpriseWrapperActive,
       selectedDirectionContext,
       selectedDirectionContract,
     ],
@@ -15688,12 +15708,19 @@ export function SandboxConciergePage({
       }
       const activeRouteShapeContract = isBuildWrapperActive
         ? null
-        : buildRouteShapeContract({
-            selectedDirection: activeDirectionContract,
-            selectedDirectionContext: activeDirectionContext,
-            conciergeIntent: canonicalConciergeIntent,
-            contractConstraints: canonicalContractConstraints,
-          })
+        : isSurpriseWrapperActive
+          ? buildCanonicalSurpriseC1RouteShapeContract({
+              selectedDirection: activeDirectionContract,
+              selectedDirectionContext: activeDirectionContext,
+              conciergeIntent: generationConciergeIntent,
+              canonicalInterpretationBundle: generationCanonicalInterpretationBundle,
+            })
+          : buildRouteShapeContract({
+              selectedDirection: activeDirectionContract,
+              selectedDirectionContext: activeDirectionContext,
+              conciergeIntent: canonicalConciergeIntent,
+              contractConstraints: canonicalContractConstraints,
+            })
       const activeIntentSelectedDirectionContext = buildIntentSelectedDirectionContextEngine(
         activeDirectionContractForValidation,
       )
@@ -16027,6 +16054,9 @@ export function SandboxConciergePage({
             contractGateWorld,
             strategyAdmissibleWorlds,
             selectedArtifactLineage: activeSelectedArtifactLineage,
+            routeShapeContract: isSurpriseWrapperActive
+              ? activeRouteShapeContract ?? undefined
+              : undefined,
           }
           result = await runPlanBuildWithLegacyPlaceRightFallback(planBuildInput, planBuildOptions)
           preLineageExpectedDirectionId = activeDirectionContract.id
@@ -16092,12 +16122,19 @@ export function SandboxConciergePage({
           })
           generatedRouteShapeContract =
             activeRouteShapeContract ??
-            buildRouteShapeContract({
-              selectedDirection: activeDirectionContract,
-              selectedDirectionContext: activeDirectionContext,
-              conciergeIntent: canonicalConciergeIntent,
-              contractConstraints: canonicalContractConstraints,
-            })
+            (isSurpriseWrapperActive
+              ? buildCanonicalSurpriseC1RouteShapeContract({
+                  selectedDirection: activeDirectionContract,
+                  selectedDirectionContext: activeDirectionContext,
+                  conciergeIntent: generationConciergeIntent,
+                  canonicalInterpretationBundle: generationCanonicalInterpretationBundle,
+                })
+              : buildRouteShapeContract({
+                  selectedDirection: activeDirectionContract,
+                  selectedDirectionContext: activeDirectionContext,
+                  conciergeIntent: canonicalConciergeIntent,
+                  contractConstraints: canonicalContractConstraints,
+                }))
         }
         const canonicalStopByRoleForState = normalizeCanonicalPlanningStopIdentityByRole(
           anchoredPlan.canonicalStopByRole,

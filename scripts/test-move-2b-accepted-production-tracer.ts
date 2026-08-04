@@ -10,6 +10,13 @@ import { buildCanonicalInterpretationBundle } from '../src/domain/interpretation
 import { buildContractGateWorldFromCanonical } from '../src/domain/bearings/buildContractGateWorld.ts'
 import { buildStrategyAdmissibleWorlds } from '../src/domain/bearings/buildStrategyAdmissibleWorlds.ts'
 import { buildDistrictOpportunityProfiles } from '../src/domain/interpretation/district/intelligence/buildDistrictOpportunityProfiles.ts'
+import { buildDirectionCandidates, type DirectionCandidate } from '../src/domain/direction/buildDirectionCandidates.ts'
+import { buildCanonicalSurpriseC1RouteShapeContract } from '../src/domain/arc/buildCanonicalSurpriseC1RouteShapeContract.ts'
+import {
+  buildDirectionPlanningSelection,
+  buildIntentSelectedDirectionContext,
+  buildResolvedDirectionContext,
+} from '../src/domain/interpretation/direction/selectedDirectionProjection.ts'
 import { runGeneratePlan, type GeneratePlanResult } from '../src/domain/runGeneratePlan.ts'
 import { roleProjection } from '../src/domain/config/roleProjection.ts'
 import type {
@@ -111,6 +118,22 @@ function emit(event: string, payload: Record<string, unknown>): void {
 
 function field<T>(value: T, provenance: Provenance): ManifestField<T> {
   return { value, provenance }
+}
+
+function directionSelectionFromCandidate(candidate: DirectionCandidate) {
+  return buildDirectionPlanningSelection({
+    id: candidate.id,
+    label: candidate.label,
+    subtitle: candidate.subtitle,
+    pocketId: candidate.pocketId,
+    pocketLabel: candidate.pocketLabel,
+    archetype: candidate.archetype,
+    cluster: candidate.cluster,
+    experienceFamily: candidate.experienceFamily,
+    familyConfidence: candidate.familyConfidence,
+    laneIdentity: candidate.contrastProfile.laneIdentity,
+    macroLane: candidate.contrastProfile.macroLane,
+  })
 }
 
 function classifyUrl(url: string, counters: FetchCounters): void {
@@ -445,57 +468,6 @@ async function run(): Promise<void> {
     conciergeIntent,
     interpretationSource: 'scripts.test-move-2b-accepted-production-tracer',
   })
-  const projectedInput = projectConciergeIntentToIntentInput({
-    conciergeIntent,
-    mode: 'surprise',
-    city: 'San Jose',
-    distanceMode: 'nearby',
-  })
-  const manifest = {
-    caseId: field(spec.id, 'EXPLICIT_CASE_IDENTITY'),
-    label: field(spec.label, 'EXPLICIT_CASE_IDENTITY'),
-    persona: field(spec.persona, 'EXPLICIT_CASE_IDENTITY'),
-    vibe: field(spec.vibe, 'EXPLICIT_CASE_IDENTITY'),
-    city: field('San Jose', 'EXPLICIT_CASE_IDENTITY'),
-    publicMode: field(projectedInput.mode, 'PRODUCTION_DERIVED'),
-    generationStrategy: field('runGeneratePlan', 'PRODUCTION_DERIVED'),
-    sourceMode: field('curated', 'PRODUCTION_DEFAULT'),
-    sourceModeOverrideApplied: field(true, 'PRODUCTION_DEFAULT'),
-    district: field(projectedInput.district ?? null, projectedInput.district ? 'PRODUCTION_DERIVED' : 'ABSENT'),
-    distanceMode: field(projectedInput.distanceMode, 'PRODUCTION_DEFAULT'),
-    starterPackIdentity: field(null, 'ABSENT'),
-    anchorPosture: field(conciergeIntent.anchorPosture, 'PRODUCTION_DERIVED'),
-    seedPosture: field(conciergeIntent.starterLineage, 'PRODUCTION_DERIVED'),
-    routeShapeContractIdentity: field(null, 'ABSENT'),
-    canonicalInterpretationBundleIdentity: field(
-      {
-        conciergeIntentId: conciergeIntent.id,
-        experienceContractId: canonicalInterpretationBundle.experienceContract.id,
-        contractConstraintsId: canonicalInterpretationBundle.contractConstraints.id,
-        strategyFamily: canonicalInterpretationBundle.strategyFamily,
-      },
-      'PRODUCTION_DERIVED',
-    ),
-    staticCorpus: field(
-      {
-        identity: 'src/data/venues.ts#sanJoseVenues',
-        count: sanJoseVenues.length,
-      },
-      'PRODUCTION_DEFAULT',
-    ),
-    liveEnvelope: field(null, 'ABSENT'),
-    waypointAssemblyObserver: field(
-      WAYPOINT_OBSERVER_ENABLED ? 'enabled' : 'disabled',
-      'PRODUCTION_DEFAULT',
-    ),
-    waypointRouteCompetitionEvidence: field(
-      ROUTE_COMPETITION_EVIDENCE_ENABLED ? 'enabled' : 'disabled',
-      'PRODUCTION_DEFAULT',
-    ),
-    timeoutAppliedByCaller: field(process.env.MOVE2B_TRACER_TIMEOUT_CEILING_MS ?? null, process.env.MOVE2B_TRACER_TIMEOUT_CEILING_MS ? 'PRODUCTION_DEFAULT' : 'ABSENT'),
-  }
-
-  emit('input_manifest', { manifest })
   emit('provider_guard_installed', {
     caseId: spec.id,
     providerGuard: {
@@ -525,6 +497,97 @@ async function run(): Promise<void> {
       source: 'scripts.test-move-2b-accepted-production-tracer',
     })
     const strategyAdmissibleWorlds = buildStrategyAdmissibleWorlds({ contractGateWorld })
+    const directionCandidates = buildDirectionCandidates({
+      ranked: districtPreview.ranked,
+      debug: districtPreview.debug,
+      contractGateWorld,
+      strategyAdmissibleWorlds,
+      context: {
+        persona: spec.persona,
+        vibe: spec.vibe,
+        experienceContract: canonicalInterpretationBundle.experienceContract,
+        contractConstraints: canonicalInterpretationBundle.contractConstraints,
+      },
+    })
+    assert(directionCandidates.length > 0, 'Canonical Surprise C1 transport requires a selected direction.')
+    const selectedDirection = directionSelectionFromCandidate(directionCandidates[0]!)
+    const selectedDirectionContext = buildResolvedDirectionContext(selectedDirection)
+    assert(selectedDirectionContext, 'Selected direction context must resolve for canonical C1 transport.')
+    const routeShapeContract = buildCanonicalSurpriseC1RouteShapeContract({
+      conciergeIntent,
+      canonicalInterpretationBundle,
+      selectedDirection,
+      selectedDirectionContext,
+    })
+    const projectedInput = projectConciergeIntentToIntentInput({
+      conciergeIntent,
+      mode: 'surprise',
+      city: 'San Jose',
+      district: selectedDirection.pocketLabel,
+      distanceMode: 'nearby',
+      selectedDirectionContext: buildIntentSelectedDirectionContext(selectedDirection),
+    })
+    const manifest = {
+      caseId: field(spec.id, 'EXPLICIT_CASE_IDENTITY'),
+      label: field(spec.label, 'EXPLICIT_CASE_IDENTITY'),
+      persona: field(spec.persona, 'EXPLICIT_CASE_IDENTITY'),
+      vibe: field(spec.vibe, 'EXPLICIT_CASE_IDENTITY'),
+      city: field('San Jose', 'EXPLICIT_CASE_IDENTITY'),
+      publicMode: field(projectedInput.mode, 'PRODUCTION_DERIVED'),
+      generationStrategy: field('runGeneratePlan', 'PRODUCTION_DERIVED'),
+      sourceMode: field('curated', 'PRODUCTION_DEFAULT'),
+      sourceModeOverrideApplied: field(true, 'PRODUCTION_DEFAULT'),
+      district: field(projectedInput.district ?? null, projectedInput.district ? 'PRODUCTION_DERIVED' : 'ABSENT'),
+      distanceMode: field(projectedInput.distanceMode, 'PRODUCTION_DEFAULT'),
+      selectedDirectionIdentity: field(
+        {
+          selectedDirectionId: selectedDirection.id,
+          selectedPocketId: selectedDirection.pocketId,
+          identity: selectedDirection.identity,
+          family: selectedDirection.experienceFamily,
+          familyConfidence: selectedDirection.familyConfidence,
+        },
+        'PRODUCTION_DERIVED',
+      ),
+      starterPackIdentity: field(null, 'ABSENT'),
+      anchorPosture: field(conciergeIntent.anchorPosture, 'PRODUCTION_DERIVED'),
+      seedPosture: field(conciergeIntent.starterLineage, 'PRODUCTION_DERIVED'),
+      routeShapeContractIdentity: field(
+        {
+          id: routeShapeContract.id,
+          interpretationC1Projection: routeShapeContract.interpretationC1Projection,
+        },
+        'PRODUCTION_DERIVED',
+      ),
+      canonicalInterpretationBundleIdentity: field(
+        {
+          conciergeIntentId: conciergeIntent.id,
+          experienceContractId: canonicalInterpretationBundle.experienceContract.id,
+          contractConstraintsId: canonicalInterpretationBundle.contractConstraints.id,
+          strategyFamily: canonicalInterpretationBundle.strategyFamily,
+        },
+        'PRODUCTION_DERIVED',
+      ),
+      staticCorpus: field(
+        {
+          identity: 'src/data/venues.ts#sanJoseVenues',
+          count: sanJoseVenues.length,
+        },
+        'PRODUCTION_DEFAULT',
+      ),
+      liveEnvelope: field(null, 'ABSENT'),
+      waypointAssemblyObserver: field(
+        WAYPOINT_OBSERVER_ENABLED ? 'enabled' : 'disabled',
+        'PRODUCTION_DEFAULT',
+      ),
+      waypointRouteCompetitionEvidence: field(
+        ROUTE_COMPETITION_EVIDENCE_ENABLED ? 'enabled' : 'disabled',
+        'PRODUCTION_DEFAULT',
+      ),
+      timeoutAppliedByCaller: field(process.env.MOVE2B_TRACER_TIMEOUT_CEILING_MS ?? null, process.env.MOVE2B_TRACER_TIMEOUT_CEILING_MS ? 'PRODUCTION_DEFAULT' : 'ABSENT'),
+    }
+
+    emit('input_manifest', { manifest })
     const startedAt = performance.now()
     const result = await runGeneratePlan(projectedInput, {
       seedVenues: sanJoseVenues,
@@ -537,6 +600,7 @@ async function run(): Promise<void> {
       rankedDistrictPockets: districtPreview.ranked,
       contractGateWorld,
       strategyAdmissibleWorlds,
+      routeShapeContract,
       waypointAssemblyObserver: assemblyObserver.observer,
       waypointRouteCompetitionEvidence: ROUTE_COMPETITION_EVIDENCE_ENABLED,
     })
@@ -557,6 +621,8 @@ async function run(): Promise<void> {
           'buildDistrictOpportunityProfiles',
           'buildContractGateWorldFromCanonical',
           'buildStrategyAdmissibleWorlds',
+          'buildDirectionCandidates',
+          'buildCanonicalSurpriseC1RouteShapeContract',
         ],
         staticCorpusUsed: 'src/data/venues.ts#sanJoseVenues',
         scenarioGenerationPathUsed: false,
