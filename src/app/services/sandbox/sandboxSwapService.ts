@@ -9,6 +9,10 @@ import type { RouteShapeContract } from '../../../domain/types/intent'
 import type { ConciergeIntent } from '../../../domain/types/intent'
 import type { ArcCandidate } from '../../../domain/types/arc'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../../../domain/types/itinerary'
+import type {
+  FormalSwapFinalRouteApprovalDiagnostics,
+  FormalSwapFinalRouteApprovalResult,
+} from './formalSwapFinalRouteApproval'
 
 export interface SwapReplacementCanonicalLike {
   displayName: string
@@ -61,6 +65,7 @@ export interface SwapDebugBreadcrumbLike {
   routeVersion: number
   mismatch: boolean
   lceDiagnostics?: LceRuntimeContractDiagnostics
+  finalRouteApproval?: FormalSwapFinalRouteApprovalDiagnostics
 }
 
 export interface SwapCommitPlanSnapshotLike {
@@ -77,12 +82,18 @@ export interface SwapCommitPlanSnapshotLike {
 
 export class SwapCommitCoreError extends Error {
   readonly compatibility?: SwapCompatibilityResultLike
+  readonly finalRouteApproval?: FormalSwapFinalRouteApprovalResult
 
-  constructor(message: string, compatibility?: SwapCompatibilityResultLike) {
+  constructor(
+    message: string,
+    compatibility?: SwapCompatibilityResultLike,
+    finalRouteApproval?: FormalSwapFinalRouteApprovalResult,
+  ) {
     super(message)
     this.name = 'SwapCommitCoreError'
     Object.setPrototypeOf(this, SwapCommitCoreError.prototype)
     this.compatibility = compatibility
+    this.finalRouteApproval = finalRouteApproval
   }
 }
 
@@ -103,6 +114,13 @@ export interface ApplyPreviewSwapCommitDependencies<
     finalRouteSnapshot: RuntimeRouteArtifact
     routeShapeContract: RouteShapeContract
   }): TCompatibility
+  approveFormalSwapFinalRoute?(params: {
+    role: UserStopRole
+    swapSnapshot: PreviewSwapStateLike<TCanonical>
+    planSnapshot: TPlanSnapshot
+    proposedCandidate: ArcCandidate
+    routeShapeContract: RouteShapeContract
+  }): FormalSwapFinalRouteApprovalResult
   patchFinalRouteStop(params: {
     route: RuntimeRouteArtifact
     targetRole: UserStopRole
@@ -247,6 +265,26 @@ export function applyPreviewSwapCommit<
       compatibility,
     )
   }
+  let finalRouteApprovalDiagnostics: FormalSwapFinalRouteApprovalDiagnostics | undefined
+  let approvedSwappedArc = swapSnapshot.swappedArc
+  if (dependencies.approveFormalSwapFinalRoute) {
+    const approval = dependencies.approveFormalSwapFinalRoute({
+      role,
+      swapSnapshot,
+      planSnapshot,
+      proposedCandidate: swapSnapshot.swappedArc,
+      routeShapeContract: planSnapshot.routeShapeContract,
+    })
+    finalRouteApprovalDiagnostics = approval.diagnostics
+    if (approval.status !== 'approved') {
+      throw new SwapCommitCoreError(
+        `Swap rejected by final route approval (${approval.refusalOwner}): ${approval.reason}.`,
+        compatibility,
+        approval,
+      )
+    }
+    approvedSwappedArc = approval.approvedCandidate
+  }
   const projectedSwapMismatch = sourceSwapStop.venueId !== swapSnapshot.requestedReplacementId
   const canonicalItineraryAfterSwap = projectedSwapMismatch
     ? {
@@ -362,6 +400,7 @@ export function applyPreviewSwapCommit<
       ...lceContract.diagnostics,
       reasonCodes: lceCommitGate.reasonCodes,
     },
+    finalRouteApproval: finalRouteApprovalDiagnostics,
   }
   if (swapMismatch) {
     throw new SwapCommitCoreError(
@@ -374,7 +413,7 @@ export function applyPreviewSwapCommit<
     nextCanonicalStopByRole,
     canonicalItineraryAfterSwap,
     nextItinerary: canonicalItineraryAfterSwap,
-    nextSelectedArc: swapSnapshot.swappedArc,
+    nextSelectedArc: approvedSwappedArc,
     nextFinalRoute,
     swapDebugBreadcrumb,
     previewFeedback: dependencies.getPreviewSwapFeedback(role),

@@ -165,6 +165,7 @@ import {
   SwapCommitCoreError,
   applyPreviewSwapCommit,
 } from '../app/services/sandbox/sandboxSwapService'
+import { approveFormalSwapFinalRoute } from '../app/services/sandbox/formalSwapFinalRouteApproval'
 import { getCrewPolicy } from '../domain/intent/getCrewPolicy'
 import { projectItinerary } from '../domain/itinerary/projectItinerary'
 import { buildTonightSignals } from '../domain/journey/buildTonightSignals'
@@ -18214,6 +18215,20 @@ export function SandboxConciergePage({
         {
           applyCanonicalIdentityToItinerary,
           evaluateSwapCompatibility,
+          approveFormalSwapFinalRoute: ({
+            role: approvalRole,
+            planSnapshot: approvalPlanSnapshot,
+            proposedCandidate,
+            routeShapeContract,
+          }) =>
+            approveFormalSwapFinalRoute({
+              targetRole: approvalRole,
+              proposedCandidate,
+              intent: approvalPlanSnapshot.intentProfile,
+              crewPolicy: getCrewPolicy(approvalPlanSnapshot.intentProfile.crew),
+              lens: approvalPlanSnapshot.lens,
+              routeShapeContract,
+            }),
           patchFinalRouteStop,
           getSharedItineraryStopFallbackImageUrl,
           hydrateRuntimeRouteStopDisplayFields,
