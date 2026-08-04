@@ -1,6 +1,7 @@
 import type { PersonaMode } from './intent'
 import type { UserStopRole } from './itinerary'
 import type { BearingsPlaceRightClauseAttribution } from '../bearings/routePlaceRightContract'
+import type { WaypointC1ApprovalDiagnostics } from '../waypoint/selectWaypointC1ApprovalCandidates'
 
 export type GreatStopGateStatus = 'PASS' | 'FAIL'
 
@@ -379,6 +380,7 @@ export interface GreatStopGateSelectionDiagnostics {
   bestAnchorPreservingFailingCandidate?: GreatStopGateCandidateSummary
   greatStopCandidateFailureDetails?: GreatStopCandidateFailureDetails
   compactnessRankingDiagnostics?: GreatStopCompactnessRankingDiagnostics
+  waypointC1Approval?: WaypointC1ApprovalDiagnostics
   structuralFailureReasons?: string[]
   passingCandidateCount?: number
   selectedGateResult?: GreatStopGateResult

@@ -95,6 +95,7 @@ import {
 import { buildWaypointRouteCompetitionEvidence } from '../integrations/waypoint/coordination/buildWaypointRouteCompetitionEvidence'
 import { projectRouteShapeOwnership } from '../integrations/waypoint/coordination/projectRouteShapeOwnership'
 import type { WaypointRankedCandidate } from '../integrations/waypoint/core'
+import { selectWaypointC1ApprovalCandidates } from './waypoint/selectWaypointC1ApprovalCandidates'
 import type { RankedPocket } from '../engines/district/types/districtTypes'
 import type { ContractGateWorld } from './bearings/buildContractGateWorld'
 import {
@@ -3750,7 +3751,7 @@ async function runGeneratePlanInternal(
   }
   let greatStopGateSelectionDiagnostics: GreatStopGateSelectionDiagnostics | undefined
   const greatStopSelectionActive = true
-  const greatStopCandidatePool =
+  const greatStopCandidatePoolBeforeC1Approval =
     buildSelectedCandidatePreservationRequired
       ? buildSelectedCandidatePreservationCandidates
       : buildRequiredAnchorPreservationRequired
@@ -3758,6 +3759,11 @@ async function runGeneratePlanInternal(
         : curateHardCommitRequired
           ? curateHardCommitCandidates
           : rankedCandidates
+  const waypointC1ApprovalSelection = selectWaypointC1ApprovalCandidates({
+    candidates: greatStopCandidatePoolBeforeC1Approval,
+    routeShapeContract: options.routeShapeContract,
+  })
+  const greatStopCandidatePool = waypointC1ApprovalSelection.candidates
   const bearingsMovementConstraints = options.routeShapeContract
     ? projectRouteShapeOwnership({ routeShapeContract: options.routeShapeContract })
         .bearingsMovementConstraints
@@ -3855,6 +3861,7 @@ async function runGeneratePlanInternal(
   if (greatStopSelection) {
     greatStopGateSelectionDiagnostics = {
       ...greatStopSelection.diagnostics,
+      waypointC1Approval: waypointC1ApprovalSelection.diagnostics,
       contractArtifactGreatStopProjection: contractArtifactGreatStopProjectionDiagnostics,
     } as GreatStopGateSelectionDiagnostics
     if (!greatStopSelection.selectedCandidate) {
