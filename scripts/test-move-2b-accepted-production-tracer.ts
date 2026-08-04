@@ -12,6 +12,10 @@ import { buildStrategyAdmissibleWorlds } from '../src/domain/bearings/buildStrat
 import { buildDistrictOpportunityProfiles } from '../src/domain/interpretation/district/intelligence/buildDistrictOpportunityProfiles.ts'
 import { runGeneratePlan, type GeneratePlanResult } from '../src/domain/runGeneratePlan.ts'
 import { roleProjection } from '../src/domain/config/roleProjection.ts'
+import type {
+  WaypointAssemblyObservationEvent,
+  WaypointAssemblyObservationType,
+} from '../src/domain/arc/waypointAssemblyObserver.ts'
 import type { PersonaMode, VibeAnchor } from '../src/domain/types/intent.ts'
 import type { UserStopRole } from '../src/domain/types/itinerary.ts'
 
@@ -44,6 +48,24 @@ interface FetchCounters {
   firstBlockedUrl: string | null
 }
 
+interface WaypointAssemblyObserverState {
+  enabled: boolean
+  detailLimit: number
+  progressInterval: number
+  totalEventsObserved: number
+  totalDetailedEventsEmitted: number
+  droppedDetailCount: number
+  truncationOccurred: boolean
+  eventCounts: Partial<Record<WaypointAssemblyObservationType, number>>
+  firstObservedTypes: WaypointAssemblyObservationType[]
+  rolePoolSizes?: WaypointAssemblyObservationEvent['rolePoolSizes']
+  lastPhaseEntered: WaypointAssemblyObservationEvent | null
+  lastPhaseCompleted: WaypointAssemblyObservationEvent | null
+  latestEnteredOperation: WaypointAssemblyObservationEvent | null
+  latestReturnedOperation: WaypointAssemblyObservationEvent | null
+  assemblyCompleted: boolean
+}
+
 const CASES: Record<CaseId, CaseSpec> = {
   'romantic-cultured': {
     id: 'romantic-cultured',
@@ -67,6 +89,13 @@ const CASES: Record<CaseId, CaseSpec> = {
 
 const UNAVAILABLE = 'UNAVAILABLE_WITHOUT_INSTRUMENTATION'
 const caseArg = process.argv.slice(2)
+const WAYPOINT_OBSERVER_ENABLED = process.env.MOVE2B_WAYPOINT_ASSEMBLY_OBSERVER === '1'
+const WAYPOINT_OBSERVER_DETAIL_LIMIT = Number(
+  process.env.MOVE2B_WAYPOINT_ASSEMBLY_DETAIL_LIMIT ?? 80,
+)
+const WAYPOINT_OBSERVER_PROGRESS_INTERVAL = Number(
+  process.env.MOVE2B_WAYPOINT_ASSEMBLY_PROGRESS_INTERVAL ?? 1000,
+)
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -98,6 +127,133 @@ function repoStatus(): string {
   return execFileSync('git', ['status', '--short', '--branch'], {
     encoding: 'utf8',
   }).trim()
+}
+
+function createWaypointAssemblyObserver(caseId: CaseId): {
+  observer?: (event: WaypointAssemblyObservationEvent) => void
+  state: WaypointAssemblyObserverState
+  summary: () => Record<string, unknown>
+} {
+  const state: WaypointAssemblyObserverState = {
+    enabled: WAYPOINT_OBSERVER_ENABLED,
+    detailLimit: WAYPOINT_OBSERVER_DETAIL_LIMIT,
+    progressInterval: WAYPOINT_OBSERVER_PROGRESS_INTERVAL,
+    totalEventsObserved: 0,
+    totalDetailedEventsEmitted: 0,
+    droppedDetailCount: 0,
+    truncationOccurred: false,
+    eventCounts: {},
+    firstObservedTypes: [],
+    lastPhaseEntered: null,
+    lastPhaseCompleted: null,
+    latestEnteredOperation: null,
+    latestReturnedOperation: null,
+    assemblyCompleted: false,
+  }
+  const seenTypes = new Set<WaypointAssemblyObservationType>()
+
+  function compactEvent(event: WaypointAssemblyObservationEvent) {
+    return {
+      type: event.type,
+      stage: event.stage,
+      proves: event.proves,
+      operationId: event.operationId,
+      coreCombinationIndex: event.coreCombinationIndex,
+      wildcardComparisonIndex: event.wildcardComparisonIndex,
+      candidateCount: event.candidateCount,
+      rolePoolSizes: event.rolePoolSizes,
+      invalidReasonCodes: event.invalidReasonCodes,
+      feasibilityReasonCodes: event.feasibilityReasonCodes,
+      result: event.result,
+      combination: event.combination,
+      wildcard: event.wildcard,
+    }
+  }
+
+  function summary() {
+    return {
+      enabled: state.enabled,
+      detailLimit: state.detailLimit,
+      progressInterval: state.progressInterval,
+      totalEventsObserved: state.totalEventsObserved,
+      totalDetailedEventsEmitted: state.totalDetailedEventsEmitted,
+      droppedDetailCount: state.droppedDetailCount,
+      truncationOccurred: state.truncationOccurred,
+      eventCounts: state.eventCounts,
+      firstObservedTypes: state.firstObservedTypes,
+      rolePoolSizes: state.rolePoolSizes,
+      lastPhaseEntered: state.lastPhaseEntered ? compactEvent(state.lastPhaseEntered) : null,
+      lastPhaseCompleted: state.lastPhaseCompleted ? compactEvent(state.lastPhaseCompleted) : null,
+      latestEnteredOperation: state.latestEnteredOperation
+        ? compactEvent(state.latestEnteredOperation)
+        : null,
+      latestReturnedOperation: state.latestReturnedOperation
+        ? compactEvent(state.latestReturnedOperation)
+        : null,
+      assemblyCompleted: state.assemblyCompleted,
+    }
+  }
+
+  if (!WAYPOINT_OBSERVER_ENABLED) {
+    return { state, summary }
+  }
+
+  function observer(event: WaypointAssemblyObservationEvent): void {
+    state.totalEventsObserved += 1
+    state.eventCounts[event.type] = (state.eventCounts[event.type] ?? 0) + 1
+    if (!seenTypes.has(event.type)) {
+      seenTypes.add(event.type)
+      state.firstObservedTypes.push(event.type)
+    }
+    if (event.rolePoolSizes) {
+      state.rolePoolSizes = event.rolePoolSizes
+    }
+    if (event.proves === 'entry') {
+      state.lastPhaseEntered = event
+      state.latestEnteredOperation = event
+    } else if (event.proves === 'return') {
+      state.latestReturnedOperation = event
+    } else {
+      state.lastPhaseCompleted = event
+      if (event.type === 'assembly_completed') {
+        state.assemblyCompleted = true
+      }
+    }
+
+    const firstType = state.eventCounts[event.type] === 1
+    const underDetailLimit = state.totalDetailedEventsEmitted < state.detailLimit
+    const progressDue = state.totalEventsObserved % state.progressInterval === 0
+
+    if (firstType || underDetailLimit) {
+      state.totalDetailedEventsEmitted += 1
+      emit('waypoint_assembly_observation', {
+        caseId,
+        sequence: state.totalEventsObserved,
+        boundedness: {
+          detailLimit: state.detailLimit,
+          progressInterval: state.progressInterval,
+          totalEventsObserved: state.totalEventsObserved,
+          totalDetailedEventsEmitted: state.totalDetailedEventsEmitted,
+          droppedDetailCount: state.droppedDetailCount,
+          truncationOccurred: state.truncationOccurred,
+        },
+        observation: compactEvent(event),
+      })
+      return
+    }
+
+    state.droppedDetailCount += 1
+    state.truncationOccurred = true
+    if (progressDue) {
+      emit('waypoint_assembly_progress', {
+        caseId,
+        sequence: state.totalEventsObserved,
+        summary: summary(),
+      })
+    }
+  }
+
+  return { observer, state, summary }
 }
 
 function assertCanonicalTracerSource(): void {
@@ -251,6 +407,7 @@ function parseCase(): CaseSpec {
 async function run(): Promise<void> {
   const spec = parseCase()
   assertCanonicalTracerSource()
+  const assemblyObserver = createWaypointAssemblyObserver(spec.id)
 
   const counters: FetchCounters = {
     attemptedProviderCalls: 0,
@@ -318,6 +475,10 @@ async function run(): Promise<void> {
       'PRODUCTION_DEFAULT',
     ),
     liveEnvelope: field(null, 'ABSENT'),
+    waypointAssemblyObserver: field(
+      WAYPOINT_OBSERVER_ENABLED ? 'enabled' : 'disabled',
+      'PRODUCTION_DEFAULT',
+    ),
     timeoutAppliedByCaller: field(process.env.MOVE2B_TRACER_TIMEOUT_CEILING_MS ?? null, process.env.MOVE2B_TRACER_TIMEOUT_CEILING_MS ? 'PRODUCTION_DEFAULT' : 'ABSENT'),
   }
 
@@ -332,6 +493,11 @@ async function run(): Promise<void> {
   emit('case_start', {
     caseId: spec.id,
     generationAuthority: 'runGeneratePlan',
+    waypointAssemblyObserver: {
+      enabled: assemblyObserver.state.enabled,
+      detailLimit: assemblyObserver.state.detailLimit,
+      progressInterval: assemblyObserver.state.progressInterval,
+    },
     repositoryStatusBeforeCase: repoStatus(),
   })
 
@@ -358,6 +524,7 @@ async function run(): Promise<void> {
       rankedDistrictPockets: districtPreview.ranked,
       contractGateWorld,
       strategyAdmissibleWorlds,
+      waypointAssemblyObserver: assemblyObserver.observer,
     })
     const elapsedMs = performance.now() - startedAt
     assert(
@@ -387,6 +554,7 @@ async function run(): Promise<void> {
         status: 'closed',
         ...counters,
       },
+      waypointAssemblyObserver: assemblyObserver.summary(),
       repositoryStatusAfterCase: repoStatus(),
     })
   } catch (error) {
@@ -397,6 +565,7 @@ async function run(): Promise<void> {
         status: counters.attemptedProviderCalls === 0 ? 'closed' : 'blocked_attempt',
         ...counters,
       },
+      waypointAssemblyObserver: assemblyObserver.summary(),
       repositoryStatusAfterCase: repoStatus(),
     })
     throw error

@@ -28,6 +28,7 @@
  * - application-specific artifact projection
  */
 import { assembleArcCandidates } from './arc/assembleArcCandidates'
+import type { WaypointAssemblyObserver } from './arc/waypointAssemblyObserver'
 import { buildRolePools, type RolePools } from './arc/buildRolePools'
 import {
   getArcStopBaseVenueId,
@@ -200,6 +201,8 @@ export interface RunGeneratePlanOptions {
   greatStopGateLocationClass?: BuildLocationClass
   // Contract-driven Waypoint ranking input. Affects candidate order before Great Stop.
   routeShapeContract?: RouteShapeContract
+  // Diagnostic-only Waypoint assembly observer. Does not affect candidate evaluation.
+  waypointAssemblyObserver?: WaypointAssemblyObserver
 }
 
 interface RunGeneratePlanInternalOptions extends RunGeneratePlanOptions {
@@ -3339,6 +3342,7 @@ async function runGeneratePlanInternal(
     lens,
     rolePools,
     arcScoringOptions,
+    options.waypointAssemblyObserver,
   )
   const arcCandidates = arcAssembly.candidates
   const anchorApplied =

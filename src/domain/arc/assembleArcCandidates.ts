@@ -43,6 +43,49 @@ import type { CrewPolicy } from '../types/crewPolicies'
 import type { ExperienceLens } from '../types/experienceLens'
 import type { IntentProfile } from '../types/intent'
 import type { InternalRole } from '../types/venue'
+import type {
+  WaypointAssemblyObservationEvent,
+  WaypointAssemblyObserver,
+  WaypointAssemblyStopIdentity,
+} from './waypointAssemblyObserver'
+
+function observeAssembly(
+  observer: WaypointAssemblyObserver | undefined,
+  event: Omit<WaypointAssemblyObservationEvent, 'observerVersion' | 'owner'>,
+): void {
+  observer?.({
+    observerVersion: 'waypoint-assembly-observer.v1',
+    owner: 'Waypoint',
+    ...event,
+  })
+}
+
+function assemblyStopIdentity(stop: ArcStop): WaypointAssemblyStopIdentity {
+  return {
+    role: stop.role,
+    candidateId: getArcStopCandidateId(stop),
+    baseVenueId: getArcStopBaseVenueId(stop),
+    venueId: stop.scoredVenue.venue.id,
+  }
+}
+
+function scoredVenueStopIdentity(
+  candidate: ScoredVenue,
+  role: InternalRole,
+): WaypointAssemblyStopIdentity {
+  return {
+    role,
+    candidateId: getScoredVenueCandidateId(candidate),
+    baseVenueId: getScoredVenueBaseVenueId(candidate),
+    venueId: candidate.venue.id,
+  }
+}
+
+function operationIdForStops(prefix: string, stops: readonly ArcStop[]): string {
+  return `${prefix}:${stops
+    .map((stop) => `${stop.role}:${getArcStopCandidateId(stop)}`)
+    .join('|')}`
+}
 
 function scoreSupportReadability(
   support: ScoredVenue,
@@ -1000,8 +1043,26 @@ export function assembleArcCandidates(
   lens: ExperienceLens,
   prebuiltPools?: RolePools,
   scoringOptions?: ScoreArcAssemblyOptions,
+  observer?: WaypointAssemblyObserver,
 ): AssembleArcCandidatesResult {
+  observeAssembly(observer, {
+    type: 'assembly_entered',
+    stage: 'assembly',
+    proves: 'entry',
+    candidateCount: scoredVenues.length,
+  })
   const pools = prebuiltPools ?? buildRolePools(scoredVenues, crewPolicy, lens)
+  observeAssembly(observer, {
+    type: 'role_pools_received',
+    stage: 'role_pools',
+    proves: 'entry',
+    rolePoolSizes: {
+      warmup: pools.warmup.length,
+      peak: pools.peak.length,
+      wildcard: pools.wildcard.length,
+      cooldown: pools.cooldown.length,
+    },
+  })
   const anchorRole =
     intent.planningMode === 'user-led' && intent.anchor?.venueId
       ? toInternalRole(intent.anchor.role ?? 'highlight')
@@ -1057,13 +1118,25 @@ export function assembleArcCandidates(
     bestRejectedAcceptanceBonusValue: undefined,
   }
   const candidates: ArcCandidate[] = []
+  let coreCombinationIndex = 0
+  let wildcardComparisonIndex = 0
 
   for (const coreRoute of coordinateArcCoreRouteShapes({
     warmupCandidates: pools.warmup,
     peakCandidates: pools.peak,
     cooldownCandidates: pools.cooldown,
   })) {
+        coreCombinationIndex += 1
         const { warmup, peak, cooldown, stops: baseStops } = coreRoute
+        const baseOperationId = operationIdForStops('core', baseStops)
+        observeAssembly(observer, {
+          type: 'core_combination_entered',
+          stage: 'core_combination',
+          proves: 'entry',
+          operationId: baseOperationId,
+          coreCombinationIndex,
+          combination: baseStops.map(assemblyStopIdentity),
+        })
         const baseIncludesAnchor =
           anchorRole && anchorVenueId
             ? stopsMatchRole(baseStops, anchorRole, anchorVenueId)
@@ -1087,13 +1160,47 @@ export function assembleArcCandidates(
             diagnosticScore.totalScore,
           )
         }
+        observeAssembly(observer, {
+          type: 'validation_entered',
+          stage: 'validation',
+          proves: 'entry',
+          operationId: baseOperationId,
+          coreCombinationIndex,
+          combination: baseStops.map(assemblyStopIdentity),
+        })
         const baseInvalidationReasons = getInvalidArcCombinationReasons(
           baseStops,
           intent,
           crewPolicy,
           lens,
         )
+        observeAssembly(observer, {
+          type: 'validation_returned',
+          stage: 'validation',
+          proves: 'return',
+          operationId: baseOperationId,
+          coreCombinationIndex,
+          invalidReasonCodes: [...baseInvalidationReasons],
+          result: baseInvalidationReasons.length > 0 ? 'invalid' : 'valid',
+        })
+        observeAssembly(observer, {
+          type: 'bearings_feasibility_received',
+          stage: 'validation',
+          proves: 'return',
+          operationId: baseOperationId,
+          coreCombinationIndex,
+          feasibilityReasonCodes: baseInvalidationReasons.filter((reason) => reason === 'geography'),
+          result: baseInvalidationReasons.includes('geography') ? 'geography_invalid' : 'no_geography_reason',
+        })
         if (baseInvalidationReasons.length > 0) {
+          observeAssembly(observer, {
+            type: 'invalid_combination_rejected',
+            stage: 'validation',
+            proves: 'completion',
+            operationId: baseOperationId,
+            coreCombinationIndex,
+            invalidReasonCodes: [...baseInvalidationReasons],
+          })
           if (baseIncludesAnchor) {
             invalidatedAnchorArcCount += 1
             for (const reason of baseInvalidationReasons) {
@@ -1122,6 +1229,15 @@ export function assembleArcCandidates(
           hasWildcard: false,
         })
         candidates.push(baseCandidate)
+        observeAssembly(observer, {
+          type: 'candidate_retained',
+          stage: 'retention',
+          proves: 'completion',
+          operationId: baseOperationId,
+          coreCombinationIndex,
+          candidateCount: candidates.length,
+          result: 'base_candidate_retained',
+        })
         if (baseIncludesAnchor) {
           postValidationAnchorArcCount += 1
           bestValidatedAnchorArc = updateBestAnchorDiagnostic(
@@ -1131,11 +1247,30 @@ export function assembleArcCandidates(
           )
         }
 
+        observeAssembly(observer, {
+          type: 'wildcard_phase_entered',
+          stage: 'wildcard_comparison',
+          proves: 'entry',
+          operationId: baseOperationId,
+          coreCombinationIndex,
+        })
         for (const wildcard of surpriseCandidates) {
+          wildcardComparisonIndex += 1
           const candidateTier = strongSurpriseIds.has(getScoredVenueCandidateId(wildcard))
             ? 'strong'
             : 'nearStrong'
           const wildcardStops = buildArcWildcardStops(baseStops, wildcard)
+          const wildcardOperationId = operationIdForStops('wildcard', wildcardStops)
+          observeAssembly(observer, {
+            type: 'wildcard_comparison_entered',
+            stage: 'wildcard_comparison',
+            proves: 'entry',
+            operationId: wildcardOperationId,
+            coreCombinationIndex,
+            wildcardComparisonIndex,
+            combination: wildcardStops.map(assemblyStopIdentity),
+            wildcard: scoredVenueStopIdentity(wildcard, 'wildcard'),
+          })
           const wildcardIncludesAnchor =
             anchorRole && anchorVenueId
               ? stopsMatchRole(wildcardStops, anchorRole, anchorVenueId)
@@ -1162,13 +1297,51 @@ export function assembleArcCandidates(
           let heldWildcardCandidate: ArcCandidate | undefined
           let heldWildcardComparableScore = baseScore.totalScore
 
+          observeAssembly(observer, {
+            type: 'validation_entered',
+            stage: 'validation',
+            proves: 'entry',
+            operationId: wildcardOperationId,
+            coreCombinationIndex,
+            wildcardComparisonIndex,
+            combination: wildcardStops.map(assemblyStopIdentity),
+          })
           const wildcardInvalidationReasons = getInvalidArcCombinationReasons(
             wildcardStops,
             intent,
             crewPolicy,
             lens,
           )
+          observeAssembly(observer, {
+            type: 'validation_returned',
+            stage: 'validation',
+            proves: 'return',
+            operationId: wildcardOperationId,
+            coreCombinationIndex,
+            wildcardComparisonIndex,
+            invalidReasonCodes: [...wildcardInvalidationReasons],
+            result: wildcardInvalidationReasons.length > 0 ? 'invalid' : 'valid',
+          })
+          observeAssembly(observer, {
+            type: 'bearings_feasibility_received',
+            stage: 'validation',
+            proves: 'return',
+            operationId: wildcardOperationId,
+            coreCombinationIndex,
+            wildcardComparisonIndex,
+            feasibilityReasonCodes: wildcardInvalidationReasons.filter((reason) => reason === 'geography'),
+            result: wildcardInvalidationReasons.includes('geography') ? 'geography_invalid' : 'no_geography_reason',
+          })
           if (wildcardInvalidationReasons.length > 0) {
+            observeAssembly(observer, {
+              type: 'invalid_combination_rejected',
+              stage: 'validation',
+              proves: 'completion',
+              operationId: wildcardOperationId,
+              coreCombinationIndex,
+              wildcardComparisonIndex,
+              invalidReasonCodes: [...wildcardInvalidationReasons],
+            })
             if (wildcardIncludesAnchor) {
               invalidatedAnchorArcCount += 1
               for (const reason of wildcardInvalidationReasons) {
@@ -1253,7 +1426,32 @@ export function assembleArcCandidates(
               }
             }
           }
+          observeAssembly(observer, {
+            type: 'wildcard_comparison_returned',
+            stage: 'wildcard_comparison',
+            proves: 'return',
+            operationId: wildcardOperationId,
+            coreCombinationIndex,
+            wildcardComparisonIndex,
+            result: heldWildcardCandidate ? 'candidate_held' : 'no_candidate_held',
+          })
 
+          observeAssembly(observer, {
+            type: 'promotion_phase_entered',
+            stage: 'promotion_evaluation',
+            proves: 'entry',
+            operationId: wildcardOperationId,
+            coreCombinationIndex,
+            wildcardComparisonIndex,
+          })
+          observeAssembly(observer, {
+            type: 'promotion_evaluation_entered',
+            stage: 'promotion_evaluation',
+            proves: 'entry',
+            operationId: wildcardOperationId,
+            coreCombinationIndex,
+            wildcardComparisonIndex,
+          })
           const promotionAssessment = evaluateSurprisePromotion({
             baseStops,
             wildcard,
@@ -1263,6 +1461,15 @@ export function assembleArcCandidates(
             pools,
             heldWildcardComparableScore,
             scoringOptions,
+          })
+          observeAssembly(observer, {
+            type: 'promotion_evaluation_returned',
+            stage: 'promotion_evaluation',
+            proves: 'return',
+            operationId: wildcardOperationId,
+            coreCombinationIndex,
+            wildcardComparisonIndex,
+            result: promotionAssessment.outcome,
           })
           const promotedIncludesAnchor =
             anchorRole &&
@@ -1304,6 +1511,16 @@ export function assembleArcCandidates(
               ),
             })
             candidates.push(promotedCandidate)
+            observeAssembly(observer, {
+              type: 'candidate_retained',
+              stage: 'retention',
+              proves: 'completion',
+              operationId: wildcardOperationId,
+              coreCombinationIndex,
+              wildcardComparisonIndex,
+              candidateCount: candidates.length,
+              result: 'promoted_candidate_retained',
+            })
             if (promotedIncludesAnchor) {
               postValidationAnchorArcCount += 1
               bestValidatedAnchorArc = updateBestAnchorDiagnostic(
@@ -1337,6 +1554,16 @@ export function assembleArcCandidates(
               },
             }
             candidates.push(finalizedHeldWildcardCandidate)
+            observeAssembly(observer, {
+              type: 'candidate_retained',
+              stage: 'retention',
+              proves: 'completion',
+              operationId: wildcardOperationId,
+              coreCombinationIndex,
+              wildcardComparisonIndex,
+              candidateCount: candidates.length,
+              result: 'wildcard_candidate_retained',
+            })
             if (wildcardIncludesAnchor) {
               postValidationAnchorArcCount += 1
               bestValidatedAnchorArc = updateBestAnchorDiagnostic(
@@ -1382,6 +1609,13 @@ export function assembleArcCandidates(
         .filter((record) => selectedFallbackCandidateIds.has(record.candidate.id))
         .map((record) => record.candidate),
     )
+    observeAssembly(observer, {
+      type: 'candidate_retained',
+      stage: 'retention',
+      proves: 'completion',
+      candidateCount: candidates.length,
+      result: 'fallback_candidates_retained',
+    })
   }
 
   const rankedCandidates = rankArcCandidatesForAssembly(candidates)
@@ -1430,6 +1664,18 @@ export function assembleArcCandidates(
         }
       : undefined
 
+  observeAssembly(observer, {
+    type: 'assembly_completed',
+    stage: 'completion',
+    proves: 'completion',
+    candidateCount: prunedCandidates.length,
+    rolePoolSizes: {
+      warmup: pools.warmup.length,
+      peak: pools.peak.length,
+      wildcard: pools.wildcard.length,
+      cooldown: pools.cooldown.length,
+    },
+  })
   return {
     candidates: prunedCandidates,
     preTop40Candidates: rankedCandidates,
