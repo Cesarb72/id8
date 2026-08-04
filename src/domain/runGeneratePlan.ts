@@ -68,6 +68,10 @@ import type { CanonicalInterpretationBundle } from './interpretation/buildCanoni
 import { applyTargetedRefinement } from './refinement/applyTargetedRefinement'
 import { getRefinementDirective } from './refinement/getRefinementDirective'
 import { selectRefinementTargetRoles } from './refinement/selectRefinementTargetRoles'
+import {
+  approveFinalRouteCandidate,
+  type FinalRouteApprovalResult,
+} from './routeApproval/approveFinalRouteCandidate'
 import { computeLiveCompetitiveness } from './retrieval/computeLiveCompetitiveness'
 import { getNearbyAlternatives } from './retrieval/getNearbyAlternatives'
 import { applyContractRetrievalPressure } from './retrieval/applyContractRetrievalPressure'
@@ -3894,6 +3898,7 @@ async function runGeneratePlanInternal(
           )
       : []
   let refinementPathContext: RefinementPathContext | undefined
+  let targetedRefinementFinalRouteApproval: FinalRouteApprovalResult | undefined
 
   if (options.baselineArc && (intent.refinementModes?.length ?? 0) > 0) {
     const directive = getRefinementDirective(intent.refinementModes![0]!)
@@ -3934,7 +3939,34 @@ async function runGeneratePlanInternal(
         winnerInertiaNotes: targeted.winnerInertiaNotes,
       }
       if (targeted.nextArc) {
-        selectedArc = targeted.nextArc
+        if (options.routeShapeContract) {
+          targetedRefinementFinalRouteApproval = approveFinalRouteCandidate({
+            source: 'domain.runGeneratePlan.targetedRefinementFinalRouteApproval',
+            targetRole: targeted.primaryTargetRole ?? targetSelection.primaryTargetRole,
+            proposedCandidate: targeted.nextArc,
+            intent: planningIntent,
+            crewPolicy,
+            lens,
+            routeShapeContract: options.routeShapeContract,
+            locationClass: options.greatStopGateLocationClass,
+          })
+          if (targetedRefinementFinalRouteApproval.status === 'approved') {
+            selectedArc = targetedRefinementFinalRouteApproval.approvedCandidate
+          } else {
+            refinementPathContext = {
+              ...refinementPathContext,
+              targetedChangeSucceeded: false,
+              fullPlanFallbackUsed: false,
+              winnerInertiaReduced: false,
+              winnerInertiaNotes: [
+                ...refinementPathContext.winnerInertiaNotes,
+                `Targeted refinement final-route approval refused by ${targetedRefinementFinalRouteApproval.refusalOwner}: ${targetedRefinementFinalRouteApproval.reason}.`,
+              ],
+            }
+          }
+        } else {
+          selectedArc = targeted.nextArc
+        }
       } else {
         selectedArc =
           rankedCandidates[0] ??
@@ -5047,6 +5079,7 @@ async function runGeneratePlanInternal(
     categoryDiversity,
     greatStopGateSelectionDiagnostics,
     greatStopGateResult,
+    targetedRefinementFinalRouteApproval,
     ...(waypointRouteCompetitionDiagnostics ? { waypointRouteCompetitionDiagnostics } : {}),
     strictShapeEnabled,
     boundaryDiagnostics,
