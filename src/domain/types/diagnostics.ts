@@ -41,6 +41,7 @@ import type {
 import type { BearingsRuntimeHoursDiagnostics } from '../bearings/runtimeHoursValidationDiagnostics'
 import type { GreatStopGateResult, GreatStopGateSelectionDiagnostics } from './greatStopGate'
 import type { InternalRole } from './venue'
+import type { WaypointRouteCompetitionDiagnostics } from './waypointRouteCompetitionDiagnostics'
 
 export type FallbackRelaxationLevel = 'none' | 'lens-soft' | 'lens-off'
 export type SelectionStrengthLabel =
@@ -1574,6 +1575,7 @@ export interface GenerationDiagnostics {
   categoryDiversity: CategoryDiversityDiagnostics
   greatStopGateResult?: GreatStopGateResult
   greatStopGateSelectionDiagnostics?: GreatStopGateSelectionDiagnostics
+  waypointRouteCompetitionDiagnostics?: WaypointRouteCompetitionDiagnostics
   strictShapeEnabled: boolean
   boundaryDiagnostics: BoundaryDiagnostics
   overlapDiagnostics?: OverlapDiagnostics

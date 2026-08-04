@@ -90,6 +90,8 @@ const CASES: Record<CaseId, CaseSpec> = {
 const UNAVAILABLE = 'UNAVAILABLE_WITHOUT_INSTRUMENTATION'
 const caseArg = process.argv.slice(2)
 const WAYPOINT_OBSERVER_ENABLED = process.env.MOVE2B_WAYPOINT_ASSEMBLY_OBSERVER === '1'
+const ROUTE_COMPETITION_EVIDENCE_ENABLED =
+  process.env.MOVE2B_ROUTE_COMPETITION_EVIDENCE === '1'
 const WAYPOINT_OBSERVER_DETAIL_LIMIT = Number(
   process.env.MOVE2B_WAYPOINT_ASSEMBLY_DETAIL_LIMIT ?? 80,
 )
@@ -387,6 +389,13 @@ function returnedEvidence(result: GeneratePlanResult, elapsedMs: number, counter
     approvedRoute: approvedRoute(result),
     shownRoute: shownRoute(result),
     assessedShownParity: parity(result),
+    routeCompetitionEvidence: result.trace.waypointRouteCompetitionDiagnostics ?? {
+      enabled: false,
+      status: UNAVAILABLE,
+      reason: ROUTE_COMPETITION_EVIDENCE_ENABLED
+        ? 'diagnostic_not_returned'
+        : 'diagnostic_disabled',
+    },
     providerAttempts: counters.attemptedProviderCalls,
     providerHits: {
       successfulProviderCalls: counters.successfulProviderCalls,
@@ -479,6 +488,10 @@ async function run(): Promise<void> {
       WAYPOINT_OBSERVER_ENABLED ? 'enabled' : 'disabled',
       'PRODUCTION_DEFAULT',
     ),
+    waypointRouteCompetitionEvidence: field(
+      ROUTE_COMPETITION_EVIDENCE_ENABLED ? 'enabled' : 'disabled',
+      'PRODUCTION_DEFAULT',
+    ),
     timeoutAppliedByCaller: field(process.env.MOVE2B_TRACER_TIMEOUT_CEILING_MS ?? null, process.env.MOVE2B_TRACER_TIMEOUT_CEILING_MS ? 'PRODUCTION_DEFAULT' : 'ABSENT'),
   }
 
@@ -525,6 +538,7 @@ async function run(): Promise<void> {
       contractGateWorld,
       strategyAdmissibleWorlds,
       waypointAssemblyObserver: assemblyObserver.observer,
+      waypointRouteCompetitionEvidence: ROUTE_COMPETITION_EVIDENCE_ENABLED,
     })
     const elapsedMs = performance.now() - startedAt
     assert(

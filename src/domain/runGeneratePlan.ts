@@ -92,6 +92,7 @@ import {
   rankArcCandidatesWithDiagnostics,
   type WaypointContractInput,
 } from '../integrations/waypoint/rankArcCandidates'
+import { buildWaypointRouteCompetitionEvidence } from '../integrations/waypoint/coordination/buildWaypointRouteCompetitionEvidence'
 import { projectRouteShapeOwnership } from '../integrations/waypoint/coordination/projectRouteShapeOwnership'
 import type { WaypointRankedCandidate } from '../integrations/waypoint/core'
 import type { RankedPocket } from '../engines/district/types/districtTypes'
@@ -203,6 +204,8 @@ export interface RunGeneratePlanOptions {
   routeShapeContract?: RouteShapeContract
   // Diagnostic-only Waypoint assembly observer. Does not affect candidate evaluation.
   waypointAssemblyObserver?: WaypointAssemblyObserver
+  // Diagnostic-only route competition evidence. Does not affect ranking or selection.
+  waypointRouteCompetitionEvidence?: boolean
 }
 
 interface RunGeneratePlanInternalOptions extends RunGeneratePlanOptions {
@@ -4854,6 +4857,30 @@ async function runGeneratePlanInternal(
     intent: planningIntent,
     locationClass: options.greatStopGateLocationClass,
   })
+  const greatStopGateResult = buildGreatStopGateResult({
+    selectedArc,
+    intent: planningIntent,
+    locationClass: options.greatStopGateLocationClass,
+    locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
+    routePacing: selectedArcPlaceRight.routePacing,
+    placeRightVerdict: selectedArcPlaceRight.placeRightVerdict,
+    fieldRealVerdict: computeFieldRealVerdictForArcCandidate(selectedArc),
+    placeRightTolerance,
+  })
+  const waypointRouteCompetitionDiagnostics = options.waypointRouteCompetitionEvidence
+    ? buildWaypointRouteCompetitionEvidence({
+        preTop40Candidates: arcAssembly.preTop40Candidates ?? arcCandidates,
+        assembledCandidates: arcCandidates,
+        finalBoundaryCandidates: boundaryCandidates,
+        finalRankedEntries: ranking.ranked,
+        selectedCandidate: selectedArc,
+        itinerary,
+        greatStopGateResult,
+        waypointContractTrace: ranking.contractTrace,
+        canonicalInterpretationIngress,
+        top40PreservationDiagnostics: arcAssembly.top40PreservationDiagnostics,
+      })
+    : undefined
 
   const diagnostics: GenerationDiagnostics = {
     totalVenueCount: retrieval.totalVenueCount,
@@ -5012,16 +5039,8 @@ async function runGeneratePlanInternal(
     selectedDistrictReason: districtAnchor.reason,
     categoryDiversity,
     greatStopGateSelectionDiagnostics,
-    greatStopGateResult: buildGreatStopGateResult({
-      selectedArc,
-      intent: planningIntent,
-      locationClass: options.greatStopGateLocationClass,
-      locationClassSource: options.greatStopGateLocationClass ? 'explicit' : undefined,
-      routePacing: selectedArcPlaceRight.routePacing,
-      placeRightVerdict: selectedArcPlaceRight.placeRightVerdict,
-      fieldRealVerdict: computeFieldRealVerdictForArcCandidate(selectedArc),
-      placeRightTolerance,
-    }),
+    greatStopGateResult,
+    ...(waypointRouteCompetitionDiagnostics ? { waypointRouteCompetitionDiagnostics } : {}),
     strictShapeEnabled,
     boundaryDiagnostics,
     overlapDiagnostics,
