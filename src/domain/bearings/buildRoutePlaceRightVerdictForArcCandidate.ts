@@ -182,6 +182,44 @@ export function buildRoutePlaceRightVerdictForArcCandidate(params: {
   intent: IntentProfile
   routePacing: RoutePacingDiagnostics
   locationClass?: 'L1 Dense' | 'L2 Mid' | 'L3 Sparse'
+  includeDiagnosticCounterfactuals?: boolean
+}): BearingsPlaceRightVerdict {
+  const districtFacts = buildDistrictRoutePlaceFactsForArcCandidate({
+    candidate: params.candidate,
+    requiredStopBaseVenueIds: params.intent.anchor?.venueId ? [params.intent.anchor.venueId] : [],
+  })
+  const input = buildRoutePlaceRightInput({
+    candidate: params.candidate,
+    intent: params.intent,
+    routePacing: params.routePacing,
+    locationClass: params.locationClass,
+    districtFacts,
+  })
+  const productionVerdict = evaluateRoutePlaceRightEvidence(input)
+  if (!params.includeDiagnosticCounterfactuals) {
+    return productionVerdict
+  }
+  return {
+    ...productionVerdict,
+    diagnosticCounterfactuals: {
+      allClausesEnforced: evaluateRoutePlaceRightEvidence(input, {
+        softClauseMode: 'enforce',
+        hardClauseMode: 'enforce',
+      }),
+      softClausesObserveOnly: evaluateRoutePlaceRightEvidence(input, {
+        softClauseMode: 'observe_only',
+        hardClauseMode: 'enforce',
+      }),
+    },
+  }
+}
+
+export function buildRoutePlaceRightDiagnosticForArcCandidate(params: {
+  candidate: ArcCandidate
+  intent: IntentProfile
+  routePacing: RoutePacingDiagnostics
+  locationClass?: 'L1 Dense' | 'L2 Mid' | 'L3 Sparse'
+  softClauseMode: 'enforce' | 'observe_only'
 }): BearingsPlaceRightVerdict {
   const districtFacts = buildDistrictRoutePlaceFactsForArcCandidate({
     candidate: params.candidate,
@@ -195,5 +233,9 @@ export function buildRoutePlaceRightVerdictForArcCandidate(params: {
       locationClass: params.locationClass,
       districtFacts,
     }),
+    {
+      softClauseMode: params.softClauseMode,
+      hardClauseMode: 'enforce',
+    },
   )
 }

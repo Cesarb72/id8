@@ -249,7 +249,12 @@ function evaluatePlaceRightFromBearings(params: {
   result: GreatStopCriterionResult
   diagnostics: Pick<
     GreatStopGateResult['diagnostics'],
-    'movement' | 'clusterCoherence' | 'zigzagOrBacktrack' | 'placeRightClauseAttribution'
+    | 'movement'
+    | 'clusterCoherence'
+    | 'zigzagOrBacktrack'
+    | 'placeRightClauseAttribution'
+    | 'placeRightSupportWorldDiagnostics'
+    | 'placeRightDiagnosticCounterfactuals'
   >
   preset: PlaceRightPreset
 } {
@@ -328,6 +333,8 @@ function evaluatePlaceRightFromBearings(params: {
         ...(backtrackDetected ? { reason: 'place_right:backtrack_structure' } : {}),
       },
       placeRightClauseAttribution: verdict?.clauseAttribution,
+      placeRightSupportWorldDiagnostics: verdict?.supportWorldDiagnostics,
+      placeRightDiagnosticCounterfactuals: verdict?.diagnosticCounterfactuals,
     },
   }
 }
@@ -607,6 +614,10 @@ export function buildGreatStopGateResult(params: {
       laneVariance: momentRight.diagnostics.laneVariance,
       strongMoment: momentRight.diagnostics.strongMoment,
       placeRightClauseAttribution: placeRight.diagnostics.placeRightClauseAttribution,
+      placeRightSupportWorldDiagnostics:
+        placeRight.diagnostics.placeRightSupportWorldDiagnostics,
+      placeRightDiagnosticCounterfactuals:
+        placeRight.diagnostics.placeRightDiagnosticCounterfactuals,
     },
   }
 }
@@ -780,6 +791,8 @@ function buildFailureDetail(params: {
     backtrackDetected: result.diagnostics.zigzagOrBacktrack.detected,
     driveLikeMovementDetected: result.diagnostics.movement.driveLikeMovement,
     placeRightClauseAttribution: result.diagnostics.placeRightClauseAttribution,
+    placeRightSupportWorldDiagnostics: result.diagnostics.placeRightSupportWorldDiagnostics,
+    placeRightDiagnosticCounterfactuals: result.diagnostics.placeRightDiagnosticCounterfactuals,
     momentFailureReasons: [...result.criteria.momentRight.reasons],
     roleEnergyNote: candidate.scoreBreakdown.roleEnergyNote,
     scoreSummary: {

@@ -193,6 +193,7 @@ export interface RunGeneratePlanOptions {
   contractGateWorld?: ContractGateWorld
   strategyAdmissibleWorlds?: StrategyAdmissibleWorld[]
   debugMode?: boolean
+  includePlaceRightDiagnosticCounterfactuals?: boolean
   strictShape?: boolean
   sourceMode?: SourceMode
   sourceModeOverrideApplied?: boolean
@@ -608,6 +609,7 @@ function buildPlaceRightVerdictForCandidate(params: {
   candidate: ArcCandidate
   intent: IntentProfile
   locationClass?: BuildLocationClass
+  includeDiagnosticCounterfactuals?: boolean
 }) {
   const routePacing = buildGreatStopRoutePacingDiagnostics(params.candidate)
   return {
@@ -617,6 +619,7 @@ function buildPlaceRightVerdictForCandidate(params: {
       intent: params.intent,
       routePacing,
       locationClass: params.locationClass,
+      includeDiagnosticCounterfactuals: params.includeDiagnosticCounterfactuals,
     }),
   }
 }
@@ -3848,6 +3851,8 @@ async function runGeneratePlanInternal(
               candidate,
               intent: planningIntent,
               locationClass: options.greatStopGateLocationClass,
+              includeDiagnosticCounterfactuals:
+                options.includePlaceRightDiagnosticCounterfactuals === true,
             }).placeRightVerdict,
           fieldRealVerdictForCandidate: computeFieldRealVerdictForArcCandidate,
           stage: 'pre_selection_gate',

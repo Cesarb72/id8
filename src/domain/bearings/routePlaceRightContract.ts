@@ -207,6 +207,95 @@ export interface BearingsPlaceRightClauseAttribution {
   preClauseFailureReasons: string[]
 }
 
+export type BearingsPlaceRightDiagnosticClauseDisposition =
+  | 'soft'
+  | 'hard'
+  | 'unclassified'
+
+export type BearingsPlaceRightDiagnosticClauseRelationship =
+  | 'independent_root'
+  | 'downstream_consequence'
+  | 'aggregate_summary'
+  | 'unresolved'
+
+export type BearingsPlaceRightDiagnosticClauseResult =
+  | 'pass'
+  | 'fail'
+  | 'not_evaluated'
+
+export type BearingsPlaceRightSoftClauseMode = 'enforce' | 'observe_only'
+
+export type BearingsPlaceRightHardClauseMode = 'enforce'
+
+export interface BearingsPlaceRightDiagnosticSupplyStage {
+  total: number
+  byRole: Record<string, number>
+  candidateIds: string[]
+}
+
+export interface BearingsPlaceRightDiagnosticRejectedCandidate {
+  candidateId: string
+  reason: string
+}
+
+export interface BearingsPlaceRightClauseEvidence {
+  clause: string
+  disposition: BearingsPlaceRightDiagnosticClauseDisposition
+  result: BearingsPlaceRightDiagnosticClauseResult
+  subjectIds: string[]
+  factualInputs: Record<string, unknown>
+  relationship: BearingsPlaceRightDiagnosticClauseRelationship
+  causedBy?: string[]
+  supplyBefore?: BearingsPlaceRightDiagnosticSupplyStage
+  supplyAfter?: BearingsPlaceRightDiagnosticSupplyStage
+  rejectedCandidates?: BearingsPlaceRightDiagnosticRejectedCandidate[]
+}
+
+export interface BearingsPlaceRightRequiredStopSurvivalDiagnostic {
+  requiredStopBaseVenueId: string
+  requiredRole: BearingsRouteStopRole
+  result: BearingsRouteFeasibilityStatus
+  relationship: BearingsPlaceRightDiagnosticClauseRelationship
+  causedBy?: string[]
+  enteringSupportCount: number
+  hardSurvivorCount: number
+  softSurvivorCount: number
+  missingRelationship?: string
+}
+
+export interface BearingsPlaceRightSupportWorldDiagnostics {
+  evaluationMode: {
+    softClauseMode: BearingsPlaceRightSoftClauseMode
+    hardClauseMode: BearingsPlaceRightHardClauseMode
+  }
+  routeId?: string
+  candidateId?: string
+  softClausesObservedOnly: string[]
+  hardClausesEnforced: string[]
+  clauseEvidence: BearingsPlaceRightClauseEvidence[]
+  supplyFunnel: {
+    enteringPlaceRight: BearingsPlaceRightDiagnosticSupplyStage
+    afterHardConstraints: BearingsPlaceRightDiagnosticSupplyStage
+    afterSoftConstraints: BearingsPlaceRightDiagnosticSupplyStage
+    hardRejectedCandidates: BearingsPlaceRightDiagnosticRejectedCandidate[]
+    softRejectedCandidates: BearingsPlaceRightDiagnosticRejectedCandidate[]
+    requiredStopSurvival: BearingsPlaceRightRequiredStopSurvivalDiagnostic[]
+    finalSupportWorld: {
+      buildable: boolean
+      relationship: BearingsPlaceRightDiagnosticClauseRelationship
+      causedBy?: string[]
+      reasonCodes: string[]
+    }
+  }
+  retainedProductionReasons: string[]
+  observedOnlyReasons: string[]
+}
+
+export interface BearingsPlaceRightDiagnosticCounterfactuals {
+  allClausesEnforced: BearingsPlaceRightVerdict
+  softClausesObserveOnly: BearingsPlaceRightVerdict
+}
+
 export interface BearingsRouteFeasibilityInput {
   routeId?: string
   candidateId?: string
@@ -276,6 +365,8 @@ export interface BearingsRouteFeasibilityVerdict {
   stopEvidence: BearingsStopLevelFeasibilityEvidence[]
   routeEvidence: BearingsRouteLevelFeasibilityEvidence
   clauseAttribution?: BearingsPlaceRightClauseAttribution
+  supportWorldDiagnostics?: BearingsPlaceRightSupportWorldDiagnostics
+  diagnosticCounterfactuals?: BearingsPlaceRightDiagnosticCounterfactuals
   compatibility: BearingsPlaceRightCompatibilityValues
   provenance: BearingsRouteFeasibilityProvenance
 }

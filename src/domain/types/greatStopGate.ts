@@ -1,6 +1,10 @@
 import type { PersonaMode } from './intent'
 import type { UserStopRole } from './itinerary'
-import type { BearingsPlaceRightClauseAttribution } from '../bearings/routePlaceRightContract'
+import type {
+  BearingsPlaceRightClauseAttribution,
+  BearingsPlaceRightDiagnosticCounterfactuals,
+  BearingsPlaceRightSupportWorldDiagnostics,
+} from '../bearings/routePlaceRightContract'
 import type { WaypointC1ApprovalDiagnostics } from '../waypoint/selectWaypointC1ApprovalCandidates'
 
 export type GreatStopGateStatus = 'PASS' | 'FAIL'
@@ -79,6 +83,8 @@ export interface GreatStopGateDiagnostics {
     momentFlatPenalty?: number
   }
   placeRightClauseAttribution?: BearingsPlaceRightClauseAttribution
+  placeRightSupportWorldDiagnostics?: BearingsPlaceRightSupportWorldDiagnostics
+  placeRightDiagnosticCounterfactuals?: BearingsPlaceRightDiagnosticCounterfactuals
 }
 
 export interface GreatStopGateResult {
@@ -133,6 +139,8 @@ export interface GreatStopGateCandidateFailureDetail {
   backtrackDetected: boolean
   driveLikeMovementDetected: boolean
   placeRightClauseAttribution?: BearingsPlaceRightClauseAttribution
+  placeRightSupportWorldDiagnostics?: BearingsPlaceRightSupportWorldDiagnostics
+  placeRightDiagnosticCounterfactuals?: BearingsPlaceRightDiagnosticCounterfactuals
   momentFailureReasons: string[]
   roleEnergyNote?: string
   scoreSummary: {

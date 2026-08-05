@@ -1,10 +1,16 @@
 import type {
   BearingsDistanceBurdenVerdict,
   BearingsFeasibilitySubVerdict,
+  BearingsPlaceRightClauseEvidence,
   BearingsPlaceRightClauseAttribution,
+  BearingsPlaceRightDiagnosticRejectedCandidate,
+  BearingsPlaceRightDiagnosticSupplyStage,
+  BearingsPlaceRightHardClauseMode,
+  BearingsPlaceRightSoftClauseMode,
   BearingsPlaceRightVerdict,
   BearingsRouteFeasibilityInput,
   BearingsRouteFeasibilityStatus,
+  BearingsPlaceRightSupportWorldDiagnostics,
   BearingsRouteLevelFeasibilityEvidence,
   BearingsStopLevelFeasibilityEvidence,
   DistrictRouteAnchorSupportRelationshipFact,
@@ -14,6 +20,19 @@ const BEARINGS_ROUTE_PLACE_RIGHT_VERSION = 'gw1-bearings-3'
 const MIN_ACCEPTABLE_COMPACTNESS = 0.55
 const MAX_ACCEPTABLE_CLUSTER_ESCAPES = 1
 const MAX_FLEXIBLE_CLUSTER_ESCAPES = 2
+
+const SOFT_PLACE_RIGHT_REASON_CODES = new Set([
+  'place_right:low_route_compactness',
+  'place_right:scattered_neighborhoods',
+  'place_right:cluster_escape_structure',
+  'place_right:backtrack_structure',
+  'place_right:poor_support_proximity',
+])
+
+interface EvaluateRoutePlaceRightEvidenceOptions {
+  softClauseMode?: BearingsPlaceRightSoftClauseMode
+  hardClauseMode?: BearingsPlaceRightHardClauseMode
+}
 
 function unique(values: string[]): string[] {
   return [...new Set(values)]
@@ -39,6 +58,53 @@ function supportCountForRelationship(
   relationship: DistrictRouteAnchorSupportRelationshipFact | undefined,
 ): number {
   return relationship?.sameNeighborhoodSupportCount ?? relationship?.supportBaseVenueIds.length ?? 0
+}
+
+function roleForSupportCandidate(
+  input: BearingsRouteFeasibilityInput,
+  candidateId: string,
+): string {
+  return (
+    input.districtFacts.supportProximity.find((fact) => fact.supportBaseVenueId === candidateId)
+      ?.supportRole ??
+    input.roleFacts.find((fact) => fact.baseVenueId === candidateId)?.routeRole ??
+    'support'
+  )
+}
+
+function buildSupplyStage(
+  input: BearingsRouteFeasibilityInput,
+  candidateIds: string[],
+): BearingsPlaceRightDiagnosticSupplyStage {
+  const uniqueCandidateIds = unique(candidateIds)
+  const byRole: Record<string, number> = {}
+  for (const candidateId of uniqueCandidateIds) {
+    const role = roleForSupportCandidate(input, candidateId)
+    byRole[role] = (byRole[role] ?? 0) + 1
+  }
+  return {
+    total: uniqueCandidateIds.length,
+    byRole,
+    candidateIds: uniqueCandidateIds,
+  }
+}
+
+function hardRejectedSupportCandidates(
+  input: BearingsRouteFeasibilityInput,
+  candidateIds: string[],
+): BearingsPlaceRightDiagnosticRejectedCandidate[] {
+  const openClosedById = new Map(
+    input.openClosedFacts.map((fact) => [fact.baseVenueId, fact.status]),
+  )
+  return unique(candidateIds)
+    .filter((candidateId) => {
+      const status = openClosedById.get(candidateId)
+      return status === 'closed' || status === 'likely_closed'
+    })
+    .map((candidateId) => ({
+      candidateId,
+      reason: 'place_right:open_closed_viability_failed',
+    }))
 }
 
 function clauseStatus(passed: boolean): BearingsRouteFeasibilityStatus {
@@ -221,9 +287,291 @@ function buildRequiredStopSurvival(input: BearingsRouteFeasibilityInput): {
   }
 }
 
+function reasonCodesForClause(clause: string): string[] {
+  if (clause === 'support_supply_buildability') {
+    return ['place_right:support_supply_not_buildable']
+  }
+  if (clause === 'required_stop_survival') {
+    return ['place_right:required_stop_survival_failed', 'place_right:support_supply_not_buildable']
+  }
+  if (clause === 'cluster_escape_structure') {
+    return ['place_right:cluster_escape_structure']
+  }
+  if (clause === 'support_proximity') {
+    return ['place_right:poor_support_proximity']
+  }
+  if (clause === 'open_closed_viability') {
+    return ['place_right:open_closed_viability_failed']
+  }
+  return []
+}
+
+function buildSupportWorldDiagnostics(params: {
+  input: BearingsRouteFeasibilityInput
+  structuralReasonCodes: string[]
+  supportReasonCodes: string[]
+  requiredStopSurvival: ReturnType<typeof buildRequiredStopSurvival>
+  openClosedReasonCodes: string[]
+  softClauseMode: BearingsPlaceRightSoftClauseMode
+  hardClauseMode: BearingsPlaceRightHardClauseMode
+  retainedProductionReasons: string[]
+  observedOnlyReasons: string[]
+}): BearingsPlaceRightSupportWorldDiagnostics {
+  const { input } = params
+  const enteringSupportIds = unique(
+    input.districtFacts.anchorSupportRelationships.flatMap(
+      (relationship) => relationship.supportBaseVenueIds,
+    ),
+  )
+  const hardRejectedCandidates = hardRejectedSupportCandidates(input, enteringSupportIds)
+  const hardRejectedIds = new Set(hardRejectedCandidates.map((entry) => entry.candidateId))
+  const afterHardIds = enteringSupportIds.filter((candidateId) => !hardRejectedIds.has(candidateId))
+  const softSurvivorIds = unique(
+    input.districtFacts.supportProximity
+      .filter((fact) => fact.sameNeighborhood === true)
+      .map((fact) => fact.supportBaseVenueId),
+  ).filter((candidateId) => afterHardIds.includes(candidateId))
+  const softRejectedCandidates = afterHardIds
+    .filter((candidateId) => !softSurvivorIds.includes(candidateId))
+    .map((candidateId) => ({
+      candidateId,
+      reason: 'place_right:poor_support_proximity',
+    }))
+  const enteringPlaceRight = buildSupplyStage(input, enteringSupportIds)
+  const afterHardConstraints = buildSupplyStage(input, afterHardIds)
+  const afterSoftConstraints = buildSupplyStage(input, softSurvivorIds)
+  const softCauseReasons = unique([
+    ...params.structuralReasonCodes.filter((reason) => SOFT_PLACE_RIGHT_REASON_CODES.has(reason)),
+    ...params.supportReasonCodes.filter((reason) => SOFT_PLACE_RIGHT_REASON_CODES.has(reason)),
+  ])
+  const downstreamCauses =
+    softCauseReasons.length > 0
+      ? softCauseReasons
+      : softRejectedCandidates.length > 0
+        ? ['place_right:poor_support_proximity']
+        : []
+
+  const requiredStopSurvival = input.requiredStopFacts.map((requiredStop) => {
+    const relationship = input.districtFacts.anchorSupportRelationships.find(
+      (entry) => entry.anchorBaseVenueId === requiredStop.baseVenueId,
+    )
+    const enteringSupportCount = relationship?.supportBaseVenueIds.length ?? 0
+    const hardSurvivorCount = relationship
+      ? relationship.supportBaseVenueIds.filter((candidateId) => afterHardIds.includes(candidateId))
+          .length
+      : 0
+    const softSurvivorCount = relationship?.sameNeighborhoodSupportCount ?? 0
+    const result: BearingsRouteFeasibilityStatus =
+      requiredStop.survivalRequired && softSurvivorCount === 0 ? 'fail' : 'pass'
+    const relationshipStatus =
+      !relationship
+        ? 'unresolved'
+        : result === 'pass'
+          ? 'independent_root'
+          : enteringSupportCount === 0
+            ? 'unresolved'
+            : hardSurvivorCount === 0
+              ? 'independent_root'
+              : 'downstream_consequence'
+    return {
+      requiredStopBaseVenueId: requiredStop.baseVenueId,
+      requiredRole: requiredStop.requiredRole,
+      result,
+      relationship: relationshipStatus,
+      ...(relationshipStatus === 'downstream_consequence' && downstreamCauses.length > 0
+        ? { causedBy: downstreamCauses }
+        : {}),
+      enteringSupportCount,
+      hardSurvivorCount,
+      softSurvivorCount,
+      ...(relationship ? {} : { missingRelationship: 'anchor_support_relationship_missing' }),
+    }
+  })
+
+  const supportSupplyRelationship =
+    enteringPlaceRight.total === 0
+      ? 'unresolved'
+      : afterHardConstraints.total === 0
+        ? 'independent_root'
+        : afterSoftConstraints.total === 0
+          ? 'downstream_consequence'
+          : 'independent_root'
+  const finalSupportWorldBuildable =
+    requiredStopSurvival.every((entry) => entry.result === 'pass') &&
+    afterSoftConstraints.total > 0
+  const finalSupportWorldRelationship =
+    finalSupportWorldBuildable
+      ? 'independent_root'
+      : requiredStopSurvival.some((entry) => entry.relationship === 'downstream_consequence') ||
+          supportSupplyRelationship === 'downstream_consequence'
+        ? 'downstream_consequence'
+        : supportSupplyRelationship
+
+  const clusterEscapeFailed = params.structuralReasonCodes.includes(
+    'place_right:cluster_escape_structure',
+  )
+  const supportProximityFailed = params.supportReasonCodes.includes(
+    'place_right:poor_support_proximity',
+  )
+  const openClosedFailed = params.openClosedReasonCodes.length > 0
+  const clauseEvidence: BearingsPlaceRightClauseEvidence[] = [
+    {
+      clause: 'cluster_escape_structure',
+      disposition: 'soft',
+      result: clusterEscapeFailed ? 'fail' : 'pass',
+      subjectIds: input.districtFacts.stopBaseVenueIds,
+      factualInputs: {
+        clusterIds: input.districtFacts.clusterCoherence.clusterIds,
+        clusterEscapeCount: input.districtFacts.clusterCoherence.clusterEscapeCount ?? 0,
+        maxClusterEscapes:
+          input.movementContract.tolerance === 'flexible'
+            ? MAX_FLEXIBLE_CLUSTER_ESCAPES
+            : MAX_ACCEPTABLE_CLUSTER_ESCAPES,
+        repeatedClusterEscapeCount:
+          input.districtFacts.clusterCoherence.repeatedClusterEscapeCount ?? 0,
+        backtrackDetected:
+          input.districtFacts.clusterCoherence.backtrackDetected === true,
+      },
+      relationship: clusterEscapeFailed ? 'independent_root' : 'independent_root',
+    },
+    {
+      clause: 'support_proximity',
+      disposition: 'soft',
+      result: supportProximityFailed ? 'fail' : 'pass',
+      subjectIds: enteringSupportIds,
+      factualInputs: {
+        requiresRouteContinuity:
+          input.movementContract.requireContinuity === true ||
+          input.movementContract.tolerance === 'contained',
+        supportProximity: input.districtFacts.supportProximity,
+      },
+      relationship: supportProximityFailed ? 'independent_root' : 'independent_root',
+      supplyBefore: afterHardConstraints,
+      supplyAfter: afterSoftConstraints,
+      rejectedCandidates: softRejectedCandidates,
+    },
+    {
+      clause: 'support_supply_buildability',
+      disposition:
+        supportSupplyRelationship === 'independent_root' && afterHardConstraints.total === 0
+          ? 'hard'
+          : 'unclassified',
+      result: params.supportReasonCodes.includes('place_right:support_supply_not_buildable')
+        ? 'fail'
+        : 'pass',
+      subjectIds: enteringSupportIds,
+      factualInputs: input.supportSupplyFacts,
+      relationship: supportSupplyRelationship,
+      ...(supportSupplyRelationship === 'downstream_consequence' && downstreamCauses.length > 0
+        ? { causedBy: downstreamCauses }
+        : {}),
+      supplyBefore: enteringPlaceRight,
+      supplyAfter: afterSoftConstraints,
+      rejectedCandidates: [...hardRejectedCandidates, ...softRejectedCandidates],
+    },
+    {
+      clause: 'required_stop_survival',
+      disposition: 'hard',
+      result:
+        params.requiredStopSurvival.verdict.status === 'fail'
+          ? 'fail'
+          : params.requiredStopSurvival.verdict.status === 'pass'
+            ? 'pass'
+            : 'not_evaluated',
+      subjectIds: input.requiredStopFacts.map((fact) => fact.baseVenueId),
+      factualInputs: {
+        requiredStopFacts: input.requiredStopFacts,
+        requiredStopSurvival,
+      },
+      relationship: requiredStopSurvival.some((entry) => entry.relationship === 'downstream_consequence')
+        ? 'downstream_consequence'
+        : requiredStopSurvival.some((entry) => entry.relationship === 'unresolved')
+          ? 'unresolved'
+          : 'independent_root',
+      ...(requiredStopSurvival.some((entry) => entry.relationship === 'downstream_consequence') &&
+      downstreamCauses.length > 0
+        ? { causedBy: downstreamCauses }
+        : {}),
+      supplyBefore: afterHardConstraints,
+      supplyAfter: afterSoftConstraints,
+      rejectedCandidates: softRejectedCandidates,
+    },
+    {
+      clause: 'open_closed_viability',
+      disposition: 'hard',
+      result: openClosedFailed ? 'fail' : 'pass',
+      subjectIds: input.openClosedFacts.map((fact) => fact.baseVenueId),
+      factualInputs: input.openClosedFacts,
+      relationship: openClosedFailed ? 'independent_root' : 'independent_root',
+      rejectedCandidates: hardRejectedCandidates,
+    },
+  ]
+
+  return {
+    evaluationMode: {
+      softClauseMode: params.softClauseMode,
+      hardClauseMode: params.hardClauseMode,
+    },
+    routeId: input.routeId,
+    candidateId: input.candidateId,
+    softClausesObservedOnly:
+      params.softClauseMode === 'observe_only'
+        ? [...SOFT_PLACE_RIGHT_REASON_CODES]
+        : [],
+    hardClausesEnforced: [
+      'place_right:district_provenance_missing',
+      'place_right:district_structural_facts_missing',
+      'place_right:required_stop_survival_failed',
+      'place_right:open_closed_viability_failed',
+      'place_right:stretch_not_admissible',
+    ],
+    clauseEvidence,
+    supplyFunnel: {
+      enteringPlaceRight,
+      afterHardConstraints,
+      afterSoftConstraints,
+      hardRejectedCandidates,
+      softRejectedCandidates,
+      requiredStopSurvival,
+      finalSupportWorld: {
+        buildable: finalSupportWorldBuildable,
+        relationship: finalSupportWorldRelationship,
+        ...(finalSupportWorldRelationship === 'downstream_consequence' &&
+        downstreamCauses.length > 0
+          ? { causedBy: downstreamCauses }
+          : {}),
+        reasonCodes: unique([
+          ...params.supportReasonCodes,
+          ...params.requiredStopSurvival.verdict.reasonCodes,
+        ]),
+      },
+    },
+    retainedProductionReasons: params.retainedProductionReasons,
+    observedOnlyReasons: params.observedOnlyReasons,
+  }
+}
+
+function downstreamReasonCodesCausedBySoft(
+  diagnostics: BearingsPlaceRightSupportWorldDiagnostics,
+): string[] {
+  return unique(
+    diagnostics.clauseEvidence
+      .filter(
+        (evidence) =>
+          evidence.result === 'fail' &&
+          evidence.relationship === 'downstream_consequence' &&
+          (evidence.causedBy ?? []).some((reason) => SOFT_PLACE_RIGHT_REASON_CODES.has(reason)),
+      )
+      .flatMap((evidence) => reasonCodesForClause(evidence.clause)),
+  )
+}
+
 export function evaluateRoutePlaceRightEvidence(
   input: BearingsRouteFeasibilityInput,
+  options: EvaluateRoutePlaceRightEvidenceOptions = {},
 ): BearingsPlaceRightVerdict {
+  const softClauseMode = options.softClauseMode ?? 'enforce'
+  const hardClauseMode = options.hardClauseMode ?? 'enforce'
   const districtFacts = input.districtFacts
   const districtFactsPresent = districtFacts.provenance.source === 'district'
   const structuralMissing = districtFacts.structuralConfidence.status === 'missing'
@@ -295,13 +643,58 @@ export function evaluateRoutePlaceRightEvidence(
     ...openClosedReasonCodes,
     ...stretchReasonCodes,
   ])
+  const preliminaryDiagnostics = buildSupportWorldDiagnostics({
+    input,
+    structuralReasonCodes,
+    supportReasonCodes,
+    requiredStopSurvival,
+    openClosedReasonCodes,
+    softClauseMode,
+    hardClauseMode,
+    retainedProductionReasons: reasons,
+    observedOnlyReasons: [],
+  })
+  const observedOnlyReasonCodes =
+    softClauseMode === 'observe_only'
+      ? unique([
+          ...reasons.filter((reason) => SOFT_PLACE_RIGHT_REASON_CODES.has(reason)),
+          ...downstreamReasonCodesCausedBySoft(preliminaryDiagnostics),
+        ])
+      : []
+  const retainedReasonCodes =
+    softClauseMode === 'observe_only'
+      ? reasons.filter((reason) => !observedOnlyReasonCodes.includes(reason))
+      : reasons
+  const retainedHardFailureReasons =
+    softClauseMode === 'observe_only'
+      ? hardFailureReasons.filter((reason) => !observedOnlyReasonCodes.includes(reason))
+      : hardFailureReasons
+  const supportWorldDiagnostics = buildSupportWorldDiagnostics({
+    input,
+    structuralReasonCodes,
+    supportReasonCodes,
+    requiredStopSurvival,
+    openClosedReasonCodes,
+    softClauseMode,
+    hardClauseMode,
+    retainedProductionReasons: retainedReasonCodes,
+    observedOnlyReasons: observedOnlyReasonCodes,
+  })
   const clauseAttribution = buildPlaceRightClauseAttribution({
     input,
-    preClauseFailureReasons: reasons,
-    hardFailureReasons,
+    preClauseFailureReasons: retainedReasonCodes,
+    hardFailureReasons: retainedHardFailureReasons,
   })
-  const clauseRescued = clauseAttribution.passedClauses.length > 0 && hardFailureReasons.length === 0
-  const finalReasonCodes = clauseRescued ? [] : reasons
+  const clauseRescued =
+    softClauseMode === 'enforce' &&
+    clauseAttribution.passedClauses.length > 0 &&
+    retainedHardFailureReasons.length === 0
+  const finalReasonCodes =
+    softClauseMode === 'observe_only'
+      ? retainedReasonCodes
+      : clauseRescued
+        ? []
+        : retainedReasonCodes
   const status = structuralMissing || !districtFactsPresent ? 'unknown' : getStatus(finalReasonCodes)
   const placeRightReady = districtFactsPresent && !structuralMissing
   const supportProximityVerdict = subVerdict(getStatus(supportReasonCodes), supportReasonCodes)
@@ -338,6 +731,7 @@ export function evaluateRoutePlaceRightEvidence(
     stopEvidence: requiredStopSurvival.stopEvidence,
     routeEvidence,
     clauseAttribution,
+    supportWorldDiagnostics,
     compatibility: {
       greatStopPlaceRightStatus: status,
       greatStopPlaceRightReasonCodes: finalReasonCodes,
