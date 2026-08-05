@@ -6,6 +6,10 @@ import type {
   RuntimeRouteMarker,
   RuntimeRouteStop,
 } from '../artifacts/runtimeRouteArtifact'
+import {
+  validateCompositionEvidenceLineageForFinalRoute,
+  type CompositionEvidenceLineage,
+} from '../artifacts/compositionEvidenceLineage'
 import type { PersonaMode, VibeAnchor } from '../types/intent'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../types/itinerary'
 import {
@@ -17,6 +21,7 @@ export type LiveArtifactRouteErrorCode =
   | 'missing_final_route'
   | 'invalid_final_route_shape'
   | 'final_route_itinerary_mismatch'
+  | 'invalid_composition_evidence_lineage'
 
 export interface LiveArtifactRouteError {
   code: LiveArtifactRouteErrorCode
@@ -67,6 +72,13 @@ function isVibeAnchor(value: unknown): value is VibeAnchor {
 
 function isValidRole(value: unknown): value is UserStopRole {
   return value === 'start' || value === 'highlight' || value === 'surprise' || value === 'windDown'
+}
+
+function sanitizeCompositionEvidenceLineage(value: unknown): CompositionEvidenceLineage | null {
+  if (!isObject(value)) {
+    return null
+  }
+  return JSON.parse(JSON.stringify(value)) as CompositionEvidenceLineage
 }
 
 function describeStopFieldState(input: {
@@ -599,10 +611,26 @@ export function sanitizeLiveArtifactSessionPayload(
     return base
   }
 
-  return {
+  const sanitizedPayload: LiveArtifactSessionPayload = {
     ...base,
     finalRoute: sanitizedFinalRoute,
   }
+  if ('compositionEvidenceLineage' in payload && payload.compositionEvidenceLineage != null) {
+    const compositionEvidenceLineage = sanitizeCompositionEvidenceLineage(
+      payload.compositionEvidenceLineage,
+    )
+    const validation = compositionEvidenceLineage
+      ? validateCompositionEvidenceLineageForFinalRoute({
+          lineage: compositionEvidenceLineage,
+          finalRoute: sanitizedFinalRoute,
+          selectedDirectionId: sanitizedFinalRoute.selectedDirectionId,
+        })
+      : { ok: false }
+    if (validation.ok) {
+      sanitizedPayload.compositionEvidenceLineage = compositionEvidenceLineage!
+    }
+  }
+  return sanitizedPayload
 }
 
 export function validateLockedLiveArtifactSessionPayload(
@@ -703,11 +731,39 @@ export function validateLockedLiveArtifactSessionPayload(
     }
   }
 
+  let compositionEvidenceLineage: CompositionEvidenceLineage | undefined
+  if ('compositionEvidenceLineage' in payload && payload.compositionEvidenceLineage != null) {
+    const sanitizedLineage = sanitizeCompositionEvidenceLineage(payload.compositionEvidenceLineage)
+    const lineageValidation = sanitizedLineage
+      ? validateCompositionEvidenceLineageForFinalRoute({
+          lineage: sanitizedLineage,
+          finalRoute: sanitizedFinalRoute,
+          selectedDirectionId: sanitizedFinalRoute.selectedDirectionId,
+        })
+      : {
+          ok: false,
+          reasons: ['composition_evidence_lineage_shape_invalid'],
+        }
+    if (!lineageValidation.ok) {
+      return {
+        ok: false,
+        error: {
+          code: 'invalid_composition_evidence_lineage',
+          detail:
+            lineageValidation.reasons.join(' | ') ||
+            'compositionEvidenceLineage could not be validated against finalRoute.',
+        },
+      }
+    }
+    compositionEvidenceLineage = sanitizedLineage
+  }
+
   return {
     ok: true,
     payload: {
       ...base,
       finalRoute: sanitizedFinalRoute,
+      ...(compositionEvidenceLineage ? { compositionEvidenceLineage } : {}),
     },
   }
 }

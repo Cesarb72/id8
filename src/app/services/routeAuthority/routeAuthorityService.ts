@@ -3,6 +3,10 @@ import {
   validateContractEntryArtifactPreCommitTruth,
   type ContractEntryArtifact,
 } from '../../../domain/artifacts/contractEntryArtifact'
+import {
+  validateCompositionEvidenceLineageForFinalRoute,
+  type CompositionEvidenceLineage,
+} from '../../../domain/artifacts/compositionEvidenceLineage'
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../../../domain/artifacts/runtimeRouteArtifact'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../../../domain/types/itinerary'
 import type { BuildLockedLiveArtifactPayloadInput } from '../live/liveSessionHandoff'
@@ -58,6 +62,7 @@ export interface RouteAuthorityLockReadyCanonicalRouteTruthCandidate {
   selectedClusterConfirmation?: string
   itinerary?: Itinerary
   finalRoute: RuntimeRouteArtifact
+  compositionEvidenceLineage?: CompositionEvidenceLineage
 }
 
 export type BuildRouteAuthoritySourceKind =
@@ -767,6 +772,22 @@ export function buildRouteAuthoritySnapshot(
     }
   }
 
+  const compositionEvidenceLineage = artifact?.enrichment?.compositionEvidenceLineage ?? null
+  let validatedCompositionEvidenceLineage: CompositionEvidenceLineage | null = null
+  if (compositionEvidenceLineage && (runtimeRoute || approvedPayloadRoute)) {
+    const validation = validateCompositionEvidenceLineageForFinalRoute({
+      lineage: compositionEvidenceLineage,
+      finalRoute: runtimeRoute ?? approvedPayloadRoute!,
+      selectedDirectionId,
+    })
+    if (validation.ok) {
+      validatedCompositionEvidenceLineage = compositionEvidenceLineage
+    } else {
+      rejectionReasons.push('composition_evidence_lineage_invalid')
+      mismatchReasons.push(...validation.reasons)
+    }
+  }
+
   if (legacyCurateRoute && artifact) {
     legacyCurateMismatchReasons = compareRouteToArtifact({
       route: legacyCurateRoute,
@@ -815,6 +836,7 @@ export function buildRouteAuthoritySnapshot(
     !rejectionReasons.includes('runtime_route_artifact_order_mismatch') &&
     !rejectionReasons.includes('approved_payload_route_mismatch') &&
     !rejectionReasons.includes('approved_payload_route_order_mismatch') &&
+    !rejectionReasons.includes('composition_evidence_lineage_invalid') &&
     !rejectionReasons.includes('runtime_lock_ineligible') &&
     !buildDiagnosticsBlockLock(buildDiagnostics) &&
     !hasInvalidArtifactValidationReason(rejectionReasons)
@@ -829,6 +851,9 @@ export function buildRouteAuthoritySnapshot(
             : {}),
           ...(input.itinerary ? { itinerary: input.itinerary } : {}),
           finalRoute: canonicalAuthorityRoute,
+          ...(validatedCompositionEvidenceLineage
+            ? { compositionEvidenceLineage: validatedCompositionEvidenceLineage }
+            : {}),
         }
       : null
 
@@ -917,6 +942,7 @@ export function buildRouteAuthoritySnapshot(
           rejectionReasons.includes('approved_payload_route_order_mismatch') ||
           rejectionReasons.includes('runtime_route_artifact_mismatch') ||
           rejectionReasons.includes('runtime_route_artifact_order_mismatch') ||
+          rejectionReasons.includes('composition_evidence_lineage_invalid') ||
           rejectionReasons.includes('generated_route_identity_mismatch') ||
           rejectionReasons.includes('required_anchor_role_missing') ||
           hasInvalidArtifactValidationReason(rejectionReasons)
@@ -1043,6 +1069,7 @@ export function buildLockInputFromRouteAuthoritySnapshot(params: {
   snapshot: RouteAuthoritySnapshot
   activeRole: UserStopRole
   fallbackCity: string
+  requireCompositionEvidenceLineage?: boolean
 }): RouteAuthorityLockInputResult {
   const candidate = params.snapshot.lockReadyCanonicalRouteTruthCandidate
   if (!candidate) {
@@ -1090,6 +1117,16 @@ export function buildLockInputFromRouteAuthoritySnapshot(params: {
       }),
     }
   }
+  if (params.requireCompositionEvidenceLineage && !candidate.compositionEvidenceLineage) {
+    return {
+      ok: false,
+      input: null,
+      diagnostics: buildLockInputDiagnostics({
+        snapshot: params.snapshot,
+        rejectionReason: 'missing_composition_evidence_lineage',
+      }),
+    }
+  }
 
   return {
     ok: true,
@@ -1098,6 +1135,9 @@ export function buildLockInputFromRouteAuthoritySnapshot(params: {
         selectedClusterConfirmation: candidate.selectedClusterConfirmation,
         itinerary: candidate.itinerary,
         finalRoute: candidate.finalRoute,
+        ...(candidate.compositionEvidenceLineage
+          ? { compositionEvidenceLineage: candidate.compositionEvidenceLineage }
+          : {}),
       },
       lockSafeItineraryStops: buildLockSafeItineraryStops({
         itinerary: candidate.itinerary,

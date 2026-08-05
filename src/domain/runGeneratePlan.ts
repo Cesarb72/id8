@@ -5353,6 +5353,7 @@ async function runGeneratePlanInternal(
     rankingEngine: ranking.engine,
     starterPack: options.starterPack,
     selectedArtifactLineage,
+    routeShapeContract: options.routeShapeContract,
   })
 
   return {

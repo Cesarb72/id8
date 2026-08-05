@@ -3,6 +3,7 @@ import {
   isBuildAnchorCanonicalRole,
   type BuildAnchorCanonicalRole,
 } from './buildAnchorTruthContract'
+import { buildCompositionEvidenceLineageFromGeneration } from './compositionEvidenceLineage'
 import type {
   ContractEntryArtifact,
   ContractEntryArtifactCanonicalRouteRoleCoverage,
@@ -14,7 +15,7 @@ import type {
 import type { ArcCandidate, ScoredVenue } from '../types/arc'
 import type { GenerationDiagnostics } from '../types/diagnostics'
 import type { ExperienceLens } from '../types/experienceLens'
-import type { IntentProfile } from '../types/intent'
+import type { IntentProfile, RouteShapeContract } from '../types/intent'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../types/itinerary'
 import type { EngineSourceMode, SourceMode } from '../types/sourceMode'
 import type { StarterPack } from '../types/starterPack'
@@ -29,6 +30,7 @@ export interface BuildContractEntryArtifactFromGenerationInput {
   rankingEngine: string
   starterPack?: StarterPack
   selectedArtifactLineage?: ContractEntryArtifactLineage
+  routeShapeContract?: RouteShapeContract
 }
 
 const SUPPORTED_MODES: ContractEntryArtifactMode[] = ['curate', 'surprise', 'build']
@@ -244,6 +246,7 @@ export function buildContractEntryArtifactFromGeneration(
     rankingEngine,
     starterPack,
     selectedArtifactLineage,
+    routeShapeContract,
   } = input
   const roleCoverage = buildRoleCoverage(itinerary)
   const missingRoleReasons = buildMissingRoleReasons(roleCoverage)
@@ -279,6 +282,11 @@ export function buildContractEntryArtifactFromGeneration(
     intentProfile.selectedDirectionContext?.pocketId ??
     selectedArtifactLineage?.pocketId ??
     diagnostics.selectedDistrictId
+  const compositionEvidenceLineage = buildCompositionEvidenceLineageFromGeneration({
+    selectedArc,
+    diagnostics,
+    routeShapeContract,
+  })
 
   const enrichment: ContractEntryArtifactEnrichment = {
     mode,
@@ -348,6 +356,7 @@ export function buildContractEntryArtifactFromGeneration(
           : {}),
       },
     },
+    ...(compositionEvidenceLineage ? { compositionEvidenceLineage } : {}),
   }
 
   return {

@@ -18563,8 +18563,9 @@ export function SandboxConciergePage({
         snapshot: routeAuthoritySnapshot,
         activeRole,
         fallbackCity: city,
+        requireCompositionEvidenceLineage: isSurpriseWrapperActive || isBuildWrapperActive,
       }),
-    [activeRole, city, routeAuthoritySnapshot],
+    [activeRole, city, isBuildWrapperActive, isSurpriseWrapperActive, routeAuthoritySnapshot],
   )
   const normalizedContractEntryArtifactDebug = useMemo(() => {
     const normalizedDirectionCardArtifacts = directionCards.map((directionCard) =>
@@ -18632,6 +18633,7 @@ export function SandboxConciergePage({
       snapshot: routeAuthoritySnapshot,
       activeRole,
       fallbackCity: city,
+      requireCompositionEvidenceLineage: isSurpriseWrapperActive || isBuildWrapperActive,
     })
     if (!lockInputResult.ok) {
       if (shouldLogLiveArtifactDebug) {

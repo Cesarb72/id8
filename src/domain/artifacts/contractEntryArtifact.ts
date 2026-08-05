@@ -6,6 +6,7 @@ import type { ScoredVenueCandidateIdentity } from '../types/arc'
 import type { DirectionContractBuildability } from '../bearings/assessDirectionContractBuildability'
 import type { UserStopRole } from '../types/itinerary'
 import type { EngineSourceMode } from '../types/sourceMode'
+import type { CompositionEvidenceLineage } from './compositionEvidenceLineage'
 import type { RuntimeRouteArtifact } from './runtimeRouteArtifact'
 
 /**
@@ -180,6 +181,7 @@ export interface ContractEntryArtifactEnrichment {
   starterContextFit?: ContractEntryArtifactStarterContextFit
   modeContextFit?: ContractEntryArtifactModeContextFit
   runtimeLockEligibility?: ContractEntryArtifactRuntimeLockEligibility
+  compositionEvidenceLineage?: CompositionEvidenceLineage
   starterSemanticRepresentation?: StarterSemanticRepresentation
 }
 

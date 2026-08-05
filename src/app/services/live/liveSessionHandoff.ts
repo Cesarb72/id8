@@ -1,4 +1,5 @@
 import type { RuntimeRouteArtifact } from '../../../domain/artifacts/runtimeRouteArtifact'
+import type { CompositionEvidenceLineage } from '../../../domain/artifacts/compositionEvidenceLineage'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../../../domain/types/itinerary'
 import {
   createLiveArtifactPlanId,
@@ -14,6 +15,7 @@ export interface LockedLiveArtifactRouteTruth {
   selectedClusterConfirmation: string
   itinerary: Itinerary
   finalRoute: RuntimeRouteArtifact
+  compositionEvidenceLineage?: CompositionEvidenceLineage
 }
 
 export interface BuildLockedLiveArtifactPayloadInput {
@@ -70,6 +72,9 @@ export function buildLockedLiveArtifactPayload(
         canonicalRouteArtifact.finalRoute.stops.findIndex((stop) => stop.role === activeRole),
       ),
     },
+    ...(canonicalRouteArtifact.compositionEvidenceLineage
+      ? { compositionEvidenceLineage: canonicalRouteArtifact.compositionEvidenceLineage }
+      : {}),
   }
 }
 

@@ -3,6 +3,7 @@ import type {
   RuntimeRouteArtifact,
   RuntimeRouteStop,
 } from '../artifacts/runtimeRouteArtifact'
+import type { CompositionEvidenceLineage } from '../artifacts/compositionEvidenceLineage'
 import {
   sanitizeLiveArtifactSessionPayload,
   validateLockedLiveArtifactSessionPayload,
@@ -25,6 +26,7 @@ export interface LiveArtifactSessionPayload {
   initialActiveRole: UserStopRole
   lockedAt: number
   finalRoute?: RuntimeRouteArtifact
+  compositionEvidenceLineage?: CompositionEvidenceLineage
 }
 
 export type FinalRouteStop = RuntimeRouteStop
