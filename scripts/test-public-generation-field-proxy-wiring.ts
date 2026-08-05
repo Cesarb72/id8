@@ -2364,18 +2364,17 @@ function assertCoffeeBooksCommittedRouteFallbackGate(): void {
     selectedPocketId: 'willow-glen',
   })
   assert(
-    rejectedCoffeeBooksFallback.status === 'accepted' &&
-      rejectedCoffeeBooksFallback.artifact.enrichment?.starterSemanticRepresentation?.status ===
-        'missing',
-    'Coffee & Books committed_route_fallback cafe-only route must remain eligible with missing semantic evidence as diagnostics.',
+    rejectedCoffeeBooksFallback.status === 'rejected' &&
+      rejectedCoffeeBooksFallback.rejectedReason === 'missing_route_shape_contract',
+    'Coffee & Books committed_route_fallback cafe-only route must not become authoritative without an active RouteShapeContract.',
   )
   const visibleFallbackArtifacts =
     rejectedCoffeeBooksFallback.status === 'accepted'
       ? [rejectedCoffeeBooksFallback.artifact]
       : []
   assert(
-    visibleFallbackArtifacts.length === 1,
-    'Coffee & Books committed_route_fallback artifact without semantic representation may become visible after generic materialization truth passes.',
+    visibleFallbackArtifacts.length === 0,
+    'Coffee & Books committed_route_fallback artifact must not become visible without active-carrier approval.',
   )
 
   const culturalOnlyResult = buildFallbackGeneratePlanResult([
@@ -2399,10 +2398,9 @@ function assertCoffeeBooksCommittedRouteFallbackGate(): void {
     selectedPocketId: 'willow-glen',
   })
   assert(
-    rejectedCulturalOnlyCoffeeBooksFallback.status === 'accepted' &&
-      rejectedCulturalOnlyCoffeeBooksFallback.artifact.enrichment?.starterSemanticRepresentation?.status ===
-        'missing',
-    'Coffee & Books committed_route_fallback museum/gallery/cultural-only route must not be blocked by literal Books evidence.',
+    rejectedCulturalOnlyCoffeeBooksFallback.status === 'rejected' &&
+      rejectedCulturalOnlyCoffeeBooksFallback.rejectedReason === 'missing_route_shape_contract',
+    'Coffee & Books committed_route_fallback museum/gallery/cultural-only route must not become authoritative without an active RouteShapeContract.',
   )
 
   const representedResult = buildFallbackGeneratePlanResult([
@@ -2426,10 +2424,9 @@ function assertCoffeeBooksCommittedRouteFallbackGate(): void {
     selectedPocketId: 'willow-glen',
   })
   assert(
-    acceptedCoffeeBooksFallback.status === 'accepted' &&
-      acceptedCoffeeBooksFallback.artifact.enrichment?.starterSemanticRepresentation?.status ===
-        'represented',
-    'Coffee & Books committed_route_fallback with explicit reading/literary/book evidence must remain eligible.',
+    acceptedCoffeeBooksFallback.status === 'rejected' &&
+      acceptedCoffeeBooksFallback.rejectedReason === 'missing_route_shape_contract',
+    'Coffee & Books committed_route_fallback with explicit reading/literary/book evidence still requires active-carrier approval.',
   )
 
   const acceptedNonCoffeeFallback = buildCurateCommittedRouteFallbackDecision({
@@ -2439,8 +2436,9 @@ function assertCoffeeBooksCommittedRouteFallbackGate(): void {
     selectedPocketId: 'willow-glen',
   })
   assert(
-    acceptedNonCoffeeFallback.status === 'accepted',
-    'Non-Coffee starters must keep existing committed_route_fallback behavior.',
+    acceptedNonCoffeeFallback.status === 'rejected' &&
+      acceptedNonCoffeeFallback.rejectedReason === 'missing_route_shape_contract',
+    'Non-Coffee committed_route_fallback also requires active-carrier approval.',
   )
   process.stdout.write('Coffee & Books committed-route fallback normalization: passed\n')
 }

@@ -132,6 +132,7 @@ import {
   buildCurateCommittedRouteFallbackDecision,
   buildCurateStarterPlannerInput,
   isCurateCommittedRouteFallbackArtifact,
+  validateCurateCommittedRouteFallbackShownRouteAuthority,
   type CurateCommittedRouteFallbackRejectedReason,
 } from '../app/services/curate/buildCurateCommittedRouteFallback'
 import {
@@ -15280,23 +15281,6 @@ export function SandboxConciergePage({
         if (cancelled) {
           return
         }
-        const decision = buildCurateCommittedRouteFallbackDecision({
-          starterPack: selectedStarterPack,
-          result,
-          selectedDirectionId: fallbackDirection?.id,
-          selectedPocketId: fallbackDirection?.debugMeta?.pocketId,
-        })
-        if (decision.status === 'rejected') {
-          setCurateCommittedRouteFallbackState({
-            attemptKey,
-            starterPackId: selectedStarterPack.id,
-            artifact: null,
-            commitability: null,
-            rejectedReason: decision.rejectedReason,
-            routeStops: decision.routeStops,
-          })
-          return
-        }
         if (!fallbackDirection) {
           setCurateCommittedRouteFallbackState({
             attemptKey,
@@ -15304,7 +15288,9 @@ export function SandboxConciergePage({
             artifact: null,
             commitability: null,
             rejectedReason: 'missing_direction_backing',
-            routeStops: decision.routeStops,
+            routeStops: result.selectedArc.stops.map(
+              (stop) => `${stop.role}:${stop.scoredVenue.venue.name}`,
+            ),
           })
           return
         }
@@ -15324,6 +15310,32 @@ export function SandboxConciergePage({
             artifact: null,
             commitability: null,
             rejectedReason: 'missing_direction_backing',
+            routeStops: result.selectedArc.stops.map(
+              (stop) => `${stop.role}:${stop.scoredVenue.venue.name}`,
+            ),
+          })
+          return
+        }
+        const fallbackRouteShapeContract = buildRouteShapeContract({
+          selectedDirection: fallbackDirectionContract,
+          selectedDirectionContext: fallbackDirectionContext,
+          conciergeIntent: canonicalConciergeIntent,
+          contractConstraints: canonicalContractConstraints,
+        })
+        const decision = buildCurateCommittedRouteFallbackDecision({
+          starterPack: selectedStarterPack,
+          result,
+          selectedDirectionId: fallbackDirection.id,
+          selectedPocketId: fallbackDirection.debugMeta?.pocketId,
+          routeShapeContract: fallbackRouteShapeContract,
+        })
+        if (decision.status === 'rejected') {
+          setCurateCommittedRouteFallbackState({
+            attemptKey,
+            starterPackId: selectedStarterPack.id,
+            artifact: null,
+            commitability: null,
+            rejectedReason: decision.rejectedReason,
             routeStops: decision.routeStops,
           })
           return
@@ -15331,7 +15343,7 @@ export function SandboxConciergePage({
 
         const anchoredPlan = await enforceFullStopRealityContract({
           itinerary: result.itinerary,
-          selectedArc: result.selectedArc,
+          selectedArc: decision.approvedCandidate,
           scoredVenues: result.scoredVenues,
           intentProfile: result.intentProfile,
           lens: result.lens,
@@ -15372,12 +15384,22 @@ export function SandboxConciergePage({
           })
           return
         }
-        const fallbackRouteShapeContract = buildRouteShapeContract({
-          selectedDirection: fallbackDirectionContract,
-          selectedDirectionContext: fallbackDirectionContext,
-          conciergeIntent: canonicalConciergeIntent,
-          contractConstraints: canonicalContractConstraints,
-        })
+        const shownRouteAuthority =
+          validateCurateCommittedRouteFallbackShownRouteAuthority({
+            decision,
+            finalRoute: fallbackFinalRoute,
+          })
+        if (shownRouteAuthority.status === 'rejected') {
+          setCurateCommittedRouteFallbackState({
+            attemptKey,
+            starterPackId: selectedStarterPack.id,
+            artifact: null,
+            commitability: null,
+            rejectedReason: shownRouteAuthority.rejectedReason,
+            routeStops: decision.routeStops,
+          })
+          return
+        }
         const fallbackSelectedDirectionPreviewContext =
           buildSelectedDirectionPreviewContext(fallbackDirection)
         const selectedClusterConfirmation =
