@@ -1577,6 +1577,7 @@ export interface GenerationDiagnostics {
   greatStopGateResult?: GreatStopGateResult
   greatStopGateSelectionDiagnostics?: GreatStopGateSelectionDiagnostics
   targetedRefinementFinalRouteApproval?: FinalRouteApprovalResult
+  peakRecoveryFinalRouteApproval?: FinalRouteApprovalResult
   waypointRouteCompetitionDiagnostics?: WaypointRouteCompetitionDiagnostics
   strictShapeEnabled: boolean
   boundaryDiagnostics: BoundaryDiagnostics

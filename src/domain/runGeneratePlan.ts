@@ -222,6 +222,36 @@ export interface GovernedRouteIngressOptions extends RunGeneratePlanOptions {
   liveEnvelope: LiveProviderEnvelope
 }
 
+export function arcUsesRecoveredPeak(candidate: ArcCandidate): boolean {
+  return Boolean(
+    candidate.stops.find((stop) => stop.role === 'peak')?.scoredVenue
+      .recoveredCentralMomentHighlight,
+  )
+}
+
+export function approvePeakRecoveryFinalRoute(params: {
+  proposedCandidate: ArcCandidate
+  intent: IntentProfile
+  crewPolicy: ReturnType<typeof getCrewPolicy>
+  lens: ExperienceLens
+  routeShapeContract?: RouteShapeContract
+  locationClass?: BuildLocationClass
+}): FinalRouteApprovalResult | undefined {
+  if (!params.routeShapeContract || !arcUsesRecoveredPeak(params.proposedCandidate)) {
+    return undefined
+  }
+  return approveFinalRouteCandidate({
+    source: 'domain.runGeneratePlan.peakRecoveryFinalRouteApproval',
+    targetRole: 'highlight',
+    proposedCandidate: params.proposedCandidate,
+    intent: params.intent,
+    crewPolicy: params.crewPolicy,
+    lens: params.lens,
+    routeShapeContract: params.routeShapeContract,
+    locationClass: params.locationClass,
+  })
+}
+
 function shouldBlockGovernedPlannerIngress(retrieval: RetrieveVenuesResult): boolean {
   const runtimeMode = retrieval.sourceMode.runtimeMode
   const activeMode = retrieval.sourceMode.effectiveMode
@@ -3889,6 +3919,64 @@ async function runGeneratePlanInternal(
           ? 'curate_selected_artifact_structurally_infeasible'
           : 'no_ranked_candidates_after_boundary',
     })
+  let peakRecoveryFinalRouteApproval: FinalRouteApprovalResult | undefined
+  peakRecoveryFinalRouteApproval = approvePeakRecoveryFinalRoute({
+    proposedCandidate: selectedArc,
+    intent: planningIntent,
+    crewPolicy,
+    lens,
+    routeShapeContract: options.routeShapeContract,
+    locationClass: options.greatStopGateLocationClass,
+  })
+  if (peakRecoveryFinalRouteApproval) {
+    if (peakRecoveryFinalRouteApproval.status === 'approved') {
+      selectedArc = peakRecoveryFinalRouteApproval.approvedCandidate
+    } else {
+      const peakRecoveryFailureDiagnostics: GreatStopGateSelectionDiagnostics = {
+        status: 'FAIL',
+        stage: 'pre_selection_gate',
+        selectedCandidateId: undefined,
+        selectedCandidateRank: greatStopGateSelectionDiagnostics?.selectedCandidateRank,
+        rankedCandidateCount: greatStopGateSelectionDiagnostics?.rankedCandidateCount,
+        evaluatedCandidateCount:
+          greatStopGateSelectionDiagnostics?.evaluatedCandidateCount ?? 1,
+        fullEvaluatedCandidateCount:
+          greatStopGateSelectionDiagnostics?.fullEvaluatedCandidateCount ?? 1,
+        evaluatedCandidateIdentitySummaries:
+          greatStopGateSelectionDiagnostics?.evaluatedCandidateIdentitySummaries,
+        rolePoolIdentityDiagnostics:
+          greatStopGateSelectionDiagnostics?.rolePoolIdentityDiagnostics,
+        failedTopCandidateCriteria: [
+          peakRecoveryFinalRouteApproval.refusalOwner === 'great_stop'
+            ? 'moment_right'
+            : 'intent_right',
+        ],
+        failureReasons: [
+          `peak_recovery_final_route_approval:${peakRecoveryFinalRouteApproval.refusalOwner}:${peakRecoveryFinalRouteApproval.reason}`,
+        ],
+        bestFailingCandidateSummary:
+          greatStopGateSelectionDiagnostics?.bestFailingCandidateSummary,
+        bestAnchorPreservingFailingCandidate:
+          greatStopGateSelectionDiagnostics?.bestAnchorPreservingFailingCandidate,
+        greatStopCandidateFailureDetails:
+          greatStopGateSelectionDiagnostics?.greatStopCandidateFailureDetails,
+        compactnessRankingDiagnostics:
+          greatStopGateSelectionDiagnostics?.compactnessRankingDiagnostics,
+        waypointC1Approval:
+          peakRecoveryFinalRouteApproval.diagnostics.waypointC1Approval ??
+          greatStopGateSelectionDiagnostics?.waypointC1Approval,
+        structuralFailureReasons: [
+          `peak_recovery_final_route_approval_refused_by_${peakRecoveryFinalRouteApproval.refusalOwner}`,
+        ],
+        passingCandidateCount: 0,
+        selectedGateResult:
+          peakRecoveryFinalRouteApproval.diagnostics.greatStop?.selectedGateResult ??
+          greatStopGateSelectionDiagnostics?.selectedGateResult,
+      }
+      greatStopGateSelectionDiagnostics = peakRecoveryFailureDiagnostics
+      throw new GreatStopGateSelectionError(peakRecoveryFailureDiagnostics)
+    }
+  }
   const curateHardCommitSampleCandidates =
     curateHardCommitRequired && curateCommitPreferences.length > 0
       ? rankedCandidatesWithContractArtifactProjection
@@ -5080,6 +5168,7 @@ async function runGeneratePlanInternal(
     greatStopGateSelectionDiagnostics,
     greatStopGateResult,
     targetedRefinementFinalRouteApproval,
+    peakRecoveryFinalRouteApproval,
     ...(waypointRouteCompetitionDiagnostics ? { waypointRouteCompetitionDiagnostics } : {}),
     strictShapeEnabled,
     boundaryDiagnostics,
