@@ -11086,6 +11086,7 @@ export function SandboxConciergePage({
   )
   const routeVersionRef = useRef(routeVersion)
   const surpriseAutoGenerateAttemptRef = useRef<string | null>(null)
+  const publicSurpriseAutoSelectedArtifactIdRef = useRef<string | null>(null)
   const buildValidationAttemptRef = useRef<string | null>(null)
   const buildValidationCompletedAttemptRef = useRef<string | null>(null)
   const buildValidationRejectedAttemptRef = useRef<string | null>(null)
@@ -13958,12 +13959,17 @@ export function SandboxConciergePage({
     }
     return publicSurpriseVerifiedCardModels
   }, [publicSurpriseVerifiedCardModels, selectedCandidateRouteArtifact])
-  const publicSurpriseSingleSelectableArtifact = useMemo(() => {
-    if (publicSurpriseSelectableCardModels.length !== 1) {
+  const publicSurpriseSystemSelectedCardModel = useMemo(() => {
+    if (!isPublicSurface || !isSurpriseWrapperActive || selectedCandidateRouteArtifact) {
       return null
     }
-    return publicSurpriseSelectableCardModels[0]?.artifact ?? null
-  }, [publicSurpriseSelectableCardModels])
+    return publicSurpriseSelectableCardModels[0] ?? null
+  }, [
+    isPublicSurface,
+    isSurpriseWrapperActive,
+    publicSurpriseSelectableCardModels,
+    selectedCandidateRouteArtifact,
+  ])
   const selectedCandidateArtifactResolution = useMemo(
     () =>
       resolveCandidateRouteArtifactSelection({
@@ -16868,16 +16874,21 @@ export function SandboxConciergePage({
       !isPublicSurface ||
       !isSurpriseWrapperActive ||
       selectedCandidateRouteArtifact ||
-      !publicSurpriseSingleSelectableArtifact
+      !publicSurpriseSystemSelectedCardModel
     ) {
       return
     }
-    handleSelectStep2NightOption(publicSurpriseSingleSelectableArtifact)
+    const selectedArtifactId = publicSurpriseSystemSelectedCardModel.artifact.id
+    if (publicSurpriseAutoSelectedArtifactIdRef.current === selectedArtifactId) {
+      return
+    }
+    publicSurpriseAutoSelectedArtifactIdRef.current = selectedArtifactId
+    handleSelectStep2NightOption(publicSurpriseSystemSelectedCardModel.artifact)
   }, [
     handleSelectStep2NightOption,
     isPublicSurface,
     isSurpriseWrapperActive,
-    publicSurpriseSingleSelectableArtifact,
+    publicSurpriseSystemSelectedCardModel,
     selectedCandidateRouteArtifact,
   ])
 
@@ -22857,12 +22868,7 @@ export function SandboxConciergePage({
   const showCurateDiscoveryPhase = Boolean(
     !isCurateWrapperActive || sharedFlowPhase === 'contract_selection',
   )
-  const publicSurpriseRouteChoiceVisible = Boolean(
-    isPublicSurface &&
-      isSurpriseWrapperActive &&
-      !selectedCandidateRouteArtifact &&
-      publicSurpriseSelectableCardModels.length > 1,
-  )
+  const publicSurpriseRouteChoiceVisible = false
   const publicSurpriseEmptyStateVisible = Boolean(
     isPublicSurface &&
       isSurpriseWrapperActive &&
@@ -22877,9 +22883,7 @@ export function SandboxConciergePage({
       (selectedDirectionGeneratePlanTrace?.generatePlanFailureSource === 'selected_direction_lineage' ||
         error.toLowerCase().includes('route drifted from selected direction contract')),
   )
-  const publicSurpriseRouteChoiceRecoveryAvailable = Boolean(
-    publicSurpriseVerifiedCardModels.length > 1,
-  )
+  const publicSurpriseRouteChoiceRecoveryAvailable = false
   const renderCurateRouteCardSection = Boolean(
     showCurateDiscoveryPhase &&
       (!isSurpriseWrapperActive ||
@@ -27530,13 +27534,9 @@ export function SandboxConciergePage({
 
       {renderCurateRouteCardSection && (
       <section className="district-discovery">
-        <h4>
-          {publicSurpriseRouteChoiceVisible ? 'Choose a route for tonight' : "Explore what's possible"}
-        </h4>
+        <h4>Explore what&apos;s possible</h4>
         <p className="district-subtext">
-          {publicSurpriseRouteChoiceVisible
-            ? 'Pick one route to keep the night moving.'
-            : "See what's happening nearby and how your night could unfold."}
+          See what&apos;s happening nearby and how your night could unfold.
         </p>
         {showStep2SecondarySurfaces && !isCurateWrapperActive && (
           <div className="step2-ecs-controls" aria-label="Exploration controls">
@@ -28153,10 +28153,7 @@ export function SandboxConciergePage({
                 </p>
               </button>
             )}
-            {!publicBuildGeneratedRouteTruthOwnsPostContinueSurface && (publicSurpriseRouteChoiceVisible
-              ? publicSurpriseSelectableCardModels
-              : curatePrimaryCardDisplay.models
-            ).map((cardModel) => {
+            {!publicBuildGeneratedRouteTruthOwnsPostContinueSurface && curatePrimaryCardDisplay.models.map((cardModel) => {
               const option = cardModel.artifact
               const buildStaticPreGenerationSelection =
                 isBuildWrapperActive
