@@ -169,18 +169,77 @@ function buildTasteSummary(
   }
 }
 
+type WaypointC1ApprovalDiagnostics = NonNullable<
+  GreatStopGateSelectionDiagnostics['waypointC1Approval']
+>
+type WaypointC1ApprovalCandidateDiagnostic = NonNullable<
+  WaypointC1ApprovalDiagnostics['topCandidate']
+>
+
+function findSelectedWaypointCandidateDiagnostic(
+  waypoint: WaypointC1ApprovalDiagnostics | undefined,
+  selectedCandidateId: string,
+): WaypointC1ApprovalCandidateDiagnostic | undefined {
+  if (!waypoint) {
+    return undefined
+  }
+  const diagnostics = [
+    waypoint.topCandidate,
+    waypoint.firstEligibleCandidate,
+    ...waypoint.ineligibleCandidates,
+  ].filter(
+    (candidate): candidate is WaypointC1ApprovalCandidateDiagnostic => Boolean(candidate),
+  )
+  return diagnostics.find((candidate) => candidate.candidateId === selectedCandidateId)
+}
+
+function selectedRouteWaypointFailureReasons(params: {
+  diagnostics: GreatStopGateSelectionDiagnostics | undefined
+  selectedCandidateId: string
+}): string[] {
+  const waypoint = params.diagnostics?.waypointC1Approval
+  if (!waypoint) {
+    return unique(params.diagnostics?.failureReasons ?? [])
+  }
+  const selectedDiagnostic = findSelectedWaypointCandidateDiagnostic(
+    waypoint,
+    params.selectedCandidateId,
+  )
+  if (selectedDiagnostic) {
+    return selectedDiagnostic.eligible
+      ? []
+      : unique(selectedDiagnostic.ineligibilityReasons)
+  }
+  if (waypoint.selectedCandidateId === params.selectedCandidateId) {
+    return []
+  }
+  return unique(waypoint.failureReasons)
+}
+
 function buildWaypointSummary(
   diagnostics: GreatStopGateSelectionDiagnostics | undefined,
+  selectedCandidateId: string,
 ): CompositionEvidenceLineageWaypointSummary {
   const waypoint = diagnostics?.waypointC1Approval
+  const selectedDiagnostic = findSelectedWaypointCandidateDiagnostic(
+    waypoint,
+    selectedCandidateId,
+  )
   return {
     enforcementActive: Boolean(waypoint?.enforcementActive),
     ...(waypoint?.routeShapeContractId ? { routeShapeContractId: waypoint.routeShapeContractId } : {}),
     ...(waypoint?.projectionId ? { projectionId: waypoint.projectionId } : {}),
-    ...(waypoint?.selectedCandidateId ? { selectedCandidateId: waypoint.selectedCandidateId } : {}),
-    ...(waypoint?.selectedCandidateRank ? { selectedCandidateRank: waypoint.selectedCandidateRank } : {}),
+    selectedCandidateId,
+    ...(selectedDiagnostic?.rank
+      ? { selectedCandidateRank: selectedDiagnostic.rank }
+      : waypoint?.selectedCandidateId === selectedCandidateId && waypoint.selectedCandidateRank
+        ? { selectedCandidateRank: waypoint.selectedCandidateRank }
+        : {}),
     ...(waypoint ? { eligibleCandidateCount: waypoint.eligibleCandidateCount } : {}),
-    failureReasons: unique(waypoint?.failureReasons ?? diagnostics?.failureReasons ?? []),
+    failureReasons: selectedRouteWaypointFailureReasons({
+      diagnostics,
+      selectedCandidateId,
+    }),
   }
 }
 
@@ -243,7 +302,7 @@ export function buildCompositionEvidenceLineageFromGeneration(params: {
     approvedRouteIdentity: routeIdentity,
     inputCarrier: inputCarrierFromRouteShapeContract(routeShapeContract),
     taste: buildTasteSummary(tasteStamp),
-    waypoint: buildWaypointSummary(diagnostics.greatStopGateSelectionDiagnostics),
+    waypoint: buildWaypointSummary(diagnostics.greatStopGateSelectionDiagnostics, selectedArc.id),
     bearings: buildBearingsSummary(greatStopGate),
     greatStop: buildGreatStopSummary({
       gate: greatStopGate,
