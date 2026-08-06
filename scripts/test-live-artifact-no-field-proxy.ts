@@ -263,6 +263,33 @@ function assertJourneyMapWiring(): void {
   )
 }
 
+function assertLiveRouteSwitchClosure(): void {
+  const source = readFileSync('src/pages/LiveJourneyPage.tsx', 'utf8')
+  const forbiddenFragments = [
+    "setLiveAlertDecision('switch')",
+    "liveAlertDecision === 'switch'",
+    'Review swap options',
+    'patchFinalRouteStop',
+    'canonicalizeNearbySwapTarget',
+    'liveSwapPreview',
+    'Use this instead',
+    'Preview change',
+    'onPreviewAlternative={',
+    'next.alternatives =',
+  ]
+  for (const fragment of forbiddenFragments) {
+    assert(!source.includes(fragment), `LiveJourneyPage must not retain ${fragment}.`)
+  }
+  assert(
+    source.includes("onClick={() => handleLiveAlertDecision('timing')}"),
+    'LiveJourneyPage must retain the timing decision action.',
+  )
+  assert(
+    source.includes("onClick={() => handleLiveAlertDecision('keep')}"),
+    'LiveJourneyPage must retain the keep-current decision action.',
+  )
+}
+
 async function main(): Promise<void> {
   installClosedValveWindow()
   installFetchTrap('Live artifact closed runtime envelope')
@@ -277,6 +304,7 @@ async function main(): Promise<void> {
   assert(liveHtml.includes('Re-lift energy'), 'LiveJourneyPage must render Re-lift energy.')
   assert(liveHtml.includes('Soft close'), 'LiveJourneyPage must render Soft close.')
   assert(liveHtml.includes('Suggested next stop'), 'LiveJourneyPage must render suggested next stop slots.')
+  assertLiveRouteSwitchClosure()
 
   const callsAfterLiveRender = proxyCallCount
   renderJourneyMapReal()
@@ -295,6 +323,7 @@ async function main(): Promise<void> {
   process.stdout.write('Continue Local / Re-lift Energy / Soft Close render proxy calls: 0\n')
   process.stdout.write('Suggested next stop placeholder proxy calls: 0\n')
   process.stdout.write('Live suggestions default closed reason: runtime-provider-disabled\n')
+  process.stdout.write('Live post-lock route switch closure: passed\n')
   process.stdout.write('live artifact no field proxy: passed\n')
 }
 

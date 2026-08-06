@@ -24,11 +24,7 @@ import type {
   RuntimeRouteArtifact,
   RuntimeRouteStop,
 } from '../domain/artifacts/runtimeRouteArtifact'
-import { canonicalizeNearbySwapTarget } from '../domain/live/canonicalizeNearbySwapTarget'
-import {
-  validateFinalRouteAgainstItinerary,
-  type LiveArtifactRouteError,
-} from '../domain/live/validateLiveArtifact'
+import type { LiveArtifactRouteError } from '../domain/live/validateLiveArtifact'
 import type {
   ContinuationAlertContract,
   ContinuationArtifactTargetKind,
@@ -44,7 +40,7 @@ import type { Itinerary, ItineraryStop, UserStopRole } from '../domain/types/iti
 import { buildPlanningStopRepresentation } from '../domain/adapters/buildPlanningStopRepresentation'
 
 type LiveAlertStage = 'idle' | 'alert' | 'preview' | 'resolved'
-type LiveAlertDecision = 'keep' | 'switch' | 'timing'
+type LiveAlertDecision = 'keep' | 'timing'
 type LiveContinuationOptionId = 'stay-nearby' | 'change-pace' | 'ease-out'
 type LiveUtilityModal = 'share' | 'calendar' | null
 
@@ -60,11 +56,6 @@ const LIVE_ALERT_PREVIEW_BY_DECISION: Record<
     signal: 'Stay with current highlight',
     impact: 'Highlight entry may tighten if congestion increases further.',
     ctaLabel: 'Confirm',
-  },
-  switch: {
-    signal: 'Switch to a nearby highlight option',
-    impact: 'Keeps route continuity while reducing immediate timing pressure.',
-    ctaLabel: 'Apply swap',
   },
   timing: {
     signal: 'Shift highlight timing by ~20 minutes',
@@ -188,19 +179,6 @@ function getLiveContinuationOptionById(
     return null
   }
   return LIVE_CONTINUATION_OPTIONS.find((option) => option.id === optionId) ?? null
-}
-
-function getNearbyOptionDescriptor(category: JourneyNearbyOption['category']): string {
-  if (category === 'nightlife') {
-    return 'more lively'
-  }
-  if (category === 'dessert') {
-    return 'slower pace'
-  }
-  if (category === 'cafe') {
-    return 'more intimate'
-  }
-  return 'closer, easier stop'
 }
 
 function toRadians(value: number): number {
@@ -401,80 +379,6 @@ function uniqueLiveLines(lines: Array<string | undefined>, limit: number): strin
   return result
 }
 
-function patchFinalRouteStop(params: {
-  route: RuntimeRouteArtifact
-  targetRole: UserStopRole
-  targetStopId?: string
-  targetStopIndex?: number
-  replacementStop: RuntimeRouteStop
-  notice?: string
-  activeRole?: UserStopRole
-}): {
-  route: RuntimeRouteArtifact
-  resolvedStop: RuntimeRouteStop
-  resolution: 'id' | 'index' | 'role'
-} | null {
-  const orderedStops = params.route.stops
-    .slice()
-    .sort((left, right) => left.stopIndex - right.stopIndex)
-  let replaceIndex = -1
-  let resolution: 'id' | 'index' | 'role' | null = null
-  if (params.targetStopId) {
-    replaceIndex = orderedStops.findIndex((stop) => stop.id === params.targetStopId)
-    if (replaceIndex >= 0) {
-      resolution = 'id'
-    }
-  }
-  if (replaceIndex < 0 && typeof params.targetStopIndex === 'number') {
-    replaceIndex = orderedStops.findIndex((stop) => stop.stopIndex === params.targetStopIndex)
-    if (replaceIndex >= 0) {
-      resolution = 'index'
-    }
-  }
-  if (replaceIndex < 0) {
-    replaceIndex = orderedStops.findIndex((stop) => stop.role === params.targetRole)
-    if (replaceIndex >= 0) {
-      resolution = 'role'
-    }
-  }
-  if (replaceIndex < 0 || !resolution) {
-    return null
-  }
-  const currentStop = orderedStops[replaceIndex]
-  if (!currentStop) {
-    return null
-  }
-  const replacementStop: RuntimeRouteStop = {
-    ...currentStop,
-    ...params.replacementStop,
-    title: currentStop.title,
-    role: currentStop.role,
-    stopIndex: currentStop.stopIndex,
-  }
-  const nextStops = orderedStops.map((stop, index) =>
-    index === replaceIndex ? replacementStop : stop,
-  )
-  const nextActiveStopIndex =
-    params.activeRole != null
-      ? Math.max(0, nextStops.findIndex((stop) => stop.role === params.activeRole))
-      : params.route.activeStopIndex
-  return {
-    route: {
-      ...params.route,
-      routeId: `${params.route.routeId}-swap-${Date.now()}`,
-      stops: nextStops,
-      activeStopIndex: nextActiveStopIndex,
-      mapMarkers: buildFinalRouteMapMarkers(nextStops),
-      liveNotices: params.notice
-        ? [...(params.route.liveNotices ?? []), params.notice]
-        : params.route.liveNotices,
-      updatedAt: Date.now(),
-    },
-    resolvedStop: currentStop,
-    resolution,
-  }
-}
-
 export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
   const [loadResult] = useState<LockedLiveArtifactLoadResult>(() =>
     sharedPlanId ? loadValidatedSharedLiveArtifactPlan(sharedPlanId) : loadValidatedLiveArtifactSession(),
@@ -498,11 +402,6 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
   const [liveAlertStage, setLiveAlertStage] = useState<LiveAlertStage>('idle')
   const [liveAlertDecision, setLiveAlertDecision] = useState<LiveAlertDecision | null>(null)
   const [liveAppliedDecision, setLiveAppliedDecision] = useState<LiveAlertDecision | null>(null)
-  const [selectedSwitchNearbyOption, setSelectedSwitchNearbyOption] =
-    useState<JourneyNearbyOption | null>(null)
-  const [liveAppliedSwitchOption, setLiveAppliedSwitchOption] = useState<JourneyNearbyOption | null>(
-    null,
-  )
   const [selectedContinuationOptionId, setSelectedContinuationOptionId] =
     useState<LiveContinuationOptionId | null>(
       () =>
@@ -616,10 +515,6 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     [],
   )
 
-  const switchNearbyOptions = (nearbyOptionsByRole.highlight ?? []).slice(0, 3)
-  const primarySwitchNearbyOption = switchNearbyOptions[0] ?? null
-  const originalHighlightStop = routeItineraryStops.find((stop) => stop.role === 'highlight') ?? null
-
   useEffect(() => {
     if (!artifact) {
       return
@@ -633,7 +528,6 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     const timer = window.setTimeout(() => {
       setLiveAlertStage('alert')
       setLiveAlertDecision(null)
-      setSelectedSwitchNearbyOption(null)
       setActiveRole('highlight')
       setPlanDetailsOpen(true)
     }, 1200)
@@ -681,23 +575,7 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
   const handleLiveAlertDecision = (decision: LiveAlertDecision) => {
     setActiveRole('highlight')
     setPlanDetailsOpen(true)
-    if (decision !== 'switch') {
-      setSelectedSwitchNearbyOption(null)
-    }
     setLiveAlertDecision(decision)
-    setLiveAlertStage('preview')
-  }
-
-  const handlePreviewAlternativeFromCard = (role: UserStopRole, venueId: string) => {
-    if (role !== 'highlight') {
-      return
-    }
-    const option = switchNearbyOptions.find((candidate) => candidate.id === venueId)
-    if (!option) {
-      return
-    }
-    setSelectedSwitchNearbyOption(option)
-    setLiveAlertDecision('switch')
     setLiveAlertStage('preview')
   }
 
@@ -709,13 +587,6 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
       return
     }
     handleLiveAlertDecision(decision)
-  }
-
-  const handleOpenHighlightSwapOptions = () => {
-    if (!primarySwitchNearbyOption) {
-      return
-    }
-    handlePreviewAlternativeFromCard('highlight', primarySwitchNearbyOption.id)
   }
 
   const handleSelectContinuationOption = (optionId: LiveContinuationOptionId) => {
@@ -777,81 +648,13 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     if (!liveAlertDecision) {
       return
     }
-    if (liveAlertDecision === 'switch') {
-      const canonicalSwapTarget = canonicalizeNearbySwapTarget({
-        selectedOptionId: selectedSwitchNearbyOption?.id,
-        nearbyOptions: nearbyOptionsByRole.highlight ?? [],
-      })
-      if (!canonicalSwapTarget.ok) {
-        setLiveAlertDecision(null)
-        setSelectedSwitchNearbyOption(null)
-        setLiveAlertStage('alert')
-        return
-      }
-      const swapTarget = canonicalSwapTarget.canonicalOption
-      setLiveAppliedSwitchOption(swapTarget)
-      setFinalRoute((current) => {
-        if (!current) {
-          return current
-        }
-        const currentHighlightStop = current.stops.find((stop) => stop.role === 'highlight')
-        if (!currentHighlightStop) {
-          return current
-        }
-        const replacementStop: RuntimeRouteStop = {
-          ...currentHighlightStop,
-          displayName: swapTarget.name,
-          venueId: swapTarget.id,
-          providerRecordId: swapTarget.providerRecordId,
-          latitude: swapTarget.coordinates[1],
-          longitude: swapTarget.coordinates[0],
-          address: `${currentHighlightStop.neighborhood || current.location}, ${current.location}`.replace(
-            /^,\s*/,
-            '',
-          ),
-          subtitle: `${getNearbyOptionDescriptor(swapTarget.category)} · ${swapTarget.minutesAway} min away`,
-        }
-        const patchedRoute = patchFinalRouteStop({
-          route: current,
-          targetRole: 'highlight',
-          targetStopId: currentHighlightStop.id,
-          targetStopIndex: currentHighlightStop.stopIndex,
-          replacementStop,
-          notice: `Highlight switched to ${swapTarget.name}.`,
-          activeRole: 'highlight',
-        })
-        if (!patchedRoute) {
-          return current
-        }
-        if (
-          patchedRoute.resolvedStop.role !== 'highlight' ||
-          patchedRoute.resolvedStop.stopIndex !== currentHighlightStop.stopIndex
-        ) {
-          return current
-        }
-        if (
-          !artifact ||
-          !validateFinalRouteAgainstItinerary({
-            itinerary: artifact.itinerary,
-            finalRoute: patchedRoute.route,
-          })
-        ) {
-          return current
-        }
-        return patchedRoute.route
-      })
-    } else {
-      setLiveAppliedSwitchOption(null)
-    }
     setLiveAppliedDecision(liveAlertDecision)
-    setSelectedSwitchNearbyOption(null)
     setLiveAlertDecision(null)
     setLiveAlertStage('resolved')
   }
 
   const handleBackFromLiveAlertPreview = () => {
     setLiveAlertDecision(null)
-    setSelectedSwitchNearbyOption(null)
     setPlanDetailsOpen(true)
     setActiveRole('highlight')
     setLiveAlertStage('alert')
@@ -934,19 +737,6 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
           next.aroundHereSignals = [nearbySummary, ...(next.aroundHereSignals ?? [])].slice(0, 2)
         }
         const highlightAlertOwnsDecision = stop.role === 'highlight' && liveAlertStage === 'alert'
-        if (
-          stop.role === 'highlight' &&
-          switchNearbyOptions.length > 0 &&
-          !highlightAlertOwnsDecision
-        ) {
-          next.alternatives = switchNearbyOptions.map((option) => ({
-            venueId: option.id,
-            name: option.name,
-            descriptor: getNearbyOptionDescriptor(option.category),
-            distanceLabel: `${option.minutesAway} min away`,
-            replacementContext: originalHighlightStop?.venueName ?? stop.venueName,
-          }))
-        }
         if (highlightAlertOwnsDecision) {
           next.alertSignal = '⚠️ This stop is getting busy'
         }
@@ -957,12 +747,6 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
               [...(next.tonightSignals ?? []), "We'll keep watching this stop."],
               3,
             )
-          } else if (liveAppliedDecision === 'switch') {
-            const switchSignal = liveAppliedSwitchOption
-              ? `Swapped to ${liveAppliedSwitchOption.name} (${liveAppliedSwitchOption.minutesAway} min away).`
-              : 'Nearby highlight swap selected.'
-            next.alertSignal = switchSignal
-            next.tonightSignals = uniqueLiveLines([...(next.tonightSignals ?? []), switchSignal], 3)
           } else if (liveAppliedDecision === 'timing') {
             next.alertSignal = 'Highlight timing shifted by about 20 minutes.'
             next.tonightSignals = uniqueLiveLines(
@@ -1002,12 +786,9 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     artifact,
     liveAlertStage,
     liveAppliedDecision,
-    liveAppliedSwitchOption,
     liveStopRepresentationByRole,
     nearbySummaryByRole,
-    originalHighlightStop?.venueName,
     routeItineraryStops,
-    switchNearbyOptions,
   ])
 
   const continuationEntries = useMemo(
@@ -1241,77 +1022,8 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
     if (!liveAlertDecision || liveAlertStage !== 'preview') {
       return null
     }
-    if (liveAlertDecision === 'switch') {
-      if (!selectedSwitchNearbyOption) {
-        return {
-          signal: LIVE_ALERT_PREVIEW_BY_DECISION.switch.signal,
-          impact: LIVE_ALERT_PREVIEW_BY_DECISION.switch.impact,
-          ctaLabel: LIVE_ALERT_PREVIEW_BY_DECISION.switch.ctaLabel,
-        }
-      }
-      return {
-        signal: `Switch highlight to ${selectedSwitchNearbyOption.name}`,
-        impact: `${selectedSwitchNearbyOption.minutesAway} min away; route flow stays intact with lower timing risk.`,
-        ctaLabel: LIVE_ALERT_PREVIEW_BY_DECISION.switch.ctaLabel,
-      }
-    }
     return LIVE_ALERT_PREVIEW_BY_DECISION[liveAlertDecision]
-  }, [liveAlertDecision, liveAlertStage, selectedSwitchNearbyOption])
-
-  const liveSwapPreview = useMemo(() => {
-    if (
-      liveAlertStage !== 'preview' ||
-      liveAlertDecision !== 'switch' ||
-      !selectedSwitchNearbyOption
-    ) {
-      return null
-    }
-
-    const descriptor = getNearbyOptionDescriptor(selectedSwitchNearbyOption.category)
-    const distanceLine = `${descriptor} · ${selectedSwitchNearbyOption.minutesAway} min away`
-    const currentHighlightName = originalHighlightStop?.venueName ?? 'Current highlight stop'
-    const currentRoleLabel = originalHighlightStop?.title ?? 'Highlight'
-    const locationLine = `${originalHighlightStop?.neighborhood ?? 'Downtown San Jose'} | about ${selectedSwitchNearbyOption.minutesAway} min | ${originalHighlightStop?.driveMinutes ?? 6} min out`
-    const pacingShift =
-      selectedSwitchNearbyOption.minutesAway <= 4
-        ? 'Slightly faster handoff into your peak moment.'
-        : 'Slightly later handoff into your peak moment.'
-    const travelImpact = `${selectedSwitchNearbyOption.minutesAway} min from your current highlight anchor.`
-    const vibeShift =
-      selectedSwitchNearbyOption.category === 'nightlife'
-        ? 'Energy stays high with a similar nightlife feel.'
-        : selectedSwitchNearbyOption.category === 'dessert'
-          ? 'Energy softens slightly while keeping the highlight role.'
-          : selectedSwitchNearbyOption.category === 'cafe'
-            ? 'A calmer highlight with conversational pacing.'
-            : 'Similar local energy with a nearby pivot.'
-
-    return {
-      name: selectedSwitchNearbyOption.name,
-      imageUrl:
-        originalHighlightStop?.imageUrl ?? routeItineraryStops[0]?.imageUrl ?? '',
-      roleChip: currentRoleLabel,
-      distanceLine,
-      roleLine: `This becomes your new ${currentRoleLabel}`,
-      replacesLine: `Replaces: ${currentHighlightName}`,
-      locationLine,
-      whyItFits: inlineDetailsByRole.highlight?.whyItFits,
-      knownFor: inlineDetailsByRole.highlight?.knownFor,
-      localSignal: inlineDetailsByRole.highlight?.localSignal,
-      whatChanges: [pacingShift, travelImpact, vibeShift],
-    }
-  }, [
-    inlineDetailsByRole,
-    liveAlertDecision,
-    liveAlertStage,
-    originalHighlightStop?.driveMinutes,
-    originalHighlightStop?.imageUrl,
-    originalHighlightStop?.neighborhood,
-    originalHighlightStop?.title,
-    originalHighlightStop?.venueName,
-    routeItineraryStops,
-    selectedSwitchNearbyOption,
-  ])
+  }, [liveAlertDecision, liveAlertStage])
 
   const liveContinuationPreview = useMemo(() => {
     const selectedPreviewOptionId = liveContinuationPreviewContract.selectedOptionId
@@ -1559,33 +1271,13 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
                     If unchanged, this can compress your highlight entry timing.
                   </p>
                   <div className="lce-alert-actions">
-                    {primarySwitchNearbyOption && (
-                      <button
-                        type="button"
-                        className="primary-button lce-action-button"
-                        onClick={handleOpenHighlightSwapOptions}
-                      >
-                        Review swap options
-                      </button>
-                    )}
-                    {!primarySwitchNearbyOption && (
-                      <button
-                        type="button"
-                        className="primary-button lce-action-button"
-                        onClick={() => handleLiveAlertDecision('timing')}
-                      >
-                        Go later (~20 min)
-                      </button>
-                    )}
-                    {primarySwitchNearbyOption && (
-                      <button
-                        type="button"
-                        className="ghost-button lce-action-button"
-                        onClick={() => handleLiveAlertDecision('timing')}
-                      >
-                        Go later (~20 min)
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="primary-button lce-action-button"
+                      onClick={() => handleLiveAlertDecision('timing')}
+                    >
+                      Go later (~20 min)
+                    </button>
                     <button
                       type="button"
                       className="ghost-button lce-action-button"
@@ -1631,92 +1323,6 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
               )}
             </section>
           </section>
-
-          {liveSwapPreview && (
-            <div
-              className="swap-preview-overlay"
-              onClick={handleBackFromLiveAlertPreview}
-              role="presentation"
-            >
-              <article
-                className="swap-preview-popout"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <div className="swap-preview-header">
-                  <p className="swap-preview-kicker">Preview change</p>
-                  <button
-                    type="button"
-                    className="ghost-button subtle"
-                    onClick={handleBackFromLiveAlertPreview}
-                  >
-                    Close
-                  </button>
-                </div>
-
-                <div className="swap-preview-card">
-                  <div className="swap-preview-image-wrap">
-                    <img src={liveSwapPreview.imageUrl} alt={liveSwapPreview.name} />
-                  </div>
-                  <div className="swap-preview-body">
-                    <span className="reveal-story-chip active">{liveSwapPreview.roleChip}</span>
-                    <h3>{liveSwapPreview.name}</h3>
-                    <p className="swap-preview-descriptor">{liveSwapPreview.distanceLine}</p>
-                    <p className="stop-card-meta">{liveSwapPreview.locationLine}</p>
-                    <p className="swap-preview-descriptor">{liveSwapPreview.roleLine}</p>
-                    <p className="swap-preview-descriptor">{liveSwapPreview.replacesLine}</p>
-
-                    {liveSwapPreview.whyItFits && (
-                      <div className="stop-card-inline-detail-row">
-                        <p className="stop-card-inline-detail-label">Why it fits</p>
-                        <p className="stop-card-inline-detail-copy">{liveSwapPreview.whyItFits}</p>
-                      </div>
-                    )}
-                    {liveSwapPreview.knownFor && (
-                      <div className="stop-card-inline-detail-row">
-                        <p className="stop-card-inline-detail-label">Known for</p>
-                        <p className="stop-card-inline-detail-copy">{liveSwapPreview.knownFor}</p>
-                      </div>
-                    )}
-                    {liveSwapPreview.localSignal && (
-                      <div className="stop-card-inline-detail-row">
-                        <p className="stop-card-inline-detail-label">Local signal</p>
-                        <p className="stop-card-inline-detail-copy">{liveSwapPreview.localSignal}</p>
-                      </div>
-                    )}
-
-                    <div className="swap-preview-impact">
-                      <p className="stop-card-inline-detail-label">What changes in your night</p>
-                      <ul className="swap-preview-impact-list">
-                        {liveSwapPreview.whatChanges.map((changeLine) => (
-                          <li key={changeLine}>{changeLine}</li>
-                        ))}
-                      </ul>
-                    </div>
-                    <p className="swap-preview-reassure">The rest of your route stays stable.</p>
-
-                    <div className="swap-preview-actions">
-                      <div className="action-row">
-                        <button
-                          type="button"
-                          className="ghost-button"
-                          onClick={handleBackFromLiveAlertPreview}
-                        >
-                          Keep current
-                        </button>
-                        <button
-                          type="button"
-                          className="primary-button"
-                          onClick={handleConfirmLiveAlertDecision}
-                        >
-                          Use this instead
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </article>
-            </div>
-          )}
 
           {liveContinuationPreview && (
             <div
@@ -1969,7 +1575,6 @@ export function LiveJourneyPage({ sharedPlanId }: LiveJourneyPageProps) {
                 onShowSwap={() => undefined}
                 onShowNearby={() => undefined}
                 onApplySwap={() => undefined}
-                onPreviewAlternative={handlePreviewAlternativeFromCard}
                 onPreviewDecisionAction={handlePreviewDecisionActionFromCard}
               />
             </div>
