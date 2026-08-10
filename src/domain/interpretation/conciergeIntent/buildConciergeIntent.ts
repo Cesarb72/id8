@@ -3,9 +3,12 @@ import type {
   ConciergeIntent,
   ConciergeIntentCandidateLineage,
   ConciergeObjectiveOccasion,
+  BuildSoftFeasibleRecoveryAction,
+  BuildSoftFeasibleRecoveryChoice,
   ExperienceMode,
   PersonaMode,
   PlanAnchor,
+  RouteShapeContract,
   VibeAnchor,
 } from '../../types/intent'
 
@@ -40,6 +43,10 @@ export interface BuildApplicationConciergeIntentParams {
   anchorDisplayName?: string | null
   anchorRoleResolutionSource?: BuildAnchorRoleProvenanceSource
   candidateLineage?: ConciergeIntentCandidateLineage | null
+  buildSoftFeasibleRecovery?: {
+    action: BuildSoftFeasibleRecoveryAction
+    originatingMovementProfile: RouteShapeContract['movementProfile']
+  } | null
 }
 
 function normalizeConciergeIntentToken(value: string | undefined): string {
@@ -228,6 +235,168 @@ function getCandidateLineage(
   }
 }
 
+const INTERPRETATION_BUILD_RECOVERY_MOVEMENT_POSTURE_ORDER: Array<
+  Omit<RouteShapeContract['movementProfile'], 'placeRightTolerance'>
+> = [
+  {
+    radius: 'tight',
+    maxTransitionMinutes: 14,
+    neighborhoodContinuity: 'strict',
+  },
+  {
+    radius: 'balanced',
+    maxTransitionMinutes: 18,
+    neighborhoodContinuity: 'preferred',
+  },
+  {
+    radius: 'balanced',
+    maxTransitionMinutes: 24,
+    neighborhoodContinuity: 'preferred',
+  },
+  {
+    radius: 'open',
+    maxTransitionMinutes: 32,
+    neighborhoodContinuity: 'flexible',
+  },
+]
+
+function movementPostureRank(movementProfile: RouteShapeContract['movementProfile']): number {
+  const exactIndex = INTERPRETATION_BUILD_RECOVERY_MOVEMENT_POSTURE_ORDER.findIndex(
+    (posture) =>
+      posture.radius === movementProfile.radius &&
+      posture.maxTransitionMinutes === movementProfile.maxTransitionMinutes &&
+      posture.neighborhoodContinuity === movementProfile.neighborhoodContinuity,
+  )
+  if (exactIndex >= 0) {
+    return exactIndex
+  }
+  const radiusRank =
+    movementProfile.radius === 'tight' ? 0 : movementProfile.radius === 'balanced' ? 1 : 3
+  const transitionRank =
+    movementProfile.maxTransitionMinutes <= 14
+      ? 0
+      : movementProfile.maxTransitionMinutes <= 18
+        ? 1
+        : movementProfile.maxTransitionMinutes <= 24
+          ? 2
+          : 3
+  const continuityRank =
+    movementProfile.neighborhoodContinuity === 'strict'
+      ? 0
+      : movementProfile.neighborhoodContinuity === 'preferred'
+        ? 2
+        : 3
+  return Math.max(radiusRank, transitionRank, continuityRank)
+}
+
+function buildRecoveryMovementProfile(
+  action: BuildSoftFeasibleRecoveryAction,
+  movementProfile: Omit<RouteShapeContract['movementProfile'], 'placeRightTolerance'>,
+): RouteShapeContract['movementProfile'] {
+  if (movementProfile.radius === 'open') {
+    return {
+      ...movementProfile,
+      placeRightTolerance: {
+        source: 'interpretation_contract_constraints',
+        travelTolerance: 'expanded',
+        maxComfortableTotalMovementMinutes: 42,
+        maxSingleTransitionMinutes: 22,
+        maxClusterEscapes: 2,
+        driveLikeMovement: 'acceptable',
+        reasonCodes: [
+          'place_right_movement_profile:interpretation_authored',
+          'build_soft_feasible_recovery:take_bigger_night',
+        ],
+      },
+    }
+  }
+  if (movementProfile.radius === 'balanced') {
+    return {
+      ...movementProfile,
+      placeRightTolerance: {
+        source: 'interpretation_contract_constraints',
+        travelTolerance: 'balanced',
+        maxComfortableTotalMovementMinutes:
+          movementProfile.maxTransitionMinutes === 18 ? 24 : 32,
+        maxSingleTransitionMinutes:
+          movementProfile.maxTransitionMinutes === 18 ? 14 : 16,
+        maxClusterEscapes: movementProfile.maxTransitionMinutes === 18 ? 1 : 2,
+        driveLikeMovement:
+          movementProfile.maxTransitionMinutes === 18 ? 'limited' : 'acceptable',
+        reasonCodes: [
+          'place_right_movement_profile:interpretation_authored',
+          `build_soft_feasible_recovery:${action}`,
+        ],
+      },
+    }
+  }
+  return {
+    ...movementProfile,
+    placeRightTolerance: {
+      source: 'interpretation_contract_constraints',
+      travelTolerance: 'tight',
+      maxComfortableTotalMovementMinutes: 18,
+      maxSingleTransitionMinutes: 10,
+      maxClusterEscapes: 1,
+      driveLikeMovement: 'discouraged',
+      reasonCodes: [
+        'place_right_movement_profile:interpretation_authored',
+        'build_soft_feasible_recovery:try_tighter_route',
+      ],
+    },
+  }
+}
+
+function buildSoftFeasibleRecoveryAttempts(
+  params: NonNullable<BuildApplicationConciergeIntentParams['buildSoftFeasibleRecovery']>,
+): BuildSoftFeasibleRecoveryChoice['orderedRouteShapeAttempts'] {
+  const originRank = movementPostureRank(params.originatingMovementProfile)
+  const candidatePostures =
+    params.action === 'take_bigger_night'
+      ? INTERPRETATION_BUILD_RECOVERY_MOVEMENT_POSTURE_ORDER.filter(
+          (posture) => movementPostureRank(posture) > originRank,
+        )
+      : INTERPRETATION_BUILD_RECOVERY_MOVEMENT_POSTURE_ORDER.filter(
+          (posture) => movementPostureRank(posture) < originRank,
+        )
+  return candidatePostures.map((movementProfile, index) => ({
+    source: 'interpretation_build_soft_feasible_recovery' as const,
+    action: params.action,
+    attemptId: `build_soft_feasible_recovery:${params.action}:${index + 1}`,
+    order: index,
+    movementProfile: buildRecoveryMovementProfile(params.action, movementProfile),
+    relationToOrigin:
+      params.action === 'take_bigger_night'
+        ? 'broader_than_origin'
+        : 'tighter_than_origin',
+    reasonCodes: [
+      'build_soft_feasible_recovery:interpretation_projected_route_shape',
+      `build_soft_feasible_recovery:${params.action}`,
+    ],
+  }))
+}
+
+function buildSoftFeasibleRecoveryChoice(
+  params: BuildApplicationConciergeIntentParams,
+): BuildSoftFeasibleRecoveryChoice | undefined {
+  if (params.mode !== 'build' || !params.buildSoftFeasibleRecovery) {
+    return undefined
+  }
+  const action = params.buildSoftFeasibleRecovery.action
+  return {
+    source: 'application_great_stop_recovery_surface',
+    action,
+    originatingMovementProfile: params.buildSoftFeasibleRecovery.originatingMovementProfile,
+    orderedRouteShapeAttempts: buildSoftFeasibleRecoveryAttempts(
+      params.buildSoftFeasibleRecovery,
+    ),
+    reasonCodes: [
+      'great_stop_failed:place_right_soft_feasible',
+      `build_soft_feasible_recovery:${action}`,
+    ],
+  }
+}
+
 export function buildApplicationConciergeIntent(
   params: BuildApplicationConciergeIntentParams,
 ): ConciergeIntent {
@@ -264,6 +433,7 @@ export function buildApplicationConciergeIntent(
   const objectiveDefaulted = params.objectiveOccasion == null
   const objectiveOccasion = params.objectiveOccasion ?? 'connect'
   const objectiveSource = params.objectiveSource ?? (objectiveDefaulted ? 'defaulted' : 'user_supplied')
+  const buildRecoveryChoice = buildSoftFeasibleRecoveryChoice(params)
   const seedToken =
     params.candidateLineage?.candidateArtifactId
       ? `candidate_${normalizeConciergeIntentToken(params.candidateLineage.candidateArtifactId)}`
@@ -306,6 +476,9 @@ export function buildApplicationConciergeIntent(
       travelTolerance,
       structureRigidity,
       swapTolerance,
+      ...(buildRecoveryChoice
+        ? { buildSoftFeasibleRecoveryChoice: buildRecoveryChoice }
+        : {}),
     },
     realityPosture: {
       liveSignalPriority: 'high',

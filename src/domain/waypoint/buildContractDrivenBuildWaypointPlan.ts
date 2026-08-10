@@ -19,12 +19,14 @@ import type {
   DirectionPlanningSelection,
 } from '../arc/directionPlanning'
 import type { DirectionContractBuildability } from '../bearings/assessDirectionContractBuildability'
+import { buildRoutePlaceRightVerdictForArcCandidate } from '../bearings/buildRoutePlaceRightVerdictForArcCandidate'
 import type { CanonicalInterpretationBundle } from '../interpretation/buildCanonicalInterpretationBundle'
 import { runGeneratePlan, type GeneratePlanResult, type RunGeneratePlanOptions } from '../runGeneratePlan'
 import type { ArcCandidate, ScoredVenue } from '../types/arc'
 import type {
   ConciergeIntent,
   ContractConstraints,
+  AnchorRole,
   IntentInput,
   IntentProfile,
   PersonaMode,
@@ -65,6 +67,31 @@ export interface BuildContractDrivenWaypointPlanDiagnostics {
   compatibilityProjectionRejected: boolean
   intentProfileRole: 'derived_compatibility_view'
   greatStopGatePostRepairVerification?: GreatStopGateSelectionDiagnostics
+  buildAnchorRoleCasting?: BuildAnchorRoleCastingDiagnostics
+}
+
+export type BuildAnchorRoleCastingVariantOutcome =
+  | {
+      role: AnchorRole
+      status: 'completed'
+      selectedRouteId: string
+      anchorRoleScore: number
+      routeScore: number
+      greatStopStatus: 'PASS'
+    }
+  | {
+      role: AnchorRole
+      status: 'rejected'
+      failureStage: string
+      reasonEvidence: string[]
+    }
+
+export interface BuildAnchorRoleCastingDiagnostics {
+  owner: 'waypoint'
+  source: 'build_anchor_missing_role_contextual_cast'
+  selectedRole: AnchorRole
+  attemptedOutcomes: BuildAnchorRoleCastingVariantOutcome[]
+  selectorRule: 'normal_great_stop_pass_then_anchor_role_score_then_route_score'
 }
 
 export interface BuildContractDrivenWaypointPlanResult {
@@ -126,6 +153,22 @@ export interface BuildContractDrivenWaypointPlanInput {
   compatibilityProjectionForMutationProof?: IntentInput
 }
 
+export class BuildAnchorRoleCastingSelectionError extends Error {
+  readonly attemptedOutcomes: BuildAnchorRoleCastingVariantOutcome[]
+
+  constructor(attemptedOutcomes: BuildAnchorRoleCastingVariantOutcome[]) {
+    super('No contextual Build anchor role cast produced a normal Great Stop PASS.')
+    this.name = 'BuildAnchorRoleCastingSelectionError'
+    this.attemptedOutcomes = attemptedOutcomes
+  }
+}
+
+const BUILD_ANCHOR_CONTEXTUAL_ROLE_ORDER: AnchorRole[] = [
+  'start',
+  'highlight',
+  'windDown',
+]
+
 function cloneCompatibilityProjection(input: IntentInput): IntentInput {
   return JSON.parse(JSON.stringify(input)) as IntentInput
 }
@@ -152,6 +195,178 @@ function roleToArcRole(
     return 'peak'
   }
   return 'cooldown'
+}
+
+function getAnchorRoleScore(params: {
+  selectedArc: ArcCandidate
+  role: AnchorRole
+  anchorVenueId: string
+}): number {
+  const arcRole = roleToArcRole(params.role)
+  const stop = params.selectedArc.stops.find(
+    (entry) =>
+      entry.role === arcRole &&
+      entry.scoredVenue.venue.id === params.anchorVenueId,
+  )
+  return stop?.scoredVenue.roleScores[arcRole] ?? 0
+}
+
+function readBuildAnchorRoleResolutionSource(
+  input: BuildContractDrivenWaypointPlanInput,
+): string | null {
+  const anchor = input.anchor as (PlanAnchor & { roleResolutionSource?: string }) | undefined
+  const anchorPosture = input.conciergeIntent.anchorPosture as ConciergeIntent['anchorPosture'] & {
+    roleResolutionSource?: string
+  }
+  return (
+    input.buildAnchorTruthContract?.roleResolutionSource ??
+    anchor?.roleResolutionSource ??
+    anchorPosture.roleResolutionSource ??
+    null
+  )
+}
+
+function getContextualBuildAnchorVenueId(
+  input: BuildContractDrivenWaypointPlanInput,
+): string | null {
+  return (
+    input.buildAnchorTruthContract?.canonicalVenueId ||
+    input.requiredBuildAnchor?.venueId ||
+    input.anchor?.venueId ||
+    input.conciergeIntent.anchorPosture.anchorValue ||
+    null
+  )
+}
+
+function shouldContextuallyCastBuildAnchorRole(
+  input: BuildContractDrivenWaypointPlanInput,
+): boolean {
+  return Boolean(
+    input.mode === 'build' &&
+      getContextualBuildAnchorVenueId(input) &&
+      readBuildAnchorRoleResolutionSource(input) === 'missing' &&
+      !input.anchor?.role &&
+      !input.requiredBuildAnchor?.role &&
+      !input.buildAnchorTruthContract?.requiredRole,
+  )
+}
+
+function applyContextualBuildAnchorRoleVariant(
+  input: BuildContractDrivenWaypointPlanInput,
+  role: AnchorRole,
+): BuildContractDrivenWaypointPlanInput {
+  const anchorVenueId = getContextualBuildAnchorVenueId(input)
+  if (!anchorVenueId) {
+    return input
+  }
+  const variantAnchor: PlanAnchor & { roleResolutionSource?: 'inferred' } = {
+    ...(input.anchor ?? { venueId: anchorVenueId }),
+    venueId: anchorVenueId,
+    role,
+    roleResolutionSource: 'inferred',
+  }
+  const anchorPosture = input.conciergeIntent.anchorPosture as ConciergeIntent['anchorPosture'] & {
+    roleResolutionSource?: string
+  }
+  const anchorLineage = input.conciergeIntent.anchorLineage as ConciergeIntent['anchorLineage'] & {
+    roleResolutionSource?: string
+  }
+  return {
+    ...input,
+    conciergeIntent: {
+      ...input.conciergeIntent,
+      anchorPosture: {
+        ...input.conciergeIntent.anchorPosture,
+        roleHint: role,
+        roleResolutionSource:
+          anchorPosture.roleResolutionSource === 'missing'
+            ? 'inferred'
+            : anchorPosture.roleResolutionSource ?? 'inferred',
+      },
+      anchorLineage: {
+        ...input.conciergeIntent.anchorLineage,
+        roleHint: role,
+        roleResolutionSource:
+          anchorLineage.roleResolutionSource === 'missing'
+            ? 'inferred'
+            : anchorLineage.roleResolutionSource ?? 'inferred',
+      },
+    },
+    anchor: variantAnchor,
+    requiredBuildAnchor: {
+      venueId: anchorVenueId,
+      role,
+    },
+    buildAnchorTruthContract: input.buildAnchorTruthContract
+      ? {
+          ...input.buildAnchorTruthContract,
+          requiredRole: role,
+          roleResolutionSource: 'inferred',
+        }
+      : input.buildAnchorTruthContract,
+  }
+}
+
+function classifyBuildAnchorRoleVariantFailure(error: unknown): {
+  failureStage: string
+  reasonEvidence: string[]
+} {
+  if (error instanceof GreatStopGateSelectionError) {
+    const diagnostics = error.greatStopGateSelectionDiagnostics
+    return {
+      failureStage: diagnostics.stage,
+      reasonEvidence: diagnostics.failureReasons,
+    }
+  }
+  if (error instanceof Error) {
+    return {
+      failureStage: error.name || 'generation',
+      reasonEvidence: [error.message],
+    }
+  }
+  return {
+    failureStage: 'unknown',
+    reasonEvidence: [String(error)],
+  }
+}
+
+function attachBuildAnchorRoleCastingDiagnostics(
+  result: BuildContractDrivenWaypointPlanResult,
+  diagnostics: BuildAnchorRoleCastingDiagnostics,
+): BuildContractDrivenWaypointPlanResult {
+  return {
+    ...result,
+    diagnostics: {
+      ...result.diagnostics,
+      buildAnchorRoleCasting: diagnostics,
+    },
+  }
+}
+
+function compareCompletedBuildAnchorRoleVariants(
+  left: {
+    role: AnchorRole
+    result: BuildContractDrivenWaypointPlanResult
+    outcome: Extract<BuildAnchorRoleCastingVariantOutcome, { status: 'completed' }>
+  },
+  right: {
+    role: AnchorRole
+    result: BuildContractDrivenWaypointPlanResult
+    outcome: Extract<BuildAnchorRoleCastingVariantOutcome, { status: 'completed' }>
+  },
+): number {
+  const anchorRoleScoreDelta = right.outcome.anchorRoleScore - left.outcome.anchorRoleScore
+  if (anchorRoleScoreDelta !== 0) {
+    return anchorRoleScoreDelta
+  }
+  const routeScoreDelta = right.outcome.routeScore - left.outcome.routeScore
+  if (routeScoreDelta !== 0) {
+    return routeScoreDelta
+  }
+  return (
+    BUILD_ANCHOR_CONTEXTUAL_ROLE_ORDER.indexOf(left.role) -
+    BUILD_ANCHOR_CONTEXTUAL_ROLE_ORDER.indexOf(right.role)
+  )
 }
 
 function getRoleTitle(role: UserStopRole): ItineraryStop['title'] {
@@ -422,16 +637,33 @@ function preserveRequiredBuildAnchorInParity(params: {
   }
 }
 
-export async function buildContractDrivenBuildWaypointPlan(
+export function buildBuildSoftFeasibleRecoveryRouteShapeAttempts(
+  routeShapeContract: RouteShapeContract,
+  conciergeIntent: ConciergeIntent,
+): RouteShapeContract[] {
+  const recoveryAttempts =
+    conciergeIntent.constraintPosture.buildSoftFeasibleRecoveryChoice?.orderedRouteShapeAttempts
+  if (!recoveryAttempts) {
+    return [routeShapeContract]
+  }
+  return recoveryAttempts.map((attempt) => ({
+    ...routeShapeContract,
+    movementProfile: attempt.movementProfile,
+  }))
+}
+
+export function applyBuildSoftFeasibleRecoveryRouteShape(
+  routeShapeContract: RouteShapeContract,
+  conciergeIntent: ConciergeIntent,
+): RouteShapeContract {
+  return buildBuildSoftFeasibleRecoveryRouteShapeAttempts(routeShapeContract, conciergeIntent)[0] ??
+    routeShapeContract
+}
+
+async function runBuildContractDrivenBuildWaypointPlanAttempt(
   input: BuildContractDrivenWaypointPlanInput,
+  routeShapeContract: RouteShapeContract,
 ): Promise<BuildContractDrivenWaypointPlanResult> {
-  const routeShapeContract = buildRouteShapeContract({
-    selectedDirection: input.selectedDirectionContract,
-    selectedDirectionContext: input.selectedDirectionContextForValidation,
-    conciergeIntent: input.conciergeIntent,
-    contractConstraints: input.canonicalInterpretationBundle.contractConstraints,
-    placeRightLocationClass: input.greatStopGateLocationClass,
-  })
   const compatibilityProjection = projectConciergeIntentToIntentInput({
     conciergeIntent: input.conciergeIntent,
     mode: input.mode,
@@ -467,6 +699,7 @@ export async function buildContractDrivenBuildWaypointPlan(
       strategyAdmissibleWorlds: input.strategyAdmissibleWorlds,
       greatStopGateLocationClass: input.greatStopGateLocationClass,
       routeShapeContract,
+      includePlaceRightDiagnosticCounterfactuals: true,
       selectedArtifactLineage: input.selectedArtifactLineage,
     },
   )
@@ -527,10 +760,19 @@ export async function buildContractDrivenBuildWaypointPlan(
   }
 
   const postRepairGreatStopGateDiagnostics = (() => {
+    const postRepairRoutePacing = buildGreatStopRoutePacingDiagnostics(parity.anchoredPlan.selectedArc)
+    const postRepairPlaceRightVerdict = buildRoutePlaceRightVerdictForArcCandidate({
+      candidate: parity.anchoredPlan.selectedArc,
+      intent: result.intentProfile,
+      routePacing: postRepairRoutePacing,
+      locationClass: input.greatStopGateLocationClass,
+      includeDiagnosticCounterfactuals: true,
+    })
     const postRepairGreatStopGateResult = buildGreatStopGateResult({
       selectedArc: parity.anchoredPlan.selectedArc,
       intent: result.intentProfile,
-      routePacing: buildGreatStopRoutePacingDiagnostics(parity.anchoredPlan.selectedArc),
+      routePacing: postRepairRoutePacing,
+      placeRightVerdict: postRepairPlaceRightVerdict,
       fieldRealVerdict: computeFieldRealVerdictForArcCandidate(parity.anchoredPlan.selectedArc),
       locationClass: input.greatStopGateLocationClass,
       locationClassSource: input.greatStopGateLocationClass ? 'explicit' : undefined,
@@ -618,4 +860,122 @@ export async function buildContractDrivenBuildWaypointPlan(
     },
     preLineage,
   }
+}
+
+export async function buildContractDrivenBuildWaypointPlan(
+  input: BuildContractDrivenWaypointPlanInput,
+): Promise<BuildContractDrivenWaypointPlanResult> {
+  const baseRouteShapeContract = buildRouteShapeContract({
+    selectedDirection: input.selectedDirectionContract,
+    selectedDirectionContext: input.selectedDirectionContextForValidation,
+    conciergeIntent: input.conciergeIntent,
+    contractConstraints: input.canonicalInterpretationBundle.contractConstraints,
+    placeRightLocationClass: input.greatStopGateLocationClass,
+  })
+  const routeShapeAttempts = buildBuildSoftFeasibleRecoveryRouteShapeAttempts(
+    baseRouteShapeContract,
+    input.conciergeIntent,
+  )
+  const recoveryActive = Boolean(
+    input.conciergeIntent.constraintPosture.buildSoftFeasibleRecoveryChoice,
+  )
+  if (routeShapeAttempts.length === 0) {
+    throw new Error('No eligible Build soft-feasible recovery movement postures remained.')
+  }
+  if (shouldContextuallyCastBuildAnchorRole(input)) {
+    const attemptedOutcomes: BuildAnchorRoleCastingVariantOutcome[] = []
+    const completedVariants: Array<{
+      role: AnchorRole
+      result: BuildContractDrivenWaypointPlanResult
+      outcome: Extract<BuildAnchorRoleCastingVariantOutcome, { status: 'completed' }>
+    }> = []
+    const anchorVenueId = getContextualBuildAnchorVenueId(input)
+    for (const role of BUILD_ANCHOR_CONTEXTUAL_ROLE_ORDER) {
+      const variantInput = applyContextualBuildAnchorRoleVariant(input, role)
+      let roleOutcomeRecorded = false
+      let lastRecoveryGreatStopError: GreatStopGateSelectionError | null = null
+      for (const routeShapeContract of routeShapeAttempts) {
+        try {
+          const result = await runBuildContractDrivenBuildWaypointPlanAttempt(
+            variantInput,
+            routeShapeContract,
+          )
+          const outcome: Extract<
+            BuildAnchorRoleCastingVariantOutcome,
+            { status: 'completed' }
+          > = {
+            role,
+            status: 'completed',
+            selectedRouteId: result.anchoredPlan.selectedArc.id,
+            anchorRoleScore: anchorVenueId
+              ? getAnchorRoleScore({
+                  selectedArc: result.anchoredPlan.selectedArc,
+                  role,
+                  anchorVenueId,
+                })
+              : 0,
+            routeScore: result.anchoredPlan.selectedArc.totalScore,
+            greatStopStatus: 'PASS',
+          }
+          attemptedOutcomes.push(outcome)
+          completedVariants.push({ role, result, outcome })
+          roleOutcomeRecorded = true
+          break
+        } catch (error) {
+          if (error instanceof GreatStopGateSelectionError && recoveryActive) {
+            lastRecoveryGreatStopError = error
+            continue
+          }
+          const failure = classifyBuildAnchorRoleVariantFailure(error)
+          attemptedOutcomes.push({
+            role,
+            status: 'rejected',
+            failureStage: failure.failureStage,
+            reasonEvidence: failure.reasonEvidence,
+          })
+          roleOutcomeRecorded = true
+          break
+        }
+      }
+      if (!roleOutcomeRecorded) {
+        const failure = classifyBuildAnchorRoleVariantFailure(
+          lastRecoveryGreatStopError ??
+            new Error('No route shape attempt completed for contextual Build anchor role.'),
+        )
+        attemptedOutcomes.push({
+          role,
+          status: 'rejected',
+          failureStage: failure.failureStage,
+          reasonEvidence: failure.reasonEvidence,
+        })
+      }
+    }
+    if (completedVariants.length === 0) {
+      throw new BuildAnchorRoleCastingSelectionError(attemptedOutcomes)
+    }
+    const [winner] = completedVariants.sort(compareCompletedBuildAnchorRoleVariants)
+    return attachBuildAnchorRoleCastingDiagnostics(winner.result, {
+      owner: 'waypoint',
+      source: 'build_anchor_missing_role_contextual_cast',
+      selectedRole: winner.role,
+      attemptedOutcomes,
+      selectorRule: 'normal_great_stop_pass_then_anchor_role_score_then_route_score',
+    })
+  }
+  let lastGreatStopSelectionError: GreatStopGateSelectionError | null = null
+  for (const routeShapeContract of routeShapeAttempts) {
+    try {
+      return await runBuildContractDrivenBuildWaypointPlanAttempt(input, routeShapeContract)
+    } catch (error) {
+      if (recoveryActive && error instanceof GreatStopGateSelectionError) {
+        lastGreatStopSelectionError = error
+        continue
+      }
+      throw error
+    }
+  }
+  if (lastGreatStopSelectionError) {
+    throw lastGreatStopSelectionError
+  }
+  throw new Error('No Build soft-feasible recovery movement posture produced a route.')
 }

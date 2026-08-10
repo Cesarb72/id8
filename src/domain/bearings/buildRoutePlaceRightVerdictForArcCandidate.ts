@@ -8,11 +8,28 @@ import { getSpatialMode } from '../types/spatial'
 import type {
   BearingsDistanceTransitionFact,
   BearingsMovementContractFacts,
+  BearingsPlaceRightDiagnosticCounterfactuals,
   BearingsPlaceRightVerdict,
   BearingsRouteFeasibilityInput,
   BearingsRouteStopRole,
   DistrictRoutePlaceFacts,
 } from './routePlaceRightContract'
+
+export type BuildPlaceRightRecoveryClassification =
+  | 'SOFT_FEASIBLE'
+  | 'HARD_INFEASIBLE'
+  | 'NOT_PLACE_RIGHT_FAILURE'
+  | 'INSUFFICIENT_EVIDENCE'
+
+export interface BuildPlaceRightRecoveryEvidence {
+  classification: BuildPlaceRightRecoveryClassification
+  reasonCodes: string[]
+  hardReasonCodes: string[]
+  softReasonCodes: string[]
+  requiredAnchorSurvived: boolean | null
+  softClausesObserveOnlyPassed: boolean
+  supportWorldBuildableWithSoftObserved: boolean | null
+}
 
 function routeRoleFor(stop: ArcStop): BearingsRouteStopRole {
   if (stop.role === 'warmup') return 'start'
@@ -238,4 +255,108 @@ export function buildRoutePlaceRightDiagnosticForArcCandidate(params: {
       hardClauseMode: 'enforce',
     },
   )
+}
+
+function uniqueReasonCodes(values: readonly string[]): string[] {
+  return [...new Set(values)]
+}
+
+function readSoftReasonCodes(
+  counterfactuals: BearingsPlaceRightDiagnosticCounterfactuals,
+): string[] {
+  const supportWorld = counterfactuals.allClausesEnforced.supportWorldDiagnostics
+  return uniqueReasonCodes([
+    ...(supportWorld?.observedOnlyReasons ?? []),
+    ...(supportWorld?.supplyFunnel.softRejectedCandidates.map((candidate) => candidate.reason) ?? []),
+    ...counterfactuals.allClausesEnforced.reasons.filter((reason) =>
+      reason === 'place_right:cluster_escape_structure' ||
+      reason === 'place_right:scattered_neighborhoods' ||
+      reason === 'place_right:poor_support_proximity' ||
+      reason === 'place_right:backtrack_structure' ||
+      reason === 'place_right:low_route_compactness',
+    ),
+  ])
+}
+
+export function classifyBuildPlaceRightRecoveryEvidence(params: {
+  verdict?: BearingsPlaceRightVerdict | null
+  requiredAnchorSurvived?: boolean | null
+}): BuildPlaceRightRecoveryEvidence {
+  const verdict = params.verdict
+  const counterfactuals = verdict?.diagnosticCounterfactuals
+  const hardReasonCodes = uniqueReasonCodes([
+    ...(verdict?.supportWorldDiagnostics?.hardClausesEnforced ?? []),
+    ...(verdict?.clauseAttribution?.hardFailureReasons ?? []),
+  ])
+  const requiredAnchorSurvived = params.requiredAnchorSurvived ?? null
+  if (!verdict || !counterfactuals) {
+    return {
+      classification: 'INSUFFICIENT_EVIDENCE',
+      reasonCodes: verdict?.reasons ?? [],
+      hardReasonCodes,
+      softReasonCodes: [],
+      requiredAnchorSurvived,
+      softClausesObserveOnlyPassed: false,
+      supportWorldBuildableWithSoftObserved: null,
+    }
+  }
+  return classifyBuildPlaceRightRecoveryCounterfactuals({
+    counterfactuals,
+    productionReasonCodes: verdict.reasons,
+    requiredAnchorSurvived,
+    productionStatus: verdict.status,
+    hardReasonCodes,
+  })
+}
+
+export function classifyBuildPlaceRightRecoveryCounterfactuals(params: {
+  counterfactuals?: BearingsPlaceRightDiagnosticCounterfactuals | null
+  productionReasonCodes?: readonly string[]
+  requiredAnchorSurvived?: boolean | null
+  productionStatus?: BearingsPlaceRightVerdict['status']
+  hardReasonCodes?: readonly string[]
+}): BuildPlaceRightRecoveryEvidence {
+  const counterfactuals = params.counterfactuals
+  const requiredAnchorSurvived = params.requiredAnchorSurvived ?? null
+  if (!counterfactuals) {
+    return {
+      classification: 'INSUFFICIENT_EVIDENCE',
+      reasonCodes: [...(params.productionReasonCodes ?? [])],
+      hardReasonCodes: [...(params.hardReasonCodes ?? [])],
+      softReasonCodes: [],
+      requiredAnchorSurvived,
+      softClausesObserveOnlyPassed: false,
+      supportWorldBuildableWithSoftObserved: null,
+    }
+  }
+  const softObserveOnly = counterfactuals.softClausesObserveOnly
+  const softClausesObserveOnlyPassed =
+    softObserveOnly.placeRightReady === true && softObserveOnly.status === 'pass'
+  const supportWorldBuildableWithSoftObserved =
+    softObserveOnly.supportWorldDiagnostics?.supplyFunnel.finalSupportWorld.buildable ?? null
+  const softReasonCodes = readSoftReasonCodes(counterfactuals)
+  const anchorHardFailed = requiredAnchorSurvived === false
+  const hardPlaceRightFailed =
+    softObserveOnly.status === 'fail' ||
+    (supportWorldBuildableWithSoftObserved === false &&
+      (softObserveOnly.supportWorldDiagnostics?.supplyFunnel.finalSupportWorld.reasonCodes ?? [])
+        .some((reason) => !softReasonCodes.includes(reason)))
+  const productionStatus = params.productionStatus ?? counterfactuals.allClausesEnforced.status
+  const classification =
+    productionStatus === 'pass'
+      ? 'NOT_PLACE_RIGHT_FAILURE'
+      : anchorHardFailed || hardPlaceRightFailed
+        ? 'HARD_INFEASIBLE'
+        : softClausesObserveOnlyPassed
+          ? 'SOFT_FEASIBLE'
+          : 'INSUFFICIENT_EVIDENCE'
+  return {
+    classification,
+    reasonCodes: [...(params.productionReasonCodes ?? counterfactuals.allClausesEnforced.reasons)],
+    hardReasonCodes: [...(params.hardReasonCodes ?? [])],
+    softReasonCodes,
+    requiredAnchorSurvived,
+    softClausesObserveOnlyPassed,
+    supportWorldBuildableWithSoftObserved,
+  }
 }

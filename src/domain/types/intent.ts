@@ -147,6 +147,26 @@ export interface RouteShapeContract {
   }
 }
 
+export type BuildSoftFeasibleRecoveryAction = 'take_bigger_night' | 'try_tighter_route'
+
+export interface BuildSoftFeasibleRecoveryRouteShapeAttempt {
+  source: 'interpretation_build_soft_feasible_recovery'
+  action: BuildSoftFeasibleRecoveryAction
+  attemptId: string
+  order: number
+  movementProfile: RouteShapeContract['movementProfile']
+  relationToOrigin: 'broader_than_origin' | 'tighter_than_origin'
+  reasonCodes: string[]
+}
+
+export interface BuildSoftFeasibleRecoveryChoice {
+  source: 'application_great_stop_recovery_surface'
+  action: BuildSoftFeasibleRecoveryAction
+  originatingMovementProfile: RouteShapeContract['movementProfile']
+  orderedRouteShapeAttempts: BuildSoftFeasibleRecoveryRouteShapeAttempt[]
+  reasonCodes: string[]
+}
+
 export type ConciergeIntentMode = 'surprise' | 'curated' | 'direct' | 'anchored' | 'search_led'
 export type ConciergeControlPostureMode = 'assistant_led' | 'guided_assist' | 'user_directed'
 export type ConciergeObjectivePrimary =
@@ -236,6 +256,7 @@ export interface ConciergeIntent {
     travelTolerance: ConciergeTravelTolerance
     structureRigidity: ConciergeStructureRigidity
     swapTolerance: ConciergeSwapTolerance
+    buildSoftFeasibleRecoveryChoice?: BuildSoftFeasibleRecoveryChoice
   }
   realityPosture: {
     liveSignalPriority: ConciergeRealityPriority

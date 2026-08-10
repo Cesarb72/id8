@@ -161,7 +161,11 @@ import {
 } from '../app/services/curate/row1CoffeeBooksProofTarget'
 import { findScoredVenueForStopWithPolicy } from '../app/services/build/finalRouteDetailCopyTruth'
 import { buildRouteRecommendationLifecycleDiagnostics } from '../app/services/routeRecommendationLifecycle'
-import { buildGreatStopRecoverySurfaceModel } from '../app/services/greatStopRecoverySurface'
+import {
+  buildGreatStopRecoverySurfaceModel,
+  validateBuildSoftFeasibleRecoveryActionBinding,
+  type BuildSoftFeasibleRecoveryActionBinding,
+} from '../app/services/greatStopRecoverySurface'
 import {
   SwapCommitCoreError,
   applyPreviewSwapCommit,
@@ -320,6 +324,7 @@ import {
 import type { ArcCandidate, ScoredVenue } from '../domain/types/arc'
 import type { ExperienceLens } from '../domain/types/experienceLens'
 import type {
+  BuildSoftFeasibleRecoveryAction,
   ConciergeIntent,
   ContractConstraints,
   ExperienceContract,
@@ -665,6 +670,11 @@ interface GenerationContractDebugBreadcrumb {
   postPlannerStagesSummary?: string
   greatStopGateSelectionDiagnostics?: GreatStopGateSelectionDiagnostics | null
   greatStopGateFailureClassification?: GreatStopGateFailureClassification | null
+}
+
+interface BuildSoftFeasibleRecoveryGenerateOptions {
+  buildSoftFeasibleRecoveryAction?: BuildSoftFeasibleRecoveryAction | null
+  buildSoftFeasibleRecoveryActionBinding?: BuildSoftFeasibleRecoveryActionBinding | null
 }
 
 type GreatStopGateFailureClassification =
@@ -10685,8 +10695,7 @@ export function SandboxConciergePage({
     isCurateEntryRoute || (!isPublicSurface && isChooseRoute && isCurateOrigin)
   const isBuildWrapperActive =
     isBuildEntryRoute || (!isPublicSurface && isChooseRoute && isBuildOrigin)
-  const buildSelectedAnchorRequiredRole: BuildAnchorCanonicalRole | null =
-    isBuildWrapperActive && selectedBuildAnchor?.venueId ? 'highlight' : null
+  const buildSelectedAnchorRequiredRole: BuildAnchorCanonicalRole | null = null
   const isModeWrapperActive = isCurateWrapperActive || isSurpriseWrapperActive || isBuildWrapperActive
   const publicCardPreviewMode = useMemo<ConciergeCardMode>(
     () => selectCardEchoPreviewMode({ isBuildWrapperActive, isCurateWrapperActive }),
@@ -11344,7 +11353,9 @@ export function SandboxConciergePage({
             isBuildWrapperActive && selectedBuildAnchor?.venueId
               ? {
                   venueId: selectedBuildAnchor.venueId,
-                  role: buildSelectedAnchorRequiredRole ?? 'highlight',
+                  ...(buildSelectedAnchorRequiredRole
+                    ? { role: buildSelectedAnchorRequiredRole }
+                    : {}),
                 }
               : null,
           districtPreviewResult: districtPreviewResult ?? null,
@@ -13912,8 +13923,16 @@ export function SandboxConciergePage({
   ])
   const effectiveBuildSelectedAnchorRequiredRole: BuildAnchorCanonicalRole | null =
     isBuildWrapperActive && selectedBuildAnchor?.venueId
-      ? selectedCandidateRouteArtifact?.anchorRole ?? buildSelectedAnchorRequiredRole
+      ? buildSelectedAnchorRequiredRole ?? selectedCandidateRouteArtifact?.anchorRole ?? null
       : null
+  const effectiveBuildSelectedAnchorRoleResolutionSource: BuildAnchorRoleResolutionSource =
+    isBuildWrapperActive && selectedBuildAnchor?.venueId
+      ? buildSelectedAnchorRequiredRole
+        ? 'explicit'
+        : selectedCandidateRouteArtifact?.anchorRole
+          ? 'inferred'
+          : 'missing'
+      : 'missing'
   const selectedBuildCandidateSourceKind =
     isBuildWrapperActive &&
     buildProviderGenerationCandidateArtifact &&
@@ -15554,6 +15573,7 @@ export function SandboxConciergePage({
     async (
       directionIdOverride?: string | unknown,
       selectedRouteArtifactIdOverride?: string | null,
+      buildRecoveryOptions?: BuildSoftFeasibleRecoveryGenerateOptions,
     ) => {
       const selectionEpochAtStart = selectionEpochRef.current
       const normalizedDirectionOverride =
@@ -15562,6 +15582,16 @@ export function SandboxConciergePage({
         typeof selectedRouteArtifactIdOverride === 'string' &&
         selectedRouteArtifactIdOverride.trim().length > 0
           ? selectedRouteArtifactIdOverride.trim()
+          : null
+      const normalizedBuildSoftFeasibleRecoveryAction =
+        isBuildWrapperActive && buildRecoveryOptions?.buildSoftFeasibleRecoveryAction
+          ? buildRecoveryOptions.buildSoftFeasibleRecoveryAction
+          : null
+      const normalizedBuildSoftFeasibleRecoveryBinding =
+        normalizedBuildSoftFeasibleRecoveryAction &&
+        buildRecoveryOptions?.buildSoftFeasibleRecoveryActionBinding?.recoveryStateBinding
+          .originatingMovementProfile
+          ? buildRecoveryOptions.buildSoftFeasibleRecoveryActionBinding.recoveryStateBinding
           : null
       let activeDirectionId = normalizedDirectionOverride ?? selectedDirectionId
       const initialArtifactResolution = resolveCandidateRouteArtifactSelection({
@@ -15844,8 +15874,8 @@ export function SandboxConciergePage({
         const buildPlannerAnchor = deriveBuildPlannerAnchor({
           isBuildWrapperActive,
           selectedBuildAnchor,
-          activeCandidateAnchorRole:
-            effectiveBuildSelectedAnchorRequiredRole ?? activeCandidateRouteArtifact?.anchorRole,
+          selectedBuildAnchorRole: buildSelectedAnchorRequiredRole,
+          activeCandidateAnchorRole: activeCandidateRouteArtifact?.anchorRole,
         })
         const activeBuildCandidateSourceKind =
           isBuildWrapperActive &&
@@ -15867,11 +15897,7 @@ export function SandboxConciergePage({
             })
           : null
         const buildAnchorRoleResolutionSource: BuildAnchorRoleResolutionSource =
-          effectiveBuildSelectedAnchorRequiredRole
-            ? 'explicit'
-            : activeCandidateRouteArtifact?.anchorRole
-              ? 'inferred'
-              : 'defaulted_highlight'
+          buildPlannerAnchor?.roleResolutionSource ?? 'missing'
         const buildAnchorTruthContractForGeneration =
           isBuildWrapperActive && selectedBuildAnchor?.venueId && buildPlannerAnchor
             ? buildAnchorTruthContract({
@@ -15934,7 +15960,17 @@ export function SandboxConciergePage({
           starterPack: generationStarterPack,
           anchor: buildPlannerAnchor,
           anchorDisplayName: selectedBuildAnchor?.name,
+          anchorRoleResolutionSource: buildPlannerAnchor?.roleResolutionSource,
           candidateLineage: generationCandidateLineage,
+          buildSoftFeasibleRecovery:
+            normalizedBuildSoftFeasibleRecoveryAction &&
+            normalizedBuildSoftFeasibleRecoveryBinding?.originatingMovementProfile
+              ? {
+                  action: normalizedBuildSoftFeasibleRecoveryAction,
+                  originatingMovementProfile:
+                    normalizedBuildSoftFeasibleRecoveryBinding.originatingMovementProfile,
+                }
+              : null,
         })
         const generationCanonicalInterpretationBundle = buildCanonicalInterpretationBundle({
           conciergeIntent: generationConciergeIntent,
@@ -16524,6 +16560,8 @@ export function SandboxConciergePage({
       persona,
       primaryVibe,
       effectiveBuildSelectedAnchorRequiredRole,
+      effectiveBuildSelectedAnchorRoleResolutionSource,
+      buildSelectedAnchorRequiredRole,
       selectedBuildAnchor,
       selectedBuildAnchorVenue,
       selectedStep2CandidateArtifactId,
@@ -19367,7 +19405,7 @@ export function SandboxConciergePage({
         },
         role: {
           role: effectiveBuildSelectedAnchorRequiredRole,
-          roleResolutionSource: effectiveBuildSelectedAnchorRequiredRole ? 'explicit' : 'missing',
+          roleResolutionSource: effectiveBuildSelectedAnchorRoleResolutionSource,
         },
       })
       const admission = evaluateBuildCandidateAdmission({
@@ -19397,6 +19435,7 @@ export function SandboxConciergePage({
     buildProviderMergedIntoVisiblePool,
     buildProviderSelectionAllowed,
     effectiveBuildSelectedAnchorRequiredRole,
+    effectiveBuildSelectedAnchorRoleResolutionSource,
     isBuildWrapperActive,
     selectedBuildAnchor,
     selectedBuildAnchorVenue,
@@ -19489,6 +19528,13 @@ export function SandboxConciergePage({
         : selectedCandidateRouteArtifact.id)
     const canonicalBuildFinalRoute =
       buildGeneratedCanonicalHandoff?.finalRoute ?? canonicalRouteArtifact?.finalRoute ?? null
+    const canonicalBuildAnchorRequiredRole =
+      buildGeneratedCanonicalHandoff?.artifact.anchorRole ??
+      effectiveBuildSelectedAnchorRequiredRole
+    const canonicalBuildAnchorRoleResolutionSource: BuildAnchorRoleResolutionSource =
+      buildGeneratedCanonicalHandoff?.artifact.anchorRole
+        ? 'inferred'
+        : effectiveBuildSelectedAnchorRoleResolutionSource
     const anchorContract = buildAnchorTruthContract({
       identity: {
         venueId: selectedBuildAnchor.venueId,
@@ -19501,8 +19547,8 @@ export function SandboxConciergePage({
         longitude: selectedBuildAnchorVenue?.source.longitude,
       },
       role: {
-        role: effectiveBuildSelectedAnchorRequiredRole,
-        roleResolutionSource: effectiveBuildSelectedAnchorRequiredRole ? 'explicit' : 'missing',
+        role: canonicalBuildAnchorRequiredRole,
+        roleResolutionSource: canonicalBuildAnchorRoleResolutionSource,
       },
     })
     const candidateAdmission = evaluateBuildCandidateAdmission({
@@ -19550,7 +19596,7 @@ export function SandboxConciergePage({
           : null,
       candidateAdmission,
       anchorTruthContract: anchorContract,
-      selectedAnchorRequiredRole: effectiveBuildSelectedAnchorRequiredRole,
+      selectedAnchorRequiredRole: canonicalBuildAnchorRequiredRole,
       sourceKind: buildGeneratedCanonicalHandoff
         ? 'static'
         : buildSelectedCandidateAdmissionDiagnostic?.source === 'provider_shadow'
@@ -19569,6 +19615,7 @@ export function SandboxConciergePage({
     buildProviderSelectionAllowed,
     buildSelectedCandidateAdmissionDiagnostic?.source,
     effectiveBuildSelectedAnchorRequiredRole,
+    effectiveBuildSelectedAnchorRoleResolutionSource,
     canonicalRouteArtifact,
     city,
     districtLocationQuery,
@@ -22935,6 +22982,17 @@ export function SandboxConciergePage({
       isPublicSurface && isBuildWrapperActive
         ? generationContractDebug?.greatStopGateFailureClassification ?? null
         : null,
+    buildAnchorName: selectedBuildAnchor?.name ?? null,
+    buildIntentId: canonicalConciergeIntent.id,
+    buildAnchorVenueId: selectedBuildAnchor?.venueId ?? null,
+    buildAnchorRole:
+      effectiveBuildSelectedAnchorRequiredRole ??
+      selectedCandidateRouteArtifact?.anchorRole ??
+      null,
+    buildAnchorRoleProvenance: effectiveBuildSelectedAnchorRoleResolutionSource,
+    selectedCandidateArtifactId:
+      selectedCandidateRouteArtifact?.id ?? selectedRouteArtifactIdForGeneration ?? null,
+    originatingMovementProfile: selectedRouteShapeContract?.movementProfile ?? null,
   })
   const publicSurpriseGreatStopFailureRecoveryVisible = Boolean(
     isPublicSurface && isSurpriseWrapperActive && publicSurpriseGreatStopRecoveryModel.active,
@@ -23463,6 +23521,46 @@ export function SandboxConciergePage({
     selectedCandidateRouteArtifact,
     selectedCurateVisibleCardModel,
   ])
+  const handleBuildSoftFeasibleRecovery = useCallback(
+    (
+      action: BuildSoftFeasibleRecoveryAction,
+      clickBinding?: BuildSoftFeasibleRecoveryActionBinding | null,
+    ) => {
+      if (!isPublicSurface || !isBuildWrapperActive || loading || !previewGenerateDirectionId) {
+        return
+      }
+      const currentRecovery = publicBuildGreatStopRecoveryModel.buildSoftFeasibleRecovery
+      const actionBindingValidation = validateBuildSoftFeasibleRecoveryActionBinding({
+        clickedAction: action,
+        submittedBinding: clickBinding,
+        currentRecoveryBinding: currentRecovery?.binding,
+        currentlyOfferedActions:
+          currentRecovery?.actions.map((entry) => entry.action) ?? [],
+      })
+      if (!actionBindingValidation.valid) {
+        setError('Recovery option expired. Re-run this route before trying recovery.')
+        return
+      }
+      setError(undefined)
+      void generatePlan(
+        previewGenerateDirectionId,
+        selectedRouteArtifactIdForGeneration,
+        {
+          buildSoftFeasibleRecoveryAction: action,
+          buildSoftFeasibleRecoveryActionBinding: clickBinding,
+        },
+      )
+    },
+    [
+      generatePlan,
+      isBuildWrapperActive,
+      isPublicSurface,
+      loading,
+      previewGenerateDirectionId,
+      publicBuildGreatStopRecoveryModel,
+      selectedRouteArtifactIdForGeneration,
+    ],
+  )
   const handleRetrySurpriseGeneration = useCallback(() => {
     if (loading) {
       return
@@ -28543,7 +28641,32 @@ export function SandboxConciergePage({
                 Try this surprise again
               </button>
             )}
-            {isPublicSurface && isBuildWrapperActive && (
+            {isPublicSurface &&
+              isBuildWrapperActive &&
+              publicGreatStopRecoverySurfaceModel.buildSoftFeasibleRecovery?.actions.map((action) => (
+                <div
+                  key={action.action}
+                  data-id8-build-soft-feasible-recovery-action={action.action}
+                >
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() =>
+                      handleBuildSoftFeasibleRecovery(
+                        action.action,
+                        action.binding,
+                      )
+                    }
+                    disabled={!previewGenerateDirectionId || loading}
+                  >
+                    {action.label}
+                  </button>
+                  <p className="preview-notice-copy">{action.copy}</p>
+                </div>
+              ))}
+            {isPublicSurface &&
+              isBuildWrapperActive &&
+              !publicGreatStopRecoverySurfaceModel.buildSoftFeasibleRecovery && (
               <button
                 type="button"
                 className="ghost-button"
