@@ -29,7 +29,8 @@ export interface BuildAnchorTruthContract {
   canonicalVenueId: string
   sourceVenueId?: string
   providerRecordId?: string
-  requiredRole: BuildAnchorCanonicalRole
+  requiredRole?: BuildAnchorCanonicalRole
+  candidateRole?: BuildAnchorCanonicalRole
   displayName?: string
   sourceOrigin?: Venue['source']['sourceOrigin']
   provider?: Venue['source']['provider']
@@ -63,7 +64,7 @@ export interface BuildAnchorRoleInput {
 export interface BuildAnchorTruthValidationResult {
   status: BuildAnchorTruthStatus
   preserved: boolean
-  requiredRole: BuildAnchorCanonicalRole
+  requiredRole?: BuildAnchorCanonicalRole
   canonicalVenueId: string
   observedRole?: UserStopRole | string
   observedVenueId?: string
@@ -82,30 +83,40 @@ export function isBuildAnchorCanonicalRole(
 }
 
 export function resolveBuildAnchorRole(params: BuildAnchorRoleInput): {
-  role: BuildAnchorCanonicalRole
+  role?: BuildAnchorCanonicalRole
+  candidateRole?: BuildAnchorCanonicalRole
   roleResolutionSource: BuildAnchorRoleResolutionSource
   reasons: BuildAnchorTruthFailureReason[]
 } {
   if (isBuildAnchorCanonicalRole(params.role)) {
+    const roleResolutionSource = params.roleResolutionSource ?? 'explicit'
+    if (roleResolutionSource === 'defaulted_highlight' || roleResolutionSource === 'missing') {
+      return {
+        candidateRole: params.role,
+        roleResolutionSource,
+        reasons:
+          roleResolutionSource === 'defaulted_highlight'
+            ? ['anchor_role_defaulted_highlight']
+            : ['anchor_role_missing'],
+      }
+    }
     return {
       role: params.role,
-      roleResolutionSource: params.roleResolutionSource ?? 'explicit',
+      roleResolutionSource,
       reasons: [],
     }
   }
 
   if (params.role && params.role.trim()) {
     return {
-      role: 'highlight',
-      roleResolutionSource: 'defaulted_highlight',
-      reasons: ['anchor_role_ambiguous', 'anchor_role_defaulted_highlight'],
+      roleResolutionSource: params.roleResolutionSource ?? 'missing',
+      reasons: ['anchor_role_ambiguous'],
     }
   }
 
   return {
-    role: 'highlight',
-    roleResolutionSource: 'defaulted_highlight',
-    reasons: ['anchor_role_missing', 'anchor_role_defaulted_highlight'],
+    roleResolutionSource: 'missing',
+    reasons: ['anchor_role_missing'],
   }
 }
 
@@ -139,7 +150,8 @@ export function buildAnchorTruthContract(params: {
     ...(nonEmpty(params.identity.providerRecordId)
       ? { providerRecordId: nonEmpty(params.identity.providerRecordId) }
       : {}),
-    requiredRole: roleResolution.role,
+    ...(roleResolution.role ? { requiredRole: roleResolution.role } : {}),
+    ...(roleResolution.candidateRole ? { candidateRole: roleResolution.candidateRole } : {}),
     ...(nonEmpty(params.identity.displayName)
       ? { displayName: nonEmpty(params.identity.displayName) }
       : {}),
@@ -171,6 +183,24 @@ function statusFromReasons(reasons: BuildAnchorTruthFailureReason[]): BuildAncho
   return 'invalid'
 }
 
+function missingRoleValidationResult(params: {
+  contract: BuildAnchorTruthContract
+  reasons: BuildAnchorTruthFailureReason[]
+  observedRole?: UserStopRole | string
+  observedVenueId?: string
+}): BuildAnchorTruthValidationResult {
+  const status = statusFromReasons(params.reasons)
+  return {
+    status,
+    preserved: false,
+    requiredRole: params.contract.requiredRole,
+    canonicalVenueId: params.contract.canonicalVenueId,
+    observedRole: params.observedRole,
+    observedVenueId: params.observedVenueId,
+    reasons: params.reasons,
+  }
+}
+
 export function validateContractEntryArtifactBuildAnchor(
   contract: BuildAnchorTruthContract,
   artifact: ContractEntryArtifact | null | undefined,
@@ -190,12 +220,17 @@ export function validateContractEntryArtifactBuildAnchor(
     }
   }
 
-  const artifactRoleResolution = resolveBuildAnchorRole({
-    role: artifact.anchorRole,
-    roleResolutionSource: artifact.anchorRole ? 'inferred' : 'defaulted_highlight',
-  })
-  const observedRole = artifactRoleResolution.role
-  reasons.push(...artifactRoleResolution.reasons)
+  const observedRole = isBuildAnchorCanonicalRole(artifact.anchorRole)
+    ? artifact.anchorRole
+    : undefined
+  if (!contract.requiredRole) {
+    return missingRoleValidationResult({
+      contract,
+      reasons,
+      observedRole,
+      observedVenueId: artifact.anchorVenueId,
+    })
+  }
 
   if (!artifact.anchorVenueId) {
     reasons.push('anchor_identity_missing')
@@ -228,6 +263,9 @@ export function validateRuntimeRouteBuildAnchor(
   const reasons = [...contract.diagnostics.reasons]
   if (!contract.canonicalVenueId) {
     reasons.push('anchor_identity_missing')
+  }
+  if (!contract.requiredRole) {
+    return missingRoleValidationResult({ contract, reasons })
   }
   if (!route) {
     reasons.push('anchor_preservation_failed')
@@ -287,6 +325,9 @@ export function validateItineraryBuildAnchor(
   const reasons = [...contract.diagnostics.reasons]
   if (!contract.canonicalVenueId) {
     reasons.push('anchor_identity_missing')
+  }
+  if (!contract.requiredRole) {
+    return missingRoleValidationResult({ contract, reasons })
   }
   if (!itinerary) {
     reasons.push('anchor_preservation_failed')

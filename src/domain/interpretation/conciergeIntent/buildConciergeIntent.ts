@@ -10,6 +10,23 @@ import type {
 } from '../../types/intent'
 
 type ConciergeIntentAdapterMode = ExperienceMode
+export type BuildAnchorRoleProvenanceSource =
+  | 'explicit'
+  | 'inferred'
+  | 'defaulted_highlight'
+  | 'missing'
+
+type AnchorPostureWithRoleProvenance = ConciergeIntent['anchorPosture'] & {
+  roleResolutionSource?: BuildAnchorRoleProvenanceSource
+}
+
+type AnchorLineageWithRoleProvenance = ConciergeIntent['anchorLineage'] & {
+  roleResolutionSource?: BuildAnchorRoleProvenanceSource
+}
+
+type PlanAnchorWithRoleProvenance = PlanAnchor & {
+  roleResolutionSource?: BuildAnchorRoleProvenanceSource
+}
 
 export interface BuildApplicationConciergeIntentParams {
   mode: ConciergeIntentAdapterMode
@@ -21,6 +38,7 @@ export interface BuildApplicationConciergeIntentParams {
   starterPack?: StarterPack | null
   anchor?: PlanAnchor | null
   anchorDisplayName?: string | null
+  anchorRoleResolutionSource?: BuildAnchorRoleProvenanceSource
   candidateLineage?: ConciergeIntentCandidateLineage | null
 }
 
@@ -109,14 +127,20 @@ function getAnchorPosture(params: {
   city: string
   starterPack?: StarterPack | null
   anchor?: PlanAnchor | null
-}): ConciergeIntent['anchorPosture'] {
+  anchorRoleResolutionSource?: BuildAnchorRoleProvenanceSource
+}): AnchorPostureWithRoleProvenance {
   const { mode, city, starterPack, anchor } = params
   if (mode === 'build') {
+    const anchorRoleProvenance = anchor as PlanAnchorWithRoleProvenance | null | undefined
+    const roleResolutionSource = anchor?.role
+      ? params.anchorRoleResolutionSource ?? anchorRoleProvenance?.roleResolutionSource ?? 'explicit'
+      : 'missing'
     return {
       mode: 'hard',
       anchorType: 'venue',
       anchorValue: anchor?.venueId,
-      roleHint: anchor?.role ?? 'highlight',
+      ...(anchor?.role ? { roleHint: anchor.role } : {}),
+      roleResolutionSource,
       timeBound: 'tonight',
     }
   }
@@ -161,13 +185,18 @@ function getStarterLineage(
 
 function getAnchorLineage(
   params: BuildApplicationConciergeIntentParams,
-): ConciergeIntent['anchorLineage'] {
+): AnchorLineageWithRoleProvenance {
   if (params.mode === 'build' && params.anchor?.venueId) {
+    const anchorRoleProvenance = params.anchor as PlanAnchorWithRoleProvenance
+    const roleResolutionSource = params.anchor.role
+      ? params.anchorRoleResolutionSource ?? anchorRoleProvenance.roleResolutionSource ?? 'explicit'
+      : 'missing'
     return {
       source: 'build_anchor',
       anchorId: params.anchor.venueId,
       displayName: params.anchorDisplayName ?? undefined,
-      roleHint: params.anchor.role ?? 'highlight',
+      ...(params.anchor.role ? { roleHint: params.anchor.role } : {}),
+      roleResolutionSource,
       required: true,
     }
   }

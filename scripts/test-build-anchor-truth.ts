@@ -5,10 +5,20 @@ import {
   validateContractEntryArtifactBuildAnchor,
   validateRuntimeRouteBuildAnchor,
 } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
+import { buildApplicationConciergeIntent } from '../src/domain/interpretation/conciergeIntent/buildConciergeIntent.ts'
+import { projectConciergeIntentToIntentInput } from '../src/domain/interpretation/projectConciergeIntentToIntentInput.ts'
+import {
+  deriveBuildPlannerAnchor,
+  deriveRequiredBuildAnchorForPostPlanner,
+  type BuildAnchorSelection,
+} from '../src/app/services/buildAnchorOrchestrationService.ts'
 import type { ContractEntryArtifactLineage } from '../src/domain/artifacts/contractEntryArtifact.ts'
 import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../src/domain/artifacts/runtimeRouteArtifact.ts'
-import type { BuildAnchorCanonicalRole } from '../src/domain/artifacts/buildAnchorTruthContract.ts'
-import type { IntentProfile } from '../src/domain/types/intent.ts'
+import type {
+  BuildAnchorCanonicalRole,
+  BuildAnchorRoleResolutionSource,
+} from '../src/domain/artifacts/buildAnchorTruthContract.ts'
+import type { ConciergeIntent, IntentInput, IntentProfile, PlanAnchor } from '../src/domain/types/intent.ts'
 import type { Itinerary, ItineraryStop, UserStopRole } from '../src/domain/types/itinerary.ts'
 
 const originalFetch = globalThis.fetch
@@ -96,6 +106,137 @@ function buildMissingRoleContract() {
     },
     role: {},
   })
+}
+
+const testAnchorSelection: BuildAnchorSelection = {
+  venueId: 'anchor-provenance',
+  name: 'Anchor Provenance',
+  category: 'restaurant' as never,
+  city: 'San Jose',
+  neighborhood: 'Downtown',
+}
+
+function roleResolutionSource(value: unknown): BuildAnchorRoleResolutionSource | undefined {
+  return (value as { roleResolutionSource?: BuildAnchorRoleResolutionSource }).roleResolutionSource
+}
+
+function assertNoAuthoritativeRole(value: { role?: string }, label: string): void {
+  assert(!Object.prototype.hasOwnProperty.call(value, 'role'), `${label} must not carry an authoritative role.`)
+}
+
+function buildConciergeIntentForAnchor(anchor: PlanAnchor & { roleResolutionSource?: BuildAnchorRoleResolutionSource }): ConciergeIntent {
+  return buildApplicationConciergeIntent({
+    mode: 'build',
+    persona: 'friends',
+    primaryVibe: 'lively',
+    city: 'San Jose',
+    anchor,
+    anchorDisplayName: 'Anchor Provenance',
+  })
+}
+
+function projectIntent(anchor: PlanAnchor & { roleResolutionSource?: BuildAnchorRoleResolutionSource }): IntentInput {
+  return projectConciergeIntentToIntentInput({
+    conciergeIntent: buildConciergeIntentForAnchor(anchor),
+    mode: 'build',
+    city: 'San Jose',
+    distanceMode: 'nearby',
+  })
+}
+
+function assertRoleProvenanceThroughAuthorizedSeams(): void {
+  const explicitPlannerAnchor = deriveBuildPlannerAnchor({
+    isBuildWrapperActive: true,
+    selectedBuildAnchor: testAnchorSelection,
+    selectedBuildAnchorRole: 'start',
+  })
+  assert(explicitPlannerAnchor?.role === 'start', 'Explicit role must preserve exact role in Application.')
+  assert(roleResolutionSource(explicitPlannerAnchor) === 'explicit', 'Explicit role source must remain explicit.')
+  const explicitProjected = projectIntent(explicitPlannerAnchor)
+  assert(explicitProjected.anchor?.role === 'start', 'Explicit role must project exact role.')
+  assert(roleResolutionSource(explicitProjected.anchor) === 'explicit', 'Explicit projection must preserve source.')
+  const explicitContract = buildAnchorTruthContract({
+    identity: { venueId: testAnchorSelection.venueId, displayName: testAnchorSelection.name },
+    role: {
+      role: explicitProjected.anchor?.role,
+      roleResolutionSource: roleResolutionSource(explicitProjected.anchor),
+    },
+  })
+  assert(explicitContract.requiredRole === 'start', 'Explicit contract role must remain start.')
+  assert(explicitContract.roleResolutionSource === 'explicit', 'Explicit contract source must remain explicit.')
+
+  const inferredPlannerAnchor = deriveBuildPlannerAnchor({
+    isBuildWrapperActive: true,
+    selectedBuildAnchor: testAnchorSelection,
+    activeCandidateAnchorRole: 'windDown',
+  })
+  assert(inferredPlannerAnchor?.role === 'windDown', 'Inferred role must preserve exact role in Application.')
+  assert(roleResolutionSource(inferredPlannerAnchor) === 'inferred', 'Inferred role source must remain inferred.')
+  const inferredProjected = projectIntent(inferredPlannerAnchor)
+  assert(inferredProjected.anchor?.role === 'windDown', 'Inferred role must project exact role.')
+  assert(roleResolutionSource(inferredProjected.anchor) === 'inferred', 'Inferred projection must preserve source.')
+  const inferredContract = buildAnchorTruthContract({
+    identity: { venueId: testAnchorSelection.venueId, displayName: testAnchorSelection.name },
+    role: {
+      role: inferredProjected.anchor?.role,
+      roleResolutionSource: roleResolutionSource(inferredProjected.anchor),
+    },
+  })
+  assert(inferredContract.requiredRole === 'windDown', 'Inferred contract role must remain windDown.')
+  assert(inferredContract.roleResolutionSource === 'inferred', 'Inferred contract must not be labeled explicit.')
+
+  const candidateOnlyContract = buildAnchorTruthContract({
+    identity: { venueId: testAnchorSelection.venueId, displayName: testAnchorSelection.name },
+    role: {
+      role: 'highlight',
+      roleResolutionSource: 'defaulted_highlight',
+    },
+  })
+  assert(candidateOnlyContract.requiredRole === undefined, 'Defaulted candidate role must not become requiredRole.')
+  assert(candidateOnlyContract.candidateRole === 'highlight', 'Defaulted candidate role may remain diagnostic candidateRole.')
+  assert(
+    candidateOnlyContract.roleResolutionSource === 'defaulted_highlight',
+    'Defaulted candidate role must remain non-authoritative.',
+  )
+  assert(
+    candidateOnlyContract.diagnostics.reasons.includes('anchor_role_defaulted_highlight'),
+    'Defaulted candidate role must diagnose its non-authoritative source.',
+  )
+
+  const missingPlannerAnchor = deriveBuildPlannerAnchor({
+    isBuildWrapperActive: true,
+    selectedBuildAnchor: testAnchorSelection,
+  })
+  assert(missingPlannerAnchor?.venueId === testAnchorSelection.venueId, 'Missing role must keep anchor identity.')
+  assertNoAuthoritativeRole(missingPlannerAnchor!, 'Missing Application planner anchor')
+  assert(roleResolutionSource(missingPlannerAnchor) === 'missing', 'Missing Application planner anchor must remain missing.')
+  assert(
+    deriveRequiredBuildAnchorForPostPlanner({
+      isBuildWrapperActive: true,
+      selectedBuildAnchor: testAnchorSelection,
+      resultAnchor: missingPlannerAnchor,
+      buildPlannerAnchor: missingPlannerAnchor,
+    }) === undefined,
+    'Missing role must not create a Required Stop Contract.',
+  )
+  const missingProjected = projectIntent(missingPlannerAnchor!)
+  assert(missingProjected.anchor?.venueId === testAnchorSelection.venueId, 'Missing projection must keep anchor identity.')
+  assertNoAuthoritativeRole(missingProjected.anchor!, 'Missing projected anchor')
+  assert(roleResolutionSource(missingProjected.anchor) === 'missing', 'Missing projected anchor must remain missing.')
+  const missingContract = buildAnchorTruthContract({
+    identity: { venueId: testAnchorSelection.venueId, displayName: testAnchorSelection.name },
+    role: {
+      role: missingProjected.anchor?.role,
+      roleResolutionSource: roleResolutionSource(missingProjected.anchor),
+    },
+  })
+  assert(missingContract.requiredRole === undefined, 'Missing contract must not default requiredRole to highlight.')
+  assert(missingContract.candidateRole === undefined, 'Missing contract must not create defaulted candidateRole.')
+  assert(missingContract.roleResolutionSource === 'missing', 'Missing contract source must remain missing.')
+  assert(
+    !missingContract.diagnostics.reasons.includes('anchor_role_defaulted_highlight'),
+    'Missing contract must not diagnose defaulted_highlight.',
+  )
 }
 
 function buildItineraryStop(role: UserStopRole, venueId: string): ItineraryStop {
@@ -292,16 +433,16 @@ function main(): void {
 
   const missingRoleContract = buildMissingRoleContract()
   assert(
-    missingRoleContract.requiredRole === 'highlight',
-    'Missing anchor role must default to highlight for compatibility.',
+    missingRoleContract.requiredRole === undefined,
+    'Missing anchor role must remain missing.',
   )
   assert(
-    missingRoleContract.roleResolutionSource === 'defaulted_highlight',
-    'Missing anchor role must expose defaulted_highlight source.',
+    missingRoleContract.roleResolutionSource === 'missing',
+    'Missing anchor role must expose missing source.',
   )
   assert(
-    missingRoleContract.diagnostics.reasons.includes('anchor_role_defaulted_highlight'),
-    'Missing anchor role must diagnose defaulted highlight.',
+    !missingRoleContract.diagnostics.reasons.includes('anchor_role_defaulted_highlight'),
+    'Missing anchor role must not diagnose defaulted highlight.',
   )
 
   const defaultedArtifactValidation = validateContractEntryArtifactBuildAnchor(
@@ -331,6 +472,12 @@ function main(): void {
     defaultedArtifactValidation.status === 'warning',
     'Missing artifact role must warn instead of silently passing.',
   )
+  assert(
+    defaultedArtifactValidation.preserved === false,
+    'Missing artifact role must not be marked preserved.',
+  )
+
+  assertRoleProvenanceThroughAuthorizedSeams()
 
   const generatedStart = buildGeneratedArtifact('start')
   assert(generatedStart.anchorRole === 'start', 'Generated Build start anchor must not re-author as highlight.')
@@ -361,6 +508,7 @@ function main(): void {
         fetchCallCount,
         preservedRoles: ['highlight', 'start', 'windDown'],
         missingRoleStatus: defaultedArtifactValidation.status,
+        missingRolePreserved: defaultedArtifactValidation.preserved,
         generatedStartAnchorRole: generatedStart.anchorRole,
         generatedWindDownAnchorRole: generatedWindDown.anchorRole,
         buildProviderSelectionAllowed: true,

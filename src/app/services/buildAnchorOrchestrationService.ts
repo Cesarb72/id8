@@ -4,6 +4,7 @@ import {
   type AnchorSearchResult,
   type SelectableAnchorSearchResult,
 } from './arcApplicationService'
+import type { BuildAnchorRoleResolutionSource } from '../../domain/artifacts/buildAnchorTruthContract'
 import type { UserStopRole } from '../../domain/types/itinerary'
 import type { Venue } from '../../domain/types/venue'
 
@@ -21,7 +22,8 @@ export type BuildAnchorSelection = {
 
 export type BuildPlannerAnchor = {
   venueId: string
-  role: BuildAnchorRole
+  role?: BuildAnchorRole
+  roleResolutionSource: BuildAnchorRoleResolutionSource
 }
 
 export type RequiredBuildAnchorStop = {
@@ -231,14 +233,22 @@ export function selectBuildAnchorVenue(params: {
 export function deriveBuildPlannerAnchor(params: {
   isBuildWrapperActive: boolean
   selectedBuildAnchor: BuildAnchorSelection | null
+  selectedBuildAnchorRole?: BuildAnchorRole | null
   activeCandidateAnchorRole?: BuildAnchorRole | null
 }): BuildPlannerAnchor | undefined {
   if (!params.isBuildWrapperActive || !params.selectedBuildAnchor?.venueId) {
     return undefined
   }
+  const role = params.selectedBuildAnchorRole ?? params.activeCandidateAnchorRole ?? undefined
+  const roleResolutionSource: BuildAnchorRoleResolutionSource = params.selectedBuildAnchorRole
+    ? 'explicit'
+    : params.activeCandidateAnchorRole
+      ? 'inferred'
+      : 'missing'
   return {
     venueId: params.selectedBuildAnchor.venueId,
-    role: params.activeCandidateAnchorRole ?? 'highlight',
+    ...(role ? { role } : {}),
+    roleResolutionSource,
   }
 }
 
@@ -257,7 +267,7 @@ export function deriveRequiredBuildAnchorForPostPlanner(params: {
   const requiredAnchorVenueId =
     params.resultAnchor?.venueId ?? params.selectedBuildAnchor.venueId
   const requiredAnchorRole =
-    params.resultAnchor?.role ?? params.buildPlannerAnchor?.role ?? 'highlight'
+    params.resultAnchor?.role ?? params.buildPlannerAnchor?.role
   if (!requiredAnchorVenueId || !isBuildAnchorCoreRole(requiredAnchorRole)) {
     return undefined
   }

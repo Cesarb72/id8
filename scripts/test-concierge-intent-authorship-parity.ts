@@ -19,6 +19,24 @@ import type {
 } from '../src/domain/types/intent.ts'
 import type { StarterPack } from '../src/domain/types/starterPack.ts'
 
+type BuildAnchorRoleProvenanceSource =
+  | 'explicit'
+  | 'inferred'
+  | 'defaulted_highlight'
+  | 'missing'
+
+type AnchorPostureWithRoleProvenance = ConciergeIntent['anchorPosture'] & {
+  roleResolutionSource?: BuildAnchorRoleProvenanceSource
+}
+
+type AnchorLineageWithRoleProvenance = ConciergeIntent['anchorLineage'] & {
+  roleResolutionSource?: BuildAnchorRoleProvenanceSource
+}
+
+type PlanAnchorWithRoleProvenance = PlanAnchor & {
+  roleResolutionSource?: BuildAnchorRoleProvenanceSource
+}
+
 type AuthorshipCaseName =
   | 'Surprise'
   | 'Curate'
@@ -89,7 +107,7 @@ function summarizeConciergeIntent(intent: ConciergeIntent) {
     objective: intent.objective,
     controlPosture: intent.controlPosture,
     experienceProfile: intent.experienceProfile,
-    anchorPosture: intent.anchorPosture,
+    anchorPosture: intent.anchorPosture as AnchorPostureWithRoleProvenance,
     constraintPosture: intent.constraintPosture,
     realityPosture: intent.realityPosture,
   }
@@ -98,7 +116,7 @@ function summarizeConciergeIntent(intent: ConciergeIntent) {
 function summarizeLineage(intent: ConciergeIntent) {
   return {
     starterLineage: intent.starterLineage,
-    anchorLineage: intent.anchorLineage,
+    anchorLineage: intent.anchorLineage as AnchorLineageWithRoleProvenance,
     candidateLineage: intent.candidateLineage,
   }
 }
@@ -144,7 +162,7 @@ function summarizeIntentInput(input: IntentInput) {
     refinementModes: input.refinementModes,
     selectedDirectionContext: input.selectedDirectionContext,
     discoveryPreferences: input.discoveryPreferences,
-    anchor: input.anchor,
+    anchor: input.anchor as PlanAnchorWithRoleProvenance | undefined,
   }
 }
 
@@ -405,6 +423,7 @@ const cases: AuthorshipCase[] = [
           anchorType: 'venue',
           anchorValue: 'sj-paper-plane',
           roleHint: 'highlight',
+          roleResolutionSource: 'explicit',
           timeBound: 'tonight',
         },
         constraintPosture: {
@@ -477,6 +496,7 @@ const cases: AuthorshipCase[] = [
           anchorId: 'sj-paper-plane',
           displayName: 'Paper Plane',
           roleHint: 'highlight',
+          roleResolutionSource: 'explicit',
           required: true,
         },
         candidateLineage: { source: 'none' },
@@ -716,6 +736,7 @@ const cases: AuthorshipCase[] = [
           anchorType: 'venue',
           anchorValue: 'sj-paper-plane',
           roleHint: 'highlight',
+          roleResolutionSource: 'explicit',
           timeBound: 'tonight',
         },
         constraintPosture: {
@@ -779,7 +800,10 @@ const cases: AuthorshipCase[] = [
         refinementModes: undefined,
         selectedDirectionContext: undefined,
         discoveryPreferences: undefined,
-        anchor: buildAnchor,
+        anchor: {
+          ...buildAnchor,
+          roleResolutionSource: 'explicit',
+        },
       },
       lineage: {
         starterLineage: { source: 'none' },
@@ -788,6 +812,7 @@ const cases: AuthorshipCase[] = [
           anchorId: 'sj-paper-plane',
           displayName: 'Paper Plane',
           roleHint: 'highlight',
+          roleResolutionSource: 'explicit',
           required: true,
         },
         candidateLineage: buildAnchorLineage,

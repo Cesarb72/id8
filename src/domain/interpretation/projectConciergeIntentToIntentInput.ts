@@ -1,5 +1,4 @@
 import type {
-  AnchorRole,
   ConciergeIntent,
   DistanceMode,
   ExperienceMode,
@@ -9,6 +8,20 @@ import type {
   SelectedDirectionContext,
 } from '../types/intent'
 import type { RefinementMode } from '../types/refinement'
+
+type BuildAnchorRoleProvenanceSource =
+  | 'explicit'
+  | 'inferred'
+  | 'defaulted_highlight'
+  | 'missing'
+
+type AnchorPostureWithRoleProvenance = ConciergeIntent['anchorPosture'] & {
+  roleResolutionSource?: BuildAnchorRoleProvenanceSource
+}
+
+type PlanAnchorWithRoleProvenance = PlanAnchor & {
+  roleResolutionSource?: BuildAnchorRoleProvenanceSource
+}
 
 export interface ProjectConciergeIntentToIntentInputParams {
   conciergeIntent: ConciergeIntent
@@ -25,7 +38,7 @@ export interface ProjectConciergeIntentToIntentInputParams {
 
 function projectAnchorFromConciergeIntent(
   conciergeIntent: ConciergeIntent,
-): PlanAnchor | undefined {
+): PlanAnchorWithRoleProvenance | undefined {
   if (
     conciergeIntent.anchorPosture.mode !== 'hard' ||
     conciergeIntent.anchorPosture.anchorType !== 'venue' ||
@@ -33,10 +46,14 @@ function projectAnchorFromConciergeIntent(
   ) {
     return undefined
   }
-  const roleHint = conciergeIntent.anchorPosture.roleHint
+  const anchorPosture = conciergeIntent.anchorPosture as AnchorPostureWithRoleProvenance
+  const roleHint = anchorPosture.roleHint
   return {
     venueId: conciergeIntent.anchorPosture.anchorValue,
-    role: (roleHint ?? 'highlight') as AnchorRole,
+    ...(roleHint ? { role: roleHint } : {}),
+    ...(anchorPosture.roleResolutionSource
+      ? { roleResolutionSource: anchorPosture.roleResolutionSource }
+      : {}),
   }
 }
 
