@@ -195,10 +195,10 @@ try {
   )
   assert(
     sandboxSource.includes('const effectiveBuildSelectedAnchorRequiredRole') &&
-      sandboxSource.includes('selectedCandidateRouteArtifact?.anchorRole ?? buildSelectedAnchorRequiredRole') &&
-      sandboxSource.includes('activeCandidateAnchorRole:\n            effectiveBuildSelectedAnchorRequiredRole') &&
+      !sandboxSource.includes('selectedCandidateRouteArtifact?.anchorRole ?? buildSelectedAnchorRequiredRole') &&
+      sandboxSource.includes('activeCandidateAnchorRole: null') &&
       sandboxSource.includes('selectedAnchorRequiredRole: effectiveBuildSelectedAnchorRequiredRole'),
-    'Public Build promotion must use the selected/generated artifact anchor role instead of forcing highlight.',
+    'Public Build must preserve place-only missing-role truth instead of promoting candidate artifact role before Waypoint.',
   )
   assert(
     !sandboxSource.includes('GOOGLE_PLACES_API_KEY') &&
@@ -244,7 +244,7 @@ try {
     sandboxSource.includes('publicBuildGeneratedRouteTruthOwnsPostContinueSurface') &&
       sandboxSource.includes('data-id8-route-card-display-source="build_generated_final_route"') &&
       sandboxSource.includes('canonicalRouteArtifact.finalRoute.stops.find((stop) => stop.role === role)') &&
-      sandboxSource.includes('!publicBuildGeneratedRouteTruthOwnsPostContinueSurface && (publicSurpriseRouteChoiceVisible'),
+      sandboxSource.includes('!publicBuildGeneratedRouteTruthOwnsPostContinueSurface && curatePrimaryCardDisplay.models.map'),
     'Public Build post-Continue route card surface must be owned by generated/final route truth, not the static pre-generation card.',
   )
   const buildReviewDiagnosticsBlock = sourceSlice(
@@ -254,7 +254,8 @@ try {
   )
   assert(
     buildReviewDiagnosticsBlock.includes('postGenerationRouteTruthOwnsSurface') &&
-      sandboxSource.includes("publicBuildGeneratedRouteTruthOwnsPostContinueSurface\n    ? 'build_generated_final_route'") &&
+      sandboxSource.includes("const selectedArtifactDisplaySource = publicBuildGeneratedRouteTruthOwnsPostContinueSurface") &&
+      sandboxSource.includes("? 'build_generated_final_route'") &&
       buildReviewDiagnosticsBlock.includes('selectedRouteStaticPreGeneration') &&
       buildReviewDiagnosticsBlock.includes('!publicBuildGeneratedRouteTruthOwnsPostContinueSurface'),
     'Build Review diagnostics must show generated/final route ownership and prevent static pre-generation selection after finalRoute exists.',

@@ -336,6 +336,24 @@ function buildCandidate(spec: CandidateSpec): ArcCandidate {
       roleEnergyNote: spec.roleEnergyNote,
       strongMomentPresent: spec.strongMomentPresent ?? true,
       momentQualityNote: spec.strongMomentPresent === false ? 'No strong main moment' : 'Strong center',
+      routeMomentVerdict: {
+        strongMomentPresent: spec.strongMomentPresent ?? true,
+        momentQualityNote:
+          spec.strongMomentPresent === false ? 'No strong main moment' : 'Strong center',
+        momentStrengthVerdict: {
+          score: spec.strongMomentPresent === false ? 0.28 : 0.76,
+          reason: spec.strongMomentPresent === false ? 'weak peak' : 'strong peak',
+        },
+        peakSuitability: {
+          score: spec.strongMomentPresent === false ? 0.28 : 0.76,
+        },
+        flatArcRisk: {
+          level: spec.momentFlatPenalty && spec.momentFlatPenalty > 0 ? 'material' : 'none',
+          penalty: spec.momentFlatPenalty ?? 0,
+          score: spec.momentFlatPenalty ?? 0,
+        },
+        momentPreservationStatus: 'preserved',
+      },
     },
     pacing: {
       transitions: transitions.map(([from, to, index]) => ({
@@ -611,7 +629,10 @@ const selection = selectGreatStopGatePassingCandidate({
   compactnessRankingDiagnostics,
 })
 
-assert(selection.selectedCandidate?.id === secondPassingCandidate.id, 'Second ranked PASS candidate should be selected.')
+assert(
+  selection.selectedCandidate?.id === secondPassingCandidate.id,
+  `Second ranked PASS candidate should be selected; received ${selection.selectedCandidate?.id ?? 'none'} with status ${selection.diagnostics.status}; reasons ${selection.diagnostics.failureReasons.join('|')}.`,
+)
 assert(selection.diagnostics.status === 'PASS', 'Selection diagnostics should pass.')
 assert(selection.diagnostics.stage === 'pre_selection_gate', 'Selection diagnostics should use pre_selection_gate stage.')
 assert(selection.diagnostics.selectedCandidateRank === 2, 'Selected candidate rank should be 2.')
@@ -1167,7 +1188,7 @@ assert(
     runGeneratePlanSource.includes('const greatStopCandidatePool =') &&
     runGeneratePlanSource.includes('selectGreatStopGatePassingCandidate({') &&
     runGeneratePlanSource.includes("stage: 'pre_selection_gate'") &&
-    runGeneratePlanSource.includes('throw new GreatStopGateSelectionError(greatStopSelection.diagnostics)'),
+    runGeneratePlanSource.includes('throw new GreatStopGateSelectionError(greatStopGateSelectionDiagnostics)'),
   'runGeneratePlan must make Great Stop gate load-bearing before selectedArc is committed across modes, with location class as preset input only.',
 )
 assert(

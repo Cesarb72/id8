@@ -766,6 +766,7 @@ async function runBuildContractDrivenBuildWaypointPlanAttempt(
       intent: result.intentProfile,
       routePacing: postRepairRoutePacing,
       locationClass: input.greatStopGateLocationClass,
+      placeRightTolerance: routeShapeContract.movementProfile.placeRightTolerance,
       includeDiagnosticCounterfactuals: true,
     })
     const postRepairGreatStopGateResult = buildGreatStopGateResult({

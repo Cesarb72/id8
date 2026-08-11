@@ -3,12 +3,17 @@ import { getArcStopBaseVenueId } from '../src/domain/candidates/candidateIdentit
 import { runGeneratePlan } from '../src/domain/runGeneratePlan'
 import { sanJoseVenues } from '../src/data/venues'
 import { GreatStopGateSelectionError } from '../src/domain/types/greatStopGate'
+import { buildBuildCardTruthModel } from '../src/app/services/canonicalPublicRouteTruthService'
+import { evaluateBuildCandidateAdmission } from '../src/app/services/buildCandidateAdmission/buildCandidateAdmissionService'
+import { buildAnchorTruthContract } from '../src/domain/artifacts/buildAnchorTruthContract'
 import {
   applyBuildSoftFeasibleRecoveryRouteShape,
   buildBuildSoftFeasibleRecoveryRouteShapeAttempts,
 } from '../src/domain/waypoint/buildContractDrivenBuildWaypointPlan'
 import fs from 'node:fs'
+import type { ArcCandidate } from '../src/domain/types/arc'
 import type { IntentInput, RouteShapeContract } from '../src/domain/types/intent'
+import type { RuntimeRouteArtifact, RuntimeRouteStop } from '../src/domain/artifacts/runtimeRouteArtifact'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -320,6 +325,64 @@ const actualRecoveryExecutionInput: IntentInput = {
   ],
 }
 
+function routeRoleForArcStop(role: ArcCandidate['stops'][number]['role']): RuntimeRouteStop['role'] {
+  if (role === 'warmup') return 'start'
+  if (role === 'peak') return 'highlight'
+  if (role === 'cooldown') return 'windDown'
+  return 'support'
+}
+
+function buildRuntimeRouteFromSelectedArc(params: {
+  selectedArc: ArcCandidate
+  selectedDirectionId: string
+  routeHeadline: string
+  routeSummary: string
+}): RuntimeRouteArtifact {
+  const stops = params.selectedArc.stops
+    .map((stop, stopIndex): RuntimeRouteStop => {
+      const venue = stop.scoredVenue.venue
+      return {
+        id: `${routeRoleForArcStop(stop.role)}:${getArcStopBaseVenueId(stop)}`,
+        sourceStopId: `${routeRoleForArcStop(stop.role)}:${getArcStopBaseVenueId(stop)}`,
+        displayName: venue.name,
+        providerRecordId: venue.source.providerRecordId ?? venue.id,
+        latitude: venue.source.latitude ?? 0,
+        longitude: venue.source.longitude ?? 0,
+        address: venue.source.formattedAddress ?? '',
+        role: routeRoleForArcStop(stop.role),
+        stopIndex,
+        venueId: getArcStopBaseVenueId(stop),
+        title: routeRoleForArcStop(stop.role),
+        subtitle: venue.neighborhood ?? 'San Jose',
+        neighborhood: venue.neighborhood ?? 'San Jose',
+        driveMinutes: venue.driveMinutes,
+        imageUrl: venue.imageUrl,
+      }
+    })
+    .filter((stop) => stop.role === 'start' || stop.role === 'highlight' || stop.role === 'windDown')
+  return {
+    routeId: `runtime:${params.selectedArc.id}`,
+    selectedDirectionId: params.selectedDirectionId,
+    location: 'San Jose',
+    persona: 'romantic',
+    vibe: 'cozy',
+    stops,
+    activeStopIndex: 0,
+    routeHeadline: params.routeHeadline,
+    routeSummary: params.routeSummary,
+    mapMarkers: stops.map((stop) => ({
+      id: stop.id,
+      displayName: stop.displayName,
+      role: stop.role,
+      stopIndex: stop.stopIndex,
+      latitude: stop.latitude,
+      longitude: stop.longitude,
+    })),
+    liveNotices: [],
+    updatedAt: 1,
+  }
+}
+
 async function runActualRecoveryExecutionObserver(): Promise<
   Array<{
     action: string
@@ -333,6 +396,9 @@ async function runActualRecoveryExecutionObserver(): Promise<
     failedCriteria: string[]
     failureReasons: string[]
     requiredAnchorSurvived: boolean | null
+    reviewEligible?: boolean
+    routeAuthorityStatus?: string
+    lockInputAvailable?: boolean
   }>
 > {
   const attempts = [
@@ -361,6 +427,64 @@ async function runActualRecoveryExecutionObserver(): Promise<
       const greatStop = result.trace.greatStopGateResult
       assert(greatStop, 'Actual recovery execution must expose a Great Stop result.')
       const routeVenueIds = result.selectedArc.stops.map(getArcStopBaseVenueId)
+      const finalRoute = buildRuntimeRouteFromSelectedArc({
+        selectedArc: result.selectedArc,
+        selectedDirectionId: result.contractEntryArtifact.selection.directionId,
+        routeHeadline: result.contractEntryArtifact.routeTitle,
+        routeSummary: result.contractEntryArtifact.routeSummary,
+      })
+      const anchorContract = buildAnchorTruthContract({
+        identity: {
+          venueId: 'sj-adega-wine-atelier',
+          displayName: 'Adega',
+        },
+        role: {
+          role: 'highlight',
+          roleResolutionSource: 'explicit',
+        },
+      })
+      const candidateAdmission = evaluateBuildCandidateAdmission({
+        mode: 'build',
+        anchorContract,
+        contractEntryArtifact: result.contractEntryArtifact,
+        runtimeRouteArtifact: finalRoute,
+        buildParked: {
+          providerSelectionAllowed: true,
+          providerMergedIntoVisiblePool: true,
+        },
+      })
+      const truth = buildBuildCardTruthModel({
+        artifact: result.contractEntryArtifact,
+        selectedCandidateArtifact: null,
+        selectedArtifactId: result.contractEntryArtifact.id,
+        selectedDirectionId: result.contractEntryArtifact.selection.directionId,
+        approvedPayload: {
+          artifactId: result.contractEntryArtifact.id,
+          selectedDirectionId: result.contractEntryArtifact.selection.directionId,
+          finalRoute,
+          selectedClusterConfirmation: 'Thread A recovery route approved.',
+          itinerary: result.itinerary,
+          sourceKind: 'static',
+        },
+        candidateAdmission,
+        anchorTruthContract: anchorContract,
+        selectedAnchorRequiredRole: 'highlight',
+        sourceKind: 'static',
+        routeReplacementAdmitted: false,
+        buildProviderSelectionAllowed: true,
+        buildProviderMergedIntoVisiblePool: true,
+        activeRole: 'highlight',
+        fallbackCity: 'San Jose',
+      })
+      assert(truth.reviewEligible, 'Completed recovery route must reach normal Review eligibility.')
+      assert(
+        truth.diagnostics.routeAuthorityStatus === 'valid',
+        'Completed recovery route must pass routeAuthority.',
+      )
+      assert(
+        truth.diagnostics.lockInputAvailable,
+        'Completed recovery route must provide normal Lock input.',
+      )
       assert(
         routeVenueIds.includes('sj-adega-wine-atelier'),
         'Actual recovery execution must preserve the selected Build anchor in generated route truth.',
@@ -377,6 +501,9 @@ async function runActualRecoveryExecutionObserver(): Promise<
         failedCriteria: greatStop.failedCriteria,
         failureReasons: greatStop.reasons,
         requiredAnchorSurvived: greatStop.requiredAnchor?.survived ?? null,
+        reviewEligible: truth.reviewEligible,
+        routeAuthorityStatus: truth.diagnostics.routeAuthorityStatus,
+        lockInputAvailable: truth.diagnostics.lockInputAvailable,
       })
     } catch (error) {
       if (!(error instanceof GreatStopGateSelectionError)) {

@@ -260,13 +260,16 @@ function buildRequiredStopSurvival(input: BearingsRouteFeasibilityInput): {
   stopEvidence: BearingsStopLevelFeasibilityEvidence[]
 } {
   const districtFacts = input.districtFacts
+  const requiresSupportSupply =
+    input.movementContract.requireContinuity === true ||
+    input.movementContract.tolerance === 'contained'
   const stopEvidence = input.requiredStopFacts.map((requiredStop) => {
     const relationship = districtFacts.anchorSupportRelationships.find(
       (entry) => entry.anchorBaseVenueId === requiredStop.baseVenueId,
     )
     const supportCount = supportCountForRelationship(relationship)
     const reasonCodes =
-      requiredStop.survivalRequired && supportCount === 0
+      requiredStop.survivalRequired && requiresSupportSupply && supportCount === 0
         ? [
             'place_right:required_stop_survival_failed',
             'place_right:support_supply_not_buildable',
@@ -609,9 +612,11 @@ export function evaluateRoutePlaceRightEvidence(
     districtFacts.supportProximity.some((fact) => fact.sameNeighborhood === false)
       ? ['place_right:poor_support_proximity']
       : []),
-    ...input.supportSupplyFacts.flatMap((fact) =>
-      fact.supportSupplyMissing ? ['place_right:support_supply_not_buildable'] : [],
-    ),
+    ...(requiresRouteContinuity
+      ? input.supportSupplyFacts.flatMap((fact) =>
+          fact.supportSupplyMissing ? ['place_right:support_supply_not_buildable'] : [],
+        )
+      : []),
   ]
   const requiredStopSurvival = buildRequiredStopSurvival(input)
   const openClosedReasonCodes = input.openClosedFacts.flatMap((fact) =>

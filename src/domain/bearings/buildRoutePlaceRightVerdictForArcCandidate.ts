@@ -1,6 +1,6 @@
 import type { ArcCandidate, ArcStop } from '../types/arc'
 import type { RoutePacingDiagnostics } from '../types/diagnostics'
-import type { IntentProfile } from '../types/intent'
+import type { IntentProfile, RouteShapePlaceRightMovementProfile } from '../types/intent'
 import { getArcStopBaseVenueId } from '../candidates/candidateIdentity'
 import { buildDistrictRoutePlaceFactsForArcCandidate } from '../interpretation/district/routePlaceFacts'
 import { evaluateRoutePlaceRightEvidence } from './evaluateRoutePlaceRightEvidence'
@@ -51,7 +51,23 @@ function transitionPosture(
 function movementContractFor(params: {
   intent: IntentProfile
   locationClass?: 'L1 Dense' | 'L2 Mid' | 'L3 Sparse'
+  placeRightTolerance?: RouteShapePlaceRightMovementProfile
 }): BearingsMovementContractFacts {
+  if (params.placeRightTolerance) {
+    const tolerance = params.placeRightTolerance
+    return {
+      tolerance: tolerance.travelTolerance === 'expanded' ? 'flexible' : 'contained',
+      travelPosture:
+        tolerance.driveLikeMovement === 'acceptable'
+          ? 'limited_drive'
+          : tolerance.driveLikeMovement === 'limited'
+            ? 'limited_drive'
+            : 'walkable',
+      spatialMode: tolerance.travelTolerance === 'expanded' ? 'flexible' : 'walkable',
+      requireContinuity: tolerance.travelTolerance !== 'expanded',
+      reasonCodes: [...tolerance.reasonCodes],
+    }
+  }
   if (params.locationClass === 'L3 Sparse') {
     return {
       tolerance: 'flexible',
@@ -95,6 +111,7 @@ function buildRoutePlaceRightInput(params: {
   routePacing: RoutePacingDiagnostics
   locationClass?: 'L1 Dense' | 'L2 Mid' | 'L3 Sparse'
   districtFacts: DistrictRoutePlaceFacts
+  placeRightTolerance?: RouteShapePlaceRightMovementProfile
 }): BearingsRouteFeasibilityInput {
   const { candidate, intent, routePacing, districtFacts } = params
   const requiredAnchorBaseVenueId = intent.anchor?.venueId
@@ -182,7 +199,11 @@ function buildRoutePlaceRightInput(params: {
       transitions,
       reasonCodes: [],
     },
-    movementContract: movementContractFor({ intent, locationClass: params.locationClass }),
+    movementContract: movementContractFor({
+      intent,
+      locationClass: params.locationClass,
+      placeRightTolerance: params.placeRightTolerance,
+    }),
     supportSupplyFacts: districtFacts.anchorSupportRelationships.map((relationship) => ({
       role: 'support',
       anchorBaseVenueId: relationship.anchorBaseVenueId,
@@ -199,6 +220,7 @@ export function buildRoutePlaceRightVerdictForArcCandidate(params: {
   intent: IntentProfile
   routePacing: RoutePacingDiagnostics
   locationClass?: 'L1 Dense' | 'L2 Mid' | 'L3 Sparse'
+  placeRightTolerance?: RouteShapePlaceRightMovementProfile
   includeDiagnosticCounterfactuals?: boolean
 }): BearingsPlaceRightVerdict {
   const districtFacts = buildDistrictRoutePlaceFactsForArcCandidate({
@@ -211,6 +233,7 @@ export function buildRoutePlaceRightVerdictForArcCandidate(params: {
     routePacing: params.routePacing,
     locationClass: params.locationClass,
     districtFacts,
+    placeRightTolerance: params.placeRightTolerance,
   })
   const productionVerdict = evaluateRoutePlaceRightEvidence(input)
   if (!params.includeDiagnosticCounterfactuals) {
@@ -236,6 +259,7 @@ export function buildRoutePlaceRightDiagnosticForArcCandidate(params: {
   intent: IntentProfile
   routePacing: RoutePacingDiagnostics
   locationClass?: 'L1 Dense' | 'L2 Mid' | 'L3 Sparse'
+  placeRightTolerance?: RouteShapePlaceRightMovementProfile
   softClauseMode: 'enforce' | 'observe_only'
 }): BearingsPlaceRightVerdict {
   const districtFacts = buildDistrictRoutePlaceFactsForArcCandidate({
@@ -249,6 +273,7 @@ export function buildRoutePlaceRightDiagnosticForArcCandidate(params: {
       routePacing: params.routePacing,
       locationClass: params.locationClass,
       districtFacts,
+      placeRightTolerance: params.placeRightTolerance,
     }),
     {
       softClauseMode: params.softClauseMode,

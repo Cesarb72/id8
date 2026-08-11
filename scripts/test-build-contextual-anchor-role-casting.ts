@@ -64,6 +64,7 @@ const selectedDirectionContext = {
 try {
   const recoveryPassProof = await runSoftFeasibleRecoveryPassProof()
   const missingRoleProof = await runMissingRoleContextualCastingProof()
+  const integratedMissingRoleRecoveryProof = await runMissingRoleRecoveryIntegrationProof()
   const explicitRoleProof = await runExplicitRoleProtectionProof()
   const candidateDefaultedProof = runCandidateDefaultedProof()
   const zeroWinnerProof = await runZeroWinnerProof()
@@ -76,6 +77,7 @@ try {
       {
         recoveryPassProof,
         missingRoleProof,
+        integratedMissingRoleRecoveryProof,
         explicitRoleProof,
         candidateDefaultedProof,
         zeroWinnerProof,
@@ -287,6 +289,137 @@ async function runSoftFeasibleRecoveryPassProof(): Promise<Record<string, unknow
     greatStopStatus: plan.diagnostics.greatStopGatePostRepairVerification?.status,
     finalRoute: plan.nextFinalRoute.stops.map((stop) => `${stop.role}:${stop.venueId}`),
     reviewEligible: truth.reviewEligible,
+    approvedPayloadArtifactId: truth.diagnostics.approvedPayloadArtifactId,
+    generatedArtifactId: plan.postParityContractEntryArtifact.id,
+  }
+}
+
+async function runMissingRoleRecoveryIntegrationProof(): Promise<Record<string, unknown>> {
+  const conciergeIntent = buildApplicationConciergeIntent({
+    mode: 'build',
+    persona: 'friends',
+    primaryVibe: 'lively',
+    city: 'San Jose',
+    anchor: {
+      venueId: 'sj-paper-plane',
+    },
+    anchorDisplayName: 'Paper Plane',
+    anchorRoleResolutionSource: 'missing',
+    buildSoftFeasibleRecovery: {
+      action: 'take_bigger_night',
+      originatingMovementProfile: {
+        radius: 'balanced',
+        maxTransitionMinutes: 18,
+        neighborhoodContinuity: 'preferred',
+      },
+    },
+  })
+  const canonicalInterpretationBundle = buildCanonicalInterpretationBundle({
+    conciergeIntent,
+    selectedDirectionContext,
+    interpretationSource: 'test.move3.integratedMissingRoleRecovery',
+  })
+  const routeShapeAttempts: string[] = []
+  const missingAnchorContract = buildAnchorTruthContract({
+    identity: {
+      venueId: 'sj-paper-plane',
+      displayName: 'Paper Plane',
+    },
+    role: {
+      role: null,
+      roleResolutionSource: 'missing',
+    },
+  })
+  const plan = await buildContractDrivenBuildWaypointPlan({
+    ...buildInputFixture({
+      conciergeIntent,
+      canonicalInterpretationBundle,
+      anchor: { venueId: 'sj-paper-plane', roleResolutionSource: 'missing' } as any,
+      requiredBuildAnchor: null,
+      buildAnchorTruthContract: missingAnchorContract,
+    }),
+    runPlanBuild: async (input, options) => {
+      const maxTransitionMinutes =
+        options?.routeShapeContract?.movementProfile.maxTransitionMinutes ?? 0
+      routeShapeAttempts.push(`${input.anchor?.role ?? 'missing'}:${maxTransitionMinutes}`)
+      return buildGeneratePlanResult(input, {
+        forcePlaceRightFailure: maxTransitionMinutes < 32,
+      })
+    },
+  })
+  const casting = plan.diagnostics.buildAnchorRoleCasting
+  assert(casting?.owner === 'waypoint', 'Integrated proof must use Waypoint contextual casting.')
+  assert(
+    casting.selectedRole === 'highlight',
+    'Integrated missing-role recovery should contextually select Highlight for Paper Plane.',
+  )
+  assert(
+    plan.diagnostics.greatStopGatePostRepairVerification?.status === 'PASS',
+    'Integrated missing-role recovery winner must pass Great Stop.',
+  )
+  const selectedRoleContract = buildAnchorTruthContract({
+    identity: {
+      venueId: 'sj-paper-plane',
+      displayName: 'Paper Plane',
+    },
+    role: {
+      role: casting.selectedRole,
+      roleResolutionSource: 'inferred',
+    },
+  })
+  const admission = evaluateBuildCandidateAdmission({
+    mode: 'build',
+    anchorContract: selectedRoleContract,
+    contractEntryArtifact: plan.postParityContractEntryArtifact,
+    runtimeRouteArtifact: plan.nextFinalRoute,
+    buildParked: {
+      providerSelectionAllowed: true,
+      providerMergedIntoVisiblePool: true,
+    },
+  })
+  assert(admission.admitted, 'Integrated recovery winner must pass Build admission.')
+  const approvedPayload: BuildApprovedPayloadReference = {
+    artifactId: plan.postParityContractEntryArtifact.id,
+    selectedDirectionId: plan.nextFinalRoute.selectedDirectionId,
+    finalRoute: plan.nextFinalRoute,
+    selectedClusterConfirmation: 'Integrated contextual recovery route is ready for Review.',
+    itinerary: plan.canonicalItinerary,
+    sourceKind: 'static',
+  }
+  const truth = buildBuildCardTruthModel({
+    artifact: plan.postParityContractEntryArtifact,
+    selectedCandidateArtifact: null,
+    selectedArtifactId: plan.postParityContractEntryArtifact.id,
+    selectedDirectionId: plan.postParityContractEntryArtifact.selection.directionId,
+    approvedPayload,
+    candidateAdmission: admission,
+    anchorTruthContract: selectedRoleContract,
+    selectedAnchorRequiredRole: casting.selectedRole,
+    sourceKind: 'static',
+    routeReplacementAdmitted: false,
+    buildProviderSelectionAllowed: true,
+    buildProviderMergedIntoVisiblePool: true,
+    activeRole: 'start',
+    fallbackCity: 'San Jose',
+  })
+  assert(truth.reviewEligible, 'Integrated contextual recovery must reach Review eligibility.')
+  assert(
+    truth.diagnostics.lockInputAvailable,
+    'Integrated contextual recovery must provide Lock input.',
+  )
+  assert(
+    truth.diagnostics.approvedPayloadArtifactId === plan.postParityContractEntryArtifact.id,
+    'Integrated Review truth must bind to the exact generated artifact.',
+  )
+  return {
+    routeShapeAttempts,
+    selectedRole: casting.selectedRole,
+    selectorRule: casting.selectorRule,
+    greatStopStatus: plan.diagnostics.greatStopGatePostRepairVerification?.status,
+    finalRoute: plan.nextFinalRoute.stops.map((stop) => `${stop.role}:${stop.venueId}`),
+    reviewEligible: truth.reviewEligible,
+    lockInputAvailable: truth.diagnostics.lockInputAvailable,
+    routeAuthorityStatus: truth.diagnostics.routeAuthorityStatus,
     approvedPayloadArtifactId: truth.diagnostics.approvedPayloadArtifactId,
     generatedArtifactId: plan.postParityContractEntryArtifact.id,
   }

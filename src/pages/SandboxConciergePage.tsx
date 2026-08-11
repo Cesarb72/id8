@@ -13923,15 +13923,13 @@ export function SandboxConciergePage({
   ])
   const effectiveBuildSelectedAnchorRequiredRole: BuildAnchorCanonicalRole | null =
     isBuildWrapperActive && selectedBuildAnchor?.venueId
-      ? buildSelectedAnchorRequiredRole ?? selectedCandidateRouteArtifact?.anchorRole ?? null
+      ? buildSelectedAnchorRequiredRole
       : null
   const effectiveBuildSelectedAnchorRoleResolutionSource: BuildAnchorRoleResolutionSource =
     isBuildWrapperActive && selectedBuildAnchor?.venueId
       ? buildSelectedAnchorRequiredRole
         ? 'explicit'
-        : selectedCandidateRouteArtifact?.anchorRole
-          ? 'inferred'
-          : 'missing'
+        : 'missing'
       : 'missing'
   const selectedBuildCandidateSourceKind =
     isBuildWrapperActive &&
@@ -15875,7 +15873,7 @@ export function SandboxConciergePage({
           isBuildWrapperActive,
           selectedBuildAnchor,
           selectedBuildAnchorRole: buildSelectedAnchorRequiredRole,
-          activeCandidateAnchorRole: activeCandidateRouteArtifact?.anchorRole,
+          activeCandidateAnchorRole: null,
         })
         const activeBuildCandidateSourceKind =
           isBuildWrapperActive &&
@@ -15888,8 +15886,7 @@ export function SandboxConciergePage({
               anchorVenueId: selectedBuildAnchor?.venueId,
               selectedCandidateArtifact: activeCandidateRouteArtifact,
               selectedCandidateSourceKind: activeBuildCandidateSourceKind,
-              requiredRole:
-                effectiveBuildSelectedAnchorRequiredRole ?? activeCandidateRouteArtifact?.anchorRole ?? null,
+              requiredRole: buildPlannerAnchor?.role ?? null,
               selectedDirectionId: activeDirectionId,
               persona,
               primaryVibe,
@@ -22992,10 +22989,15 @@ export function SandboxConciergePage({
     buildIntentId: canonicalConciergeIntent.id,
     buildAnchorVenueId: selectedBuildAnchor?.venueId ?? null,
     buildAnchorRole:
-      effectiveBuildSelectedAnchorRequiredRole ??
-      selectedCandidateRouteArtifact?.anchorRole ??
-      null,
-    buildAnchorRoleProvenance: effectiveBuildSelectedAnchorRoleResolutionSource,
+      buildGeneratedCanonicalHandoff?.artifact.anchorRole ??
+      plan?.generatedContractEntryArtifact?.anchorRole ??
+      effectiveBuildSelectedAnchorRequiredRole,
+    buildAnchorRoleProvenance: effectiveBuildSelectedAnchorRequiredRole
+      ? effectiveBuildSelectedAnchorRoleResolutionSource
+      : (buildGeneratedCanonicalHandoff?.artifact.anchorRole ??
+            plan?.generatedContractEntryArtifact?.anchorRole)
+        ? 'inferred'
+        : effectiveBuildSelectedAnchorRoleResolutionSource,
     selectedCandidateArtifactId:
       selectedCandidateRouteArtifact?.id ?? selectedRouteArtifactIdForGeneration ?? null,
     originatingMovementProfile: selectedRouteShapeContract?.movementProfile ?? null,

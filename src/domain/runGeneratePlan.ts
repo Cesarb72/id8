@@ -609,6 +609,7 @@ function buildPlaceRightVerdictForCandidate(params: {
   candidate: ArcCandidate
   intent: IntentProfile
   locationClass?: BuildLocationClass
+  placeRightTolerance?: RouteShapeContract['movementProfile']['placeRightTolerance']
   includeDiagnosticCounterfactuals?: boolean
 }) {
   const routePacing = buildGreatStopRoutePacingDiagnostics(params.candidate)
@@ -619,6 +620,7 @@ function buildPlaceRightVerdictForCandidate(params: {
       intent: params.intent,
       routePacing,
       locationClass: params.locationClass,
+      placeRightTolerance: params.placeRightTolerance,
       includeDiagnosticCounterfactuals: params.includeDiagnosticCounterfactuals,
     }),
   }
@@ -676,6 +678,7 @@ function buildGreatStopCompactnessRankingDiagnostics(params: {
           candidate: entry.candidate,
           intent,
           locationClass,
+          placeRightTolerance,
         })
         return buildGreatStopGateResult({
           selectedArc: entry.candidate,
@@ -990,6 +993,7 @@ function buildBuildCandidatePoolCompactnessDiagnostics(params: {
       candidate: entry.candidate,
       intent,
       locationClass,
+      placeRightTolerance,
     })
     const gateResult = buildGreatStopGateResult({
       selectedArc: entry.candidate,
@@ -3851,6 +3855,7 @@ async function runGeneratePlanInternal(
               candidate,
               intent: planningIntent,
               locationClass: options.greatStopGateLocationClass,
+              placeRightTolerance,
               includeDiagnosticCounterfactuals:
                 options.includePlaceRightDiagnosticCounterfactuals === true,
             }).placeRightVerdict,
@@ -4988,6 +4993,7 @@ async function runGeneratePlanInternal(
     candidate: selectedArc,
     intent: planningIntent,
     locationClass: options.greatStopGateLocationClass,
+    placeRightTolerance,
   })
   const greatStopGateResult = buildGreatStopGateResult({
     selectedArc,
