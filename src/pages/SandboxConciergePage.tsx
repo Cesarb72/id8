@@ -22961,6 +22961,12 @@ export function SandboxConciergePage({
   const surpriseRetryAvailable = Boolean(
     isSurpriseWrapperActive && !loading && selectedDirectionId && selectedCandidateRouteArtifact,
   )
+  const selectedRouteArtifactIdForGeneration =
+    isBuildWrapperActive
+      ? selectedCandidateRouteArtifact?.id ?? null
+      : selectedRouteArtifact?.source === 'candidate'
+        ? selectedRouteArtifact.candidateArtifactId ?? null
+        : null
   const publicSurpriseGreatStopRecoveryModel = buildGreatStopRecoverySurfaceModel({
     mode: 'surprise',
     diagnostics:
@@ -23426,12 +23432,6 @@ export function SandboxConciergePage({
     ) ?? []
   const showTryAnotherAction = isSurpriseWrapperActive
   const showReturnToCurateDiscoveryAction = curatePreviewPhaseActive
-  const selectedRouteArtifactIdForGeneration =
-    isBuildWrapperActive
-      ? selectedCandidateRouteArtifact?.id ?? null
-      : selectedRouteArtifact?.source === 'candidate'
-        ? selectedRouteArtifact.candidateArtifactId ?? null
-        : null
   const handleReturnToCurateDiscovery = useCallback(() => {
     if (!isCurateWrapperActive) {
       return
