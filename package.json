@@ -34,6 +34,7 @@
     "provider:build-supply-dry-run": "tsx scripts/run-build-provider-supply-dry-run.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "2.112.3",
     "mapbox-gl": "^3.20.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
