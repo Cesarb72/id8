@@ -3,8 +3,10 @@ import type {
   BearingsFeasibilitySubVerdict,
   BearingsPlaceRightClauseEvidence,
   BearingsPlaceRightClauseAttribution,
+  BearingsPlaceRightDiagnosticClauseRelationship,
   BearingsPlaceRightDiagnosticRejectedCandidate,
   BearingsPlaceRightDiagnosticSupplyStage,
+  BearingsPlaceRightRequiredStopSurvivalDiagnostic,
   BearingsPlaceRightHardClauseMode,
   BearingsPlaceRightSoftClauseMode,
   BearingsPlaceRightVerdict,
@@ -354,7 +356,7 @@ function buildSupportWorldDiagnostics(params: {
         ? ['place_right:poor_support_proximity']
         : []
 
-  const requiredStopSurvival = input.requiredStopFacts.map((requiredStop) => {
+  const requiredStopSurvival: BearingsPlaceRightRequiredStopSurvivalDiagnostic[] = input.requiredStopFacts.map((requiredStop) => {
     const relationship = input.districtFacts.anchorSupportRelationships.find(
       (entry) => entry.anchorBaseVenueId === requiredStop.baseVenueId,
     )
@@ -366,7 +368,7 @@ function buildSupportWorldDiagnostics(params: {
     const softSurvivorCount = relationship?.sameNeighborhoodSupportCount ?? 0
     const result: BearingsRouteFeasibilityStatus =
       requiredStop.survivalRequired && softSurvivorCount === 0 ? 'fail' : 'pass'
-    const relationshipStatus =
+    const relationshipStatus: BearingsPlaceRightDiagnosticClauseRelationship =
       !relationship
         ? 'unresolved'
         : result === 'pass'
@@ -463,7 +465,9 @@ function buildSupportWorldDiagnostics(params: {
         ? 'fail'
         : 'pass',
       subjectIds: enteringSupportIds,
-      factualInputs: input.supportSupplyFacts,
+      factualInputs: {
+        supportSupplyFacts: input.supportSupplyFacts,
+      },
       relationship: supportSupplyRelationship,
       ...(supportSupplyRelationship === 'downstream_consequence' && downstreamCauses.length > 0
         ? { causedBy: downstreamCauses }
@@ -504,7 +508,9 @@ function buildSupportWorldDiagnostics(params: {
       disposition: 'hard',
       result: openClosedFailed ? 'fail' : 'pass',
       subjectIds: input.openClosedFacts.map((fact) => fact.baseVenueId),
-      factualInputs: input.openClosedFacts,
+      factualInputs: {
+        openClosedFacts: input.openClosedFacts,
+      },
       relationship: openClosedFailed ? 'independent_root' : 'independent_root',
       rejectedCandidates: hardRejectedCandidates,
     },

@@ -72,6 +72,10 @@ export interface GreatStopRecoverySurfaceModel {
   }
 }
 
+type BuildSoftFeasibleRecoveryActions = NonNullable<
+  GreatStopRecoverySurfaceModel['buildSoftFeasibleRecovery']
+>['actions']
+
 const criterionLabels: Record<GreatStopGateCriterion, string> = {
   real: 'Real',
   role_right: 'Role',
@@ -149,7 +153,7 @@ function buildSoftFeasibleRecoveryActionBinding(params: {
 
 function buildSoftFeasibleRecoveryActions(
   recoveryStateBinding: BuildSoftFeasibleRecoveryBinding,
-): GreatStopRecoverySurfaceModel['buildSoftFeasibleRecovery']['actions'] {
+): BuildSoftFeasibleRecoveryActions {
   return [
     {
       action: 'take_bigger_night',

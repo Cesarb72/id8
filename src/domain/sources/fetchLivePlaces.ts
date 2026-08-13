@@ -1,6 +1,6 @@
 import { curatedVenues } from '../../data/venues'
 import { normalizeVenue } from '../normalize/normalizeVenue'
-import { searchPlaces } from '../providers/ProviderAdapter'
+import { searchPlaces, type ProviderTextSearchQuery } from '../providers/ProviderAdapter'
 import type { ProviderVenue } from '../providers/providerTypes'
 import {
   resolveCanonicalVenueIdForProviderVenue,
@@ -1093,8 +1093,26 @@ export async function fetchLivePlaces(
   const queryLabelsUsed = queryPlan.map((entry) => entry.label)
   const roleIntentQueryNotes = [...new Set(baseQueryPlan.flatMap((entry) => entry.notes))]
   const requestedKindsForPlan = [...new Set(baseQueryPlan.map((entry) => entry.kind))]
+  const dispatchQueries = queryPlan.map(
+    (query): ProviderTextSearchQuery & Pick<(typeof queryPlan)[number], 'kind' | 'queryTerms'> => {
+      const { center, label, radiusM, ...providerQuery } = query
+      return {
+        ...providerQuery,
+        locationBias: {
+          circle: {
+            center: {
+              latitude: center.lat,
+              longitude: center.lng,
+            },
+            radius: radiusM,
+          },
+        },
+        rankPreference: 'RELEVANCE',
+      }
+    },
+  )
 
-  const providerResults = await searchPlaces<MappedLiveRawPlaceResult, (typeof queryPlan)[number]>({
+  const providerResults = await searchPlaces<MappedLiveRawPlaceResult, (typeof dispatchQueries)[number]>({
     callPurpose: 'retrieval_supply',
     city: intent.city,
     context: {
@@ -1129,22 +1147,7 @@ export async function fetchLivePlaces(
         ...(canonicalMapping ? { canonicalMapping } : {}),
       }
     },
-    queries: queryPlan.map((query) => {
-      const { center, label, radiusM, ...providerQuery } = query
-      return {
-        ...providerQuery,
-        locationBias: {
-          circle: {
-            center: {
-              latitude: center.lat,
-              longitude: center.lng,
-            },
-            radius: radiusM,
-          },
-        },
-        rankPreference: 'RELEVANCE',
-      }
-    }),
+    queries: dispatchQueries,
     mode: intent.mode,
     sourceMode: options.sourceMode,
     envelope: options.envelope,

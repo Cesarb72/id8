@@ -2133,7 +2133,9 @@ function AppShellContent({
       city: state.lastIntentProfile.city,
       neighborhood: state.lastIntentProfile.neighborhood ?? currentStop?.scoredVenue.venue.neighborhood,
     }).catch(() => [])
-    const selectableRemoteMatches = remoteMatches.filter(isSelectableAnchorSearchResult)
+    const selectableRemoteMatches = remoteMatches.flatMap((result) =>
+      isSelectableAnchorSearchResult(result) ? [result] : [],
+    )
 
     const scoredRemoteMatches = selectableRemoteMatches.map((result) => ({
       scoredVenue: scoreVenueFit(

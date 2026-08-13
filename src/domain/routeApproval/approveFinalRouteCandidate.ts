@@ -1,7 +1,10 @@
 import { scoreArcAssembly } from '../arc/scoreArcAssembly'
 import { buildRoutePlaceRightVerdictForArcCandidate } from '../bearings/buildRoutePlaceRightVerdictForArcCandidate'
 import { computeFieldRealVerdictForArcCandidate } from '../field/computeFieldRealVerdict'
-import { selectGreatStopGatePassingCandidate } from '../greatStop/buildGreatStopGateResult'
+import {
+  buildGreatStopRoutePacingDiagnostics,
+  selectGreatStopGatePassingCandidate,
+} from '../greatStop/buildGreatStopGateResult'
 import { selectWaypointC1ApprovalCandidates } from '../waypoint/selectWaypointC1ApprovalCandidates'
 import { projectRouteShapeOwnership } from '../../integrations/waypoint/coordination/projectRouteShapeOwnership'
 import type { ArcCandidate } from '../types/arc'
@@ -147,7 +150,7 @@ export function approveFinalRouteCandidate(
   const placeRightVerdict = buildRoutePlaceRightVerdictForArcCandidate({
     candidate: waypointApprovedCandidate,
     intent: params.intent,
-    routePacing: waypointApprovedCandidate.pacing,
+    routePacing: buildGreatStopRoutePacingDiagnostics(waypointApprovedCandidate),
     locationClass: params.locationClass,
   })
   const bearingsDiagnostics: FinalRouteApprovalDiagnostics = {

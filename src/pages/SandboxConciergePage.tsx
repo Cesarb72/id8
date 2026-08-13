@@ -6034,6 +6034,9 @@ function buildDevSandboxBlockedProviderShadowDiagnostics(
     canonicalMappings: [],
     completeness: [],
     equivalence: [],
+    venueIdentityHandoffs: [],
+    venueIdentityAdmissions: [],
+    venueIdentityAdmissionGroups: [],
     trace: null,
     ledger: null,
   }
@@ -15769,8 +15772,8 @@ export function SandboxConciergePage({
           ? buildCanonicalSurpriseC1RouteShapeContract({
               selectedDirection: activeDirectionContract,
               selectedDirectionContext: activeDirectionContext,
-              conciergeIntent: generationConciergeIntent,
-              canonicalInterpretationBundle: generationCanonicalInterpretationBundle,
+              conciergeIntent: canonicalConciergeIntent,
+              canonicalInterpretationBundle,
             })
           : buildRouteShapeContract({
               selectedDirection: activeDirectionContract,

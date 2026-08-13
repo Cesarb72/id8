@@ -4,6 +4,7 @@ import { buildContractEntryArtifactFromGeneration } from '../artifacts/buildCont
 import {
   validateContractEntryArtifactBuildAnchor,
   validateRuntimeRouteBuildAnchor,
+  type BuildAnchorCanonicalRole,
   type BuildAnchorTruthContract,
 } from '../artifacts/buildAnchorTruthContract'
 import { buildFinalRoute } from '../artifacts/runtimeRouteProjection'
@@ -153,6 +154,10 @@ export interface BuildContractDrivenWaypointPlanInput {
   compatibilityProjectionForMutationProof?: IntentInput
 }
 
+type RequiredBuildAnchorTruthContract = BuildAnchorTruthContract & {
+  requiredRole: BuildAnchorCanonicalRole
+}
+
 export class BuildAnchorRoleCastingSelectionError extends Error {
   readonly attemptedOutcomes: BuildAnchorRoleCastingVariantOutcome[]
 
@@ -265,12 +270,6 @@ function applyContextualBuildAnchorRoleVariant(
     role,
     roleResolutionSource: 'inferred',
   }
-  const anchorPosture = input.conciergeIntent.anchorPosture as ConciergeIntent['anchorPosture'] & {
-    roleResolutionSource?: string
-  }
-  const anchorLineage = input.conciergeIntent.anchorLineage as ConciergeIntent['anchorLineage'] & {
-    roleResolutionSource?: string
-  }
   return {
     ...input,
     conciergeIntent: {
@@ -278,18 +277,10 @@ function applyContextualBuildAnchorRoleVariant(
       anchorPosture: {
         ...input.conciergeIntent.anchorPosture,
         roleHint: role,
-        roleResolutionSource:
-          anchorPosture.roleResolutionSource === 'missing'
-            ? 'inferred'
-            : anchorPosture.roleResolutionSource ?? 'inferred',
       },
       anchorLineage: {
         ...input.conciergeIntent.anchorLineage,
         roleHint: role,
-        roleResolutionSource:
-          anchorLineage.roleResolutionSource === 'missing'
-            ? 'inferred'
-            : anchorLineage.roleResolutionSource ?? 'inferred',
       },
     },
     anchor: variantAnchor,
@@ -400,8 +391,14 @@ function findRequiredAnchorSource(params: {
   }
 }
 
+function hasRequiredBuildAnchorRole(
+  contract: BuildAnchorTruthContract,
+): contract is RequiredBuildAnchorTruthContract {
+  return contract.requiredRole !== undefined
+}
+
 function buildRequiredAnchorItineraryStop(params: {
-  contract: BuildAnchorTruthContract
+  contract: RequiredBuildAnchorTruthContract
   currentRoleStop: ItineraryStop
   sourceStop?: ItineraryStop
   sourceCandidate?: ScoredVenue
@@ -449,7 +446,7 @@ function buildRequiredAnchorItineraryStop(params: {
 }
 
 function buildRequiredAnchorCanonicalIdentity(params: {
-  contract: BuildAnchorTruthContract
+  contract: RequiredBuildAnchorTruthContract
   replacementStop: ItineraryStop
   existingIdentity?: CanonicalPlanningStopIdentityLike
   sourceCandidate?: ScoredVenue
@@ -500,7 +497,7 @@ function buildRequiredAnchorCanonicalIdentity(params: {
 
 function replaceRequiredAnchorArcStop(params: {
   selectedArc: ArcCandidate
-  contract: BuildAnchorTruthContract
+  contract: RequiredBuildAnchorTruthContract
   sourceCandidate?: ScoredVenue
 }): ArcCandidate {
   const targetArcRole = roleToArcRole(params.contract.requiredRole)
@@ -555,6 +552,9 @@ function preserveRequiredBuildAnchorInParity(params: {
     params.parity.nextFinalRoute,
   )
   if (runtimeAnchorValidation.status !== 'invalid') {
+    return params.parity
+  }
+  if (!hasRequiredBuildAnchorRole(params.contract)) {
     return params.parity
   }
 

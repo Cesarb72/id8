@@ -734,16 +734,20 @@ export function validateLockedLiveArtifactSessionPayload(
   let compositionEvidenceLineage: CompositionEvidenceLineage | undefined
   if ('compositionEvidenceLineage' in payload && payload.compositionEvidenceLineage != null) {
     const sanitizedLineage = sanitizeCompositionEvidenceLineage(payload.compositionEvidenceLineage)
-    const lineageValidation = sanitizedLineage
-      ? validateCompositionEvidenceLineageForFinalRoute({
-          lineage: sanitizedLineage,
-          finalRoute: sanitizedFinalRoute,
-          selectedDirectionId: sanitizedFinalRoute.selectedDirectionId,
-        })
-      : {
-          ok: false,
-          reasons: ['composition_evidence_lineage_shape_invalid'],
-        }
+    if (!sanitizedLineage) {
+      return {
+        ok: false,
+        error: {
+          code: 'invalid_composition_evidence_lineage',
+          detail: 'composition_evidence_lineage_shape_invalid',
+        },
+      }
+    }
+    const lineageValidation = validateCompositionEvidenceLineageForFinalRoute({
+      lineage: sanitizedLineage,
+      finalRoute: sanitizedFinalRoute,
+      selectedDirectionId: sanitizedFinalRoute.selectedDirectionId,
+    })
     if (!lineageValidation.ok) {
       return {
         ok: false,

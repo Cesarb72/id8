@@ -205,16 +205,6 @@ function buildSemanticTokenSet(values: readonly unknown[]): Set<string> {
   return tokens
 }
 
-function scoreToCompatibility(score: number): TasteRouteMeaningCompatibilityStatus {
-  if (score >= 0.65) {
-    return 'compatible'
-  }
-  if (score >= 0.35) {
-    return 'partial'
-  }
-  return 'conflict'
-}
-
 function scoreToFitStrength(score: number): TasteRouteMeaningFitStrength {
   if (score >= 0.75) {
     return 'strong'

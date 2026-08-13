@@ -253,12 +253,6 @@ function isBuildFriendsEasyHangContext(
   ).easyHang.active
 }
 
-function getEasyHangHardIncompatibleSignals(candidate: ScoredVenue): string[] {
-  return [
-    ...getTasteRolePoolCandidateMeaning(candidate).hardIncompatibleSignals,
-  ]
-}
-
 function isEasyHangHardIncompatibleCandidate(candidate: ScoredVenue): boolean {
   return getTasteRolePoolCandidateMeaning(candidate).hardIncompatible
 }
@@ -1721,7 +1715,6 @@ function getPeakStrongMomentSelectionBias(
   }
 
   const categoryArchetype = getCategoryArchetypeMeaning(candidate)
-  const archetype = categoryArchetype.primaryExperienceArchetype
   const passiveHospitalityFallback = categoryArchetype.isPassiveHospitalityPeak
   const weakMomentPenalty =
     candidate.momentIdentity.strength === 'medium'
